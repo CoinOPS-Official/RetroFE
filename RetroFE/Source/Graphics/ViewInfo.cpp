@@ -54,7 +54,6 @@ ViewInfo::ViewInfo()
 	, Monitor(0)
     , Volume(0)
     , Restart(false)
-	, Additive(false)
 {
 }
 

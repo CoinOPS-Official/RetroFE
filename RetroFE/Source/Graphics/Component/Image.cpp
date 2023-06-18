@@ -65,15 +65,8 @@ void Image::allocateGraphicsMemory()
 
         if (texture_ != NULL)
         {
-            if (baseViewInfo.Additive)
-			{
-				SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_ADD);
-            }
-			else
-			{
-				SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
-			}
-			SDL_QueryTexture(texture_, NULL, NULL, &width, &height);
+            SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+            SDL_QueryTexture(texture_, NULL, NULL, &width, &height);
             baseViewInfo.ImageWidth  = (float)width;
             baseViewInfo.ImageHeight = (float)height;
         }

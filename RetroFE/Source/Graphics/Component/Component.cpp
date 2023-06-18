@@ -424,13 +424,7 @@ bool Component::animate()
             case TWEEN_PROPERTY_RESTART:
                 baseViewInfo.Restart = tween->duration && !elapsedTime;
                 break;
-            case TWEEN_PROPERTY_ADDITIVE:
-				if (tween->startDefined)
-                    baseViewInfo.Additive = tween->animate(elapsedTime);
-                else
-                    baseViewInfo.Additive = tween->animate(elapsedTime, storeViewInfo_.Additive);
-                break;
-			}
+            }
         }
 
         if ( currentDone )

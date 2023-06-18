@@ -1333,7 +1333,6 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
     xml_attribute<> *monitor            = findAttribute(componentXml, "monitor", defaultXml);
     xml_attribute<> *volume             = findAttribute(componentXml, "volume", defaultXml);
     xml_attribute<>* restart = findAttribute(componentXml, "restart", defaultXml);
-	xml_attribute<>* additive = findAttribute(componentXml, "additive", defaultXml);
 
     info.X = getHorizontalAlignment(x, 0);
     info.Y = getVerticalAlignment(y, 0);
@@ -1377,7 +1376,6 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
     info.Monitor            = monitor            ? Utils::convertInt(monitor->value())             : 0;
     info.Volume             = volume             ? Utils::convertFloat(volume->value())            : 1.f;
     info.Restart = restart ? Utils::toLower(restart->value()) == "true" : false;
-	info.Additive = additive ? Utils::toLower(additive->value()) == "true" : false;
 
     if(fontColor)
     {
