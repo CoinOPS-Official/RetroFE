@@ -226,7 +226,7 @@ bool GStreamerVideo::play(std::string file)
             videoBin_ = gst_bin_new("SinkBin");
             videoSink_  = gst_element_factory_make("fakesink", "video_sink");
             videoConvert_  = gst_element_factory_make("capsfilter", "video_convert");
-            videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
+            videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
             height_ = 0;
             width_ = 0;
             if(!playbin_)
@@ -420,7 +420,7 @@ void GStreamerVideo::update(float /* dt */)
     
 	if(!hide_ && !texture_ && width_ != 0 && height_ != 0)
     {
-        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_IYUV,
+        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
                                     SDL_TEXTUREACCESS_STREAMING, width_, height_);
         SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
     }
@@ -448,48 +448,42 @@ void GStreamerVideo::update(float /* dt */)
             else
             {
                 GstMapInfo bufInfo;
-                unsigned int y_stride, u_stride, v_stride;
-                const Uint8 *y_plane, *u_plane, *v_plane;
+                unsigned int y_stride, uv_stride;
+                const Uint8 *y_plane, *uv_plane;
 
                 y_stride = GST_ROUND_UP_4(width_);
-                u_stride = v_stride = GST_ROUND_UP_4(y_stride / 2);
+                uv_stride = GST_ROUND_UP_4(width_);
 
                 gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
                 y_plane = bufInfo.data;
-                u_plane = y_plane + (height_ * y_stride);
-                v_plane = u_plane + ((height_ / 2) * u_stride);
-                SDL_UpdateYUVTexture(texture_, NULL,
-                                     (const Uint8*)y_plane, y_stride,
-                                     (const Uint8*)u_plane, u_stride,
-                                     (const Uint8*)v_plane, v_stride);
+                uv_plane = y_plane + (height_ * y_stride);
+
+                SDL_UpdateNVTexture(texture_, NULL,
+                          (const Uint8*)y_plane, y_stride,
+                          (const Uint8*)uv_plane, uv_stride);
                 gst_buffer_unmap(videoBuffer_, &bufInfo);
             }
         }
         else
 		{
-			GstMapInfo bufInfo;
-			void *y_plane, *u_plane, *v_plane;
-			int y_stride, u_stride, v_stride;
+                GstMapInfo bufInfo;
+                unsigned int y_stride, uv_stride;
+                const Uint8 *y_plane, *uv_plane;
 
-			// Map the buffer only once
-			gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+                // Map the buffer only once
+                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
 
-			// Map Y, U, and V planes using offsets and strides from meta
-			y_stride = meta->stride[0];
-			u_stride = meta->stride[1];
-			v_stride = meta->stride[2];
+                // Map Y and UV planes using offsets and strides from meta
+                y_stride = meta->stride[0];
+                uv_stride = meta->stride[1];
 
-			y_plane = bufInfo.data + meta->offset[0];
-			u_plane = bufInfo.data + meta->offset[1];
-			v_plane = bufInfo.data + meta->offset[2];
+                y_plane = bufInfo.data + meta->offset[0];
+                uv_plane = bufInfo.data + meta->offset[1]; // Assuming the UV plane immediately follows the Y plane in memory
 
-			SDL_UpdateYUVTexture(texture_, NULL,
-								(const Uint8*)y_plane, y_stride,
-								(const Uint8*)u_plane, u_stride,
-								(const Uint8*)v_plane, v_stride);
-
-			// Unmap the buffer only once
-			gst_buffer_unmap(videoBuffer_, &bufInfo);
+                SDL_UpdateNVTexture(texture_, NULL,
+                            (const Uint8*)y_plane, y_stride,
+                            (const Uint8*)uv_plane, uv_stride);
+                gst_buffer_unmap(videoBuffer_, &bufInfo);
 		}
 		gst_buffer_unref(videoBuffer_);
 		videoBuffer_ = NULL;
