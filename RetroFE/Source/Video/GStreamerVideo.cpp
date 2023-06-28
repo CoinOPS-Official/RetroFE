@@ -80,9 +80,7 @@ void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *bu
     if (video && video->isPlaying_)
     {
         SDL_LockMutex(SDL::getMutex());
-        bool shouldUpdateVideoBuffer = !video->frameReady_;
-        SDL_UnlockMutex(SDL::getMutex());
-        if (shouldUpdateVideoBuffer)
+        if (!video->frameReady_)
         {
             if (!video->width_ || !video->height_)
             {
@@ -92,20 +90,13 @@ void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *bu
                 gst_structure_get_int(s, "height", &video->height_);
                 gst_caps_unref(caps);  // Don't forget to unref the caps
             }
-            if (video->height_ && video->width_)
+            if (video->height_ && video->width_ && !video->videoBuffer_)
             {
-                SDL_LockMutex(SDL::getMutex());
-                bool shouldRefBuffer = !video->videoBuffer_;
-                SDL_UnlockMutex(SDL::getMutex());
-                if (shouldRefBuffer)
-                {
-                    video->videoBuffer_ = gst_buffer_ref(buf);
-                    SDL_LockMutex(SDL::getMutex());
-                    video->frameReady_ = true;
-                    SDL_UnlockMutex(SDL::getMutex());
-                }
+                video->videoBuffer_ = gst_buffer_ref(buf);
+                video->frameReady_ = true;
             }
         }
+        SDL_UnlockMutex(SDL::getMutex());
     }
 }
 
@@ -416,56 +407,59 @@ void GStreamerVideo::update(float /* dt */)
 		}
 	}
 
-    SDL_LockMutex(SDL::getMutex());
-    
-	if(!hide_ && !texture_ && width_ != 0 && height_ != 0)
-    {
-        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
-                                    SDL_TEXTUREACCESS_STREAMING, width_, height_);
-        SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
-    }
 
-    if(!hide_ && videoBuffer_)
-    {
-        GstVideoMeta *meta;
-        meta = gst_buffer_get_video_meta(videoBuffer_);
+    
+	if (!hide_)
+	{
+		SDL_LockMutex(SDL::getMutex());
+		if(!texture_ && width_ != 0 && height_ != 0)
+    	{
+	        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
+                                    	SDL_TEXTUREACCESS_STREAMING, width_, height_);
+        	SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+    	}
+
+    	if(videoBuffer_)
+    	{
+	        GstVideoMeta *meta;
+    	    meta = gst_buffer_get_video_meta(videoBuffer_);
 
         // Presence of meta indicates non-contiguous data in the buffer
-        if (!meta)
-        {
-            void *pixels;
-            int pitch;
-            unsigned int vbytes = width_ * height_;
-            vbytes += (vbytes / 2);
-            gsize bufSize = gst_buffer_get_size(videoBuffer_);
+      	    if (!meta)
+        	{
+				void *pixels;
+            	int pitch;
+            	unsigned int vbytes = width_ * height_;
+            	vbytes += (vbytes / 2);
+            	gsize bufSize = gst_buffer_get_size(videoBuffer_);
 
-            if (bufSize == vbytes)
-            {
-                SDL_LockTexture(texture_, NULL, &pixels, &pitch);
-                gst_buffer_extract(videoBuffer_, 0, pixels, vbytes);
-                SDL_UnlockTexture(texture_);
-            }
-            else
-            {
-                GstMapInfo bufInfo;
-                unsigned int y_stride, uv_stride;
-                const Uint8 *y_plane, *uv_plane;
+	            if (bufSize == vbytes)
+            	{
+                	SDL_LockTexture(texture_, NULL, &pixels, &pitch);
+                	gst_buffer_extract(videoBuffer_, 0, pixels, vbytes);
+                	SDL_UnlockTexture(texture_);
+            	}
+            	else
+            	{
+                	GstMapInfo bufInfo;
+                	unsigned int y_stride, uv_stride;
+                	const Uint8 *y_plane, *uv_plane;
 
-                y_stride = GST_ROUND_UP_4(width_);
-                uv_stride = GST_ROUND_UP_4(width_);
+                	y_stride = GST_ROUND_UP_4(width_);
+                	uv_stride = GST_ROUND_UP_4(width_);
 
-                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
-                y_plane = bufInfo.data;
-                uv_plane = y_plane + (height_ * y_stride);
+                	gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+                	y_plane = bufInfo.data;
+                	uv_plane = y_plane + (height_ * y_stride);
 
-                SDL_UpdateNVTexture(texture_, NULL,
-                          (const Uint8*)y_plane, y_stride,
-                          (const Uint8*)uv_plane, uv_stride);
-                gst_buffer_unmap(videoBuffer_, &bufInfo);
-            }
-        }
-        else
-		{
+                	SDL_UpdateNVTexture(texture_, NULL,
+                              (const Uint8*)y_plane, y_stride,
+                              (const Uint8*)uv_plane, uv_stride);
+                	gst_buffer_unmap(videoBuffer_, &bufInfo);
+            	}
+        	}
+        	else
+			{
                 GstMapInfo bufInfo;
                 unsigned int y_stride, uv_stride;
                 const Uint8 *y_plane, *uv_plane;
@@ -484,12 +478,13 @@ void GStreamerVideo::update(float /* dt */)
                             (const Uint8*)y_plane, y_stride,
                             (const Uint8*)uv_plane, uv_stride);
                 gst_buffer_unmap(videoBuffer_, &bufInfo);
+			}
+			gst_buffer_unref(videoBuffer_);
+			videoBuffer_ = NULL;
 		}
-		gst_buffer_unref(videoBuffer_);
-		videoBuffer_ = NULL;
+		SDL_UnlockMutex(SDL::getMutex());
 	}
-	
-	SDL_UnlockMutex(SDL::getMutex());
+
     
 	if(videoBus_)
     {
