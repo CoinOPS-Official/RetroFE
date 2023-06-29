@@ -411,78 +411,45 @@ void GStreamerVideo::update(float /* dt */)
     
 	if (!hide_)
 	{
-		SDL_LockMutex(SDL::getMutex());
-		if(!texture_ && width_ != 0 && height_ != 0)
-    	{
-	        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
-                                    	SDL_TEXTUREACCESS_STREAMING, width_, height_);
-        	SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
-    	}
+        SDL_LockMutex(SDL::getMutex());
+        if (!texture_ && width_ != 0 && height_ != 0)
+        {
+            texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
+                                        SDL_TEXTUREACCESS_STREAMING, width_, height_);
+            SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+        }
+        if (videoBuffer_)
+        {
+            GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
 
-    	if(videoBuffer_)
-    	{
-	        GstVideoMeta *meta;
-    	    meta = gst_buffer_get_video_meta(videoBuffer_);
+            if (!meta || meta->buffer == NULL)
+            {
+                void *pixels;
+                int pitch;
 
-        // Presence of meta indicates non-contiguous data in the buffer
-      	    if (!meta)
-        	{
-				void *pixels;
-            	int pitch;
-            	unsigned int vbytes = width_ * height_;
-            	vbytes += (vbytes / 2);
-            	gsize bufSize = gst_buffer_get_size(videoBuffer_);
-
-	            if (bufSize == vbytes)
-            	{
-                	SDL_LockTexture(texture_, NULL, &pixels, &pitch);
-                	gst_buffer_extract(videoBuffer_, 0, pixels, vbytes);
-                	SDL_UnlockTexture(texture_);
-            	}
-            	else
-            	{
-                	GstMapInfo bufInfo;
-                	unsigned int y_stride, uv_stride;
-                	const Uint8 *y_plane, *uv_plane;
-
-                	y_stride = GST_ROUND_UP_4(width_);
-                	uv_stride = GST_ROUND_UP_4(width_);
-
-                	gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
-                	y_plane = bufInfo.data;
-                	uv_plane = y_plane + (height_ * y_stride);
-
-                	SDL_UpdateNVTexture(texture_, NULL,
-                              (const Uint8*)y_plane, y_stride,
-                              (const Uint8*)uv_plane, uv_stride);
-                	gst_buffer_unmap(videoBuffer_, &bufInfo);
-            	}
-        	}
-        	else
-			{
+                SDL_LockTexture(texture_, NULL, &pixels, &pitch);
+                gst_buffer_extract(videoBuffer_, 0, pixels, width_ * height_ * 3 / 2);
+                SDL_UnlockTexture(texture_);
+            }
+            else
+            {
                 GstMapInfo bufInfo;
-                unsigned int y_stride, uv_stride;
                 const Uint8 *y_plane, *uv_plane;
 
-                // Map the buffer only once
                 gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
-
-                // Map Y and UV planes using offsets and strides from meta
-                y_stride = meta->stride[0];
-                uv_stride = meta->stride[1];
 
                 y_plane = bufInfo.data + meta->offset[0];
                 uv_plane = bufInfo.data + meta->offset[1]; // Assuming the UV plane immediately follows the Y plane in memory
 
                 SDL_UpdateNVTexture(texture_, NULL,
-                            (const Uint8*)y_plane, y_stride,
-                            (const Uint8*)uv_plane, uv_stride);
+                                (const Uint8 *)y_plane, meta->stride[0],
+                                (const Uint8 *)uv_plane, meta->stride[1]);
                 gst_buffer_unmap(videoBuffer_, &bufInfo);
-			}
-			gst_buffer_unref(videoBuffer_);
-			videoBuffer_ = NULL;
-		}
-		SDL_UnlockMutex(SDL::getMutex());
+            }
+            gst_buffer_unref(videoBuffer_);
+            videoBuffer_ = NULL;
+        }
+        SDL_UnlockMutex(SDL::getMutex());
 	}
 
     
@@ -512,7 +479,6 @@ void GStreamerVideo::update(float /* dt */)
             gst_message_unref(msg);
         }
     }
-    
 }
 
 
