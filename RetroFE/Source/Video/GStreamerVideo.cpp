@@ -422,7 +422,7 @@ void GStreamerVideo::update(float /* dt */)
         {
             GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
 
-            if (!meta || meta->buffer == NULL)
+            if (!meta)
             {
                 void *pixels;
                 int pitch;
