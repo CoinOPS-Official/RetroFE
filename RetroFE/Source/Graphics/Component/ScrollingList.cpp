@@ -126,7 +126,7 @@ void ScrollingList::setItems( std::vector<Item *> *items )
     items_ = items;
     if (items_)
     {
-        itemIndex_ = loopDecrement(0, selectedOffsetIndex_, items_->size());
+        itemIndex_ = loopDecrement(0, selectedOffsetIndex_, static_cast<unsigned int>(items_->size()));
     }
 }
 
@@ -137,7 +137,7 @@ void ScrollingList::selectItemByName(std::string name)
 
     for (size_t i = 0; i < size; ++i)
     {
-        index = loopDecrement(itemIndex_, i, size);
+        index = loopDecrement(itemIndex_, i, static_cast<unsigned int>(size));
 
         if (items_->at((index + selectedOffsetIndex_) % size)->name == name) {
             itemIndex_ = index;
@@ -207,7 +207,11 @@ void ScrollingList::allocateSpritePoints( )
 
     for ( unsigned int i = 0; i < scrollPoints_->size( ); ++i )
     {
+<<<<<<< Updated upstream
         unsigned int index  = loopIncrement( itemIndex_, i, items_->size());
+=======
+        unsigned int index  = loopIncrement( itemIndex_, i, static_cast<unsigned int>(items_->size()));
+>>>>>>> Stashed changes
         Item *item = items_->at( index );
 
         Component *old = components_.at( i );
@@ -258,26 +262,42 @@ void ScrollingList::setPoints( std::vector<ViewInfo *> *scrollPoints, std::vecto
 
     if ( scrollPoints )
     {
+<<<<<<< Updated upstream
         size = scrollPoints_->size();
+=======
+        size_t size = scrollPoints_->size( );
+>>>>>>> Stashed changes
     }
     components_.resize(size);
 
     if ( items_ )
     {
+<<<<<<< Updated upstream
         itemIndex_ = loopDecrement( 0, selectedOffsetIndex_, items_->size());
+=======
+        itemIndex_ = loopDecrement( 0, selectedOffsetIndex_, static_cast<unsigned int>(items_->size()));
+>>>>>>> Stashed changes
     }
 }
 
 
 unsigned int ScrollingList::getScrollOffsetIndex( )
 {
+<<<<<<< Updated upstream
     return loopIncrement( itemIndex_, selectedOffsetIndex_, items_->size());
+=======
+    return loopIncrement( itemIndex_, selectedOffsetIndex_, static_cast<unsigned int>(items_->size()));
+>>>>>>> Stashed changes
 }
 
 
 void ScrollingList::setScrollOffsetIndex( unsigned int index )
 {
+<<<<<<< Updated upstream
     itemIndex_ = loopDecrement( index, selectedOffsetIndex_, items_->size());
+=======
+    itemIndex_ = loopDecrement( index, selectedOffsetIndex_, static_cast<unsigned int>(items_->size()));
+>>>>>>> Stashed changes
 }
 
 
@@ -295,11 +315,11 @@ Item *ScrollingList::getItemByOffset( int offset )
     unsigned int index = getSelectedIndex( );
     if ( offset >= 0 )
     {
-        index = loopIncrement( index, offset, items_->size( ) );
+        index = loopIncrement( index, offset, static_cast<unsigned int>(items_->size()));
     }
     else
     {
-        index = loopDecrement( index, offset*-1, items_->size( ) );
+        index = loopDecrement( index, offset*-1, static_cast<unsigned int>(items_->size()));
     }
     
     return items_->at( index );
@@ -310,21 +330,21 @@ Item *ScrollingList::getItemByOffset( int offset )
 Item* ScrollingList::getSelectedItem()
 {
     if (!items_ || items_->size() == 0) return NULL;
-    return items_->at(loopIncrement(itemIndex_, selectedOffsetIndex_, items_->size()));
+    return items_->at(loopIncrement(itemIndex_, selectedOffsetIndex_, static_cast<unsigned int>(items_->size())));
 }
 
 
 void ScrollingList::pageUp()
 {
     if (components_.size() == 0) return;
-    itemIndex_ = loopDecrement(itemIndex_, components_.size(), items_->size());
+    itemIndex_ = loopDecrement(itemIndex_, static_cast<unsigned int>(components_.size()), static_cast<unsigned int>(items_->size()));
 }
 
 
 void ScrollingList::pageDown()
 {
     if (components_.size() == 0) return;
-    itemIndex_ = loopIncrement(itemIndex_, components_.size(), items_->size());
+    itemIndex_ = loopIncrement(itemIndex_, static_cast<unsigned int>(components_.size()), static_cast<unsigned int>(items_->size()));
 }
 
 
@@ -360,11 +380,12 @@ void ScrollingList::letterChange( bool increment)
         unsigned int index = 0;
         if ( increment )
         {
-            index = loopIncrement( itemIndex_, i, items_->size( ) );
+            index = loopIncrement(itemIndex_, i, static_cast<unsigned int>(items_->size()));
         }
         else
         {
-            index = loopDecrement( itemIndex_, i, items_->size( ) );
+            index = loopDecrement(itemIndex_, i, static_cast<unsigned int>(items_->size()));
+
         }
 
         std::string endname = items_->at( (index+selectedOffsetIndex_ ) % items_->size( ) )->lowercaseFullTitle( );
@@ -388,7 +409,7 @@ void ScrollingList::letterChange( bool increment)
 
             for ( unsigned int i = 0; i < items_->size( ); ++i )
             {
-                unsigned int index = loopDecrement( itemIndex_, i, items_->size( ) );
+                unsigned int index = loopDecrement(itemIndex_, i, static_cast<unsigned int>(items_->size()));
 
                 std::string endname = items_->at( (index+selectedOffsetIndex_ ) % items_->size( ) )->lowercaseFullTitle( );
 
@@ -396,14 +417,14 @@ void ScrollingList::letterChange( bool increment)
                 if ((isalpha(startname[0] ) ^ isalpha(endname[0] ) ) ||
                     (isalpha(startname[0] ) && isalpha(endname[0] ) && startname[0] != endname[0] ) )
                 {
-                    itemIndex_ = loopIncrement( index,1,items_->size( ) );
+                    itemIndex_ = loopIncrement(index, 1, static_cast<unsigned int>(items_->size()));
                     break;
                 }
             }
         }
         else
         {
-            itemIndex_ = loopIncrement( itemIndex_,1,items_->size( ) );
+            itemIndex_ = loopIncrement(itemIndex_, 1, static_cast<unsigned int>(items_->size()));
         }
     }
 }
@@ -434,11 +455,11 @@ void ScrollingList::metaChange(bool increment, std::string attribute)
         unsigned int index = 0;
         if (increment)
         {
-            index = loopIncrement(itemIndex_, i, items_->size());
+            index = loopIncrement(itemIndex_, i, static_cast<unsigned int>(items_->size()));
         }
         else
         {
-            index = loopDecrement(itemIndex_, i, items_->size());
+            index = loopDecrement(itemIndex_, i, static_cast<unsigned int>(items_->size()));
         }
 
         std::string endValue = items_->at((index + selectedOffsetIndex_) % items_->size())->getMetaAttribute(attribute);

@@ -16,7 +16,7 @@ set(RAPIDXML_ROOT "${RETROFE_THIRD_PARTY_DIR}/rapidxml-1.13")
 
 if(WIN32)
 if(MSVC)
-	set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-2.28.0")
+	set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2")
 	set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.6.3")
 	set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.6.3")
 	set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.20.2")
@@ -29,7 +29,7 @@ endif()
 
 	set(ZLIB_ROOT "${RETROFE_THIRD_PARTY_DIR}/zlib128-dll")
 
-	set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x86" CACHE STRING "location of where your gstreamer include and lib folders reside")
+	set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x64" CACHE STRING "location of where your gstreamer include and lib folders reside")
 	set(GLIB2_ROOT "${GSTREAMER_ROOT}")
   
 if(MSVC)  
