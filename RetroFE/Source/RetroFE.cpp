@@ -408,7 +408,11 @@ bool RetroFE::run( )
     Launcher l( config_ );
     Menu     m( config_, input_ );
     preloadTime = static_cast<float>( SDL_GetTicks( ) ) / 1000;
-    l.LEDBlinky( 1 );
+    bool hasLEDBlinkyDirectory = config_.propertyExists("LEDBlinkyDirectory");
+    if (hasLEDBlinkyDirectory)
+    {
+        l.LEDBlinky( 1 );
+    }
     l.startScript();
     config_.getProperty("kiosk", kioskLock_);
 
@@ -702,8 +706,13 @@ bool RetroFE::run( )
         // Start onHighlightEnter animation
         case RETROFE_HIGHLIGHT_LOAD_ART:
             currentPage_->highlightEnter( );
-            if ( currentPage_->getSelectedItem( ) )
-                l.LEDBlinky( 9, currentPage_->getSelectedItem( )->collectionInfo->name, currentPage_->getSelectedItem( ) );
+            if (hasLEDBlinkyDirectory)
+            {
+                if ( currentPage_->getSelectedItem( ) )
+                {
+                    l.LEDBlinky( 9, currentPage_->getSelectedItem( )->collectionInfo->name, currentPage_->getSelectedItem( ) );
+                }
+            }
             state = RETROFE_HIGHLIGHT_ENTER;
             break;
 
@@ -734,8 +743,13 @@ bool RetroFE::run( )
             if ( currentPage_->isIdle( ) )
             {
                 std::string collectionName = currentPage_->getCollectionName();
-                if ( currentPage_->getSelectedItem( ) )
-                    l.LEDBlinky( 8, currentPage_->getSelectedItem( )->name, currentPage_->getSelectedItem( ) );
+                if (hasLEDBlinkyDirectory)
+                {
+                    if ( currentPage_->getSelectedItem( ) )
+                    {
+                        l.LEDBlinky( 8, currentPage_->getSelectedItem( )->name, currentPage_->getSelectedItem( ) );
+                    }
+                }
                 lastMenuOffsets_[collectionName] = currentPage_->getScrollOffsetIndex();
                 lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName( );
                 std::string nextPageName = nextPageItem_->name;
@@ -841,8 +855,13 @@ bool RetroFE::run( )
             {
                 currentPage_->start( );
             }
-            if ( currentPage_->getSelectedItem( ) )
-                l.LEDBlinky( 9, currentPage_->getSelectedItem( )->collectionInfo->name, currentPage_->getSelectedItem( ) );
+            if (hasLEDBlinkyDirectory)
+            {
+                if ( currentPage_->getSelectedItem( ) )
+                {
+                    l.LEDBlinky( 9, currentPage_->getSelectedItem( )->collectionInfo->name, currentPage_->getSelectedItem( ) );
+                }
+            }
             state = RETROFE_NEXT_PAGE_MENU_ENTER;
             break;
 
@@ -1064,8 +1083,13 @@ bool RetroFE::run( )
         // Start onHighlightEnter animation
         case RETROFE_COLLECTION_HIGHLIGHT_LOAD_ART:
             currentPage_->highlightEnter( );
-            if ( currentPage_->getSelectedItem( ) )
-                l.LEDBlinky( 9, currentPage_->getSelectedItem( )->collectionInfo->name, currentPage_->getSelectedItem( ) );
+            if (hasLEDBlinkyDirectory)
+            {
+                if ( currentPage_->getSelectedItem( ) )
+                {
+                    l.LEDBlinky( 9, currentPage_->getSelectedItem( )->collectionInfo->name, currentPage_->getSelectedItem( ) );
+                }
+            }
             state = RETROFE_COLLECTION_HIGHLIGHT_ENTER;
             break;
 
@@ -1258,7 +1282,10 @@ bool RetroFE::run( )
                     currentPage_->updateReloadables(0);
                 }
 
-                l.LEDBlinky( 3, nextPageItem_->collectionInfo->name, nextPageItem_ );
+                if (hasLEDBlinkyDirectory)
+                {
+                    l.LEDBlinky( 3, nextPageItem_->collectionInfo->name, nextPageItem_ );
+                }
                 if (l.run(nextPageItem_->collectionInfo->name, nextPageItem_, currentPage_)) // Run and check if we need to reboot
                 {
                     attract_.reset( );
@@ -1269,7 +1296,10 @@ bool RetroFE::run( )
                 {
                     attract_.reset();
                     launchExit( );
-                    l.LEDBlinky( 4 );
+                    if (hasLEDBlinkyDirectory)
+                    {
+                        l.LEDBlinky( 4 );
+                    }
                     currentPage_->exitGame( );
                     // with new sort by last played return to first
                     if (currentPage_->getPlaylistName() == "lastplayed")
@@ -1458,7 +1488,10 @@ bool RetroFE::run( )
         case RETROFE_QUIT:
             if ( currentPage_->isGraphicsIdle( ) )
             {
-                l.LEDBlinky( 2 );
+                if (hasLEDBlinkyDirectory)
+                {
+                    l.LEDBlinky( 2 );
+                }
                 l.exitScript();
                 running = false;
             }
@@ -1558,12 +1591,18 @@ bool RetroFE::run( )
                         if ( !attractMode_ && attract_.isSet( ) )
                         {
                             currentPage_->attractEnter( );
-                            l.LEDBlinky( 5 );
+                            if (hasLEDBlinkyDirectory)
+                            {
+                                l.LEDBlinky( 5 );
+                            }
                         }
                         else if ( attractMode_ && !attract_.isSet( ) )
                         {
                             currentPage_->attractExit( );
-                            l.LEDBlinky( 6 );
+                            if (hasLEDBlinkyDirectory)
+                            {
+                                l.LEDBlinky( 6 );
+                            }
                         }
                         else if ( attract_.isSet( ) )
                         {
