@@ -364,8 +364,8 @@ void ScrollingList::letterChange( bool increment)
     unsigned int itemSize = static_cast<unsigned int>(items_->size());
     if ( !items_ || itemSize == 0 ) return;
 
-    Item       *startItem = items_->at( (itemIndex_+selectedOffsetIndex_ ) % items_->size( ) );
-    std::string startname = items_->at( (itemIndex_+selectedOffsetIndex_ ) % items_->size( ) )->lowercaseFullTitle( );
+    Item       *startItem = items_->at( (itemIndex_+selectedOffsetIndex_ ) % itemSize );
+    std::string startname = items_->at( (itemIndex_+selectedOffsetIndex_ ) % itemSize )->lowercaseFullTitle( );
 
     
 
