@@ -23,6 +23,7 @@
 #include <dirent.h>
 #include <locale>
 #include <list>
+#include <filesystem>
 
 #ifdef WIN32
     #include <Windows.h>
@@ -141,24 +142,24 @@ std::string Utils::combinePath(std::string path1, std::string path2, std::string
 }
 
 
-bool Utils::findMatchingFile(std::string prefix, std::vector<std::string> &extensions, std::string &file)
+#include <filesystem>  // If using C++17 or later
+
+bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file)
 {
-    for(unsigned int i = 0; i < extensions.size(); ++i)
+    for(const auto& ext : extensions)
     {
-        std::string temp = prefix + "." + extensions[i];
+        std::string temp = prefix + "." + ext;
         temp = Configuration::convertToAbsolutePath(Configuration::absolutePath, temp);
 
-        std::ifstream f(temp.c_str());
-
-        if (f.good())
+        if(std::filesystem::exists(temp)) 
         {
             file = temp;
             return true;
         }
     }
-
     return false;
 }
+
 
 
 std::string Utils::replace(
