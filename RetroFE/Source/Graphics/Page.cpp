@@ -1448,10 +1448,8 @@ bool Page::isSelectPlaying()
 
 void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu)
 {
-    for(std::vector<ScrollingList *>::iterator it = activeMenu_.begin(); it != activeMenu_.end(); it++)
+    for(ScrollingList *menu : activeMenu_)
     {
-        ScrollingList *menu = *it;
-        // if menu exists and is not a playlist or playlist menu is allowed to be updated
         if(menu && (!menu->isPlaylist() || updatePlaylistMenu))
         {
             menu->deallocateSpritePoints();
