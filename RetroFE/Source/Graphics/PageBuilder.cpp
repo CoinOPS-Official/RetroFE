@@ -1504,55 +1504,55 @@ void PageBuilder::getAnimationEvents(xml_node<> *node, TweenSet &tweens)
             }
             else
             {
-    // if in settings action="<something>" and the action has setting="<something>" then perform animation
-    if (setting && setting->value() != actionSetting) {
-        continue;
-    }
+                // if in settings action="<something>" and the action has setting="<something>" then perform animation
+                if (setting && setting->value() != actionSetting) {
+                    continue;
+                }
 
-    float fromValue = 0.0f;
-    bool  fromDefined = true;
-    if (from)
-    {
-        std::string fromStr = from->value();
-        if(fromStr == "left") {
-            fromValue = 0.0f;
-        } else if(fromStr == "center") {
-            fromValue = static_cast<float>(layoutWidth_) / 2;
-        } else if(fromStr == "right" || fromStr == "stretch") {
-            fromValue = static_cast<float>(layoutWidth_);
-        } else {
-            fromValue = Utils::convertFloat(fromStr);
-        }
-    }
-    else
-    {
-       fromDefined = false;
-    }
+                float fromValue = 0.0f;
+                bool  fromDefined = true;
+                if (from)
+                {
+                    std::string fromStr = from->value();
+                    if(fromStr == "left") {
+                        fromValue = 0.0f;
+                    } else if(fromStr == "center") {
+                        fromValue = static_cast<float>(layoutWidth_) / 2;
+                    } else if(fromStr == "right" || fromStr == "stretch") {
+                        fromValue = static_cast<float>(layoutWidth_);
+                    } else {
+                        fromValue = Utils::convertFloat(fromStr);
+                    }
+                }
+                else
+                {
+                    fromDefined = false;
+                }
 
-    float toValue = 0.0f;
-    if (to)
-    {
-        std::string toStr = to->value();
-        if(toStr == "left") {
-            toValue = 0.0f;
-        } else if(toStr == "center") {
-            toValue = static_cast<float>(layoutWidth_) / 2;
-        } else if(toStr == "right" || toStr == "stretch") {
-            toValue = static_cast<float>(layoutWidth_);
-        } else {
-            toValue = Utils::convertFloat(toStr);
-        }
-    }
+                float toValue = 0.0f;
+                if (to)
+                {
+                    std::string toStr = to->value();
+                    if(toStr == "left") {
+                        toValue = 0.0f;
+                    } else if(toStr == "center") {
+                        toValue = static_cast<float>(layoutWidth_) / 2;
+                    } else if(toStr == "right" || toStr == "stretch") {
+                        toValue = static_cast<float>(layoutWidth_);
+                    } else {
+                        toValue = Utils::convertFloat(toStr);
+                    }
+                }
 
-    float durationValue = Utils::convertFloat(durationXml->value());
+                float durationValue = Utils::convertFloat(durationXml->value());
 
-    TweenAlgorithm algorithm = LINEAR;
-    TweenProperty property;
+                TweenAlgorithm algorithm = LINEAR;
+                TweenProperty property;
 
-    if(algorithmXml)
-    {
-        algorithm = Tween::getTweenType(algorithmXml->value());
-    }
+                if(algorithmXml)
+                {
+                    algorithm = Tween::getTweenType(algorithmXml->value());
+                }
 
                 if(Tween::getTweenProperty(animateType, property))
                 {
