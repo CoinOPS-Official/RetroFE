@@ -135,14 +135,8 @@ float Utils::convertFloat(std::string content)
     return retVal;
 }
 
-int Utils::convertInt(std::string content)
-{
-    int retVal = 0;
-    std::stringstream ss;
-    ss << content;
-    ss >> retVal;
-
-    return retVal;
+int Utils::convertInt(const std::string& content) {
+    return std::stoi(content);
 }
 
 void Utils::replaceSlashesWithUnderscores(std::string &content)

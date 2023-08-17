@@ -32,7 +32,7 @@ public:
                                const std::string& replace);
 
     static float convertFloat(std::string content);
-    static int convertInt(std::string content);
+    static int convertInt(const std::string& content);
     static void replaceSlashesWithUnderscores(std::string &content);
 #ifdef WIN32    
     static void postMessage(LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam );
