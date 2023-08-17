@@ -118,7 +118,8 @@ std::string Utils::replace(
     size_t pos = 0;
     while ((pos = subject.find(search, pos)) != std::string::npos)
     {
-        subject.replace(pos, search.length(), replace);
+        subject.erase(pos, search.length());
+        subject.insert(pos, replace);
         pos += replace.length();
     }
     return subject;
@@ -210,23 +211,25 @@ std::string Utils::trimEnds(std::string str)
 }
 
 
-void Utils::listToVector( std::string str, std::vector<std::string> &vec, char delimiter = ',' )
+void Utils::listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter)
 {
-    std::string value;
-    std::size_t current, previous = 0;
-    current = str.find( delimiter );
-    while (current != std::string::npos)
+    size_t previous = 0;
+    size_t current;
+
+    std::string value;  // Use this outside the loop and reuse it
+
+    while ((current = str.find(delimiter, previous)) != std::string::npos)
     {
-        value = Utils::trimEnds(str.substr(previous, current - previous));
-        if (value != "") {
-            vec.push_back(value);
+        value = trimEnds(str.substr(previous, current - previous));
+        if (!value.empty()) {
+            vec.push_back(std::move(value));  // Use std::move to avoid copying the string
         }
         previous = current + 1;
-        current  = str.find( delimiter, previous );
     }
-    value = Utils::trimEnds(str.substr(previous, current - previous));
-    if (value != "") {
-        vec.push_back(value);
+
+    value = trimEnds(str.substr(previous));
+    if (!value.empty()) {
+        vec.push_back(std::move(value));
     }
 }
 

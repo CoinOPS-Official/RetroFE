@@ -46,7 +46,7 @@ public:
     static std::string uppercaseFirst(std::string str);
     static std::string filterComments(std::string line);
     static std::string trimEnds(std::string str);
-    static void listToVector( std::string str, std::vector<std::string> &vec, char delimiter );
+    static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter = ',');
     static int gcd( int a, int b );
     static std::string trim(std::string& str);
 
@@ -59,6 +59,8 @@ public:
         return combinePath(std::list<std::string>{paths...});
     }
    
+
+    
 #ifdef WIN32
     static const char pathSeparator = '\\';
 #else
