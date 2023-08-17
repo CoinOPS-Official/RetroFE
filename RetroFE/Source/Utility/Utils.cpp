@@ -82,67 +82,16 @@ std::string Utils::filterComments(std::string line)
     return line;
 }
 
-std::string Utils::combinePath(std::list<std::string> &paths)
+std::string Utils::combinePath(const std::list<std::string>& paths)
 {
-    std::list<std::string>::iterator it = paths.begin();
-    std::string path;
-
-    if(it != paths.end())
+    std::filesystem::path result;
+    for (const auto& p : paths)
     {
-        path += *it;
-        it++;
+        result /= p;
     }
-
-
-    while(it != paths.end())
-    {
-        path += Utils::pathSeparator;
-        path += *it;
-        it++;
-    }
-
-    return path;
+    return result.string();
 }
 
-std::string Utils::combinePath(std::string path1, std::string path2)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    return combinePath(paths);
-}
-
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    return combinePath(paths);
-}
-
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3, std::string path4)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    paths.push_back(path4);
-    return combinePath(paths);
-}
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3, std::string path4, std::string path5)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    paths.push_back(path4);
-    paths.push_back(path5);
-    return combinePath(paths);
-}
-
-
-#include <filesystem>  // If using C++17 or later
 
 bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file)
 {
@@ -159,7 +108,6 @@ bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::s
     }
     return false;
 }
-
 
 
 std::string Utils::replace(

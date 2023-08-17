@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <list>
+#include <filesystem>
 
 #ifdef WIN32
     #define NOMINMAX
@@ -49,12 +50,14 @@ public:
     static int gcd( int a, int b );
     static std::string trim(std::string& str);
 
-    //todo: there has to be a better way to do this
-    static std::string combinePath(std::list<std::string> &paths);
-    static std::string combinePath(std::string path1, std::string path2);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3, std::string path4);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3, std::string path4, std::string path5);
+    // Base function to handle a list of paths
+    static std::string combinePath(const std::list<std::string>& paths);
+
+    // Variadic template function to handle any number of string arguments
+    template <typename... Strings>
+    static std::string combinePath(Strings... paths) {
+        return combinePath(std::list<std::string>{paths...});
+    }
    
 #ifdef WIN32
     static const char pathSeparator = '\\';
