@@ -16,7 +16,6 @@
 
 #include "VideoBuilder.h"
 #include "../../Utility/Utils.h"
-#include "../../Utility/Log.h"
 #include "../../Video/VideoFactory.h"
 #include <fstream>
 
