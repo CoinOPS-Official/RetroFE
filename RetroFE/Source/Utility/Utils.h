@@ -31,7 +31,7 @@ public:
     static std::string replace(std::string subject, const std::string& search,
                                const std::string& replace);
 
-    static float convertFloat(std::string content);
+    static float convertFloat(const std::string& content);
     static int convertInt(const std::string& content);
     static void replaceSlashesWithUnderscores(std::string &content);
 #ifdef WIN32    

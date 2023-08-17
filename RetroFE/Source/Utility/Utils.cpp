@@ -125,14 +125,9 @@ std::string Utils::replace(
 }
 
 
-float Utils::convertFloat(std::string content)
+float Utils::convertFloat(const std::string& content)
 {
-    float retVal = 0;
-    std::stringstream ss;
-    ss << content;
-    ss >> retVal;
-
-    return retVal;
+    return std::stof(content);
 }
 
 int Utils::convertInt(const std::string& content) {
