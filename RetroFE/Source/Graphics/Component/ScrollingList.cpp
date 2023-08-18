@@ -150,10 +150,11 @@ void ScrollingList::selectItemByName(std::string name)
 
 std::string ScrollingList::getSelectedItemName()
 {
-    if (!items_->size())
+    size_t size = items_->size();
+    if (!size)
         return "";
     
-    return (*items_)[(itemIndex_ + selectedOffsetIndex_) % static_cast<int>(items_->size())]->name;
+    return (*items_)[(itemIndex_ + selectedOffsetIndex_) % static_cast<int>(size)]->name;
 }
 
 
@@ -197,7 +198,7 @@ void ScrollingList::enableTextFallback(bool value)
 
 void ScrollingList::deallocateSpritePoints( )
 {
-    unsigned int componentSize = static_cast<unsigned int>(components_.size());
+    size_t componentSize = components_.size();
   
     for ( unsigned int i = 0; i < componentSize; ++i )
     {
@@ -212,8 +213,8 @@ void ScrollingList::allocateSpritePoints()
     if (!scrollPoints_ || scrollPoints_->empty()) return;
     if (components_.empty()) return;
 
-    unsigned int itemsSize = static_cast<unsigned int>(items_->size());
-    unsigned int scrollPointsSize = static_cast<unsigned int>(scrollPoints_->size());
+    size_t itemsSize = items_->size();
+    size_t scrollPointsSize = scrollPoints_->size();
 
     for (unsigned int i = 0; i < scrollPointsSize; ++i)
     {
@@ -246,7 +247,7 @@ void ScrollingList::allocateSpritePoints()
 
 void ScrollingList::destroyItems()
 {
-    unsigned int componentSize = static_cast<unsigned int>(components_.size());
+    size_t componentSize = components_.size();
 
     for (unsigned int i = 0; i < componentSize; ++i)
     {
@@ -304,7 +305,7 @@ void ScrollingList::setSelectedIndex( int selectedIndex )
 
 Item *ScrollingList::getItemByOffset(int offset)
 {
-    unsigned int itemSize = static_cast<unsigned int>(items_->size());
+    size_t itemSize = items_->size();
     if (!items_ || itemSize == 0) return NULL;
 
     unsigned int index = getSelectedIndex();
@@ -324,7 +325,7 @@ Item *ScrollingList::getItemByOffset(int offset)
 
 Item* ScrollingList::getSelectedItem()
 {
-    unsigned int itemSize = static_cast<unsigned int>(items_->size());
+    size_t itemSize = items_->size();
     if (!items_ || itemSize == 0) return NULL;
     
     return (*items_)[loopIncrement(itemIndex_, selectedOffsetIndex_, itemSize)];
@@ -347,7 +348,7 @@ void ScrollingList::pageDown()
 
 void ScrollingList::random( )
 {
-    unsigned int itemSize = static_cast<unsigned int>(items_->size());
+    size_t itemSize = items_->size();
     if ( !items_ || itemSize == 0 ) return;
     itemIndex_ = rand( ) % itemSize;
 }
@@ -367,7 +368,7 @@ void ScrollingList::letterDown( )
 
 void ScrollingList::letterChange(bool increment)
 {
-    unsigned int itemSize = static_cast<unsigned int>(items_->size());
+    size_t itemSize = items_->size();
     if (!items_ || itemSize == 0) return;
 
     Item* startItem = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize];
@@ -431,7 +432,7 @@ void ScrollingList::metaDown(std::string attribute)
 
 void ScrollingList::metaChange(bool increment, std::string attribute)
 {
-    unsigned int itemSize = static_cast<unsigned int>(items_->size());
+    size_t itemSize = items_->size();
 
     if (!items_ || itemSize == 0) return;
 
@@ -478,7 +479,7 @@ void ScrollingList::metaChange(bool increment, std::string attribute)
 
 void ScrollingList::subChange(bool increment)
 {
-    unsigned int itemSize = static_cast<unsigned int>(items_->size());
+    size_t itemSize = items_->size();
 
     if (!items_ || itemSize == 0) return;
 
@@ -656,7 +657,7 @@ void ScrollingList::triggerJukeboxJumpEvent( int menuIndex )
 
 void ScrollingList::triggerEventOnAll(std::string event, int menuIndex)
 {
-    unsigned int componentSize = static_cast<unsigned int>(components_.size());
+    size_t componentSize = components_.size();
     for (unsigned int i = 0; i < componentSize; ++i)
     {
         Component* c = components_[i];
@@ -674,7 +675,7 @@ bool ScrollingList::update(float dt)
     if (!items_) 
         return done;
 
-    unsigned int scrollPointsSize = static_cast<unsigned int>(scrollPoints_->size());
+    size_t scrollPointsSize = scrollPoints_->size();
     
     for (unsigned int i = 0; i < scrollPointsSize; i++)
     {
@@ -1097,7 +1098,7 @@ void ScrollingList::draw(  )
 
 void ScrollingList::draw(unsigned int layer)
 {
-    unsigned int componentSize = static_cast<unsigned int>(components_.size());
+    size_t componentSize = components_.size();
     
     if (componentSize == 0) return;
 
@@ -1111,7 +1112,7 @@ void ScrollingList::draw(unsigned int layer)
 
 bool ScrollingList::isIdle(  )
 {
-    unsigned int componentSize = static_cast<unsigned int>(components_.size());
+    size_t componentSize = components_.size();
     if ( !Component::isIdle(  ) ) return false;
 
     for ( unsigned int i = 0; i < componentSize; ++i )
@@ -1126,7 +1127,7 @@ bool ScrollingList::isIdle(  )
 
 bool ScrollingList::isAttractIdle(  )
 {
-    unsigned int componentSize = static_cast<unsigned int>(components_.size());
+    size_t componentSize = components_.size();
     if ( !Component::isAttractIdle(  ) ) return false;
 
     for ( unsigned int i = 0; i < componentSize; ++i )
