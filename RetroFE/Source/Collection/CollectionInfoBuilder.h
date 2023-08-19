@@ -20,6 +20,7 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <filesystem>
 
 class Configuration;
 class CollectionInfo;
@@ -47,5 +48,10 @@ private:
     std::string getKey(Item* item);
     void AddToPlayCount(Item* item);
     std::map<std::string, Item*> ImportPlayCount(std::string file);
-    void ImportRomDirectory(std::string path, CollectionInfo *info, std::map<std::string, Item *> includeFilter, std::map<std::string, Item *> excludeFilter, bool romHierarchy, bool emuarc);
+    void ImportRomDirectory(const std::filesystem::path& path, 
+            CollectionInfo *info, 
+            std::map<std::string, Item *> includeFilter, 
+            std::map<std::string, Item *> excludeFilter, 
+            bool romHierarchy, 
+            bool emuarc);
 };

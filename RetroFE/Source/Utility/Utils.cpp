@@ -24,6 +24,8 @@
 #include <locale>
 #include <list>
 #include <filesystem>
+#include <string_view>
+
 
 #ifdef WIN32
     #include <Windows.h>
@@ -46,41 +48,50 @@ void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lP
 }
 #endif
 
-std::string Utils::toLower(std::string str)
+std::string Utils::toLower(const std::string& input)
 {
-    for(unsigned int i=0; i < str.length(); ++i)
+    std::string result = input;
+    std::locale loc;
+
+    for(char& c : result)
     {
-        std::locale loc;
-        str[i] = std::tolower(str[i], loc);
+        c = std::tolower(c, loc);
     }
 
-    return str;
+    return result;
 }
 
-std::string Utils::uppercaseFirst(std::string str)
-{
-    if(str.length() > 0)
-    {
-        std::locale loc;
-        str[0] = std::toupper(str[0], loc);
-    }
 
-    return str;
+std::string Utils::uppercaseFirst(const std::string& input)
+{
+    if(input.empty()) 
+        return input; // Return early if string is empty
+
+    std::string result = input;
+    result[0] = std::toupper(result[0], std::locale());
+
+    return result;
 }
-std::string Utils::filterComments(std::string line)
-{
-    size_t position;
 
-    // strip out any comments
-    if((position = line.find("#")) != std::string::npos)
+
+std::string Utils::filterComments(const std::string& line)
+{
+    std::string result = line;
+
+    // Find the first occurrence of '#'
+    size_t position = result.find('#');
+    if (position != std::string::npos)
     {
-        line = line.substr(0, position);
+        // Erase the comment part
+        result.erase(position);
     }
-    // unix only wants \n. Windows uses \r\n. Strip off the \r for unix.
-    line.erase( std::remove(line.begin(), line.end(), '\r'), line.end() );
+
+    // Remove all '\r' characters
+    result.erase(std::remove(result.begin(), result.end(), '\r'), result.end());
     
-    return line;
+    return result;
 }
+
 
 std::string Utils::combinePath(const std::list<std::string>& paths)
 {
@@ -118,8 +129,7 @@ std::string Utils::replace(
     size_t pos = 0;
     while ((pos = subject.find(search, pos)) != std::string::npos)
     {
-        subject.erase(pos, search.length());
-        subject.insert(pos, replace);
+        subject.replace(pos, search.length(), replace);
         pos += replace.length();
     }
     return subject;
@@ -142,35 +152,17 @@ void Utils::replaceSlashesWithUnderscores(std::string &content)
 }
 
 
-std::string Utils::getDirectory(std::string filePath)
+std::string Utils::getDirectory(const std::string& filePath)
 {
-
-    std::string directory = filePath;
-
-    const size_t last_slash_idx = filePath.rfind(pathSeparator);
-    if (std::string::npos != last_slash_idx)
-    {
-        directory = filePath.substr(0, last_slash_idx);
-    }
-
-    return directory;
+    std::filesystem::path path(filePath);
+    return path.parent_path().string();
 }
 
-std::string Utils::getParentDirectory(std::string directory)
+
+std::string Utils::getParentDirectory(const std::string& directory)
 {
-    size_t last_slash_idx = directory.find_last_of(pathSeparator);
-    if(directory.length() - 1 == last_slash_idx)
-    {
-        directory = directory.erase(last_slash_idx, directory.length()-1);
-        last_slash_idx = directory.find_last_of(pathSeparator);
-    }
-
-    if (std::string::npos != last_slash_idx)
-    {
-        directory = directory.erase(last_slash_idx, directory.length());
-    }
-
-    return directory;
+    std::filesystem::path dirPath(directory);
+    return dirPath.parent_path().string();
 }
 
 std::string Utils::getEnvVar(std::string const& key)
@@ -180,56 +172,48 @@ std::string Utils::getEnvVar(std::string const& key)
     return val == NULL ? std::string() : std::string(val);
 }
 
-std::string Utils::getFileName(std::string filePath)
+std::string Utils::getFileName(const std::string& filePath)
 {
-
-    std::string filename = filePath;
-
-    const size_t last_slash_idx = filePath.rfind(pathSeparator);
-    if (std::string::npos != last_slash_idx)
-    {
-        filename = filePath.erase(0, last_slash_idx+1);
-    }
-
-    return filename;
+    std::filesystem::path path(filePath);
+    return path.filename().string();
 }
 
 
-std::string Utils::trimEnds(std::string str)
+std::string_view Utils::trimEnds(std::string_view view)
 {
-    // strip off any initial tabs or spaces
-    size_t trimStart = str.find_first_not_of(" \t");
-
-    if(trimStart != std::string::npos)
-    {
-        size_t trimEnd = str.find_last_not_of(" \t");
-
-        str = str.substr(trimStart, trimEnd - trimStart + 1);
+    // Find the start of the non-space characters
+    size_t trimStart = view.find_first_not_of(" \t");
+    if (trimStart == std::string_view::npos) {
+        return ""; // View contains only spaces/tabs, return an empty view
     }
 
-    return str;
+    // Find the end of the non-space characters
+    size_t trimEnd = view.find_last_not_of(" \t");
+
+    // Return a subview that represents the trimmed string
+    return view.substr(trimStart, trimEnd - trimStart + 1);
 }
 
 
 void Utils::listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter)
 {
+    std::string_view view(str);  // Create a view of the string
     size_t previous = 0;
     size_t current;
 
-    std::string value;  // Use this outside the loop and reuse it
-
-    while ((current = str.find(delimiter, previous)) != std::string::npos)
+    while ((current = view.find(delimiter, previous)) != std::string_view::npos)
     {
-        value = trimEnds(str.substr(previous, current - previous));
-        if (!value.empty()) {
-            vec.push_back(std::move(value));  // Use std::move to avoid copying the string
+        auto subview = view.substr(previous, current - previous);
+        auto trimmed = trimEnds(subview);
+        if (!trimmed.empty()) {
+            vec.emplace_back(trimmed);  // Directly construct the string in the vector
         }
         previous = current + 1;
     }
 
-    value = trimEnds(str.substr(previous));
-    if (!value.empty()) {
-        vec.push_back(std::move(value));
+    auto trimmed = trimEnds(view.substr(previous));
+    if (!trimmed.empty()) {
+        vec.emplace_back(trimmed);
     }
 }
 

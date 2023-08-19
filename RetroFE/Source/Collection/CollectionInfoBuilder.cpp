@@ -34,6 +34,8 @@
 #include <vector>
 #include <fstream>
 #include <algorithm>
+#include <filesystem>
+#include <iostream>
 
 CollectionInfoBuilder::CollectionInfoBuilder(Configuration &c, MetadataDatabase &mdb)
     : conf_(c)
@@ -887,93 +889,72 @@ std::map<std::string, Item*> CollectionInfoBuilder::ImportPlayCount( std::string
     return curretPlayCountList;
 }
 
-void CollectionInfoBuilder::ImportRomDirectory(std::string path, CollectionInfo *info, std::map<std::string, Item *> includeFilter, std::map<std::string, Item *> excludeFilter, bool romHierarchy, bool emuarc)
+
+void CollectionInfoBuilder::ImportRomDirectory(
+    const std::filesystem::path& path, 
+    CollectionInfo *info, 
+    std::map<std::string, Item *> includeFilter, 
+    std::map<std::string, Item *> excludeFilter, 
+    bool romHierarchy, 
+    bool emuarc)
 {
-
-    DIR                               *dp;
-    struct dirent                     *dirp;
-    std::vector<std::string>           extensions;
-    std::vector<std::string>::iterator extensionsIt;
-
+    std::vector<std::string> extensions;
     info->extensionList(extensions);
 
-    dp = opendir(path.c_str());
-
-    Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Scanning directory \"" + path + "\"");
-    if (dp == NULL)
+    if(!std::filesystem::exists(path) || !std::filesystem::is_directory(path))
     {
-        Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Could not read directory \"" + path + "\". Ignore if this is a menu.");
+        Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Could not read directory \"" + path.string() + "\". Ignore if this is a menu.");
         return;
     }
 
-    while(dp != NULL && (dirp = readdir(dp)) != NULL)
+    Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Scanning directory \"" + path.string() + "\"");
+
+    for(const auto& entry : std::filesystem::directory_iterator(path))
     {
-        std::string file = dirp->d_name;
-
-        // Check if the file is a directory or a file
-        struct stat sb;
-        if (romHierarchy && file != "." && file != ".." && stat( Utils::combinePath( path, file ).c_str(), &sb ) == 0 && S_ISDIR( sb.st_mode ))
+        if(romHierarchy && entry.is_directory())
         {
-            ImportRomDirectory( Utils::combinePath( path, file ), info, includeFilter, excludeFilter, romHierarchy, emuarc );
+            ImportRomDirectory(entry.path(), info, includeFilter, excludeFilter, romHierarchy, emuarc);
+            continue;
         }
-        else if (file != "." && file != "..")
+
+        std::string file = entry.path().filename().string();
+        std::string basename = entry.path().stem().string();
+
+        if ((includeFilter.empty() || includeFilter.find(basename) != includeFilter.end()) &&
+            (excludeFilter.empty() || excludeFilter.find(basename) == excludeFilter.end()))
         {
-            size_t position = file.find_last_of(".");
-            std::string basename = (std::string::npos == position)? file : file.substr(0, position);
-        
-            // if there is an include list, only include roms that are found and are in the include list
-            // if there is an exclude list, exclude those roms
-            if ((includeFilter.size() == 0 || (includeFilter.find(basename) != includeFilter.end())) &&
-                    (excludeFilter.size() == 0 || excludeFilter.find(basename) == excludeFilter.end()))
+            for(const auto& ext : extensions)
             {
-                // iterate through all known file extensions
-                for(extensionsIt = extensions.begin(); extensionsIt != extensions.end(); ++extensionsIt)
+                if(entry.path().extension() == "." + ext)
                 {
-                    std::string comparator = "." + *extensionsIt;
-                    size_t start = file.length() - comparator.length() + 1;
+                    bool found = std::any_of(info->items.begin(), info->items.end(), [&basename](const Item* item) {
+                        return item->name == basename;
+                    });
 
-                    if (start >= 0)
+                    if(!found)
                     {
-                        if (file.compare(start, comparator.length(), *extensionsIt) == 0)
+                        Item* i = new Item();
+                        i->name = basename;
+                        i->fullTitle = basename;
+                        i->title = basename;
+                        i->collectionInfo = info;
+                        i->filepath = path.string() + "/";
+
+                        if (emuarc)
                         {
-                            // Add item if it doesn't already exist
-                            bool found = false;
-                            for (std::vector<Item*>::iterator it = info->items.begin(); it != info->items.end(); it++) {
-                                if ((*it)->name == basename) {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if (!found) {
-                                Item* i = new Item();
-
-                                i->name = basename;
-                                i->fullTitle = basename;
-                                i->title = basename;
-                                i->collectionInfo = info;
-                                i->filepath = path + Utils::pathSeparator;
-
-                                if (emuarc)
-                                {
-                                    i->file = basename;
-                                    i->name = Utils::getFileName(path);
-                                    i->fullTitle = i->name;
-                                    i->title = i->name;
-                                }
-                                info->items.push_back(i);
-                            }
+                            i->file = basename;
+                            i->name = entry.path().parent_path().filename().string();
+                            i->fullTitle = i->name;
+                            i->title = i->name;
                         }
+                        info->items.push_back(i);
                     }
                 }
             }
         }
     }
-
-    if (dp) closedir(dp);
-
-    return;
-
 }
+
 
 
 void CollectionInfoBuilder::injectMetadata(CollectionInfo *info)

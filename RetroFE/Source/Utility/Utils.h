@@ -19,6 +19,7 @@
 #include <vector>
 #include <list>
 #include <filesystem>
+#include <string_view>
 
 #ifdef WIN32
     #define NOMINMAX
@@ -37,15 +38,15 @@ public:
 #ifdef WIN32    
     static void postMessage(LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam );
 #endif    
-    static std::string getDirectory(std::string filePath);
-    static std::string getParentDirectory(std::string filePath);
+    static std::string getDirectory(const std::string& filePath);
+    static std::string getParentDirectory(const std::string& directory);
     static std::string getEnvVar(std::string const& key);
-    static std::string getFileName(std::string filePath);
+    static std::string getFileName(const std::string& filePath);
     static bool findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file);
-    static std::string toLower(std::string str);
-    static std::string uppercaseFirst(std::string str);
-    static std::string filterComments(std::string line);
-    static std::string trimEnds(std::string str);
+    static std::string toLower(const std::string& str);
+    static std::string uppercaseFirst(const std::string& str);
+    static std::string filterComments(const std::string& line);
+    static std::string_view trimEnds(std::string_view str);
     static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter = ',');
     static int gcd( int a, int b );
     static std::string trim(std::string& str);
@@ -59,14 +60,6 @@ public:
         return combinePath(std::list<std::string>{paths...});
     }
    
-
-    
-#ifdef WIN32
-    static const char pathSeparator = '\\';
-#else
-    static const char pathSeparator = '/';
-#endif
-
 private:
     Utils();
     virtual ~Utils();

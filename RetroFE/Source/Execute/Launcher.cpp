@@ -28,6 +28,7 @@
 #include "../Graphics/Page.h"
 #include <thread>
 #include <atomic>
+#include <filesystem>
 #ifdef WIN32
 #include <windows.h>
 #include <cstring>
@@ -271,7 +272,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
     if(!CreateProcess(NULL, applicationName, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, currDir, &startupInfo, &processInfo))
 #else
-    const std::size_t last_slash_idx = executable.rfind(Utils::pathSeparator);
+    const std::size_t last_slash_idx = std::max(executable.rfind('/'), executable.rfind('\\'));
     if (last_slash_idx != std::string::npos)
     {
         std::string applicationName = executable.substr(last_slash_idx + 1);
@@ -454,7 +455,12 @@ bool Launcher::collectionDirectory(std::string &directory, std::string collectio
 
     // find the items path folder (i.e. ROM path)
     config_.getCollectionAbsolutePath(collection, itemsPathValue);
-    directory += itemsPathValue + Utils::pathSeparator;
+
+    // Use std::filesystem::path for automatic path separator handling
+    std::filesystem::path p(directory);
+    p /= itemsPathValue;
+
+    directory = p.string();
 
     return true;
 }
