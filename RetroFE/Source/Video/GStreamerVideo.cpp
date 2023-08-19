@@ -608,7 +608,7 @@ void GStreamerVideo::restart( )
             Logger::write(Logger::ZONE_DEBUG, "Video", "Not playing return");
         return;
     }
-    Logger::write(Logger::ZONE_DEBUG, "Video", "Restarting Video " + Utils::getFileName(currentFile_));
+    Logger::write(Logger::ZONE_DEBUG, "Video", "Seek to Start of Video " + Utils::getFileName(currentFile_));
     gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT ), 0 );
 
 }

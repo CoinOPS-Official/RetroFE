@@ -28,7 +28,8 @@ VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& vi
     , videoFile_(videoFile)
     , videoInst_(videoInst)
     , isPlaying_(false)
-    , hasPlayedOnce_ (false)
+    , initialLoad_ (true)
+    , wasEverUnpaused_ (false)
 {
 //   AllocateGraphicsMemory();
 }
@@ -55,30 +56,28 @@ bool VideoComponent::update(float dt)
         isPlaying_ = ((GStreamerVideo *)(videoInst_))->isPlaying();
     }
 
-    if(isPlaying_ && !hasPlayedOnce_)
-    {
-        // Mark this video as having played at least once.
-        hasPlayedOnce_ = true;
-
-        // If it's the first time it's playing and Restart is true, we ignore it.
-        baseViewInfo.Restart = false;
-    }
-
     if(isPlaying_)
     {
-        if (baseViewInfo.Restart) {
-            restart();
-            baseViewInfo.Restart = false;
-        }
-        if (videoInst_->getTexture()) {
-            if (baseViewInfo.Alpha == 0.0 && !isPaused()) {
+        if (videoInst_->getTexture()) 
+        {
+            if (baseViewInfo.Alpha == 0.0 && !isPaused()) 
+            {
                 pause();
+                
+                // If it's not the first load and video was ever unpaused, restart the video
+                if (!initialLoad_ && wasEverUnpaused_) 
+                {
+                    restart();
+                }
             }
-            if (baseViewInfo.Alpha != 0.0 && isPaused()) {
+            if (baseViewInfo.Alpha != 0.0 && isPaused()) 
+            {
                 // unpause
                 pause();
+                wasEverUnpaused_ = true; // set this flag when we unpause the video
             }
         }
+
         videoInst_->setVolume(baseViewInfo.Volume);
         videoInst_->update(dt);
 
@@ -88,10 +87,14 @@ bool VideoComponent::update(float dt)
             baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
             baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
         }
+
+        // After the initial load, set initialLoad_ to false
+        initialLoad_ = false;
     }
 
     return Component::update(dt);
 }
+
 
 
 

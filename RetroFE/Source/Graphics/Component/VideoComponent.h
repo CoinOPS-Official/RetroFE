@@ -47,5 +47,6 @@ private:
     std::string name_;
     IVideo *videoInst_;
     bool isPlaying_;
-    bool hasPlayedOnce_;
+    bool initialLoad_;
+    bool wasEverUnpaused_;
 };
