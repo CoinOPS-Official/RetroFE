@@ -181,7 +181,9 @@ bool GStreamerVideo::stop()
     height_ = 0;
     width_ = 0;
     frameReady_ = false;
-
+    
+    Logger::write(Logger::ZONE_DEBUG, "Video", "Stopped Video " + Utils::getFileName(currentFile_));
+    
     return true;
 }
 
@@ -202,7 +204,7 @@ bool GStreamerVideo::play(std::string file)
 
     currentFile_ = file;
 
-    stop();
+    //stop();
 
     gchar *uriFile = gst_filename_to_uri (file.c_str(), NULL);
     if(!uriFile)
@@ -477,6 +479,7 @@ void GStreamerVideo::update(float /* dt */)
             else
             {
                 isPlaying_ = false;
+                stop();
             }
             gst_message_unref(msg);
         }
