@@ -18,6 +18,7 @@
 #include "../ViewInfo.h"
 #include "../../Database/Configuration.h"
 #include "../../Utility/Log.h"
+#include "../../Utility/Utils.h"
 #include "../../Video/GStreamerVideo.h"
 #include "../../Video/VideoFactory.h"
 #include "../../SDL.h"
@@ -27,6 +28,7 @@ VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& vi
     , videoFile_(videoFile)
     , videoInst_(videoInst)
     , isPlaying_(false)
+    , hasPlayedOnce_ (false)
 {
 //   AllocateGraphicsMemory();
 }
@@ -40,7 +42,7 @@ VideoComponent::~VideoComponent()
         if ( VideoFactory::canDelete( videoInst_ ) )
         {
             delete videoInst_;
-            Logger::write(Logger::ZONE_DEBUG, "Component", "Deleted - VideoC " + videoFile_);
+            Logger::write(Logger::ZONE_DEBUG, "Component", "Deleted - VideoC " + Utils::getFileName(videoFile_));
         }
         videoInst_ = NULL;
     }
@@ -51,6 +53,15 @@ bool VideoComponent::update(float dt)
     if (videoInst_)
     {
         isPlaying_ = ((GStreamerVideo *)(videoInst_))->isPlaying();
+    }
+
+    if(isPlaying_ && !hasPlayedOnce_)
+    {
+        // Mark this video as having played at least once.
+        hasPlayedOnce_ = true;
+
+        // If it's the first time it's playing and Restart is true, we ignore it.
+        baseViewInfo.Restart = false;
     }
 
     if(isPlaying_)
@@ -79,8 +90,10 @@ bool VideoComponent::update(float dt)
         }
     }
 
-   return Component::update(dt);
+    return Component::update(dt);
 }
+
+
 
 void VideoComponent::allocateGraphicsMemory()
 {
@@ -94,7 +107,7 @@ void VideoComponent::allocateGraphicsMemory()
 
 void VideoComponent::freeGraphicsMemory()
 {
-    Logger::write(Logger::ZONE_DEBUG, "Component", "Free - VideoC " + videoFile_);
+    Logger::write(Logger::ZONE_DEBUG, "Component", "Free - VideoC " + Utils::getFileName(videoFile_));
 
     videoInst_->stop();
     isPlaying_ = false;

@@ -322,6 +322,8 @@ bool GStreamerVideo::play(std::string file)
 
         /* Start playing */
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Playing Video " + Utils::getFileName(currentFile_));
+        
         //gst_debug_bin_to_dot_file(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline");
         if (playState != GST_STATE_CHANGE_ASYNC)
         {
@@ -586,9 +588,15 @@ void GStreamerVideo::pause( )
 {
     paused_ = !paused_;
     if (paused_)
+    {
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Pausing Video " + Utils::getFileName(currentFile_));
+    }
     else
+    {
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Unpausing Video " + Utils::getFileName(currentFile_));
+    }
 }
 
 
@@ -596,8 +604,11 @@ void GStreamerVideo::restart( )
 {
 
     if ( !isPlaying_ )
+    {
+            Logger::write(Logger::ZONE_DEBUG, "Video", "Not playing return");
         return;
-
+    }
+    Logger::write(Logger::ZONE_DEBUG, "Video", "Restarting Video " + Utils::getFileName(currentFile_));
     gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT ), 0 );
 
 }
