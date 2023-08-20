@@ -18,29 +18,33 @@
 #include "IVideo.h"
 #include "../Utility/Log.h"
 #include "GStreamerVideo.h"
+#include <vector>
+#include <string>
 
 bool VideoFactory::enabled_ = true;
 int VideoFactory::numLoops_ = 0;
-IVideo *VideoFactory::instance_ = NULL;
+std::vector<IVideo*> VideoFactory::videoInstances_ = {};
 
 
-IVideo *VideoFactory::createVideo( int monitor, bool isTypeVideo, int numLoops )
+IVideo *VideoFactory::createVideo(int monitor, bool isTypeVideo, int numLoops)
 {
-    IVideo *instance = NULL;
-    if ( enabled_ && (!isTypeVideo || !instance_) )
+    GStreamerVideo *instance = NULL;
+    if (enabled_)
     {
-        instance = new GStreamerVideo( monitor );
+        instance = new GStreamerVideo(monitor);
         instance->initialize();
-        if ( isTypeVideo )
-            instance_ = instance;
+        addInstance(instance);  // Add to the list of instances
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Video count = " + std::to_string(getInstanceCount()));
     }
-    if ( isTypeVideo )
-        instance = instance_;
 
     if (numLoops > 0 )
+    {
         ((GStreamerVideo *)(instance))->setNumLoops(numLoops);
+    }
     else
+    {
         ((GStreamerVideo *)(instance))->setNumLoops(numLoops_);
+    }
 
     return instance;
 }
@@ -57,8 +61,18 @@ void VideoFactory::setNumLoops(int numLoops)
     numLoops_ = numLoops;
 }
 
-
-bool VideoFactory::canDelete( IVideo *instance )
+void VideoFactory::addInstance(IVideo* instance)
 {
-    return ( instance != instance_ );
+    videoInstances_.push_back(instance);
+}
+
+void VideoFactory::removeInstance(IVideo* instance)
+{
+    auto it = std::remove(videoInstances_.begin(), videoInstances_.end(), instance);
+    videoInstances_.erase(it, videoInstances_.end());
+}
+
+int VideoFactory::getInstanceCount()
+{
+    return static_cast<int>(videoInstances_.size());
 }

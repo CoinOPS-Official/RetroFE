@@ -22,6 +22,7 @@
 #include "../../Video/GStreamerVideo.h"
 #include "../../Video/VideoFactory.h"
 #include "../../SDL.h"
+#include <string>
 
 VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& videoFile)
     : Component(p)
@@ -37,16 +38,6 @@ VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& vi
 VideoComponent::~VideoComponent()
 {
     freeGraphicsMemory();
-
-    if(videoInst_)
-    {
-        if ( VideoFactory::canDelete( videoInst_ ) )
-        {
-            delete videoInst_;
-            Logger::write(Logger::ZONE_DEBUG, "Component", "Deleted - VideoC " + Utils::getFileName(videoFile_));
-        }
-        videoInst_ = NULL;
-    }
 }
 
 bool VideoComponent::update(float dt)
@@ -56,7 +47,7 @@ bool VideoComponent::update(float dt)
         isPlaying_ = ((GStreamerVideo *)(videoInst_))->isPlaying();
     }
 
-    if(isPlaying_)
+    if (isPlaying_)
     {
         if (videoInst_->getTexture()) 
         {
@@ -82,7 +73,7 @@ bool VideoComponent::update(float dt)
         videoInst_->update(dt);
 
         // video needs to run a frame to start getting size info
-        if(baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
+        if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
         {
             baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
             baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
@@ -110,12 +101,20 @@ void VideoComponent::allocateGraphicsMemory()
 
 void VideoComponent::freeGraphicsMemory()
 {
-    Logger::write(Logger::ZONE_DEBUG, "Component", "Free - VideoC " + Utils::getFileName(videoFile_));
-
-    videoInst_->stop();
-    isPlaying_ = false;
-
+    //videoInst_->stop()
+        
     Component::freeGraphicsMemory();
+    Logger::write(Logger::ZONE_DEBUG, "Component", "Freed " + Utils::getFileName(videoFile_));
+    
+    if (videoInst_) 
+    {
+        VideoFactory::removeInstance(videoInst_);  // Inform VideoFactory about the instance removal.
+        delete videoInst_;
+        isPlaying_ = false;
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Deleted " + Utils::getFileName(videoFile_));
+        videoInst_ = NULL;
+        
+    }
 }
 
 
