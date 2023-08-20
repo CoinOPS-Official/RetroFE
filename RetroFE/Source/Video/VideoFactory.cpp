@@ -68,8 +68,10 @@ void VideoFactory::addInstance(IVideo* instance)
 
 void VideoFactory::removeInstance(IVideo* instance)
 {
-    auto it = std::remove(videoInstances_.begin(), videoInstances_.end(), instance);
-    videoInstances_.erase(it, videoInstances_.end());
+    std::vector<IVideo*>::iterator it = std::find(videoInstances_.begin(), videoInstances_.end(), instance);
+    if (it != videoInstances_.end()) {
+        videoInstances_.erase(it);
+    }
 }
 
 int VideoFactory::getInstanceCount()

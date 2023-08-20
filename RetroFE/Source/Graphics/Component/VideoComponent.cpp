@@ -51,17 +51,27 @@ bool VideoComponent::update(float dt)
     {
         if (videoInst_->getTexture()) 
         {
-            if (baseViewInfo.Alpha == 0.0 && !isPaused()) 
+            bool shouldPause = baseViewInfo.Alpha == 0.0 && !isPaused();
+            bool shouldUnpause = baseViewInfo.Alpha != 0.0 && isPaused();
+
+            // Don't pause videos with numloops set to 0
+            if (videoInst_->getNumLoops() == 1)
+            {
+                shouldPause = false;
+            }
+
+            if (shouldPause)
             {
                 pause();
-                
+
                 // If it's not the first load and video was ever unpaused, restart the video
-                if (!initialLoad_ && wasEverUnpaused_) 
+                if (!initialLoad_ && wasEverUnpaused_)
                 {
                     restart();
                 }
             }
-            if (baseViewInfo.Alpha != 0.0 && isPaused()) 
+            
+            if (shouldUnpause)
             {
                 // unpause
                 pause();
@@ -85,6 +95,7 @@ bool VideoComponent::update(float dt)
 
     return Component::update(dt);
 }
+
 
 
 

@@ -639,3 +639,9 @@ bool GStreamerVideo::isPaused( )
 {
     return paused_;
 }
+
+
+int GStreamerVideo::getNumLoops( )
+{
+    return numLoops_;
+}
