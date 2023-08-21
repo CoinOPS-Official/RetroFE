@@ -34,7 +34,7 @@ IVideo *VideoFactory::createVideo(int monitor, bool isTypeVideo, int numLoops)
         instance = new GStreamerVideo(monitor);
         instance->initialize();
         addInstance(instance);  // Add to the list of instances
-        Logger::write(Logger::ZONE_DEBUG, "Video", "Video count = " + std::to_string(getInstanceCount()));
+        Logger::write(Logger::ZONE_DEBUG, "VideoFactory", "Video count = " + std::to_string(getInstanceCount()));
     }
 
     if (numLoops > 0 )

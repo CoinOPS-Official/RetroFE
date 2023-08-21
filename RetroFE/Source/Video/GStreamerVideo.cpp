@@ -182,7 +182,7 @@ bool GStreamerVideo::stop()
     width_ = 0;
     frameReady_ = false;
     
-    Logger::write(Logger::ZONE_DEBUG, "Video", "Stopped Video " + Utils::getFileName(currentFile_));
+    Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Stopped " + Utils::getFileName(currentFile_));
     
     return true;
 }
@@ -324,7 +324,7 @@ bool GStreamerVideo::play(std::string file)
 
         /* Start playing */
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-        Logger::write(Logger::ZONE_DEBUG, "Video", "Playing Video " + Utils::getFileName(currentFile_));
+        Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Playing " + Utils::getFileName(currentFile_));
         
         //gst_debug_bin_to_dot_file(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline");
         if (playState != GST_STATE_CHANGE_ASYNC)
@@ -480,6 +480,8 @@ void GStreamerVideo::update(float /* dt */)
             {
                 isPlaying_ = false;
                 stop();
+                Logger::write(Logger::ZONE_DEBUG, "GStreamer", "Stopped: End Of Stream " + Utils::getFileName(currentFile_));
+
             }
             gst_message_unref(msg);
         }
@@ -593,12 +595,12 @@ void GStreamerVideo::pause( )
     if (paused_)
     {
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
-        Logger::write(Logger::ZONE_DEBUG, "Video", "Pausing Video " + Utils::getFileName(currentFile_));
+        Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Pausing " + Utils::getFileName(currentFile_));
     }
     else
     {
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-        Logger::write(Logger::ZONE_DEBUG, "Video", "Unpausing Video " + Utils::getFileName(currentFile_));
+        Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Unpausing " + Utils::getFileName(currentFile_));
     }
 }
 
@@ -608,10 +610,10 @@ void GStreamerVideo::restart( )
 
     if ( !isPlaying_ )
     {
-            Logger::write(Logger::ZONE_DEBUG, "Video", "Not playing return");
+            Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Not playing return");
         return;
     }
-    Logger::write(Logger::ZONE_DEBUG, "Video", "Seek to Start of Video " + Utils::getFileName(currentFile_));
+    Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Seek to Start of " + Utils::getFileName(currentFile_));
     gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT ), 0 );
 
 }

@@ -20,6 +20,7 @@
 #include "../../Video/IVideo.h"
 #include "../../Video/GStreamerVideo.h"
 #include "../../Utility/Log.h"
+#include "../../Utility/Utils.h"
 #include "../../SDL.h"
 
 
@@ -45,6 +46,8 @@ Video::~Video( )
         Component::freeGraphicsMemory();
         delete video_;
         video_ = nullptr;
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Deleted " + Utils::getFileName(file_));
+
     }
 }
 
@@ -65,7 +68,6 @@ bool Video::update(float dt)
             baseViewInfo.ImageWidth = video_->baseViewInfo.ImageWidth;
             baseViewInfo.ImageHeight = video_->baseViewInfo.ImageHeight;
         }
-
         video_->update(dt);
     }
     
@@ -80,6 +82,8 @@ void Video::freeGraphicsMemory( )
     {
         video_->freeGraphicsMemory();
         video_ = nullptr;
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Deleted " + Utils::getFileName(file_));
+
     }
 }
 

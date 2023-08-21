@@ -508,12 +508,14 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page)
                     c->setMenuScrollReload(true);
                 }
                 xml_attribute<>* animationDoneRemove = componentXml->first_attribute("animationDoneRemove");
+                
                 if (animationDoneRemove &&
                     (Utils::toLower(animationDoneRemove->value()) == "true" ||
                         Utils::toLower(animationDoneRemove->value()) == "yes"))
                 {
                     c->setAnimationDoneRemove(true);
                 }
+
                 buildViewInfo(componentXml, c->baseViewInfo);
                 loadTweens(c, componentXml);
                 page->addComponent(c);
@@ -1375,8 +1377,9 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
     xml_attribute<> *containerHeight    = findAttribute(componentXml, "containerHeight", defaultXml);
     xml_attribute<> *monitor            = findAttribute(componentXml, "monitor", defaultXml);
     xml_attribute<> *volume             = findAttribute(componentXml, "volume", defaultXml);
-    xml_attribute<>* restart = findAttribute(componentXml, "restart", defaultXml);
-    xml_attribute<>* additive = findAttribute(componentXml, "additive", defaultXml);
+    xml_attribute<> *restart            = findAttribute(componentXml, "restart", defaultXml);
+    xml_attribute<> *additive           = findAttribute(componentXml, "additive", defaultXml);
+    xml_attribute<> *pauseonscroll      = findAttribute(componentXml, "pauseonscroll", defaultXml);
 
     info.X = getHorizontalAlignment(x, 0);
     info.Y = getVerticalAlignment(y, 0);
@@ -1419,8 +1422,9 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
     info.ContainerHeight    = containerHeight    ? Utils::convertFloat(containerHeight->value())   : -1.f;
     info.Monitor            = monitor            ? Utils::convertInt(monitor->value())             : 0;
     info.Volume             = volume             ? Utils::convertFloat(volume->value())            : 1.f;
-    info.Restart = restart ? Utils::toLower(restart->value()) == "true" : false;
-    info.Additive = additive ? Utils::toLower(additive->value()) == "true" : false;
+    info.Restart            = restart            ? Utils::toLower(restart->value())     == "true" : false;
+    info.Additive           = additive           ? Utils::toLower(additive->value())    == "true" : false;
+    info.PauseOnScroll      = pauseonscroll      ? Utils::toLower(pauseonscroll->value()) == "true" : false;
 
     bool disableVideoRestart;
     config_.getProperty("disableVideoRestart", disableVideoRestart);
