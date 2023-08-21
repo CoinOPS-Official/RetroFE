@@ -77,6 +77,7 @@ void Video::freeGraphicsMemory( )
     if (video_)
     {
         video_->freeGraphicsMemory();
+        video_ = nullptr;
     }
 }
 
