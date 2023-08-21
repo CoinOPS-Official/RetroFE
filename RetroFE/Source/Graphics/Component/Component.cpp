@@ -26,7 +26,7 @@ Component::Component(Page &p)
     tweens_                   = NULL;
     backgroundTexture_        = NULL;
     menuScrollReload_         = false;
-    animationDoneRemove_ = false;
+    animationDoneRemove_      = false;
     freeGraphicsMemory();
     id_                       = -1;
 }

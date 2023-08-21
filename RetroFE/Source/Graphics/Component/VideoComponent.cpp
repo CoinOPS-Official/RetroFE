@@ -24,13 +24,14 @@
 #include "../../SDL.h"
 #include <string>
 
-VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& videoFile)
+VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& videoFile, const std::string& origin)
     : Component(p)
     , videoFile_(videoFile)
     , videoInst_(videoInst)
+    , origin_(origin)
     , isPlaying_(false)
     , initialLoad_ (true)
-    , wasEverUnpaused_ (false)
+    , hasPlayedOnce_ (false)
 {
 //   AllocateGraphicsMemory();
 }
@@ -40,6 +41,7 @@ VideoComponent::~VideoComponent()
     freeGraphicsMemory();
 }
 
+
 bool VideoComponent::update(float dt)
 {
     if (videoInst_)
@@ -47,50 +49,39 @@ bool VideoComponent::update(float dt)
         isPlaying_ = ((GStreamerVideo *)(videoInst_))->isPlaying();
     }
 
-    if (isPlaying_)
+    if(isPlaying_ && !hasPlayedOnce_)
     {
-        if (videoInst_->getTexture()) 
-        {
-            bool shouldPause = baseViewInfo.Alpha == 0.0 && !isPaused();
-            bool shouldUnpause = baseViewInfo.Alpha != 0.0 && isPaused();
+        // Mark this video as having played at least once.
+        hasPlayedOnce_ = true;
 
-            // Don't pause videos with numloops set to 0
-            if (videoInst_->getNumLoops() == 1)
-            {
-                shouldPause = false;
-            }
+        // If it's the first time it's playing and Restart is true, we ignore it.
+        baseViewInfo.Restart = false;
+    }
 
-            if (shouldPause)
-            {
+    if(isPlaying_)
+    {
+        if (baseViewInfo.Restart) {
+            restart();
+            baseViewInfo.Restart = false;
+        }
+        if (videoInst_->getTexture()) {
+            if (baseViewInfo.Alpha == 0.0 && !isPaused() && origin_.empty()) {
                 pause();
-
-                // If it's not the first load and video was ever unpaused, restart the video
-                if (!initialLoad_ && wasEverUnpaused_)
-                {
-                    restart();
-                }
             }
-            
-            if (shouldUnpause)
-            {
+            if (baseViewInfo.Alpha != 0.0 && isPaused() && origin_.empty()) {
                 // unpause
                 pause();
-                wasEverUnpaused_ = true; // set this flag when we unpause the video
             }
         }
-
         videoInst_->setVolume(baseViewInfo.Volume);
         videoInst_->update(dt);
 
         // video needs to run a frame to start getting size info
-        if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
+        if(baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
         {
             baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
             baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
         }
-
-        // After the initial load, set initialLoad_ to false
-        initialLoad_ = false;
     }
 
     return Component::update(dt);
