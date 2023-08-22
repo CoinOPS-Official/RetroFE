@@ -504,8 +504,7 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page)
                 Video* c = new Video(videoPath, altVideoPath, numLoops, *page, monitor);
                 c->setId(id);
                 
-                bool pauseOnScroll = true;  // default value if the attribute is not provided or is invalid
-
+                xml_attribute<>* pauseOnScroll = componentXml->first_attribute("pauseOnScroll");
                 if (pauseOnScroll && 
                     (Utils::toLower(pauseOnScrollXml->value()) == "false" ||
                     Utils::toLower(pauseOnScrollXml->value()) == "no"))
@@ -1438,7 +1437,7 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
     info.Volume             = volume             ? Utils::convertFloat(volume->value())            : 1.f;
     info.Restart            = restart            ? Utils::toLower(restart->value())     == "true" : false;
     info.Additive           = additive           ? Utils::toLower(additive->value())    == "true" : false;
-    info.PauseOnScroll = (!pauseOnScroll) || (Utils::toLower(pauseOnScroll->value()) == "true");
+    info.PauseOnScroll      = pauseOnScroll      ? (Utils::toLower(pauseOnScroll->value()) == "false" ? false : true) : true;
 
     bool disableVideoRestart;
     config_.getProperty("disableVideoRestart", disableVideoRestart);
