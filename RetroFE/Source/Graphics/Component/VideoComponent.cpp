@@ -32,7 +32,6 @@ VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& vi
     , isPlaying_(false)
     , initialLoad_ (true)
     , hasPlayedOnce_ (false)
-    , pauseOnScroll_ (baseViewInfo.PauseOnScroll)
 {
 //   AllocateGraphicsMemory();
 }
@@ -67,7 +66,7 @@ bool VideoComponent::update(float dt)
         }
         if (videoInst_->getTexture()) 
         {
-            if (pauseOnScroll_)
+            if (baseViewInfo.PauseOnScroll)
             {
                 if (baseViewInfo.Alpha == 0.0 && !isPaused())
                 {
@@ -106,8 +105,6 @@ void VideoComponent::allocateGraphicsMemory()
 
     if(!isPlaying_)
     {
-        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", std::string("baseViewInfo.PauseOnScroll is ") + (baseViewInfo.PauseOnScroll ? "true" : "false") + " on " + Utils::getFileName(videoFile_));
-        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", std::string("baseViewInfo.Restart is ") + (baseViewInfo.Restart ? "true" : "false") + " on " + Utils::getFileName(videoFile_));
         isPlaying_ = videoInst_->play(videoFile_);
     }
 }

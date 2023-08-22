@@ -486,3 +486,13 @@ int Component::getId( )
 {
     return id_;
 }
+
+void Component::setPauseOnScroll(bool value)
+{   
+    pauseOnScroll_ = value;
+}
+
+bool Component::getPauseOnScroll() const 
+{
+    return pauseOnScroll_;
+}

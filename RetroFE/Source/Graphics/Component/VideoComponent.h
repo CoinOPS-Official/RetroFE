@@ -50,5 +50,4 @@ private:
     bool isPlaying_;
     bool initialLoad_;
     bool hasPlayedOnce_;
-    bool pauseOnScroll_;
 };

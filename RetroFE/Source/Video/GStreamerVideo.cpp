@@ -479,9 +479,8 @@ void GStreamerVideo::update(float /* dt */)
             else
             {
                 isPlaying_ = false;
+                Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "End Of Stream " + Utils::getFileName(currentFile_));
                 stop();
-                Logger::write(Logger::ZONE_DEBUG, "GStreamer", "Stopped: End Of Stream " + Utils::getFileName(currentFile_));
-
             }
             gst_message_unref(msg);
         }
