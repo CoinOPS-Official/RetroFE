@@ -78,4 +78,5 @@ private:
     bool paused_;
     bool MuteVideo;
     bool hide_;
+    gint nv12BufferSize_;
 };

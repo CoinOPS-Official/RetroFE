@@ -55,6 +55,7 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , monitor_(monitor)
 	, MuteVideo(Configuration::MuteVideo)
     , hide_(false)
+    , nv12BufferSize_(0)
 {
     paused_ = false;
 }
@@ -88,6 +89,7 @@ void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *bu
                 GstStructure *s = gst_caps_get_structure(caps, 0);
                 gst_structure_get_int(s, "width", &video->width_);
                 gst_structure_get_int(s, "height", &video->height_);
+                video->nv12BufferSize_ = video->width_ * video->height_ * 3 / 2;
                 gst_caps_unref(caps);  // Don't forget to unref the caps
             }
             if (video->height_ && video->width_ && !video->videoBuffer_)
@@ -432,7 +434,7 @@ void GStreamerVideo::update(float /* dt */)
                 int pitch;
 
                 SDL_LockTexture(texture_, NULL, &pixels, &pitch);
-                gst_buffer_extract(videoBuffer_, 0, pixels, width_ * height_ * 3 / 2);
+                gst_buffer_extract(videoBuffer_, 0, pixels, nv12BufferSize_);
                 SDL_UnlockTexture(texture_);
             }
             else
