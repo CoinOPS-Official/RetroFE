@@ -20,6 +20,7 @@
 #include "GStreamerVideo.h"
 #include <vector>
 #include <string>
+#include <algorithm>
 
 bool VideoFactory::enabled_ = true;
 int VideoFactory::numLoops_ = 0;
