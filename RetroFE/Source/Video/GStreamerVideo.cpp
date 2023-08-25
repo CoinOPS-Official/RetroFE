@@ -669,7 +669,7 @@ GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink)
             if (width_ && !videoBuffer_) 
             {
                 // Get a new buffer from the pool
-                GstBuffer *poolBuffer = getBufferFromPool(); // Implement this function to get a buffer from your buffer pool.
+                GstBuffer *poolBuffer = getBufferFromPool();
 
                 if (!poolBuffer) {
                     Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get buffer from pool");
@@ -700,17 +700,20 @@ GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink)
 }
 
 bool GStreamerVideo::initializeBufferPool() {
-    if (pool_) {
-        gst_buffer_pool_set_active(pool_, FALSE);
-        g_object_unref(pool_);
-        pool_ = NULL;
+    GstStructure *config = NULL; 
+
+    if (!pool_) {
+        pool_ = gst_buffer_pool_new();
+        config = gst_buffer_pool_get_config(pool_);
+        gst_buffer_pool_config_set_params(config, videoConvertCaps_, nv12BufferSize_, 0, 0);
+    } else {
+        config = gst_buffer_pool_get_config(pool_);
+        if (!config) {
+            Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get buffer pool configuration");
+            return false;
+        }
     }
 
-    pool_ = gst_buffer_pool_new();
-    GstStructure *config = gst_buffer_pool_get_config(pool_);
-    
-    gst_buffer_pool_config_set_params(config, videoConvertCaps_, nv12BufferSize_, 0, 0);
-    
     if (!gst_buffer_pool_set_config(pool_, config)) {
         Logger::write(Logger::ZONE_ERROR, "Video", "Failed to set buffer pool configuration");
         g_object_unref(pool_);
@@ -721,6 +724,7 @@ bool GStreamerVideo::initializeBufferPool() {
     gst_buffer_pool_set_active(pool_, TRUE);
     return true;
 }
+
 
 GstBuffer* GStreamerVideo::getBufferFromPool() 
 {
