@@ -91,8 +91,13 @@ void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *bu
                 gst_structure_get_int(s, "height", &video->height_);
                 video->nv12BufferSize_ = video->width_ * video->height_ * 3 / 2;
                 gst_caps_unref(caps);  // Don't forget to unref the caps
+                if (!video->width_ || !video->height_)
+                {
+                    video->width_ = 0;
+                    video->height_ = 0;
+                }
             }
-            if (video->height_ && video->width_ && !video->videoBuffer_)
+            if (video->width_ && !video->videoBuffer_)
             {
                 video->videoBuffer_ = gst_buffer_ref(buf);
                 video->frameReady_ = true;
@@ -418,7 +423,7 @@ void GStreamerVideo::update(float /* dt */)
 	if (!hide_)
 	{
         SDL_LockMutex(SDL::getMutex());
-        if (!texture_ && width_ != 0 && height_ != 0)
+        if (!texture_ && width_ != 0) //no need to check height here
         {
             texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
                                         SDL_TEXTUREACCESS_STREAMING, width_, height_);
