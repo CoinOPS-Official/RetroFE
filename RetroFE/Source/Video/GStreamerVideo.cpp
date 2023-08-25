@@ -234,7 +234,7 @@ bool GStreamerVideo::play(std::string file)
                 return false;
             }
 
-            g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, NULL);
+            g_object_set(G_OBJECT(videoSink_), "drop", TRUE, NULL);
 
             GstPad *videoSinkPad = gst_ghost_pad_new("sink", videoConvertSinkPad);
             if(!videoSinkPad)
@@ -271,8 +271,6 @@ bool GStreamerVideo::play(std::string file)
 		#endif
 
 
-        isPlaying_ = true;
-        
         g_signal_connect(playbin_, "element-setup", G_CALLBACK(+[](GstElement *playbin, GstElement *element, gpointer data) {
         GStreamerVideo *video = static_cast<GStreamerVideo *>(data);
 
@@ -298,6 +296,8 @@ bool GStreamerVideo::play(std::string file)
         /* Start playing */
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
         Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Playing " + Utils::getFileName(currentFile_));
+        
+        isPlaying_ = true;
         
         //gst_debug_bin_to_dot_file(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline");
         if (playState != GST_STATE_CHANGE_ASYNC)
