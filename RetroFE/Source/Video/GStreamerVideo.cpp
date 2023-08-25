@@ -46,6 +46,7 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , height_(0)
     , width_(0)
     , videoBuffer_(NULL)
+    , pool_(NULL)
     , frameReady_(false)
     , isPlaying_(false)
     , playCount_(0)
@@ -119,7 +120,7 @@ bool GStreamerVideo::stop()
     
     if(videoSink_)
     {
-        g_object_set(G_OBJECT(videoSink_), "signal-handoffs", FALSE, NULL);
+        g_object_set(G_OBJECT(videoSink_), "emit-signals", FALSE, NULL);
     }
 
     if(playbin_)
@@ -149,6 +150,13 @@ bool GStreamerVideo::stop()
     {
         gst_buffer_unref(videoBuffer_);
         videoBuffer_ = NULL;
+    }
+
+    // Added buffer pool cleanup logic
+    if (pool_)
+    {
+        gst_object_unref(pool_);
+        pool_ = NULL;
     }
 
     freeElements();
@@ -402,15 +410,11 @@ void GStreamerVideo::update(float /* dt */)
             SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
         }
 
-        if (videoBuffer_)
-        {
-            GstMapInfo bufInfo;
-
-            if (gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
+            if (videoBuffer_)
             {
-                GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
+                GstMapInfo bufInfo;
 
-                if (!meta)
+                if (gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
                 {
                     void *pixels;
                     int pitch;
@@ -418,24 +422,14 @@ void GStreamerVideo::update(float /* dt */)
                     SDL_LockTexture(texture_, NULL, &pixels, &pitch);
                     SDL_memcpy(pixels, bufInfo.data, nv12BufferSize_);
                     SDL_UnlockTexture(texture_);
-                }
-                else
-                {
-                    const Uint8 *y_plane = bufInfo.data + meta->offset[0];
-                    const Uint8 *uv_plane = bufInfo.data + meta->offset[1]; // Assuming the UV plane immediately follows the Y plane in memory
 
-                    SDL_UpdateNVTexture(texture_, NULL,
-                                        y_plane, meta->stride[0],
-                                        uv_plane, meta->stride[1]);
+                    gst_buffer_unmap(videoBuffer_, &bufInfo);
                 }
 
-                gst_buffer_unmap(videoBuffer_, &bufInfo);
+                gst_buffer_unref(videoBuffer_);
+                videoBuffer_ = NULL;
             }
-
-            gst_buffer_unref(videoBuffer_);
-            videoBuffer_ = NULL;
-        }
-        SDL_UnlockMutex(SDL::getMutex());
+            SDL_UnlockMutex(SDL::getMutex());
     }
 
     if(videoBus_)
@@ -642,33 +636,102 @@ GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink)
     GstBuffer *buf = gst_sample_get_buffer(sample);
     GstCaps *caps = gst_sample_get_caps(sample);
 
-    // Note: no need to re-cast `this`. Use it directly.
-    if (isPlaying()) {
+    if (isPlaying()) 
+    {
         SDL_LockMutex(SDL::getMutex());
-        if (!frameReady_) {
-
+        if (!frameReady_) 
+        {
             // Getting video dimensions from the sample's caps
-            if (!getWidth() || !getHeight()) {
+            if (!getWidth() || !getHeight()) 
+            {
                 GstStructure *s = gst_caps_get_structure(caps, 0);
                 gst_structure_get_int(s, "width", &width_);
                 gst_structure_get_int(s, "height", &height_);
                 nv12BufferSize_ = width_ * height_ * 3 / 2;
-
-                if (!width_ || !height_) {
+                if (!initializeBufferPool()) 
+                {
+                    Logger::write(Logger::ZONE_ERROR, "Video", "Failed to initialize buffer pool");
+                    return GST_FLOW_ERROR;
+                }
+                if (!width_ || !height_) 
+                {
                     width_ = 0;
                     height_ = 0;
                 }
             }
-            
-            // Rest of the logic
-            if (width_ && !videoBuffer_) {
-                videoBuffer_ = gst_buffer_ref(buf);
+            if (width_ && !videoBuffer_) 
+            {
+                // Get a new buffer from the pool
+                GstBuffer *poolBuffer = getBufferFromPool(); // Implement this function to get a buffer from your buffer pool.
+
+                if (!poolBuffer) {
+                    Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get buffer from pool");
+                    return GST_FLOW_ERROR;
+                }
+
+                // Copy data from buf to poolBuffer
+                GstMapInfo srcInfo, dstInfo;
+                if (gst_buffer_map(buf, &srcInfo, GST_MAP_READ) &&
+                    gst_buffer_map(poolBuffer, &dstInfo, GST_MAP_WRITE)) {
+                    SDL_memcpy(dstInfo.data, srcInfo.data, nv12BufferSize_);  // Ensure this is safe to do!
+
+                    gst_buffer_unmap(buf, &srcInfo);
+                    gst_buffer_unmap(poolBuffer, &dstInfo);
+                } else {
+                    Logger::write(Logger::ZONE_ERROR, "Video", "Failed to map buffers");
+                    // Handle error - maybe unref poolBuffer and return an error
+                }
+
+                videoBuffer_ = poolBuffer;
                 frameReady_ = true;
             }
         }
         SDL_UnlockMutex(SDL::getMutex());
     }
-
     gst_sample_unref(sample);
     return GST_FLOW_OK;
+}
+
+bool GStreamerVideo::initializeBufferPool() {
+    if (pool_) {
+        gst_buffer_pool_set_active(pool_, FALSE);
+        g_object_unref(pool_);
+        pool_ = NULL;
+    }
+
+    pool_ = gst_buffer_pool_new();
+    GstStructure *config = gst_buffer_pool_get_config(pool_);
+    
+    gst_buffer_pool_config_set_params(config, videoConvertCaps_, nv12BufferSize_, 0, 0);
+    
+    if (!gst_buffer_pool_set_config(pool_, config)) {
+        Logger::write(Logger::ZONE_ERROR, "Video", "Failed to set buffer pool configuration");
+        g_object_unref(pool_);
+        pool_ = NULL;
+        return false;
+    }
+
+    gst_buffer_pool_set_active(pool_, TRUE);
+    return true;
+}
+
+GstBuffer* GStreamerVideo::getBufferFromPool() 
+{
+    GstBuffer *poolBuffer = NULL;
+    GstFlowReturn flow_return;
+
+    if (!pool_) {
+        Logger::write(Logger::ZONE_ERROR, "Video", "Buffer pool is not initialized");
+        return NULL;
+    }
+
+    // Acquire a buffer from the pool
+    flow_return = gst_buffer_pool_acquire_buffer(pool_, &poolBuffer, NULL);
+
+    if (flow_return != GST_FLOW_OK || !poolBuffer) {
+        Logger::write(Logger::ZONE_ERROR, "Video", "Failed to acquire buffer from pool");
+        return NULL;
+    }
+
+    return poolBuffer;
 }
