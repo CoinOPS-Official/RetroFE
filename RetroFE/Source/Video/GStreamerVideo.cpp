@@ -394,10 +394,8 @@ void GStreamerVideo::update(float /* dt */)
         }
     }
 
-
-    
-	if (!hide_)
-	{
+    if (!hide_)
+    {
         SDL_LockMutex(SDL::getMutex());
         if (!texture_ && width_ != 0) //no need to check height here
         {
@@ -405,49 +403,50 @@ void GStreamerVideo::update(float /* dt */)
                                         SDL_TEXTUREACCESS_STREAMING, width_, height_);
             SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
         }
+
         if (videoBuffer_)
         {
-            GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
+            GstMapInfo bufInfo;
 
-            if (!meta)
+            if (gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
             {
-                void *pixels;
-                int pitch;
+                GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
 
-                SDL_LockTexture(texture_, NULL, &pixels, &pitch);
-                gst_buffer_extract(videoBuffer_, 0, pixels, nv12BufferSize_);
-                SDL_UnlockTexture(texture_);
-            }
-            else
-            {
-                GstMapInfo bufInfo;
-                const Uint8 *y_plane, *uv_plane;
+                if (!meta)
+                {
+                    void *pixels;
+                    int pitch;
 
-                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+                    SDL_LockTexture(texture_, NULL, &pixels, &pitch);
+                    SDL_memcpy(pixels, bufInfo.data, nv12BufferSize_);
+                    SDL_UnlockTexture(texture_);
+                }
+                else
+                {
+                    const Uint8 *y_plane = bufInfo.data + meta->offset[0];
+                    const Uint8 *uv_plane = bufInfo.data + meta->offset[1]; // Assuming the UV plane immediately follows the Y plane in memory
 
-                y_plane = bufInfo.data + meta->offset[0];
-                uv_plane = bufInfo.data + meta->offset[1]; // Assuming the UV plane immediately follows the Y plane in memory
+                    SDL_UpdateNVTexture(texture_, NULL,
+                                        y_plane, meta->stride[0],
+                                        uv_plane, meta->stride[1]);
+                }
 
-                SDL_UpdateNVTexture(texture_, NULL,
-                                (const Uint8 *)y_plane, meta->stride[0],
-                                (const Uint8 *)uv_plane, meta->stride[1]);
                 gst_buffer_unmap(videoBuffer_, &bufInfo);
             }
+
             gst_buffer_unref(videoBuffer_);
             videoBuffer_ = NULL;
         }
         SDL_UnlockMutex(SDL::getMutex());
-	}
+    }
 
-    
-	if(videoBus_)
+    if(videoBus_)
     {
         GstMessage *msg = gst_bus_pop_filtered(videoBus_, GST_MESSAGE_EOS);
         if(msg)
         {
             playCount_++;
 
-            // If the number of loops is 0 or greater than the current playCount_, seek the playback to the beginning.
             if(!numLoops_ || numLoops_ > playCount_)
             {
                 gst_element_seek(playbin_,
@@ -468,6 +467,7 @@ void GStreamerVideo::update(float /* dt */)
         }
     }
 }
+
 
 
 bool GStreamerVideo::isPlaying()
