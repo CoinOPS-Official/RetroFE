@@ -56,6 +56,8 @@ GStreamerVideo::GStreamerVideo( int monitor )
 	, MuteVideo(Configuration::MuteVideo)
     , hide_(false)
     , nv12BufferSize_(0)
+    , lastSetVolume_(0.0)
+    , lastSetMuteState_(false)
 {
     paused_ = false;
 }
@@ -292,7 +294,7 @@ bool GStreamerVideo::play(std::string file)
 		videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 
         g_object_set(G_OBJECT(videoSink_), "emit-signals", TRUE, "sync", TRUE, NULL);
-g_signal_connect(videoSink_, "new-sample", G_CALLBACK(GStreamerVideo::static_on_new_sample), this);
+        g_signal_connect(videoSink_, "new-sample", G_CALLBACK(GStreamerVideo::static_on_new_sample), this);
         /* Start playing */
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
         Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Playing " + Utils::getFileName(currentFile_));
@@ -357,30 +359,40 @@ void GStreamerVideo::draw()
 
 void GStreamerVideo::update(float /* dt */)
 {
-	if(playbin_)
-	{
-		if(MuteVideo)
-		{
-			// Keep the audio muted.
-			gst_stream_volume_set_mute( GST_STREAM_VOLUME( playbin_ ), true );
-		}
-		else
-		{
-			if(volume_ > 1.0)
-				volume_ = 1.0;
-			if ( currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_ )
-				currentVolume_ = volume_;
-			else
-				currentVolume_ += 0.005;
+    if (playbin_)
+    {
+        bool shouldMute = false;
+        double targetVolume = 0.0;
+        if (MuteVideo)
+        {
+            shouldMute = true;
+        }
+        else
+        {
+            if (volume_ > 1.0)
+                volume_ = 1.0;
+            if (currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_)
+                currentVolume_ = volume_;
+            else
+                currentVolume_ += 0.005;
+            targetVolume = static_cast<double>(currentVolume_);
+            if (currentVolume_ < 0.1)
+                shouldMute = true;
+        }
 
-			// Update the volume only if not muted.
-			gst_stream_volume_set_volume( GST_STREAM_VOLUME( playbin_ ), GST_STREAM_VOLUME_FORMAT_LINEAR, static_cast<double>(currentVolume_));
-			if(currentVolume_ < 0.1)
-				gst_stream_volume_set_mute( GST_STREAM_VOLUME( playbin_ ), true );
-			else
-				gst_stream_volume_set_mute( GST_STREAM_VOLUME( playbin_ ), false );
-		}
-	}
+        // Only set the volume if it has changed since the last call.
+        if (targetVolume != lastSetVolume_)
+        {
+            gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, targetVolume);
+            lastSetVolume_ = targetVolume;
+        }
+        // Only set the mute state if it has changed since the last call.
+        if (shouldMute != lastSetMuteState_)
+        {
+            gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), shouldMute);
+            lastSetMuteState_ = shouldMute;
+        }
+    }
 
 
     
@@ -397,7 +409,7 @@ void GStreamerVideo::update(float /* dt */)
         {
             GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
 
-            if (!meta || meta->buffer == NULL)
+            if (!meta)
             {
                 void *pixels;
                 int pitch;

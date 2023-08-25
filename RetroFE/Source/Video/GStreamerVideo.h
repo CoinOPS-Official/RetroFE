@@ -78,6 +78,8 @@ private:
     bool paused_;
     bool MuteVideo;
     bool hide_;
+    double lastSetVolume_;
+    bool lastSetMuteState_;
     gint nv12BufferSize_;
     GstFlowReturn member_on_new_sample(GstAppSink *appsink);
     static GstFlowReturn static_on_new_sample(GstAppSink *appsink, gpointer userdata);
