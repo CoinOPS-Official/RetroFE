@@ -410,26 +410,33 @@ void GStreamerVideo::update(float /* dt */)
             SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
         }
 
-            if (videoBuffer_)
+        if (videoBuffer_)
+        {
+            GstMapInfo bufInfo;
+
+            if (gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
             {
-                GstMapInfo bufInfo;
+                const Uint8 *Yplane = bufInfo.data;
+                const Uint8 *UVplane = bufInfo.data + (width_ * height_); // Start of UV data
+                int Ypitch = width_;
+                int UVpitch = width_; // Given it's packed UV, it's the same as width
 
-                if (gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
+                if (SDL_UpdateNVTexture(texture_, NULL, Yplane, Ypitch, UVplane, UVpitch) != 0) 
                 {
-                    void *pixels;
-                    int pitch;
-
-                    SDL_LockTexture(texture_, NULL, &pixels, &pitch);
-                    SDL_memcpy(pixels, bufInfo.data, nv12BufferSize_);
-                    SDL_UnlockTexture(texture_);
-
+                    Logger::write(Logger::ZONE_ERROR, "Video", SDL_GetError());
                     gst_buffer_unmap(videoBuffer_, &bufInfo);
+                    gst_buffer_unref(videoBuffer_);
+                    videoBuffer_ = NULL;
+                    SDL_UnlockMutex(SDL::getMutex());
+                    return; // Depending on your flow, adjust this exit point accordingly
                 }
 
+                gst_buffer_unmap(videoBuffer_, &bufInfo);
                 gst_buffer_unref(videoBuffer_);
                 videoBuffer_ = NULL;
             }
-            SDL_UnlockMutex(SDL::getMutex());
+        }
+        SDL_UnlockMutex(SDL::getMutex());
     }
 
     if(videoBus_)
