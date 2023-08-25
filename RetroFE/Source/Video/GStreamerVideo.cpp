@@ -75,39 +75,6 @@ SDL_Texture *GStreamerVideo::getTexture() const
     return texture_;
 }
 
-void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata)
-{
-    GStreamerVideo *video = (GStreamerVideo *)userdata;
-    if (video && video->isPlaying_)
-    {
-        SDL_LockMutex(SDL::getMutex());
-        if (!video->frameReady_)
-        {
-            if (!video->width_ || !video->height_)
-            {
-                GstCaps *caps = gst_pad_get_current_caps(new_pad);
-                GstStructure *s = gst_caps_get_structure(caps, 0);
-                gst_structure_get_int(s, "width", &video->width_);
-                gst_structure_get_int(s, "height", &video->height_);
-                video->nv12BufferSize_ = video->width_ * video->height_ * 3 / 2;
-                gst_caps_unref(caps);  // Don't forget to unref the caps
-                if (!video->width_ || !video->height_)
-                {
-                    video->width_ = 0;
-                    video->height_ = 0;
-                }
-            }
-            if (video->width_ && !video->videoBuffer_)
-            {
-                video->videoBuffer_ = gst_buffer_ref(buf);
-                video->frameReady_ = true;
-            }
-        }
-        SDL_UnlockMutex(SDL::getMutex());
-    }
-}
-
-
 bool GStreamerVideo::initialize()
 {
     if(initialized_)
@@ -224,7 +191,7 @@ bool GStreamerVideo::play(std::string file)
         {
             playbin_ = gst_element_factory_make("playbin3", "player");
             videoBin_ = gst_bin_new("SinkBin");
-            videoSink_  = gst_element_factory_make("fakesink", "video_sink");
+            videoSink_  = gst_element_factory_make("appsink", "video_sink");
             videoConvert_  = gst_element_factory_make("capsfilter", "video_convert");
             videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
             height_ = 0;
@@ -324,11 +291,8 @@ bool GStreamerVideo::play(std::string file)
 
 		videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 
-        g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, NULL);
-        g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
-
-        
-
+        g_object_set(G_OBJECT(videoSink_), "emit-signals", TRUE, "sync", TRUE, NULL);
+g_signal_connect(videoSink_, "new-sample", G_CALLBACK(GStreamerVideo::static_on_new_sample), this);
         /* Start playing */
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
         Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Playing " + Utils::getFileName(currentFile_));
@@ -351,6 +315,7 @@ bool GStreamerVideo::play(std::string file)
 
     return true;
 }
+
 
 void GStreamerVideo::freeElements()
 {
@@ -384,7 +349,6 @@ int GStreamerVideo::getWidth()
 {
     return static_cast<int>(width_);
 }
-
 
 void GStreamerVideo::draw()
 {
@@ -651,4 +615,50 @@ bool GStreamerVideo::isPaused( )
 int GStreamerVideo::getNumLoops( )
 {
     return numLoops_;
+}
+
+GstFlowReturn GStreamerVideo::static_on_new_sample(GstAppSink *appsink, gpointer userdata) 
+{
+    return static_cast<GStreamerVideo*>(userdata)->member_on_new_sample(appsink);
+}
+
+GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink) 
+{
+    GstSample *sample = gst_app_sink_pull_sample(appsink);
+    if (!sample) {
+        return GST_FLOW_ERROR;
+    }
+
+    GstBuffer *buf = gst_sample_get_buffer(sample);
+    GstCaps *caps = gst_sample_get_caps(sample);
+
+    // Note: no need to re-cast `this`. Use it directly.
+    if (isPlaying()) {
+        SDL_LockMutex(SDL::getMutex());
+        if (!frameReady_) {
+
+            // Getting video dimensions from the sample's caps
+            if (!getWidth() || !getHeight()) {
+                GstStructure *s = gst_caps_get_structure(caps, 0);
+                gst_structure_get_int(s, "width", &width_);
+                gst_structure_get_int(s, "height", &height_);
+                nv12BufferSize_ = width_ * height_ * 3 / 2;
+
+                if (!width_ || !height_) {
+                    width_ = 0;
+                    height_ = 0;
+                }
+            }
+            
+            // Rest of the logic
+            if (width_ && !videoBuffer_) {
+                videoBuffer_ = gst_buffer_ref(buf);
+                frameReady_ = true;
+            }
+        }
+        SDL_UnlockMutex(SDL::getMutex());
+    }
+
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
 }

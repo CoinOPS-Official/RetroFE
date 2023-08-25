@@ -22,6 +22,7 @@ extern "C"
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 }
+#include "../SDL.h"
 
 
 class GStreamerVideo : public IVideo
@@ -55,7 +56,6 @@ public:
     int getNumLoops( );
 
 private:
-    static void processNewBuffer (GstElement *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
     GstElement *playbin_;
     GstElement *videoBin_;
     GstElement *videoSink_;
@@ -79,4 +79,7 @@ private:
     bool MuteVideo;
     bool hide_;
     gint nv12BufferSize_;
+    GstFlowReturn member_on_new_sample(GstAppSink *appsink);
+    static GstFlowReturn static_on_new_sample(GstAppSink *appsink, gpointer userdata);
 };
+    
