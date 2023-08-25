@@ -234,8 +234,6 @@ bool GStreamerVideo::play(std::string file)
                 return false;
             }
 
-            g_object_set(G_OBJECT(videoSink_), "drop", TRUE, NULL);
-
             GstPad *videoSinkPad = gst_ghost_pad_new("sink", videoConvertSinkPad);
             if(!videoSinkPad)
             {
@@ -291,7 +289,7 @@ bool GStreamerVideo::play(std::string file)
 
 		videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 
-        g_object_set(G_OBJECT(videoSink_), "emit-signals", TRUE, "sync", TRUE, NULL);
+        g_object_set(G_OBJECT(videoSink_), "emit-signals", TRUE, "drop", TRUE, "max-buffers", 0, NULL);
         g_signal_connect(videoSink_, "new-sample", G_CALLBACK(GStreamerVideo::static_on_new_sample), this);
         /* Start playing */
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
