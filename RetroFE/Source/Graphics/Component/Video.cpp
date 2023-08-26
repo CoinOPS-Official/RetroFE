@@ -109,7 +109,7 @@ void Video::allocateGraphicsMemory( )
             IVideo      *video = new GStreamerVideo( baseViewInfo.Monitor );
             video->initialize();
             ((GStreamerVideo *)(video))->setNumLoops( numLoops_ );
-            video_ = new VideoComponent( video, page, file, "Video.cpp" );
+            video_ = new VideoComponent( video, page, file );
         }
     }
 

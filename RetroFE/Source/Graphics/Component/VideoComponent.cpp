@@ -24,11 +24,10 @@
 #include "../../SDL.h"
 #include <string>
 
-VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& videoFile, const std::string& origin)
+VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& videoFile)
     : Component(p)
     , videoFile_(videoFile)
     , videoInst_(videoInst)
-    , origin_(origin)
     , isPlaying_(false)
     , initialLoad_ (true)
     , hasPlayedOnce_ (false)
