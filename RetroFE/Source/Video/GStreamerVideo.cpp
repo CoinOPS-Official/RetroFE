@@ -402,7 +402,7 @@ void GStreamerVideo::update(float /* dt */)
 
     if (!hide_)
     {
-        SDL_LockMutex(SDL::getMutex());
+        //SDL_LockMutex(SDL::getMutex());
         if (!texture_ && width_ != 0) //no need to check height here
         {
             texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
@@ -436,7 +436,7 @@ void GStreamerVideo::update(float /* dt */)
                 videoBuffer_ = NULL;
             }
         }
-        SDL_UnlockMutex(SDL::getMutex());
+        //SDL_UnlockMutex(SDL::getMutex());
     }
 
     if(videoBus_)
@@ -645,7 +645,7 @@ GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink)
 
     if (isPlaying()) 
     {
-        SDL_LockMutex(SDL::getMutex());
+        //SDL_LockMutex(SDL::getMutex());
         if (!frameReady_) 
         {
             // Getting video dimensions from the sample's caps
@@ -693,7 +693,7 @@ GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink)
                 frameReady_ = true;
             }
         }
-        SDL_UnlockMutex(SDL::getMutex());
+        //SDL_UnlockMutex(SDL::getMutex());
     }
     gst_sample_unref(sample);
     return GST_FLOW_OK;
