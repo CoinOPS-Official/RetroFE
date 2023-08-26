@@ -86,5 +86,6 @@ private:
     static GstFlowReturn static_on_new_sample(GstAppSink *appsink, gpointer userdata);
     bool initializeBufferPool();
     GstBuffer* getBufferFromPool();
+    gint nv12BufferSize_;
 };
     
