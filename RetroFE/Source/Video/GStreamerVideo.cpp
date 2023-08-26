@@ -155,6 +155,7 @@ bool GStreamerVideo::stop()
     // Added buffer pool cleanup logic
     if (pool_)
     {
+        gst_buffer_pool_set_active(pool_, FALSE);
         gst_object_unref(pool_);
         pool_ = NULL;
     }
