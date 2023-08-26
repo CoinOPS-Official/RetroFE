@@ -404,7 +404,7 @@ void GStreamerVideo::update(float /* dt */)
     if (!hide_)
     {
         //SDL_LockMutex(SDL::getMutex());
-        if (!texture_ && width_ != 0) //no need to check height here
+        if (!texture_ && !video->width_) //no need to check height here
         {
             texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
                                         SDL_TEXTUREACCESS_STREAMING, width_, height_);
