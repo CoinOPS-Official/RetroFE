@@ -642,7 +642,6 @@ GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink)
     }
 
     GstBuffer *buf = gst_sample_get_buffer(sample);
-    GstCaps *caps = gst_sample_get_caps(sample);
 
     if (isPlaying()) 
     {
@@ -652,10 +651,12 @@ GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink)
             // Getting video dimensions from the sample's caps
             if (!getWidth() || !getHeight()) 
             {
+                GstCaps *caps = gst_sample_get_caps(sample);
                 GstStructure *s = gst_caps_get_structure(caps, 0);
                 gst_structure_get_int(s, "width", &width_);
                 gst_structure_get_int(s, "height", &height_);
                 nv12BufferSize_ = width_ * height_ * 3 / 2;
+                
                 if (!initializeBufferPool()) 
                 {
                     Logger::write(Logger::ZONE_ERROR, "Video", "Failed to initialize buffer pool");
