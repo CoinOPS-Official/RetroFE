@@ -87,4 +87,3 @@ private:
     bool initializeBufferPool();
     GstBuffer* getBufferFromPool();
 };
-    
