@@ -52,8 +52,8 @@ public:
     unsigned long long getCurrent( );
     unsigned long long getDuration( );
     bool isPaused( );
-    void hide(bool hide);
     int getNumLoops( );
+    bool isFrameReady( );
 
 private:
     GstElement *playbin_;
@@ -61,8 +61,8 @@ private:
     GstElement *videoSink_;
     GstElement *videoConvert_;
     GstCaps *videoConvertCaps_;
-    GstBus *videoBus_;
-    GstBufferPool *pool_;
+    GstElement *capsFilter_;
+    //GstBus *videoBus_;
     SDL_Texture* texture_;
     gint height_;
     gint width_;
@@ -76,14 +76,10 @@ private:
     float volume_;
     double currentVolume_;
     int monitor_;
+    bool lastSetMuteState_;
     bool paused_;
     bool MuteVideo;
-    bool hide_;
     double lastSetVolume_;
-    bool lastSetMuteState_;
-    gint nv12BufferSize_;
     GstFlowReturn member_on_new_sample(GstAppSink *appsink);
     static GstFlowReturn static_on_new_sample(GstAppSink *appsink, gpointer userdata);
-    bool initializeBufferPool();
-    GstBuffer* getBufferFromPool();
 };

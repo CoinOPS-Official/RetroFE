@@ -41,12 +41,11 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , videoSink_(NULL)
     , videoConvert_(NULL)
     , videoConvertCaps_(NULL)
-    , videoBus_(NULL)
+    //, videoBus_(NULL)
     , texture_(NULL)
     , height_(0)
     , width_(0)
     , videoBuffer_(NULL)
-    , pool_(NULL)
     , frameReady_(false)
     , isPlaying_(false)
     , playCount_(0)
@@ -54,14 +53,14 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , volume_(0.0)
     , currentVolume_(0.0)
     , monitor_(monitor)
-	  , MuteVideo(Configuration::MuteVideo)
-    , hide_(false)
-    , nv12BufferSize_(0)
+	, MuteVideo(Configuration::MuteVideo)
     , lastSetVolume_(0.0)
+    , paused_(false)
     , lastSetMuteState_(false)
 {
-    paused_ = false;
+
 }
+
 GStreamerVideo::~GStreamerVideo()
 {
     stop();
@@ -94,7 +93,7 @@ bool GStreamerVideo::initialize()
 #endif
 
     initialized_ = true;
-    paused_      = false;
+    //paused_      = false;
 
     return true;
 }
@@ -111,7 +110,7 @@ bool GStreamerVideo::deInitialize()
 bool GStreamerVideo::stop()
 {
 
-    paused_ = false;
+    //paused_ = false;
 
     if(!initialized_)
     {
@@ -152,13 +151,6 @@ bool GStreamerVideo::stop()
         videoBuffer_ = NULL;
     }
 
-    // Added buffer pool cleanup logic
-    if (pool_)
-    {
-        gst_buffer_pool_set_active(pool_, FALSE);
-        gst_object_unref(pool_);
-        pool_ = NULL;
-    }
 
     freeElements();
 
@@ -170,11 +162,6 @@ bool GStreamerVideo::stop()
     Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Stopped " + Utils::getFileName(currentFile_));
     
     return true;
-}
-
-void GStreamerVideo::hide(bool hide)
-{
-    hide_ = hide;
 }
 
 bool GStreamerVideo::play(std::string file)
@@ -198,65 +185,55 @@ bool GStreamerVideo::play(std::string file)
     }
     else
     {
-        if(!playbin_)
+       if(!playbin_)
         {
             playbin_ = gst_element_factory_make("playbin3", "player");
             videoBin_ = gst_bin_new("SinkBin");
-            videoSink_  = gst_element_factory_make("appsink", "video_sink");
-            videoConvert_  = gst_element_factory_make("capsfilter", "video_convert");
+
+            videoSink_ = gst_element_factory_make("appsink", "video_sink");
+            GstAppSinkCallbacks appsink_callbacks;
+            SDL_memset(&appsink_callbacks, 0, sizeof(appsink_callbacks));
+
+            //appsink_callbacks.new_sample = GStreamerVideo::static_on_new_sample;
+
+            // Uncomment these if you need them
+            // appsink_callbacks.new_preroll = ...;
+            // appsink_callbacks.eos = ...;
+
+            gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &appsink_callbacks, this, NULL);
+            gst_app_sink_set_drop(GST_APP_SINK(videoSink_), TRUE);
+
+            videoConvert_ = gst_element_factory_make("videoconvert", "video_convert");
+            capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
             videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+
             height_ = 0;
             width_ = 0;
-            if(!playbin_)
+
+            if(!playbin_ || !videoSink_ || !videoConvert_ || !capsFilter_ || !videoConvertCaps_)
             {
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not create playbin");
-                freeElements();
-                return false;
-            }
-            if(!videoSink_)
-            {
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not create video sink");
-                freeElements();
-                return false;
-            }
-            if(!videoConvert_)
-            {
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not create video converter");
-                freeElements();
-                return false;
-            }
-            if(!videoConvertCaps_)
-            {
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not create video caps");
+                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not create elements");
                 freeElements();
                 return false;
             }
 
-            gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, videoSink_, NULL);
-            gst_element_link_filtered(videoConvert_, videoSink_, videoConvertCaps_);
-            GstPad *videoConvertSinkPad = gst_element_get_static_pad(videoConvert_, "sink");
-
-            if(!videoConvertSinkPad)
+            g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, NULL);
+            
+            gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, NULL);
+            if (!gst_element_link_many(videoConvert_, capsFilter_, videoSink_, NULL))
             {
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not get video convert sink pad");
+                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not link video processing elements");
                 freeElements();
                 return false;
             }
 
-            GstPad *videoSinkPad = gst_ghost_pad_new("sink", videoConvertSinkPad);
-            if(!videoSinkPad)
-            {
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not get video bin sink pad");
-                freeElements();
-                gst_object_unref(videoConvertSinkPad);
-                videoConvertSinkPad = NULL;
-                return false;
-            }
+            GstPad *videoSinkPad = gst_element_get_static_pad(videoConvert_, "sink");
+            GstPad *ghostPad = gst_ghost_pad_new("sink", videoSinkPad);
+            gst_element_add_pad(videoBin_, ghostPad);
 
-            gst_element_add_pad(videoBin_, videoSinkPad);
-            gst_object_unref(videoConvertSinkPad);
-            videoConvertSinkPad = NULL;
+            gst_object_unref(videoSinkPad);
         }
+
         g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, NULL);
         g_free( uriFile );
 		
@@ -296,10 +273,13 @@ bool GStreamerVideo::play(std::string file)
         }
         }), this);
 
-		videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+		//videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 
         g_object_set(G_OBJECT(videoSink_), "emit-signals", TRUE, "drop", TRUE, "max-buffers", 0, NULL);
         g_signal_connect(videoSink_, "new-sample", G_CALLBACK(GStreamerVideo::static_on_new_sample), this);
+        
+
+        
         /* Start playing */
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
         Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Playing " + Utils::getFileName(currentFile_));
@@ -328,11 +308,6 @@ bool GStreamerVideo::play(std::string file)
 
 void GStreamerVideo::freeElements()
 {
-    if(videoBus_)
-    {
-        gst_object_unref(videoBus_);
-        videoBus_ = NULL;
-    }
     if(playbin_)
     {
         gst_object_unref(playbin_);
@@ -364,8 +339,15 @@ void GStreamerVideo::draw()
     frameReady_ = false;
 }
 
+bool GStreamerVideo::isFrameReady()
+{
+    return frameReady_;
+}
+
 void GStreamerVideo::update(float /* dt */)
 {
+    if (isPaused())
+        return;
     if (playbin_)
     {
         bool shouldMute = false;
@@ -376,24 +358,21 @@ void GStreamerVideo::update(float /* dt */)
         }
         else
         {
-            if (volume_ > 1.0)
-                volume_ = 1.0;
+            if (volume_ > 1.0) volume_ = 1.0;
+
             if (currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_)
                 currentVolume_ = volume_;
             else
                 currentVolume_ += 0.005;
             targetVolume = static_cast<double>(currentVolume_);
-            if (currentVolume_ < 0.1)
+            if (currentVolume_ < 0.1) 
                 shouldMute = true;
         }
-
-        // Only set the volume if it has changed since the last call.
         if (targetVolume != lastSetVolume_)
         {
             gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, targetVolume);
             lastSetVolume_ = targetVolume;
         }
-        // Only set the mute state if it has changed since the last call.
         if (shouldMute != lastSetMuteState_)
         {
             gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), shouldMute);
@@ -401,69 +380,98 @@ void GStreamerVideo::update(float /* dt */)
         }
     }
 
-    if (!hide_)
+
+    SDL_LockMutex(SDL::getMutex());
+
+    if (!texture_ && width_ != 0)
     {
-        //SDL_LockMutex(SDL::getMutex());
-        if (!texture_ && width_ != 0) //no need to check height here
-        {
-            texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
-                                        SDL_TEXTUREACCESS_STREAMING, width_, height_);
-            SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
-        }
+        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12, SDL_TEXTUREACCESS_STREAMING, width_, height_);
+        SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+    }
 
         if (videoBuffer_)
         {
-            GstMapInfo bufInfo;
+            GstVideoFrame videoFrame;
+            GstVideoInfo videoInfo;
+            
+            // Assuming NV12 format.
+            gst_video_info_set_format(&videoInfo, GST_VIDEO_FORMAT_NV12, width_, height_);
 
-            if (gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
+            if (gst_video_frame_map(&videoFrame, &videoInfo, videoBuffer_, GST_MAP_READ))
             {
-                const Uint8 *Yplane = bufInfo.data;
-                const Uint8 *UVplane = bufInfo.data + (width_ * height_); // Start of UV data
-                int Ypitch = width_;
-                int UVpitch = width_; // Given it's packed UV, it's the same as width
+                void* mPixels;
+                int mPitch;
 
-                if (SDL_UpdateNVTexture(texture_, NULL, Yplane, Ypitch, UVplane, UVpitch) != 0) 
+                guint8* yDataSrc = reinterpret_cast<guint8*>(GST_VIDEO_FRAME_PLANE_DATA(&videoFrame, 0));
+                guint8* uvDataSrc = reinterpret_cast<guint8*>(GST_VIDEO_FRAME_PLANE_DATA(&videoFrame, 1));
+
+                gint yStride = GST_VIDEO_FRAME_PLANE_STRIDE(&videoFrame, 0);
+                gint uvStride = GST_VIDEO_FRAME_PLANE_STRIDE(&videoFrame, 1);
+
+       
+                if (SDL_LockTexture(texture_, NULL, &mPixels, &mPitch) != 0)
                 {
                     Logger::write(Logger::ZONE_ERROR, "Video", SDL_GetError());
-                    gst_buffer_unmap(videoBuffer_, &bufInfo);
-                    gst_buffer_unref(videoBuffer_);
-                    videoBuffer_ = NULL;
-                    SDL_UnlockMutex(SDL::getMutex());
-                    return; // Depending on your flow, adjust this exit point accordingly
                 }
+                else
+                {
+                                    guint8* yDataDst = (guint8*)mPixels;
+                guint8* uvDataDst = yDataDst + (mPitch * height_);
+                    // Check if block copy is possible
+                    if (mPitch == yStride && (mPitch == uvStride * 2)) 
+                    {
+                        SDL_memcpy(yDataDst, yDataSrc, yStride * height_); // Block copy Y data
+                        SDL_memcpy(uvDataDst, uvDataSrc, uvStride * (height_ / 2)); // Block copy UV data
+                    }
+                    else
+                    {
+                        for (int i = 0; i < height_; i++)
+                        {
+                            SDL_memcpy(yDataDst, yDataSrc, width_);  // Copy Y data line by line
+                            yDataDst += mPitch;
+                            yDataSrc += yStride;
+                        }
 
-                gst_buffer_unmap(videoBuffer_, &bufInfo);
-                gst_buffer_unref(videoBuffer_);
-                videoBuffer_ = NULL;
+                        for (int i = 0; i < height_ / 2; i++)
+                        {
+                            SDL_memcpy(uvDataDst, uvDataSrc, width_);  // Copy UV data line by line
+                            uvDataDst += mPitch;
+                            uvDataSrc += uvStride;
+                        }
+                    }
+
+                    SDL_UnlockTexture(texture_);
+                }
+                gst_video_frame_unmap(&videoFrame);
             }
+            gst_buffer_unref(videoBuffer_);
+            videoBuffer_ = NULL;
+            frameReady_ = false;
         }
-        //SDL_UnlockMutex(SDL::getMutex());
-    }
+        SDL_UnlockMutex(SDL::getMutex());
 
-    if(videoBus_)
+
+
+    GstAppSink *appsink = GST_APP_SINK(videoSink_);
+    if (gst_app_sink_is_eos(appsink))
     {
-        GstMessage *msg = gst_bus_pop_filtered(videoBus_, GST_MESSAGE_EOS);
-        if(msg)
-        {
-            playCount_++;
+        playCount_++;
 
-            if(!numLoops_ || numLoops_ > playCount_)
-            {
-                gst_element_seek(playbin_,
-                             1.0,
-                             GST_FORMAT_TIME,
-                             GST_SEEK_FLAG_FLUSH,
-                             GST_SEEK_TYPE_SET,
-                             0,
-                             GST_SEEK_TYPE_NONE,
-                             GST_CLOCK_TIME_NONE);
-            }
-            else
-            {
-                Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "End Of Stream " + Utils::getFileName(currentFile_));
-                stop();
-            }
-            gst_message_unref(msg);
+        if (!numLoops_ || numLoops_ > playCount_)
+        {
+            gst_element_seek(playbin_,
+                         1.0,
+                         GST_FORMAT_TIME,
+                         GST_SEEK_FLAG_FLUSH,
+                         GST_SEEK_TYPE_SET,
+                         0,
+                         GST_SEEK_TYPE_NONE,
+                         GST_CLOCK_TIME_NONE);
+        }
+        else
+        {
+            Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "End Of Stream " + Utils::getFileName(currentFile_));
+            stop();
         }
     }
 }
@@ -591,12 +599,11 @@ void GStreamerVideo::restart( )
 
     if ( !isPlaying_ )
     {
-            Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Not playing return");
+        Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Not playing return");
         return;
     }
     Logger::write(Logger::ZONE_DEBUG, "GStreamerVideo", "Seek to Start of " + Utils::getFileName(currentFile_));
-    gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT ), 0 );
-
+    gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH ), 0 );
 }
 
 
@@ -636,122 +643,41 @@ GstFlowReturn GStreamerVideo::static_on_new_sample(GstAppSink *appsink, gpointer
 
 GstFlowReturn GStreamerVideo::member_on_new_sample(GstAppSink *appsink) 
 {
+    if (isPaused())
+        return GST_FLOW_OK;
+    
     GstSample *sample = gst_app_sink_pull_sample(appsink);
     if (!sample) {
-        return GST_FLOW_ERROR;
+        return GST_FLOW_OK;
     }
 
     GstBuffer *buf = gst_sample_get_buffer(sample);
+    if (!buf) {
+        gst_sample_unref(sample);
+        return GST_FLOW_OK;
+    }
 
-    if (isPlaying()) 
+    // Only get the mutex when it's needed to modify shared resources
+    if (!frameReady_) 
     {
-        //SDL_LockMutex(SDL::getMutex());
-        if (!frameReady_) 
+        // Getting video dimensions from the sample's caps
+        if (!width_ || !height_) 
         {
-            // Getting video dimensions from the sample's caps
-            if (!getWidth() || !getHeight()) 
-            {
-                GstCaps *caps = gst_sample_get_caps(sample);
-                GstStructure *s = gst_caps_get_structure(caps, 0);
-                gst_structure_get_int(s, "width", &width_);
-                gst_structure_get_int(s, "height", &height_);
-                nv12BufferSize_ = width_ * height_ * 3 / 2;
-                
-                if (!initializeBufferPool()) 
-                {
-                    Logger::write(Logger::ZONE_ERROR, "Video", "Failed to initialize buffer pool");
-                    return GST_FLOW_ERROR;
-                }
-                if (!width_ || !height_) 
-                {
-                    width_ = 0;
-                    height_ = 0;
-                }
-            }
-            if (width_ && !videoBuffer_) 
-            {
-                // Get a new buffer from the pool
-                GstBuffer *poolBuffer = getBufferFromPool();
-
-                if (!poolBuffer) {
-                    Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get buffer from pool");
-                    return GST_FLOW_ERROR;
-                }
-
-                // Copy data from buf to poolBuffer
-                GstMapInfo srcInfo, dstInfo;
-                if (gst_buffer_map(buf, &srcInfo, GST_MAP_READ) &&
-                    gst_buffer_map(poolBuffer, &dstInfo, GST_MAP_WRITE)) {
-                    SDL_memcpy(dstInfo.data, srcInfo.data, nv12BufferSize_);  // Ensure this is safe to do!
-
-                    gst_buffer_unmap(buf, &srcInfo);
-                    gst_buffer_unmap(poolBuffer, &dstInfo);
-                } else {
-                    Logger::write(Logger::ZONE_ERROR, "Video", "Failed to map buffers");
-                    // Handle error - maybe unref poolBuffer and return an error
-                }
-
-                videoBuffer_ = poolBuffer;
-                frameReady_ = true;
-            }
+            GstCaps *caps = gst_sample_get_caps(sample);
+            GstStructure *s = gst_caps_get_structure(caps, 0);
+            gst_structure_get_int(s, "width", &width_);
+            gst_structure_get_int(s, "height", &height_);
+            gst_caps_unref(caps);
         }
-        //SDL_UnlockMutex(SDL::getMutex());
+        SDL_LockMutex(SDL::getMutex());
+        if (!videoBuffer_) 
+        {
+            videoBuffer_ = gst_buffer_ref(buf);
+            frameReady_ = true;
+        }
+        SDL_UnlockMutex(SDL::getMutex());
     }
     gst_sample_unref(sample);
     return GST_FLOW_OK;
 }
 
-
-bool GStreamerVideo::initializeBufferPool() {
-    if (pool_) {
-        // If the pool already exists, simply return true.
-        return true;
-    }
-
-    pool_ = gst_buffer_pool_new();
-    if (!pool_) {
-        Logger::write(Logger::ZONE_ERROR, "Video", "Failed to create a new buffer pool");
-        return false;
-    }
-
-    GstStructure *config = gst_buffer_pool_get_config(pool_);
-    if (!config) {
-        Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get buffer pool configuration");
-        g_object_unref(pool_);
-        pool_ = NULL;
-        return false;
-    }
-
-    gst_buffer_pool_config_set_params(config, videoConvertCaps_, nv12BufferSize_, 0, 0);
-    if (!gst_buffer_pool_set_config(pool_, config)) {
-        Logger::write(Logger::ZONE_ERROR, "Video", "Failed to set buffer pool configuration");
-        g_object_unref(pool_);
-        pool_ = NULL;
-        return false;
-    }
-
-    gst_buffer_pool_set_active(pool_, TRUE);
-    return true;
-}
-
-
-GstBuffer* GStreamerVideo::getBufferFromPool() 
-{
-    GstBuffer *poolBuffer = NULL;
-    GstFlowReturn flow_return;
-
-    if (!pool_) {
-        Logger::write(Logger::ZONE_ERROR, "Video", "Buffer pool is not initialized");
-        return NULL;
-    }
-
-    // Acquire a buffer from the pool
-    flow_return = gst_buffer_pool_acquire_buffer(pool_, &poolBuffer, NULL);
-
-    if (flow_return != GST_FLOW_OK || !poolBuffer) {
-        Logger::write(Logger::ZONE_ERROR, "Video", "Failed to acquire buffer from pool");
-        return NULL;
-    }
-
-    return poolBuffer;
-}
