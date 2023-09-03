@@ -22,7 +22,6 @@ extern "C"
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
 }
-#include "../SDL.h"
 
 
 class GStreamerVideo : public IVideo
@@ -52,17 +51,16 @@ public:
     unsigned long long getCurrent( );
     unsigned long long getDuration( );
     bool isPaused( );
-    int getNumLoops( );
-    bool isFrameReady( );
+    void hide(bool hide);
 
 private:
+    static void processNewBuffer (GstElement *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
     GstElement *playbin_;
     GstElement *videoBin_;
     GstElement *videoSink_;
     GstElement *videoConvert_;
     GstCaps *videoConvertCaps_;
-    GstElement *capsFilter_;
-    //GstBus *videoBus_;
+    GstBus *videoBus_;
     SDL_Texture* texture_;
     gint height_;
     gint width_;
@@ -76,10 +74,7 @@ private:
     float volume_;
     double currentVolume_;
     int monitor_;
-    bool lastSetMuteState_;
     bool paused_;
     bool MuteVideo;
-    double lastSetVolume_;
-    GstFlowReturn member_on_new_sample(GstAppSink *appsink);
-    static GstFlowReturn static_on_new_sample(GstAppSink *appsink, gpointer userdata);
+    bool hide_;
 };
