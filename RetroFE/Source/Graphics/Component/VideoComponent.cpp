@@ -38,6 +38,16 @@ VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& vi
 VideoComponent::~VideoComponent()
 {
     freeGraphicsMemory();
+
+    if(videoInst_)
+    {
+        if ( VideoFactory::canDelete( videoInst_ ) )
+        {
+            delete videoInst_;
+            Logger::write(Logger::ZONE_DEBUG, "Component", "Deleted - VideoC " + videoFile_);
+        }
+        videoInst_ = NULL;
+    }
 }
 
 
@@ -60,7 +70,7 @@ bool VideoComponent::update(float dt)
     if(isPlaying_)
     {
         if (baseViewInfo.Restart) {
-            restart();
+            videoInst_->restart();
             baseViewInfo.Restart = false;
         }
         if (videoInst_->getTexture()) 
@@ -115,15 +125,10 @@ void VideoComponent::freeGraphicsMemory()
     Component::freeGraphicsMemory();
     Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
     
-    if (videoInst_) 
-    {
-        VideoFactory::removeInstance(videoInst_);  // Inform VideoFactory about the instance removal.
-        delete videoInst_;
-        isPlaying_ = false;
-        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
-        videoInst_ = NULL;
-        
-    }
+    videoInst_->stop();
+    isPlaying_ = false;
+
+    Component::freeGraphicsMemory();
 }
 
 

@@ -415,8 +415,8 @@ void GStreamerVideo::update(float /* dt */)
                 }
                 else
                 {
-                                    guint8* yDataDst = (guint8*)mPixels;
-                guint8* uvDataDst = yDataDst + (mPitch * height_);
+                    guint8* yDataDst = (guint8*)mPixels;
+                    guint8* uvDataDst = yDataDst + (mPitch * height_);
                     // Check if block copy is possible
                     if (mPitch == yStride && (mPitch == uvStride * 2)) 
                     {
