@@ -26,16 +26,13 @@ IVideo *VideoFactory::instance_ = NULL;
 
 IVideo *VideoFactory::createVideo( int monitor, bool isTypeVideo, int numLoops )
 {
-    IVideo *instance = NULL;
-    if ( enabled_ && (!isTypeVideo || !instance_) )
+    GStreamerVideo *instance = NULL;
+    if (enabled_)
     {
         instance = new GStreamerVideo( monitor );
         instance->initialize();
-        if ( isTypeVideo )
-            instance_ = instance;
     }
-    if ( isTypeVideo )
-        instance = instance_;
+
 
     if (numLoops > 0 )
         ((GStreamerVideo *)(instance))->setNumLoops(numLoops);
@@ -55,10 +52,4 @@ void VideoFactory::setEnabled(bool enabled)
 void VideoFactory::setNumLoops(int numLoops)
 {
     numLoops_ = numLoops;
-}
-
-
-bool VideoFactory::canDelete( IVideo *instance )
-{
-    return ( instance != instance_ );
 }

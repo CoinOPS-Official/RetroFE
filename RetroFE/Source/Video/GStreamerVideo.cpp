@@ -54,7 +54,6 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , currentVolume_(0.0)
     , monitor_(monitor)
 	, MuteVideo(Configuration::MuteVideo)
-    , hide_(false)
 {
     paused_ = false;
 }
@@ -185,10 +184,6 @@ bool GStreamerVideo::stop()
     return true;
 }
 
-void GStreamerVideo::hide(bool hide)
-{
-    hide_ = hide;
-}
 
 bool GStreamerVideo::play(std::string file)
 {
@@ -409,8 +404,6 @@ void GStreamerVideo::update(float /* dt */)
 
 
     
-	if (!hide_)
-	{
         SDL_LockMutex(SDL::getMutex());
         if (!texture_ && width_ != 0 && height_ != 0)
         {
@@ -450,7 +443,7 @@ void GStreamerVideo::update(float /* dt */)
             videoBuffer_ = NULL;
         }
         SDL_UnlockMutex(SDL::getMutex());
-	}
+	
 
     
 	if(videoBus_)
@@ -474,6 +467,7 @@ void GStreamerVideo::update(float /* dt */)
             }
             else
             {
+                stop();
                 isPlaying_ = false;
             }
             gst_message_unref(msg);
@@ -598,7 +592,7 @@ void GStreamerVideo::restart( )
     if ( !isPlaying_ )
         return;
 
-    gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT ), 0 );
+    gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH), 0 );
 
 }
 

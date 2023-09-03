@@ -29,8 +29,7 @@ VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& vi
     , videoFile_(videoFile)
     , videoInst_(videoInst)
     , isPlaying_(false)
-    , initialLoad_ (true)
-    , hasPlayedOnce_ (false)
+    , hasPlayedOnce_(false)
 {
 //   AllocateGraphicsMemory();
 }
@@ -38,16 +37,6 @@ VideoComponent::VideoComponent(IVideo *videoInst, Page &p, const std::string& vi
 VideoComponent::~VideoComponent()
 {
     freeGraphicsMemory();
-
-    if(videoInst_)
-    {
-        if ( VideoFactory::canDelete( videoInst_ ) )
-        {
-            delete videoInst_;
-            Logger::write(Logger::ZONE_DEBUG, "Component", "Deleted - VideoC " + videoFile_);
-        }
-        videoInst_ = NULL;
-    }
 }
 
 
@@ -63,14 +52,14 @@ bool VideoComponent::update(float dt)
         // Mark this video as having played at least once.
         hasPlayedOnce_ = true;
 
-        // If it's the first time it's playing and Restart is true, we ignore it.
-        baseViewInfo.Restart = false;
     }
 
     if(isPlaying_)
     {
-        if (baseViewInfo.Restart) {
+        if (baseViewInfo.Restart && hasPlayedOnce_) {
             videoInst_->restart();
+            Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
+            
             baseViewInfo.Restart = false;
         }
         if (videoInst_->getTexture()) 
@@ -79,14 +68,14 @@ bool VideoComponent::update(float dt)
             {
                 if (baseViewInfo.Alpha == 0.0 && !isPaused())
                 {
-                    videoInst_->pause( );
-                    //Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+                    pause( );
+                    Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Paused " + Utils::getFileName(videoFile_));
                 }
                 if (baseViewInfo.Alpha != 0.0 && isPaused()) 
                 {
                     // unpause
-                    videoInst_->pause( );
-                    //Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+                    pause( );
+                    Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
                 }
             }
         }
@@ -118,6 +107,7 @@ void VideoComponent::allocateGraphicsMemory()
     }
 }
 
+
 void VideoComponent::freeGraphicsMemory()
 {
     //videoInst_->stop()
@@ -125,10 +115,14 @@ void VideoComponent::freeGraphicsMemory()
     Component::freeGraphicsMemory();
     Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
     
-    videoInst_->stop();
-    isPlaying_ = false;
-
-    Component::freeGraphicsMemory();
+    if (videoInst_) 
+    {
+        delete videoInst_;
+        isPlaying_ = false;
+        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
+        videoInst_ = NULL;
+        
+    }
 }
 
 
