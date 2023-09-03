@@ -26,7 +26,7 @@ IVideo *VideoFactory::instance_ = NULL;
 
 IVideo *VideoFactory::createVideo( int monitor, bool isTypeVideo, int numLoops )
 {
-    GStreamerVideo *instance = NULL;
+    IVideo *instance = NULL;
     if (enabled_)
     {
         instance = new GStreamerVideo( monitor );
