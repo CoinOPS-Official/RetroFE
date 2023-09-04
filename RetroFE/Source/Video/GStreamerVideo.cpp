@@ -57,6 +57,7 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , lastSetMuteState_(false)
     , monitor_(monitor)
 	, MuteVideo(Configuration::MuteVideo)
+    , busWatchId_(0)
 {
     paused_ = false;
     unsigned int contiguousCounter = 0;
@@ -77,33 +78,6 @@ void GStreamerVideo::setNumLoops(int n)
 SDL_Texture *GStreamerVideo::getTexture() const
 {
     return texture_;
-}
-
-void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata)
-{
-    GStreamerVideo *video = (GStreamerVideo *)userdata;
-    if (video && video->isPlaying_)
-    {
-        if (!video->frameReady_)
-        {
-            if (!video->width_ || !video->height_)
-            {
-                GstCaps *caps = gst_pad_get_current_caps(new_pad);
-                GstStructure *s = gst_caps_get_structure(caps, 0);
-                gst_structure_get_int(s, "width", &video->width_);
-                gst_structure_get_int(s, "height", &video->height_);
-                gst_caps_unref(caps);  // Don't forget to unref the caps
-            }
-            if (video->height_ && video->width_ && !video->videoBuffer_)
-            {
-                SDL_LockMutex(SDL::getMutex());
-                video->videoBuffer_ = gst_buffer_ref(buf);
-                video->frameReady_ = true;
-                SDL_UnlockMutex(SDL::getMutex());
-            }
-        }
-
-    }
 }
 
 
@@ -189,6 +163,34 @@ bool GStreamerVideo::stop()
     frameReady_ = false;
 
     return true;
+}
+
+
+void GStreamerVideo::freeElements()
+{
+    if(busWatchId_)
+    {
+        g_source_remove(busWatchId_);
+        busWatchId_ = 0;
+    }
+    if(videoBus_)
+    {
+        gst_object_unref(videoBus_);
+        videoBus_ = NULL;
+    }
+    if(playbin_)
+    {
+        gst_object_unref(playbin_);
+        playbin_ = NULL;
+    }
+    if(videoConvertCaps_)
+    {
+        gst_caps_unref(videoConvertCaps_);
+        videoConvertCaps_ = NULL;
+    }
+    videoSink_    = NULL;
+    videoConvert_ = NULL;
+    videoBin_     = NULL;
 }
 
 
@@ -288,12 +290,11 @@ bool GStreamerVideo::play(std::string file)
         }
         }), this);
 
-		videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+        videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+        busWatchId_ = gst_bus_add_watch(videoBus_, busCallback, this);
 
         g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, NULL);
         g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
-
-        
 
         /* Start playing */
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
@@ -317,44 +318,72 @@ bool GStreamerVideo::play(std::string file)
     return true;
 }
 
-void GStreamerVideo::freeElements()
+
+void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata)
 {
-    if(videoBus_)
+    GStreamerVideo *video = (GStreamerVideo *)userdata;
+    if (video && video->isPlaying_)
     {
-        gst_object_unref(videoBus_);
-        videoBus_ = NULL;
+        if (!video->frameReady_)
+        {
+            if (!video->width_ || !video->height_)
+            {
+                GstCaps *caps = gst_pad_get_current_caps(new_pad);
+                GstStructure *s = gst_caps_get_structure(caps, 0);
+                gst_structure_get_int(s, "width", &video->width_);
+                gst_structure_get_int(s, "height", &video->height_);
+                gst_caps_unref(caps);  // Don't forget to unref the caps
+            }
+            if (video->height_ && video->width_ && !video->videoBuffer_)
+            {
+                SDL_LockMutex(SDL::getMutex());
+                video->videoBuffer_ = gst_buffer_ref(buf);
+                video->frameReady_ = true;
+                SDL_UnlockMutex(SDL::getMutex());
+            }
+        }
+
     }
-    if(playbin_)
+}
+
+
+void GStreamerVideo::onEndOfStream()
+{
+    playCount_++;
+
+    // If the number of loops is 0 or greater than the current playCount_, seek the playback to the beginning.
+    if(!numLoops_ || numLoops_ > playCount_)
     {
-        gst_object_unref(playbin_);
-        playbin_ = NULL;
+        gst_element_seek(playbin_,
+                     1.0,
+                     GST_FORMAT_TIME,
+                     GST_SEEK_FLAG_FLUSH,
+                     GST_SEEK_TYPE_SET,
+                     0,
+                     GST_SEEK_TYPE_NONE,
+                     GST_CLOCK_TIME_NONE);
     }
-    if(videoConvertCaps_)
+    else
     {
-        gst_caps_unref(videoConvertCaps_);
-        videoConvertCaps_ = NULL;
+        stop();
     }
-    videoSink_    = NULL;
-    videoConvert_ = NULL;
-    videoBin_     = NULL;
 }
 
 
-int GStreamerVideo::getHeight()
+gboolean GStreamerVideo::busCallback(GstBus *bus, GstMessage *msg, gpointer data)
 {
-    return static_cast<int>(height_);
+    GStreamerVideo *video = static_cast<GStreamerVideo*>(data);
+    switch(GST_MESSAGE_TYPE(msg)) 
+    {
+        case GST_MESSAGE_EOS:
+            video->onEndOfStream();
+            break;
+        default:
+            break;
+    }
+    return TRUE;  // Keep the watch alive.
 }
 
-int GStreamerVideo::getWidth()
-{
-    return static_cast<int>(width_);
-}
-
-
-void GStreamerVideo::draw()
-{
-    frameReady_ = false;
-}
 
 void GStreamerVideo::update(float /* dt */)
 {
@@ -465,36 +494,24 @@ void GStreamerVideo::update(float /* dt */)
     }
 
     SDL_UnlockMutex(SDL::getMutex());
+   
+}
 
 
-    
-	if(videoBus_)
-    {
-        GstMessage *msg = gst_bus_pop_filtered(videoBus_, GST_MESSAGE_EOS);
-        if(msg)
-        {
-            playCount_++;
+int GStreamerVideo::getHeight()
+{
+    return static_cast<int>(height_);
+}
 
-            // If the number of loops is 0 or greater than the current playCount_, seek the playback to the beginning.
-            if(!numLoops_ || numLoops_ > playCount_)
-            {
-                gst_element_seek(playbin_,
-                             1.0,
-                             GST_FORMAT_TIME,
-                             GST_SEEK_FLAG_FLUSH,
-                             GST_SEEK_TYPE_SET,
-                             0,
-                             GST_SEEK_TYPE_NONE,
-                             GST_CLOCK_TIME_NONE);
-            }
-            else
-            {
-                stop();
-                isPlaying_ = false;
-            }
-            gst_message_unref(msg);
-        }
-    }
+int GStreamerVideo::getWidth()
+{
+    return static_cast<int>(width_);
+}
+
+
+void GStreamerVideo::draw()
+{
+    frameReady_ = false;
 }
 
 
@@ -531,6 +548,7 @@ void GStreamerVideo::skipForward( )
     gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT ), current );
 
 }
+
 
 void GStreamerVideo::skipBackward( )
 {
@@ -573,6 +591,7 @@ void GStreamerVideo::skipForwardp( )
     gst_element_seek_simple( playbin_, GST_FORMAT_TIME, GstSeekFlags( GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT ), current );
 
 }
+
 
 void GStreamerVideo::skipBackwardp( )
 {

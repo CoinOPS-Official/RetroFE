@@ -54,6 +54,8 @@ public:
 
 private:
     static void processNewBuffer (GstElement *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
+    static gboolean busCallback(GstBus *bus, GstMessage *msg, gpointer data);
+    void onEndOfStream();
     GstElement *playbin_;
     GstElement *videoBin_;
     GstElement *videoSink_;
@@ -78,4 +80,5 @@ private:
     bool MuteVideo;
     double lastSetVolume_;
     bool lastSetMuteState_;
+    guint busWatchId_;
 };
