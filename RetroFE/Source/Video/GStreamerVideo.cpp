@@ -334,7 +334,7 @@ void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *bu
                 gst_structure_get_int(s, "height", &video->height_);
                 gst_caps_unref(caps);  // Don't forget to unref the caps
             }
-            if (video->height_ && video->width_ && !video->videoBuffer_)
+            if ((video->height_ || video->width_) && !video->videoBuffer_)
             {
                 SDL_LockMutex(SDL::getMutex());
                 video->videoBuffer_ = gst_buffer_ref(buf);
@@ -389,6 +389,69 @@ void GStreamerVideo::update(float /* dt */)
 {
 	if(playbin_)
 	{
+        SDL_LockMutex(SDL::getMutex());
+        if (!texture_ && width_ != 0)
+        {
+            texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
+                                            SDL_TEXTUREACCESS_STREAMING, width_, height_);
+            SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+        }
+        
+         if (videoBuffer_)
+        {
+            gboolean is_contiguous = FALSE;
+            GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
+            unsigned int expected_y_stride = GST_ROUND_UP_4(width_);
+            unsigned int expected_uv_stride = GST_ROUND_UP_4(expected_y_stride);
+            unsigned int expected_uv_offset = height_ * expected_y_stride;
+            
+            if (meta)
+            {
+                if (meta->offset[0] == 0 && meta->stride[0] == expected_y_stride && 
+                    meta->stride[1] == expected_uv_stride && meta->offset[1] == expected_uv_offset)
+                {
+                    is_contiguous = TRUE;
+                }
+            }
+            if (is_contiguous) 
+            {
+                GstMapInfo bufInfo;
+                if (gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ)) 
+                {
+                    SDL_UpdateTexture(texture_, NULL, bufInfo.data, expected_y_stride);
+                    gst_buffer_unmap(videoBuffer_, &bufInfo);
+                }
+            }
+            else
+            {
+                GstMapInfo bufInfo;
+                void *y_plane, *uv_plane;
+                int y_stride, uv_stride;  // NV12 has only two planes
+                
+                // Default to normal stride if no meta
+                y_stride = meta ? meta->stride[0] : GST_ROUND_UP_4(width_);
+                uv_stride = meta ? meta->stride[1] : GST_ROUND_UP_4(y_stride);
+
+                // Map the buffer only once
+                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+
+                y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
+                uv_plane = bufInfo.data + (meta ? meta->offset[1] : width_ * height_);
+
+                SDL_UpdateNVTexture(texture_, NULL,
+                                    (const Uint8*)y_plane, y_stride,
+                                    (const Uint8*)uv_plane, uv_stride);
+
+                // Unmap the buffer only once
+                gst_buffer_unmap(videoBuffer_, &bufInfo);
+            }
+
+            gst_buffer_unref(videoBuffer_);
+            videoBuffer_ = NULL;
+        }
+        
+        SDL_UnlockMutex(SDL::getMutex());
+    
         bool shouldMute = false;
         double targetVolume = 0.0;
         if (MuteVideo)
@@ -420,82 +483,9 @@ void GStreamerVideo::update(float /* dt */)
             gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), shouldMute);
             lastSetMuteState_ = shouldMute;
         }
-	}
-
-    SDL_LockMutex(SDL::getMutex());
-    if (!texture_ && width_ != 0)
-    {
-        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
-                                        SDL_TEXTUREACCESS_STREAMING, width_, height_);
-        SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
     }
-    
-    if(videoBuffer_) {
-        void *pixels;
-        int pitch;
-        unsigned int vbytes = width_ * height_ * 3 / 2;
-        gsize bufSize = gst_buffer_get_size(videoBuffer_);
-
-        if (bufSize == vbytes) {
-            SDL_LockTexture(texture_, NULL, &pixels, &pitch);
-            gst_buffer_extract(videoBuffer_, 0, pixels, vbytes);
-            SDL_UnlockTexture(texture_);
-        } else {
-            GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
-            gboolean use_meta = FALSE;
-
-            if (meta) {
-                // Check for Y plane
-                if (meta->offset[0] != 0 || meta->stride[0] != width_) {
-                    use_meta = TRUE;
-                }
-                
-                // Check for UV plane (assuming NV12 format)
-                if (meta->stride[1] != width_ || meta->offset[1] != width_ * height_) {
-                    use_meta = TRUE;
-                }
-            }
-            if (!use_meta) {
-                GstMapInfo bufInfo;
-                unsigned int y_stride = GST_ROUND_UP_4(width_);
-                unsigned int uv_stride = GST_ROUND_UP_4(y_stride);  // Depending on padding, adjust this
-
-                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
-                const Uint8 *y_plane = bufInfo.data;
-                const Uint8 *uv_plane = y_plane + (height_ * y_stride);  // Start of UV data
-
-                SDL_UpdateNVTexture(texture_, NULL,
-                                    y_plane, y_stride,
-                                    uv_plane, uv_stride);
-                gst_buffer_unmap(videoBuffer_, &bufInfo);
-            } else {
-                GstMapInfo bufInfo;
-                void *y_plane, *uv_plane;
-                int y_stride = meta->stride[0];
-                int uv_stride = meta->stride[1];  // NV12 has only two planes
-
-                // Map the buffer only once
-                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
-
-                y_plane = bufInfo.data + meta->offset[0];
-                uv_plane = bufInfo.data + meta->offset[1];
-
-                SDL_UpdateNVTexture(texture_, NULL,
-                                    (const Uint8*)y_plane, y_stride,
-                                    (const Uint8*)uv_plane, uv_stride);
-
-                // Unmap the buffer only once
-                gst_buffer_unmap(videoBuffer_, &bufInfo);
-            }
-        }
-
-        gst_buffer_unref(videoBuffer_);
-        videoBuffer_ = NULL;
-    }
-
-    SDL_UnlockMutex(SDL::getMutex());
-   
 }
+
 
 
 int GStreamerVideo::getHeight()
