@@ -76,5 +76,6 @@ private:
     int monitor_;
     bool paused_;
     bool MuteVideo;
-    bool hide_;
+    double lastSetVolume_;
+    bool lastSetMuteState_;
 };

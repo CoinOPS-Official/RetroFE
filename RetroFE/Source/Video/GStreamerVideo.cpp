@@ -53,6 +53,8 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , numLoops_(0)
     , volume_(0.0)
     , currentVolume_(0.0)
+    , lastSetVolume_(0.0)
+    , lastSetMuteState_(false)
     , monitor_(monitor)
 	, MuteVideo(Configuration::MuteVideo)
 {
@@ -358,27 +360,37 @@ void GStreamerVideo::update(float /* dt */)
 {
 	if(playbin_)
 	{
-		if(MuteVideo)
-		{
-			// Keep the audio muted.
-			gst_stream_volume_set_mute( GST_STREAM_VOLUME( playbin_ ), true );
-		}
-		else
-		{
-			if(volume_ > 1.0)
-				volume_ = 1.0;
-			if ( currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_ )
-				currentVolume_ = volume_;
-			else
-				currentVolume_ += 0.005;
+        bool shouldMute = false;
+        double targetVolume = 0.0;
+        if (MuteVideo)
+        {
+            shouldMute = true;
+        }
+        else
+        {
+            if (volume_ > 1.0)
+                volume_ = 1.0;
+            if (currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_)
+                currentVolume_ = volume_;
+            else
+                currentVolume_ += 0.005;
+            targetVolume = static_cast<double>(currentVolume_);
+            if (currentVolume_ < 0.1)
+                shouldMute = true;
+        }
 
-			// Update the volume only if not muted.
-			gst_stream_volume_set_volume( GST_STREAM_VOLUME( playbin_ ), GST_STREAM_VOLUME_FORMAT_LINEAR, static_cast<double>(currentVolume_));
-			if(currentVolume_ < 0.1)
-				gst_stream_volume_set_mute( GST_STREAM_VOLUME( playbin_ ), true );
-			else
-				gst_stream_volume_set_mute( GST_STREAM_VOLUME( playbin_ ), false );
-		}
+        // Only set the volume if it has changed since the last call.
+        if (targetVolume != lastSetVolume_)
+        {
+            gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, targetVolume);
+            lastSetVolume_ = targetVolume;
+        }
+        // Only set the mute state if it has changed since the last call.
+        if (shouldMute != lastSetMuteState_)
+        {
+            gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), shouldMute);
+            lastSetMuteState_ = shouldMute;
+        }
 	}
 
     SDL_LockMutex(SDL::getMutex());
