@@ -385,106 +385,111 @@ gboolean GStreamerVideo::busCallback(GstBus *bus, GstMessage *msg, gpointer data
 }
 
 
-void GStreamerVideo::update(float /* dt */)
+void GStreamerVideo::update(float /* dt */) 
 {
-	if(playbin_)
+	if(!playbin_)
 	{
-        SDL_LockMutex(SDL::getMutex());
-        if (!texture_ && width_ != 0)
+		return;
+	}
+
+    SDL_LockMutex(SDL::getMutex());
+
+    if (!texture_ && width_ != 0) 
+    {
+        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
+                                    SDL_TEXTUREACCESS_STREAMING, width_, height_);
+        SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+    }
+
+    if (videoBuffer_) 
+    {
+        // Check buffer layout only once
+        if (bufferLayout_ == UNKNOWN)
         {
-            texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
-                                            SDL_TEXTUREACCESS_STREAMING, width_, height_);
-            SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
-        }
-        
-         if (videoBuffer_)
-        {
-            gboolean is_contiguous = FALSE;
             GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
             unsigned int expected_y_stride = GST_ROUND_UP_4(width_);
             unsigned int expected_uv_stride = GST_ROUND_UP_4(expected_y_stride);
             unsigned int expected_uv_offset = height_ * expected_y_stride;
             
-            if (meta)
+            if (meta && meta->offset[0] == 0 && meta->stride[0] == expected_y_stride && 
+                meta->stride[1] == expected_uv_stride && meta->offset[1] == expected_uv_offset)
             {
-                if (meta->offset[0] == 0 && meta->stride[0] == expected_y_stride && 
-                    meta->stride[1] == expected_uv_stride && meta->offset[1] == expected_uv_offset)
-                {
-                    is_contiguous = TRUE;
-                }
+                bufferLayout_ = CONTIGUOUS;
             }
-            if (is_contiguous) 
+            else 
             {
-                GstMapInfo bufInfo;
-                if (gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ)) 
-                {
-                    SDL_UpdateTexture(texture_, NULL, bufInfo.data, expected_y_stride);
-                    gst_buffer_unmap(videoBuffer_, &bufInfo);
-                }
+                bufferLayout_ = NON_CONTIGUOUS;
             }
-            else
-            {
-                GstMapInfo bufInfo;
-                void *y_plane, *uv_plane;
-                int y_stride, uv_stride;  // NV12 has only two planes
-                
-                // Default to normal stride if no meta
-                y_stride = meta ? meta->stride[0] : GST_ROUND_UP_4(width_);
-                uv_stride = meta ? meta->stride[1] : GST_ROUND_UP_4(y_stride);
-
-                // Map the buffer only once
-                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
-
-                y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
-                uv_plane = bufInfo.data + (meta ? meta->offset[1] : width_ * height_);
-
-                SDL_UpdateNVTexture(texture_, NULL,
-                                    (const Uint8*)y_plane, y_stride,
-                                    (const Uint8*)uv_plane, uv_stride);
-
-                // Unmap the buffer only once
-                gst_buffer_unmap(videoBuffer_, &bufInfo);
-            }
-
-            gst_buffer_unref(videoBuffer_);
-            videoBuffer_ = NULL;
         }
-        
-        SDL_UnlockMutex(SDL::getMutex());
-    
-        bool shouldMute = false;
-        double targetVolume = 0.0;
-        if (MuteVideo)
+
+        GstMapInfo bufInfo;
+        if (!gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
         {
-            shouldMute = true;
+            SDL_UnlockMutex(SDL::getMutex());
+            return; // Early exit if unable to map the buffer
         }
+
+        switch (bufferLayout_)
+        {
+        case CONTIGUOUS:
+            SDL_UpdateTexture(texture_, NULL, bufInfo.data, GST_ROUND_UP_4(width_));
+            break;
+
+        case NON_CONTIGUOUS:
+        {
+            GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
+            void *y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
+            void *uv_plane = bufInfo.data + (meta ? meta->offset[1] : width_ * height_);
+            int y_stride = meta ? meta->stride[0] : GST_ROUND_UP_4(width_);
+            int uv_stride = meta ? meta->stride[1] : GST_ROUND_UP_4(y_stride);
+            SDL_UpdateNVTexture(texture_, NULL, (const Uint8*)y_plane, y_stride, (const Uint8*)uv_plane, uv_stride);
+            break;
+        }
+        default:
+            // Should not reach here.
+            break;
+        }
+
+        gst_buffer_unmap(videoBuffer_, &bufInfo);
+        gst_buffer_unref(videoBuffer_);
+        videoBuffer_ = NULL;
+    }
+
+    SDL_UnlockMutex(SDL::getMutex());
+
+    bool shouldMute = false;
+    double targetVolume = 0.0;
+    if (MuteVideo)
+    {
+        shouldMute = true;
+    }
+    else
+    {
+        if (volume_ > 1.0)
+            volume_ = 1.0;
+        if (currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_)
+            currentVolume_ = volume_;
         else
-        {
-            if (volume_ > 1.0)
-                volume_ = 1.0;
-            if (currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_)
-                currentVolume_ = volume_;
-            else
-                currentVolume_ += 0.005;
-            targetVolume = static_cast<double>(currentVolume_);
-            if (currentVolume_ < 0.1)
-                shouldMute = true;
-        }
+            currentVolume_ += 0.005;
+        targetVolume = static_cast<double>(currentVolume_);
+        if (currentVolume_ < 0.1)
+            shouldMute = true;
+    }
 
-        // Only set the volume if it has changed since the last call.
-        if (targetVolume != lastSetVolume_)
-        {
-            gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, targetVolume);
-            lastSetVolume_ = targetVolume;
-        }
-        // Only set the mute state if it has changed since the last call.
-        if (shouldMute != lastSetMuteState_)
-        {
-            gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), shouldMute);
-            lastSetMuteState_ = shouldMute;
-        }
+    // Only set the volume if it has changed since the last call.
+    if (targetVolume != lastSetVolume_)
+    {
+        gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, targetVolume);
+        lastSetVolume_ = targetVolume;
+    }
+    // Only set the mute state if it has changed since the last call.
+    if (shouldMute != lastSetMuteState_)
+    {
+        gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), shouldMute);
+        lastSetMuteState_ = shouldMute;
     }
 }
+
 
 
 

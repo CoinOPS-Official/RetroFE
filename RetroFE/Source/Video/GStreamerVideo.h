@@ -53,6 +53,15 @@ public:
     bool isPaused( );
 
 private:
+        
+    enum BufferLayout {
+        UNKNOWN,        // Initial state
+        CONTIGUOUS,     // Contiguous buffer layout
+        NON_CONTIGUOUS  // Non-contiguous buffer layout
+    };
+    
+    BufferLayout bufferLayout_ = UNKNOWN;
+    
     static void processNewBuffer (GstElement *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
     static gboolean busCallback(GstBus *bus, GstMessage *msg, gpointer data);
     void onEndOfStream();
