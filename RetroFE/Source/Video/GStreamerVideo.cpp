@@ -58,6 +58,7 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , monitor_(monitor)
 	, MuteVideo(Configuration::MuteVideo)
     , busWatchId_(0)
+    , bufferLayout_(UNKNOWN)
 {
     paused_ = false;
     unsigned int contiguousCounter = 0;
