@@ -411,15 +411,18 @@ void GStreamerVideo::update(float /* dt */)
             unsigned int expected_y_stride = GST_ROUND_UP_4(width_);
             unsigned int expected_uv_stride = GST_ROUND_UP_4(expected_y_stride);
             unsigned int expected_uv_offset = height_ * expected_y_stride;
-            
-            if (meta && meta->offset[0] == 0 && meta->stride[0] == expected_y_stride && 
-                meta->stride[1] == expected_uv_stride && meta->offset[1] == expected_uv_offset)
+
+            // Assume CONTIGUOUS is more likely.
+            if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
+                meta->stride[1] != expected_uv_stride || meta->offset[1] != expected_uv_offset)
             {
-                bufferLayout_ = CONTIGUOUS;
+                bufferLayout_ = NON_CONTIGUOUS;
+                Logger::write(Logger::ZONE_DEBUG, "Video", "Buffer is Non-Contiguous");
             }
             else 
             {
-                bufferLayout_ = NON_CONTIGUOUS;
+                bufferLayout_ = CONTIGUOUS;
+                Logger::write(Logger::ZONE_DEBUG, "Video", "Buffer is Contiguous");
             }
         }
 
