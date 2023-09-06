@@ -56,15 +56,14 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , lastSetVolume_(0.0)
     , lastSetMuteState_(false)
     , monitor_(monitor)
-	, MuteVideo(Configuration::MuteVideo)
+    , elementSetupHandlerId_(0)
+    , handoffHandlerId_(0)
     , busWatchId_(0)
     , bufferLayout_(UNKNOWN)
 {
     paused_ = false;
-    unsigned int contiguousCounter = 0;
-    unsigned int metaCounter = 0;
-    time_t lastLogged = time(NULL);
 }
+
 GStreamerVideo::~GStreamerVideo()
 {
     stop();
@@ -114,19 +113,31 @@ bool GStreamerVideo::deInitialize()
 
 bool GStreamerVideo::stop()
 {
-
     paused_ = false;
 
     if(!initialized_)
     {
         return false;
     }
-    
-    if(videoSink_)
+
+    // Disable handoffs for videoSink
+    if (videoSink_) 
     {
         g_object_set(G_OBJECT(videoSink_), "signal-handoffs", FALSE, NULL);
     }
 
+    // Disconnect associated signals
+    if (playbin_ && elementSetupHandlerId_) {
+        g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
+        elementSetupHandlerId_ = 0;
+    }
+
+    if (videoSink_ && handoffHandlerId_) {
+        g_signal_handler_disconnect(videoSink_, handoffHandlerId_);
+        handoffHandlerId_ = 0;
+    }
+
+    // Set playbin state to GST_STATE_NULL
     if(playbin_)
     {
         GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_NULL);
@@ -144,18 +155,21 @@ bool GStreamerVideo::stop()
         }
     }
 
+    // Release SDL Texture
     if(texture_)
     {
         SDL_DestroyTexture(texture_);
         texture_ = NULL;
     }
 
+    // Unref the video buffer
     if(videoBuffer_)
     {
         gst_buffer_unref(videoBuffer_);
         videoBuffer_ = NULL;
     }
 
+    // Free GStreamer elements and related resources
     freeElements();
 
     isPlaying_ = false;
@@ -169,26 +183,35 @@ bool GStreamerVideo::stop()
 
 void GStreamerVideo::freeElements()
 {
+    // Remove the bus watch
     if(busWatchId_)
     {
         g_source_remove(busWatchId_);
         busWatchId_ = 0;
     }
+
+    // Unref the video bus
     if(videoBus_)
     {
         gst_object_unref(videoBus_);
         videoBus_ = NULL;
     }
+
+    // Unref the playbin
     if(playbin_)
     {
         gst_object_unref(playbin_);
         playbin_ = NULL;
     }
+
+    // Unref caps associated with video conversion
     if(videoConvertCaps_)
     {
         gst_caps_unref(videoConvertCaps_);
         videoConvertCaps_ = NULL;
     }
+
+    // Nullify video elements
     videoSink_    = NULL;
     videoConvert_ = NULL;
     videoBin_     = NULL;
@@ -197,128 +220,126 @@ void GStreamerVideo::freeElements()
 
 bool GStreamerVideo::play(std::string file)
 {
-
     playCount_ = 0;
 
     if(!initialized_)
-    {
         return false;
-    }
 
     currentFile_ = file;
 
-    //stop();
+    if(!initializeGstElements(file))
+        return false;
 
-    gchar *uriFile = gst_filename_to_uri (file.c_str(), NULL);
-    if(!uriFile)
+    // Start playing
+    GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
+    if (playState != GST_STATE_CHANGE_ASYNC)
     {
+        isPlaying_ = false;
+        Logger::write(Logger::ZONE_ERROR, "Video", "Unable to set the pipeline to the playing state.");
+        stop();
         return false;
     }
-    else
-    {
-        if(!playbin_)
-        {
-            playbin_ = gst_element_factory_make("playbin3", "player");
-            videoBin_ = gst_bin_new("SinkBin");
-            videoSink_ = gst_element_factory_make("fakesink", "video_sink");
-            videoConvert_ = gst_element_factory_make("videoconvert", "video_convert");
-            capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
-            videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
 
-            height_ = 0;
-            width_ = 0;
+    isPlaying_ = true;
 
-            if(!playbin_ || !videoSink_ || !videoConvert_ || !capsFilter_ || !videoConvertCaps_)
-            {
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not create elements");
-                freeElements();
-                return false;
-            }
-            g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, NULL);
-            g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, NULL);
-            
-            gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, NULL);
-            if (!gst_element_link_many(videoConvert_, capsFilter_, videoSink_, NULL))
-            {
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Could not link video processing elements");
-                freeElements();
-                return false;
-            }
-
-            GstPad *videoSinkPad = gst_element_get_static_pad(videoConvert_, "sink");
-            GstPad *ghostPad = gst_ghost_pad_new("sink", videoSinkPad);
-            gst_element_add_pad(videoBin_, ghostPad);
-
-            gst_object_unref(videoSinkPad);
-        }
-        
-        guint flags = (0x00000001 | 0x00000002 | 0x00000010);  // the audio and video flags
-        g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", flags, NULL);
-        g_free( uriFile );
-		
-		#ifdef WIN32
-		std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec"}; //add decoder names to disable when HardwareVideoAccel = false
-		bool HardwareVideoAccel = Configuration::HardwareVideoAccel;
-		if (!HardwareVideoAccel)
-		{
-			for (auto& pluginName : decoderPluginNames)
-			{
-			GstElementFactory *factory = gst_element_factory_find(pluginName.c_str());
-                if (factory)
-                {
-                    gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_NONE);
-                    g_object_unref(factory);
-                }
-			}
-		}
-		#endif
-        
-        g_signal_connect(playbin_, "element-setup", G_CALLBACK(+[](GstElement *playbin, GstElement *element, gpointer data) {
-        GStreamerVideo *video = static_cast<GStreamerVideo *>(data);
-
-        if (video)
-        {
-            gchar *elementName = gst_element_get_name(element);
-
-                if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265"))
-                {
-                    // Modify the properties of the avdec_h265 element here
-                    // set "thread-type" property to 2 and AvdecMaxThreads in settings.conf (defaults to 2)
-                    g_object_set(G_OBJECT(element), "thread-type", 2, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, NULL);
-                }
-
-            g_free(elementName);
-        }
-        }), this);
-
-        videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-        busWatchId_ = gst_bus_add_watch(videoBus_, busCallback, this);
-
-        g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, NULL);
-        g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
-
-        /* Start playing */
-        GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-        //gst_debug_bin_to_dot_file(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "pipeline");
-        if (playState != GST_STATE_CHANGE_ASYNC)
-        {
-            isPlaying_ = false;
-            std::stringstream ss;
-            ss << "Unable to set the pipeline to the playing state: ";
-            ss << playState;
-            Logger::write(Logger::ZONE_ERROR, "Video", ss.str());
-            freeElements();
-            return false;
-        }
-        isPlaying_ = true;
-    }
-
-    gst_stream_volume_set_volume( GST_STREAM_VOLUME( playbin_ ), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0 );
-    gst_stream_volume_set_mute( GST_STREAM_VOLUME( playbin_ ), true );
+    // Set the volume to zero and mute the video
+    gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
+    gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), true);
 
     return true;
 }
 
+bool GStreamerVideo::initializeGstElements(std::string file)
+{
+    gchar *uriFile = gst_filename_to_uri(file.c_str(), NULL);
+
+    if(!uriFile)
+        return false;
+
+    if(!playbin_)
+    {
+        if(!createAndLinkGstElements())
+        {
+            stop();
+            return false;
+        }
+    }
+
+    // Set properties of playbin and videoSink
+    const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002 | 0x00000010;
+    g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, NULL);
+    g_free(uriFile);
+    elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
+    videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+    busWatchId_ = gst_bus_add_watch(videoBus_, busCallback, this);
+    g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, NULL);
+    handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
+
+    return true;
+}
+
+bool GStreamerVideo::createAndLinkGstElements()
+{
+    playbin_ = gst_element_factory_make("playbin3", "player");
+    videoBin_ = gst_bin_new("SinkBin");
+    videoSink_ = gst_element_factory_make("fakesink", "video_sink");
+    videoConvert_ = gst_element_factory_make("videoconvert", "video_convert");
+    capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
+    videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+
+    if(!playbin_ || !videoSink_ || !videoConvert_ || !capsFilter_ || !videoConvertCaps_)
+    {
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Could not create elements");
+        return false;
+    }
+
+    g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, NULL);
+    g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, NULL);
+
+    gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, NULL);
+    if (!gst_element_link_many(videoConvert_, capsFilter_, videoSink_, NULL))
+    {
+        Logger::write(Logger::ZONE_DEBUG, "Video", "Could not link video processing elements");
+        return false;
+    }
+
+    GstPad *videoSinkPad = gst_element_get_static_pad(videoConvert_, "sink");
+    GstPad *ghostPad = gst_ghost_pad_new("sink", videoSinkPad);
+    gst_element_add_pad(videoBin_, ghostPad);
+    gst_object_unref(videoSinkPad);
+
+    return true;
+}
+
+
+void GStreamerVideo::elementSetupCallback(GstElement *playbin, GstElement *element, GStreamerVideo *video) {
+    #ifdef WIN32
+    bool hardwareVideoAccel = Configuration::HardwareVideoAccel;
+    if (!hardwareVideoAccel) {
+        std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec"};
+        for (const auto& pluginName : decoderPluginNames) {
+            GstElementFactory *factory = gst_element_factory_find(pluginName.c_str());
+            if (factory) {
+                gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_NONE);
+                g_object_unref(factory);
+            }
+        }
+    }
+    #endif
+
+    gchar *elementName = gst_element_get_name(element);
+    if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265")) {
+        #ifdef WIN32
+        if (!hardwareVideoAccel) {
+        #endif
+            // Modify the properties of the avdec_h265 element here
+            g_object_set(G_OBJECT(element), "thread-type", 2, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, NULL);
+        #ifdef WIN32
+        }
+        #endif
+    }
+    g_free(elementName);
+}
 
 void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata)
 {
@@ -343,7 +364,6 @@ void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *bu
                 SDL_UnlockMutex(SDL::getMutex());
             }
         }
-
     }
 }
 
@@ -460,10 +480,15 @@ void GStreamerVideo::update(float /* dt */)
     }
 
     SDL_UnlockMutex(SDL::getMutex());
+    volumeUpdate();
+}
 
+void GStreamerVideo::volumeUpdate()
+{    
     bool shouldMute = false;
     double targetVolume = 0.0;
-    if (MuteVideo)
+    bool muteVideo = Configuration::MuteVideo;
+    if (muteVideo)
     {
         shouldMute = true;
     }
@@ -493,8 +518,6 @@ void GStreamerVideo::update(float /* dt */)
         lastSetMuteState_ = shouldMute;
     }
 }
-
-
 
 
 int GStreamerVideo::getHeight()

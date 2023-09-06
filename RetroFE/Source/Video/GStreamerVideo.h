@@ -35,6 +35,7 @@ public:
     bool deInitialize();
     SDL_Texture *getTexture() const;
     void update(float dt);
+    void volumeUpdate();
     void draw();
     void setNumLoops(int n);
     void freeElements();
@@ -63,7 +64,10 @@ private:
     BufferLayout bufferLayout_ = UNKNOWN;
     
     static void processNewBuffer (GstElement *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
+    static void elementSetupCallback(GstElement *playbin, GstElement *element, GStreamerVideo *video);
     static gboolean busCallback(GstBus *bus, GstMessage *msg, gpointer data);
+    bool initializeGstElements(std::string file);
+    bool createAndLinkGstElements();
     void onEndOfStream();
     GstElement *playbin_;
     GstElement *videoBin_;
@@ -73,6 +77,8 @@ private:
     GstCaps *videoConvertCaps_;
     GstBus *videoBus_;
     SDL_Texture* texture_;
+    gulong elementSetupHandlerId_;
+    gulong handoffHandlerId_;
     gint height_;
     gint width_;
     GstBuffer *videoBuffer_;
@@ -86,7 +92,6 @@ private:
     double currentVolume_;
     int monitor_;
     bool paused_;
-    bool MuteVideo;
     double lastSetVolume_;
     bool lastSetMuteState_;
     guint busWatchId_;
