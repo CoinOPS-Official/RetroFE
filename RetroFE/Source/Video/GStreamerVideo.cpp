@@ -66,7 +66,7 @@ GStreamerVideo::GStreamerVideo( int monitor )
 
 GStreamerVideo::~GStreamerVideo()
 {
-    stop();
+    GStreamerVideo::stop();
 }
 
 void GStreamerVideo::setNumLoops(int n)
