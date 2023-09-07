@@ -455,30 +455,65 @@ void GStreamerVideo::update(float /* dt */)
 
         switch (bufferLayout_)
         {
-        case CONTIGUOUS:
-            SDL_UpdateTexture(texture_, NULL, bufInfo.data, GST_ROUND_UP_4(width_));
-            break;
+            case CONTIGUOUS:
+            {
+                // Directly lock the texture for the entire area
+                Uint8 *texture_pixels;
+                int texture_pitch;
+                if (SDL_LockTexture(texture_, NULL, (void**)&texture_pixels, &texture_pitch) < 0) {
+                    Logger::write(Logger::ZONE_ERROR, "Video", "Unable to lock texture");
+                    break;
+                }
 
-        case NON_CONTIGUOUS:
-        {
-            GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
-            void *y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
-            void *uv_plane = bufInfo.data + (meta ? meta->offset[1] : width_ * height_);
-            int y_stride = meta ? meta->stride[0] : GST_ROUND_UP_4(width_);
-            int uv_stride = meta ? meta->stride[1] : GST_ROUND_UP_4(y_stride);
-            SDL_UpdateNVTexture(texture_, NULL, (const Uint8*)y_plane, y_stride, (const Uint8*)uv_plane, uv_stride);
-            break;
-        }
-        default:
-            // Should not reach here.
-            break;
+                // Pointers to Y and UV planes in the source buffer
+                const Uint8 *src_y = (const Uint8 *)bufInfo.data;
+                const Uint8 *src_uv = src_y + GST_ROUND_UP_4(width_) * height_;
+
+                // Pointers to Y and UV planes in the texture
+                Uint8 *dst_y = texture_pixels;
+                Uint8 *dst_uv = dst_y + texture_pitch * height_;
+
+                // Y plane copying
+                for (int i = height_; i--;) {
+                    SDL_memcpy(dst_y, src_y, width_);
+                    src_y += GST_ROUND_UP_4(width_);
+                    dst_y += texture_pitch;
+                }
+
+                // UV plane copying (NV12 specific)
+                int uv_height = (height_ + 1) / 2;
+                int uv_width = ((width_ + 1) / 2) * 2;
+                int uv_src_pitch = ((GST_ROUND_UP_4(width_) + 1) / 2) * 2;
+                for (int i = uv_height; i--;) {
+                    SDL_memcpy(dst_uv, src_uv, uv_width);
+                    src_uv += uv_src_pitch;
+                    dst_uv += texture_pitch;
+                }
+
+                SDL_UnlockTexture(texture_);
+                break;
+            }
+
+            case NON_CONTIGUOUS:
+            {
+                GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
+                void *y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
+                void *uv_plane = bufInfo.data + (meta ? meta->offset[1] : width_ * height_);
+                int y_stride = meta ? meta->stride[0] : GST_ROUND_UP_4(width_);
+                int uv_stride = meta ? meta->stride[1] : GST_ROUND_UP_4(y_stride);
+                SDL_UpdateNVTexture(texture_, NULL, (const Uint8*)y_plane, y_stride, (const Uint8*)uv_plane, uv_stride);
+                break;
+            }
+            
+            default:
+                // Should not reach here.
+                break;
         }
 
         gst_buffer_unmap(videoBuffer_, &bufInfo);
         gst_buffer_unref(videoBuffer_);
         videoBuffer_ = NULL;
     }
-
     SDL_UnlockMutex(SDL::getMutex());
     volumeUpdate();
 }
