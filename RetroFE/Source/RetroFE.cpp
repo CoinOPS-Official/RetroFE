@@ -2309,13 +2309,23 @@ CollectionInfo *RetroFE::getCollection(std::string collectionName)
         collection->sortItems();
     }
 
+    else {
+        // Sort items based on 'ctrlType'
+        collection->customSortAllItems();  // No need to pass sortType
+    }
     // build collection menu if menu.txt exists
     MenuParser mp;
     mp.buildMenuItems(collection, menuSort);
-
-    // adds items to "all" list except those found in "exclude_all.txt"
+    // Adds items to "all" list except those found in "exclude_all.txt"
     cib.addPlaylists(collection);
-    collection->sortPlaylists();
+
+    if (!menuSort) {
+        collection->customSortAllItems();  // No need to pass sortType
+        // Potentially add logic to sort other playlists here
+    }
+    else {
+        collection->sortPlaylists();
+    }
 
     // Add extra info, if available
     for ( std::vector<Item *>::iterator it = collection->items.begin( ); it != collection->items.end( ); it++ )

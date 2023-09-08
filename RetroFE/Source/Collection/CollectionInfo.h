@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <unordered_map>
 
 class Item;
 class Configuration;
@@ -50,6 +51,16 @@ public:
     bool subsSplit;
     bool hasSubs;
     bool sortDesc;
+
+    std::map<std::string, std::vector<std::string>> playlistOrders;
+    void readPlaylistFile(const std::string& playlistName);
+    std::vector<std::string> playlistOrder;
+    void readAllPlaylistFiles();
+    void customSortAllItems();
+    int findInPlaylistOrder(const std::string& itemName, const std::vector<std::string>& playlistOrder);
+    void customSortPlaylist(const std::string& playlistName, std::vector<Item*>* playlist);
+    void customSort(std::vector<Item*>& itemsToSort, const std::unordered_map<std::string, std::size_t>& orderIndices, const std::string& mainCollectionName);
+
 private:
     Configuration& conf_;
     std::string metadataPath_;

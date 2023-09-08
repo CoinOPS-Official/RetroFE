@@ -20,6 +20,8 @@
 #include <string>
 #include <map>
 #include <vector>
+#include "Item.h"
+#include "../RetroFE.h"
 
 class Configuration;
 class CollectionInfo;
@@ -48,4 +50,5 @@ private:
     void AddToPlayCount(Item* item);
     std::map<std::string, Item*> ImportPlayCount(std::string file);
     void ImportRomDirectory(std::string path, CollectionInfo *info, std::map<std::string, Item *> includeFilter, std::map<std::string, Item *> excludeFilter, bool romHierarchy, bool emuarc);
+    RetroFE* retroFEInstance;
 };

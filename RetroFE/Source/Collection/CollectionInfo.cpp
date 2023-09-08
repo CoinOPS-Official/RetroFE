@@ -24,6 +24,9 @@
 #include <exception>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unordered_map>
+#include <dirent.h>
+#include <string>
 
 #ifdef _WIN32
 #include <Windows.h>
@@ -234,4 +237,126 @@ void CollectionInfo::sortPlaylists()
         }
     }
     sortType = "";
+}
+
+int CollectionInfo::findInPlaylistOrder(const std::string& itemName, const std::vector<std::string>& playlistOrder)
+{
+    auto it = std::find(playlistOrder.begin(), playlistOrder.end(), itemName);
+    if (it != playlistOrder.end())
+        return static_cast<int>(std::distance(playlistOrder.begin(), it));
+    return INT_MAX;
+}
+
+std::unordered_map<std::string, std::vector<std::string>> playlistOrders;
+void CollectionInfo::readPlaylistFile(const std::string& playlistName) {
+    std::string playlistFilePath = Utils::combinePath(Configuration::absolutePath, "collections", name, "playlists", playlistName + ".txt");
+    std::ifstream filestream(playlistFilePath);
+    if (!filestream.is_open()) {
+        Logger::write(Logger::ZONE_WARNING, "Collection", "Could not open playlist file: " + playlistFilePath);
+        return;
+    }
+    std::string line;
+    while (std::getline(filestream, line)) {
+        line = Utils::trimEnds(line);
+        playlistOrders[playlistName].push_back(line);
+    }
+    filestream.close();
+}
+
+void CollectionInfo::readAllPlaylistFiles() {
+    if (!playlistOrders.empty()) {
+        return;
+    }
+    playlistOrders.clear();
+    std::string playlistFolderPath = Utils::combinePath(Configuration::absolutePath, "collections", name, "playlists");
+    DIR* dir;
+    struct dirent* entry;
+    dir = opendir(playlistFolderPath.c_str());
+    if (dir == nullptr) {
+        Logger::write(Logger::ZONE_WARNING, "Collection", "Could not open playlist folder: " + playlistFolderPath);
+        return;
+    }
+    while ((entry = readdir(dir)) != nullptr) {
+        std::string fileName = entry->d_name;
+        std::string fileExtension = fileName.substr(fileName.find_last_of(".") + 1);
+        if (fileExtension == "txt") {
+            std::string playlistName = fileName.substr(0, fileName.find_last_of("."));
+            Logger::write(Logger::ZONE_INFO, "Collection", "Reading playlist file: " + playlistName);
+            readPlaylistFile(playlistName);
+        }
+    }
+    closedir(dir);
+}
+
+void CollectionInfo::customSort(std::vector<Item*>& itemsToSort, const std::unordered_map<std::string, std::size_t>& orderIndices, const std::string& mainCollectionName) {
+    std::vector<Item*> inPlaylist;
+    std::vector<Item*> notInPlaylist;
+    for (Item* item : itemsToSort) {
+        std::string itemName = item->name;
+        if (item->collectionInfo->name != this->name) {
+            itemName = "_" + item->collectionInfo->name + ":" + itemName;
+        }
+        auto it = orderIndices.find(itemName);
+        if (it != orderIndices.end()) {
+            inPlaylist.push_back(item);
+        }
+        else {
+            notInPlaylist.push_back(item);
+        }
+    }
+    std::sort(inPlaylist.begin(), inPlaylist.end(),
+        [&orderIndices, &mainCollectionName](const Item* a, const Item* b) {
+            std::string aName = a->name;
+            if (a->collectionInfo->name != mainCollectionName) {
+                aName = "_" + a->collectionInfo->name + ":" + a->name;
+            }
+            std::string bName = b->name;
+            if (b->collectionInfo->name != mainCollectionName) {
+                bName = "_" + b->collectionInfo->name + ":" + b->name;
+            }
+            std::size_t aIndex = orderIndices.count(aName) > 0 ? orderIndices.at(aName) : std::numeric_limits<std::size_t>::max();
+            std::size_t bIndex = orderIndices.count(bName) > 0 ? orderIndices.at(bName) : std::numeric_limits<std::size_t>::max();
+            return aIndex < bIndex;
+        }
+    );
+    if (!std::is_sorted(notInPlaylist.begin(), notInPlaylist.end(), [](const Item* a, const Item* b) { return a->name < b->name; })) {
+        std::sort(notInPlaylist.begin(), notInPlaylist.end(), [](const Item* a, const Item* b) { return a->name < b->name; });
+    }
+    inPlaylist.reserve(inPlaylist.size() + notInPlaylist.size());
+    std::copy(notInPlaylist.begin(), notInPlaylist.end(), std::back_inserter(inPlaylist));
+    itemsToSort.swap(inPlaylist);
+}
+
+void CollectionInfo::customSortPlaylist(const std::string& playlistName, std::vector<Item*>* playlist) {
+
+    // Attempt to sort by the attribute specified in playlistName
+    if (!playlist->empty() && !playlist->at(0)->getMetaAttribute(playlistName).empty() && playlistName != "lastplayed") {
+
+        // Sorting by custom attribute based on the playlist name
+        std::sort(playlist->begin(), playlist->end(), itemIsLess(playlistName));
+
+        return;
+    }
+    else {
+        if (playlistOrders.find(playlistName) == playlistOrders.end()) {
+            return;
+        }
+        const auto& playlistOrder = playlistOrders[playlistName];
+        std::unordered_map<std::string, std::size_t> playlistOrderIndices;
+        for (std::size_t i = 0; i < playlistOrder.size(); ++i) {
+            playlistOrderIndices[playlistOrder[i]] = i;
+        }
+        customSort(*playlist, playlistOrderIndices, this->name);
+    }
+}
+
+void CollectionInfo::customSortAllItems() {
+
+    readAllPlaylistFiles();
+
+    for (auto it = playlistOrders.begin(); it != playlistOrders.end(); ++it) {
+        std::string playlistName = it->first;
+        customSortPlaylist(playlistName, &items); // Assuming items is the vector you want to sort. Adjust as needed.
+    }
+
 }
