@@ -431,7 +431,7 @@ void GStreamerVideo::update(float /* dt */)
             GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
             gint expected_y_stride = GST_ROUND_UP_4(width_);
             gint expected_uv_stride = GST_ROUND_UP_4(expected_y_stride);
-            gint expected_uv_offset = height_ * expected_y_stride;
+            gsize expected_uv_offset = height_ * expected_y_stride;
 
             // Assume CONTIGUOUS is more likely.
             if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
