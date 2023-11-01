@@ -391,7 +391,7 @@ std::string ReloadableText::getTimeSince(std::string sinceTimestamp)
         std::tm tempTm2 = tm2;
 
         while (tempTm2.tm_mon != tm1.tm_mon) {
-            tempT2 += 24 * 60 * 60;  // Add 1 day
+            tempT2 += static_cast<time_t>(24 * 60 * 60);
             tempTm2 = *std::localtime(&tempT2);
             daysDiff += tempTm2.tm_mday;  // Add the number of days in the current month
         }
@@ -402,7 +402,7 @@ std::string ReloadableText::getTimeSince(std::string sinceTimestamp)
             int totalDaysDiff = 0;
 
             while (tempTm2.tm_year != tm1.tm_year || tempTm2.tm_mon != tm1.tm_mon) {
-                tempT2 += 24 * 60 * 60;  // Add 1 day
+                tempT2 += static_cast<time_t>(24 * 60 * 60);
                 tempTm2 = *std::localtime(&tempT2);
                 totalDaysDiff++;
             }

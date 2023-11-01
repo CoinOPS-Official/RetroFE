@@ -700,7 +700,10 @@ void ReloadableScrollingText::draw( )
                 }
                 if (alignment_ == "centered")
                 {
-                    rect.x = static_cast<int>( xOrigin + imageMaxWidth / 2 - textWidth[l] / 2 - (textWords[l] - 1) * spaceWidth * scale / 2 );
+                    float centeredAlignX = xOrigin + static_cast<float>(imageMaxWidth) / 2.0f
+                        - static_cast<float>(textWidth[l]) / 2.0f
+                        - (textWords[l] - 1) * spaceWidth * scale / 2.0f;
+                    rect.x = static_cast<int>(std::round(centeredAlignX));
                 }
 
                 std::istringstream iss(text[l]);

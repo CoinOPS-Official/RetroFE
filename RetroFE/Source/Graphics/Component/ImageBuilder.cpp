@@ -20,7 +20,7 @@
 
 Image * ImageBuilder::CreateImage(const std::string& path, Page &p, const std::string& name, int monitor, bool additive)
 {
-    Image *image = NULL;
+    Image *image = nullptr;
     static std::vector<std::string> extensions = {
         "png", "PNG", "jpg", "JPG", "jpeg", "JPEG"
     };
