@@ -261,8 +261,10 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
     memset(&applicationName, 0, sizeof(applicationName));
     memset(&startupInfo, 0, sizeof(startupInfo));
     memset(&processInfo, 0, sizeof(processInfo));
-    strncpy(applicationName, executionString.c_str(), sizeof(applicationName));
-    strncpy(currDir, currentDirectory.c_str(), sizeof(currDir));
+    strncpy(applicationName, executionString.c_str(), sizeof(applicationName) - 1);
+    applicationName[sizeof(applicationName) - 1] = '\0';
+    strncpy(currDir, currentDirectory.c_str(), sizeof(currDir) - 1);
+    currDir[sizeof(currDir) - 1] = '\0';
     startupInfo.dwFlags = STARTF_USESTDHANDLES;
     startupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
     startupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);

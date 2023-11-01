@@ -96,7 +96,7 @@ void Image::draw()
 
     if(texture_)
     {
-        SDL_Rect rect;
+        SDL_Rect rect = { 0, 0, 0, 0 };
 
         rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
         rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());

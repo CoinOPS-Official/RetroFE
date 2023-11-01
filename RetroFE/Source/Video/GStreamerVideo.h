@@ -91,6 +91,5 @@ private:
     bool paused_;
     double lastSetVolume_;
     bool lastSetMuteState_;
-    guint busWatchId_;
     BufferLayout bufferLayout_ = UNKNOWN;
 };

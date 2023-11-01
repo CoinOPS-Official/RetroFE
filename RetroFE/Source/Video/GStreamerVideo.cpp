@@ -25,6 +25,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <vector>
+#include <glib-object.h>
 #include <SDL2/SDL.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -123,7 +124,7 @@ bool GStreamerVideo::stop()
     // Disable handoffs for videoSink
     if (videoSink_) 
     {
-        g_object_set(G_OBJECT(videoSink_), "signal-handoffs", FALSE, NULL);
+        g_object_set(G_OBJECT(videoSink_), "signal-handoffs", false, nullptr);
     }
 
     // Disconnect associated signals
@@ -260,11 +261,11 @@ bool GStreamerVideo::initializeGstElements(std::string file)
 
     // Set properties of playbin and videoSink
     const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002 | 0x00000010;
-    g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, NULL);
+    g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", true, "flags", PLAYBIN_FLAGS, nullptr);
     g_free(uriFile);
     elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
     videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-    g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, NULL);
+    g_object_set(G_OBJECT(videoSink_), "signal-handoffs", true, nullptr);
     handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
 
     return true;
@@ -285,11 +286,11 @@ bool GStreamerVideo::createAndLinkGstElements()
         return false;
     }
 
-    g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, NULL);
-    g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, NULL);
+    g_object_set(G_OBJECT(videoSink_), "sync", true, "qos", false, nullptr);
+    g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, nullptr);
 
-    gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, NULL);
-    if (!gst_element_link_many(videoConvert_, capsFilter_, videoSink_, NULL))
+    gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, nullptr);
+    if (!gst_element_link_many(videoConvert_, capsFilter_, videoSink_, nullptr))
     {
         Logger::write(Logger::ZONE_DEBUG, "Video", "Could not link video processing elements");
         return false;
@@ -325,7 +326,7 @@ void GStreamerVideo::elementSetupCallback(GstElement *playbin, GstElement *eleme
         if (!hardwareVideoAccel) {
         #endif
             // Modify the properties of the avdec_h265 element here
-            g_object_set(G_OBJECT(element), "thread-type", 2, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, NULL);
+            g_object_set(G_OBJECT(element), "thread-type", 2, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
         #ifdef WIN32
         }
         #endif
@@ -384,7 +385,7 @@ void GStreamerVideo::update(float /* dt */)
             GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
             gint expected_y_stride = width_;
             gint expected_uv_stride = expected_y_stride;
-            gsize expected_uv_offset = height_ * expected_y_stride;
+            gsize expected_uv_offset = static_cast<gsize>(height_) * expected_y_stride;
 
             // Assume CONTIGUOUS is more likely.
             if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
@@ -412,7 +413,7 @@ void GStreamerVideo::update(float /* dt */)
             case CONTIGUOUS:
             {
                 // Directly lock the texture for the entire area
-                Uint8 *texture_pixels;
+                Uint8* texture_pixels = nullptr;
                 int texture_pitch;
                 if (SDL_LockTexture(texture_, NULL, (void**)&texture_pixels, &texture_pitch) < 0) {
                     Logger::write(Logger::ZONE_ERROR, "Video", "Unable to lock texture");
@@ -452,7 +453,7 @@ void GStreamerVideo::update(float /* dt */)
             {
                 GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
                 void *y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
-                void *uv_plane = bufInfo.data + (meta ? meta->offset[1] : width_ * height_);
+                void* uv_plane = bufInfo.data + (meta ? meta->offset[1] : static_cast<ptrdiff_t>(width_) * height_);
                 int y_stride = meta ? meta->stride[0] : GST_ROUND_UP_4(width_);
                 int uv_stride = meta ? meta->stride[1] : GST_ROUND_UP_4(y_stride);
                 SDL_UpdateNVTexture(texture_, NULL, (const Uint8*)y_plane, y_stride, (const Uint8*)uv_plane, uv_stride);

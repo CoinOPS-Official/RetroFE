@@ -490,7 +490,7 @@ void ReloadableScrollingText::draw( )
         float xOrigin = baseViewInfo.XRelativeToOrigin( );
         float yOrigin = baseViewInfo.YRelativeToOrigin( );
 
-        SDL_Rect rect;
+        SDL_Rect rect = { 0, 0, 0, 0 };
 
         float position = 0.0f;
 

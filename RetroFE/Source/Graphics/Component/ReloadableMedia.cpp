@@ -37,7 +37,7 @@ ReloadableMedia::ReloadableMedia(Configuration &config, bool systemMode, bool la
     , commonMode_(commonMode)
     , menuMode_(menuMode)
     , loadedComponent_(NULL)
-    , videoInst_(NULL)
+    //, videoInst_(NULL)
     , isVideo_(isVideo)
     , FfntInst_(font)
     , textFallback_(false)

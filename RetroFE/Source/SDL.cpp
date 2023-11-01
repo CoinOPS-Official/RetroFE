@@ -439,14 +439,14 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
         viewInfo.ContainerHeight = static_cast<float>( layoutHeight );
     }
 
-    SDL_Rect srcRect;
-    SDL_Rect dstRect;
-    SDL_Rect srcRectCopy;
-    SDL_Rect dstRectCopy;
-    SDL_Rect srcRectOrig;
-    SDL_Rect dstRectOrig;
-    double   imageScaleX;
-    double   imageScaleY;
+    SDL_Rect srcRect = { 0, 0, 0, 0 };
+    SDL_Rect dstRect = { 0, 0, 0, 0 };
+    SDL_Rect srcRectCopy = { 0, 0, 0, 0 };
+    SDL_Rect dstRectCopy = { 0, 0, 0, 0 };
+    SDL_Rect srcRectOrig = { 0, 0, 0, 0 };
+    SDL_Rect dstRectOrig = { 0, 0, 0, 0 };
+    double   imageScaleX = 1.0;
+    double   imageScaleY = 1.0;
 
     dstRect.w = dest->w;
     dstRect.h = dest->h;

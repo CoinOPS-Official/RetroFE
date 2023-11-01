@@ -58,13 +58,13 @@ private:
     bool menuMode_;
     int randomSelect_;
     Component* loadedComponent_;
-    IVideo* videoInst_;
+    //IVideo* videoInst_;
     bool isVideo_;
     Font* FfntInst_;
     bool textFallback_;
     std::string type_;
     std::string currentCollection_;
-    Page* page_;
+    //Page* page_;
     int displayOffset_;
     std::string imageType_;
     bool jukebox_;

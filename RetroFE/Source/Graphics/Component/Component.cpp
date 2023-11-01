@@ -221,7 +221,7 @@ void Component::draw()
 
     if ( backgroundTexture_ )
     {
-        SDL_Rect rect;
+        SDL_Rect rect = { 0, 0, 0, 0 };
         rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
         rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
         rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
