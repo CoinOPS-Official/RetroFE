@@ -28,8 +28,8 @@ VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monito
     : Component(p)
     , videoFile_(videoFile)
     , videoInst_(NULL)
-    , numLoops_(numLoops)
     , isPlaying_(false)
+    , numLoops_(numLoops)
     , hasPlayedOnce_(false)
     , monitor_(monitor)
 {
@@ -134,7 +134,7 @@ void VideoComponent::freeGraphicsMemory()
 
 void VideoComponent::draw()
 {
-    SDL_Rect rect;
+    SDL_Rect rect = { 0, 0, 0, 0 };
 
     rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
     rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
