@@ -17,20 +17,17 @@
 #include "AnimationEvents.h"
 #include <string>
 
-
-
 AnimationEvents::AnimationEvents()
 {
 }
 
-AnimationEvents::AnimationEvents(AnimationEvents &copy)
+AnimationEvents::AnimationEvents(AnimationEvents& copy)
 {
-    for(std::map<std::string, std::map<int , Animation *> >::iterator it = copy.animationMap_.begin(); it != copy.animationMap_.end(); it++)
+    for (const auto& outerPair : copy.animationMap_)
     {
-        for(std::map<int, Animation *>::iterator it2 = (it->second).begin(); it2 != (it->second).end(); it2++)
+        for (const auto& innerPair : outerPair.second)
         {
-            Animation *t = new Animation(*it2->second);
-            animationMap_[it->first][it2->first] = t;
+            animationMap_[outerPair.first][innerPair.first] = new Animation(*innerPair.second);
         }
     }
 }
@@ -40,42 +37,60 @@ AnimationEvents::~AnimationEvents()
     clear();
 }
 
-Animation *AnimationEvents::getAnimation(const std::string& tween)
+Animation* AnimationEvents::getAnimation(const std::string& tween)
 {
     return getAnimation(tween, -1);
 }
 
-Animation *AnimationEvents::getAnimation(const std::string& tween, int index)
+Animation* AnimationEvents::getAnimation(const std::string& tween, int index)
 {
-    if(animationMap_[tween].find(-1) == animationMap_[tween].end())
+    auto outerIt = animationMap_.find(tween);
+
+    // If tween not found, create a new Animation and return it
+    if (outerIt == animationMap_.end())
     {
         animationMap_[tween][-1] = new Animation();
+        return animationMap_[tween][-1];
     }
 
-    if(animationMap_[tween].find(index) == animationMap_[tween].end())
+    auto& innerMap = outerIt->second;
+    auto innerIt = innerMap.find(index);
+
+    // If index not found, return the Animation at -1; 
+    // if -1 also doesn't exist, create it
+    if (innerIt == innerMap.end())
     {
-        index = -1;
+        if (innerMap.find(-1) == innerMap.end())
+        {
+            innerMap[-1] = new Animation();
+        }
+        return innerMap[-1];
     }
 
-    return animationMap_[tween][index];
+    return innerIt->second;
 }
 
-
-void AnimationEvents::setAnimation(const std::string& tween, int index, Animation *animation)
+void AnimationEvents::setAnimation(const std::string& tween, int index, Animation* animation)
 {
-    if(animationMap_[tween].find(index) != animationMap_[tween].end())
+    auto outerIt = animationMap_.find(tween);
+    if (outerIt != animationMap_.end())
     {
-        delete animationMap_[tween][index];
+        auto& innerMap = outerIt->second;
+        auto innerIt = innerMap.find(index);
+        if (innerIt != innerMap.end())
+        {
+            delete innerIt->second;
+            innerMap.erase(innerIt);
+        }
     }
     animationMap_[tween][index] = animation;
 }
 
-
 void AnimationEvents::clear()
 {
-    for (auto &outerPair : animationMap_)
+    for (auto& outerPair : animationMap_)
     {
-        for (auto &innerPair : outerPair.second)
+        for (auto& innerPair : outerPair.second)
         {
             delete innerPair.second;
         }

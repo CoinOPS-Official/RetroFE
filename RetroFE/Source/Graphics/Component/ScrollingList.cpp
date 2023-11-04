@@ -70,9 +70,9 @@ ScrollingList::ScrollingList( Configuration &c,
     , fontInst_( font )
     , layoutKey_( layoutKey )
     , imageType_( imageType )
+    , textFallback_(true)
     , videoType_( videoType )
     , items_( NULL )
-    , textFallback_(true)
 {
 }
 

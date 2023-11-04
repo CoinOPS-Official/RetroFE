@@ -29,8 +29,8 @@ VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monito
     , videoFile_(videoFile)
     , videoInst_(NULL)
     , isPlaying_(false)
-    , numLoops_(numLoops)
     , hasPlayedOnce_(false)
+    , numLoops_(numLoops)
     , monitor_(monitor)
 {
     allocateGraphicsMemory();

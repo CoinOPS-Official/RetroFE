@@ -332,7 +332,7 @@ bool MetadataDatabase::needsRefresh()
 
 bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string collectionName)
 {
-    char *error = NULL;
+    char* error = NULL;
 
     config_.setProperty("status", "Scraping data from \"" + hyperlistFile + "\"");
     rapidxml::xml_document<> doc;
@@ -345,32 +345,37 @@ bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string co
 
         doc.parse<0>(&buffer[0]);
 
-        rapidxml::xml_node<> *root = doc.first_node("menu");
+        rapidxml::xml_node<>* root = doc.first_node("menu");
 
-        if(!root)
+        if (!root)
         {
             Logger::write(Logger::ZONE_ERROR, "Metadata", "Does not appear to be a HyperList file (missing <menu> tag)");
             return false;
         }
-        sqlite3 *handle = db_.handle;
+        sqlite3* handle = db_.handle;
         sqlite3_exec(handle, "BEGIN IMMEDIATE TRANSACTION;", NULL, NULL, &error);
-        for(rapidxml::xml_node<> *game = root->first_node("game"); game; game = game->next_sibling("game"))
+
+        // Prepare the SQL statement once before the loop
+        sqlite3_stmt* stmt;
+        const char* sql = "INSERT OR REPLACE INTO Meta (name, title, year, manufacturer, developer, genre, players, ctrltype, buttons, joyways, cloneOf, collectionName, rating, score) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+        sqlite3_prepare_v2(handle, sql, -1, &stmt, 0);
+        for (rapidxml::xml_node<>* game = root->first_node("game"); game; game = game->next_sibling("game"))
         {
-            rapidxml::xml_attribute<> *nameXml = game->first_attribute("name");
-            rapidxml::xml_node<> *descriptionXml = game->first_node("description");
-            rapidxml::xml_node<> *cloneofXml = game->first_node("cloneof");
-            rapidxml::xml_node<> *crcXml = game->first_node("crc");
-            rapidxml::xml_node<> *manufacturerXml = game->first_node("manufacturer");
-            rapidxml::xml_node<> *developerXml = game->first_node("developer");
-            rapidxml::xml_node<> *yearXml = game->first_node("year");
-            rapidxml::xml_node<> *genreXml = game->first_node("genre");
-            rapidxml::xml_node<> *ratingXml = game->first_node("rating");
-            rapidxml::xml_node<> *scoreXml = game->first_node("score");
-            rapidxml::xml_node<> *numberPlayersXml = game->first_node("players");
-            rapidxml::xml_node<> *ctrlTypeXml = game->first_node("ctrltype");
-            rapidxml::xml_node<> *numberButtonsXml = game->first_node("buttons");
-            rapidxml::xml_node<> *numberJoyWaysXml = game->first_node("joyways");
-            rapidxml::xml_node<> *enabledXml = game->first_node("enabled");
+            rapidxml::xml_attribute<>* nameXml = game->first_attribute("name");
+            rapidxml::xml_node<>* descriptionXml = game->first_node("description");
+            rapidxml::xml_node<>* cloneofXml = game->first_node("cloneof");
+            rapidxml::xml_node<>* crcXml = game->first_node("crc");
+            rapidxml::xml_node<>* manufacturerXml = game->first_node("manufacturer");
+            rapidxml::xml_node<>* developerXml = game->first_node("developer");
+            rapidxml::xml_node<>* yearXml = game->first_node("year");
+            rapidxml::xml_node<>* genreXml = game->first_node("genre");
+            rapidxml::xml_node<>* ratingXml = game->first_node("rating");
+            rapidxml::xml_node<>* scoreXml = game->first_node("score");
+            rapidxml::xml_node<>* numberPlayersXml = game->first_node("players");
+            rapidxml::xml_node<>* ctrlTypeXml = game->first_node("ctrltype");
+            rapidxml::xml_node<>* numberButtonsXml = game->first_node("buttons");
+            rapidxml::xml_node<>* numberJoyWaysXml = game->first_node("joyways");
+            rapidxml::xml_node<>* enabledXml = game->first_node("enabled");
             std::string name = (nameXml) ? nameXml->value() : "";
             std::string description = (descriptionXml) ? descriptionXml->value() : "";
             std::string crc = (crcXml) ? crcXml->value() : "";
@@ -387,39 +392,36 @@ bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string co
             std::string numberJoyWays = (numberJoyWaysXml) ? numberJoyWaysXml->value() : "";
             std::string enabled = (enabledXml) ? enabledXml->value() : "";
 
-            if(name.length() > 0)
-            {
-                sqlite3_stmt *stmt;
-
-                sqlite3_prepare_v2(handle,
-                                   "INSERT OR REPLACE INTO Meta (name, title, year, manufacturer, developer, genre, players, ctrltype, buttons, joyways, cloneOf, collectionName, rating, score) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                   -1, &stmt, 0);
-
-                sqlite3_bind_text(stmt,  1, name.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt,  2, description.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt,  3, year.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt,  4, manufacturer.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt,  5, developer.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt,  6, genre.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt,  7, numberPlayers.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt,  8, ctrlType.c_str(), -1, SQLITE_TRANSIENT);
-                sqlite3_bind_text(stmt,  9, numberButtons.c_str(), -1, SQLITE_TRANSIENT);
+            if (!name.empty()) {
+                // Bind the values to the precompiled statement
+                sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 2, description.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 3, year.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 4, manufacturer.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 5, developer.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 6, genre.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 7, numberPlayers.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 8, ctrlType.c_str(), -1, SQLITE_TRANSIENT);
+                sqlite3_bind_text(stmt, 9, numberButtons.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt, 10, numberJoyWays.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt, 11, cloneOf.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt, 12, collectionName.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt, 13, rating.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt, 14, score.c_str(), -1, SQLITE_TRANSIENT);
-
+                // Execute the statement
                 sqlite3_step(stmt);
-                sqlite3_finalize(stmt);
+
+                // Reset the statement for the next iteration
+                sqlite3_reset(stmt);
             }
         }
+        sqlite3_finalize(stmt);
         config_.setProperty("status", "Saving data from \"" + hyperlistFile + "\" to database");
         sqlite3_exec(handle, "COMMIT TRANSACTION;", NULL, NULL, &error);
 
         return true;
     }
-    catch(rapidxml::parse_error &e)
+    catch (rapidxml::parse_error& e)
     {
         std::string what = e.what();
         long line = static_cast<long>(std::count(&buffer.front(), e.where<char>(), char('\n')) + 1);
@@ -428,7 +430,7 @@ bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string co
 
         Logger::write(Logger::ZONE_ERROR, "Metadata", ss.str());
     }
-    catch(std::exception &e)
+    catch (std::exception& e)
     {
         std::string what = e.what();
         Logger::write(Logger::ZONE_ERROR, "Metadata", "Could not parse hyperlist file. Reason: " + what);
@@ -437,7 +439,6 @@ bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string co
 
     return false;
 }
-
 bool MetadataDatabase::importMamelist(std::string filename, std::string collectionName)
 {
     rapidxml::xml_document<> doc;

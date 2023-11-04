@@ -23,6 +23,8 @@
 #include <dirent.h>
 #include <locale>
 #include <list>
+#include <string_view>
+#include <vector>
 
 #ifdef WIN32
     #include <Windows.h>
@@ -81,64 +83,7 @@ std::string Utils::filterComments(std::string line)
     return line;
 }
 
-std::string Utils::combinePath(std::list<std::string> &paths)
-{
-    std::list<std::string>::iterator it = paths.begin();
-    std::string path;
 
-    if(it != paths.end())
-    {
-        path += *it;
-        it++;
-    }
-
-
-    while(it != paths.end())
-    {
-        path += Utils::pathSeparator;
-        path += *it;
-        it++;
-    }
-
-    return path;
-}
-
-std::string Utils::combinePath(std::string path1, std::string path2)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    return combinePath(paths);
-}
-
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    return combinePath(paths);
-}
-
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3, std::string path4)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    paths.push_back(path4);
-    return combinePath(paths);
-}
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3, std::string path4, std::string path5)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    paths.push_back(path4);
-    paths.push_back(path5);
-    return combinePath(paths);
-}
 
 
 bool Utils::findMatchingFile(std::string prefix, std::vector<std::string> &extensions, std::string &file)
@@ -272,23 +217,25 @@ std::string Utils::trimEnds(std::string str)
 }
 
 
-void Utils::listToVector( std::string str, std::vector<std::string> &vec, char delimiter = ',' )
+void Utils::listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter = ',')
 {
-    std::string value;
-    std::size_t current, previous = 0;
-    current = str.find( delimiter );
-    while (current != std::string::npos)
+    std::string_view strv(str); // Create a string_view from the string
+    size_t start = 0;
+    size_t end = strv.find(delimiter);
+
+    while (end != std::string_view::npos)
     {
-        value = Utils::trimEnds(str.substr(previous, current - previous));
-        if (value != "") {
-            vec.push_back(value);
+        std::string_view token = strv.substr(start, end - start);
+        if (!token.empty()) {
+            vec.emplace_back(token.begin(), token.end()); // Directly construct string in the vector
         }
-        previous = current + 1;
-        current  = str.find( delimiter, previous );
+        start = end + 1;
+        end = strv.find(delimiter, start);
     }
-    value = Utils::trimEnds(str.substr(previous, current - previous));
-    if (value != "") {
-        vec.push_back(value);
+
+    std::string_view token = strv.substr(start);
+    if (!token.empty()) {
+        vec.emplace_back(token.begin(), token.end());
     }
 }
 

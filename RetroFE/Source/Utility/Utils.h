@@ -45,16 +45,16 @@ public:
     static std::string uppercaseFirst(std::string str);
     static std::string filterComments(std::string line);
     static std::string trimEnds(std::string str);
-    static void listToVector( std::string str, std::vector<std::string> &vec, char delimiter );
+    static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter);
     static int gcd( int a, int b );
     static std::string trim(std::string& str);
 
-    //todo: there has to be a better way to do this
-    static std::string combinePath(std::list<std::string> &paths);
-    static std::string combinePath(std::string path1, std::string path2);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3, std::string path4);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3, std::string path4, std::string path5);
+    template<typename... Paths>
+    static std::string combinePath(Paths... paths) {
+        std::list<std::string> pathsList = { paths... };
+        // Call the internal helper function to avoid recursive ambiguity
+        return combinePathList(pathsList);
+    }
    
 #ifdef WIN32
     static const char pathSeparator = '\\';
@@ -65,4 +65,18 @@ public:
 private:
     Utils();
     virtual ~Utils();
+
+    static std::string combinePathList(std::list<std::string>& paths) {
+        std::string combinedPath;
+        auto it = paths.begin();
+        if (it != paths.end()) {
+            combinedPath += *it;
+            ++it;
+        }
+        while (it != paths.end()) {
+            combinedPath += pathSeparator + *it;
+            ++it;
+        }
+        return combinedPath;
+    }
 };
