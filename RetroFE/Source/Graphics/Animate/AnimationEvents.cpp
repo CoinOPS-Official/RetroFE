@@ -42,7 +42,7 @@ Animation* AnimationEvents::getAnimation(const std::string& tween)
     return getAnimation(tween, -1);
 }
 
-Animation* AnimationEvents::getAnimation(const std::string& tween, int index)
+Animation* AnimationEvents::getAnimation(const std::string& tween, size_t index)
 {
     auto outerIt = animationMap_.find(tween);
 

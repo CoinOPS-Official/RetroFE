@@ -29,7 +29,7 @@ public:
     ~AnimationEvents();
 
     Animation *getAnimation(const std::string& tween);
-    Animation *getAnimation(const std::string& tween, int index);
+    Animation *getAnimation(const std::string& tween, size_t index);
     void setAnimation(const std::string& tween, int index, Animation *animation);
     void clear();
 

@@ -297,13 +297,13 @@ void ScrollingList::setScrollOffsetIndex( unsigned int index )
 }
 
 
-void ScrollingList::setSelectedIndex( int selectedIndex )
+void ScrollingList::setSelectedIndex( size_t selectedIndex )
 {
     selectedOffsetIndex_ = selectedIndex;
 }
 
 
-Item *ScrollingList::getItemByOffset(int offset)
+Item *ScrollingList::getItemByOffset(size_t offset)
 {
     size_t itemSize = items_->size();
     if (!items_ || itemSize == 0) return NULL;
@@ -682,7 +682,7 @@ void ScrollingList::triggerJukeboxJumpEvent( int menuIndex )
     triggerEventOnAll("jukeboxJump", menuIndex);
 }
 
-void ScrollingList::triggerEventOnAll(std::string event, int menuIndex)
+void ScrollingList::triggerEventOnAll(std::string event, size_t menuIndex)
 {
     size_t componentSize = components_.size();
     for (unsigned int i = 0; i < componentSize; ++i)
@@ -726,11 +726,7 @@ unsigned int ScrollingList::getSelectedIndex( )
 }
 
 
-void ScrollingList::setSelectedIndex( unsigned int index )
-{
-     if ( !items_ ) return;
-     itemIndex_ = loopDecrement( index, selectedOffsetIndex_, items_->size( ) );
-}
+
 
 
 size_t ScrollingList::getSize()

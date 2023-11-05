@@ -41,7 +41,7 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , minShowTime_(0)
     , jukebox_(false)
     , playlistMenu_(NULL)
-    , elapsedTime_(0)
+//    , elapsedTime_(0)
     , anActiveMenu_(NULL)
     , fromPreviousPlaylist (false)
     , fromPlaylistNav(false)
@@ -245,7 +245,7 @@ void Page::highlightLoadArt()
 }
 
 
-void Page::pushMenu(ScrollingList *s, int index)
+void Page::pushMenu(ScrollingList *s, size_t index)
 {
     // If index < 0 then append to the menus_ vector
     if(index < 0)
@@ -264,7 +264,7 @@ void Page::pushMenu(ScrollingList *s, int index)
 }
 
 
-unsigned int Page::getMenuDepth()
+size_t Page::getMenuDepth()
 {
     return menuDepth_;
 }
@@ -649,19 +649,19 @@ void Page::triggerEventOnAllMenus(const std::string& event)
     if (!selectedItem_)
         return;
 
-    unsigned int depth = menuDepth_ - 1;
+    size_t depth = menuDepth_ - 1;
     for (size_t i = 0; i < menus_.size(); ++i)
     {
         for (ScrollingList* menu : menus_[i])
         {
-            unsigned int index = (depth == i) ? MENU_INDEX_HIGH + depth : depth;
+            size_t index = (depth == i) ? MENU_INDEX_HIGH + depth : depth;
 
             menu->triggerEvent(event, index);
             menu->triggerEventOnAll(event, index);
         }
     }
 
-    unsigned int index = depth;
+    size_t index = depth;
     for (Component* component : LayerComponents)
     {
         if (component)
@@ -834,7 +834,7 @@ size_t Page::getCollectionSize()
 }
 
 
-unsigned int Page::getSelectedIndex()
+size_t Page::getSelectedIndex()
 {
     ScrollingList* amenu = getAnActiveMenu();
     if (!amenu) return 0;

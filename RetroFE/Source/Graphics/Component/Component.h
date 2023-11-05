@@ -33,7 +33,7 @@ public:
     virtual void allocateGraphicsMemory();
     virtual void deInitializeFonts();
     virtual void initializeFonts();
-    void triggerEvent(std::string event, int menuIndex = -1);
+    void triggerEvent(std::string event, size_t menuIndex = -1);
     void setPlaylist(std::string name );
     void setNewItemSelected();
     void setNewScrollItemSelected();
@@ -94,7 +94,7 @@ private:
     bool         animationRequested_;
     bool         menuScrollReload_;
     bool         animationDoneRemove_;
-    int          menuIndex_;
+    size_t          menuIndex_;
     int          id_;
 
 };

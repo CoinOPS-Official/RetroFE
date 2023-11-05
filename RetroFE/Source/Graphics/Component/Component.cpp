@@ -104,7 +104,7 @@ void Component::initializeFonts()
 }
 
 
-void Component::triggerEvent(std::string event, int menuIndex)
+void Component::triggerEvent(std::string event, size_t menuIndex)
 {
     animationRequestedType_ = event;
     animationRequested_     = true;

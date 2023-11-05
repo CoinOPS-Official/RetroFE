@@ -62,7 +62,7 @@ public:
     void selectPlaylist(std::string playlist);
     void nextCyclePlaylist(std::vector<std::string> list);
     void prevCyclePlaylist(std::vector<std::string> list);
-    void pushMenu(ScrollingList *s, int index = -1);
+    void pushMenu(ScrollingList *s, size_t index = -1);
     void updatePlaylistMenuPosition();
     bool isMenusFull();
     void setLoadSound(Sound *chunk);
@@ -77,7 +77,7 @@ public:
     void metaScroll(ScrollDirection direction, std::string attribute);
     void cfwLetterSubScroll(ScrollDirection direction);
     size_t getCollectionSize();
-    unsigned int getSelectedIndex();
+    size_t getSelectedIndex();
     void selectRandom();
     void start();
     void stop();
@@ -89,7 +89,7 @@ public:
     void setLayoutHeightByMonitor(int monitor, int height);
     void setScrolling(ScrollDirection direction);
     bool isHorizontalScroll();
-    unsigned int getMenuDepth();
+    size_t getMenuDepth();
     Item *getSelectedItem();
     Item *getSelectedItem(int offset);
     void removeSelectedItem();
@@ -198,7 +198,7 @@ private:
     std::vector<ScrollingList *> activeMenu_;
     ScrollingList* anActiveMenu_;
     ScrollingList* playlistMenu_;
-    unsigned int menuDepth_;
+    size_t menuDepth_;
     MenuVector_T menus_;
     CollectionVector_T collections_;
     CollectionVector_T deleteCollections_;
@@ -218,7 +218,7 @@ private:
     Sound *highlightSoundChunk_;
     Sound *selectSoundChunk_;
     float minShowTime_;
-    float elapsedTime_;
+//    float elapsedTime_;
     CollectionInfo::Playlists_T::iterator playlist_;
     std::vector<int> layoutWidth_;
     std::vector<int> layoutHeight_;

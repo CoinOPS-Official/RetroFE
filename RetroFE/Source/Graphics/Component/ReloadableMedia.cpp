@@ -35,7 +35,7 @@ ReloadableMedia::ReloadableMedia(Configuration &config, bool systemMode, bool la
     , systemMode_(systemMode)
     , layoutMode_(layoutMode)
     , commonMode_(commonMode)
-    , menuMode_(menuMode)
+//    , menuMode_(menuMode)
     , loadedComponent_(NULL)
     //, videoInst_(NULL)
     , isVideo_(isVideo)
@@ -68,7 +68,7 @@ void ReloadableMedia::enableTextFallback_(bool value)
 
 bool ReloadableMedia::update(float dt)
 {
-    Component* foundComponent = loadedComponent_;
+//    Component* foundComponent = loadedComponent_;
     if (newItemSelected ||
        (newScrollItemSelected && getMenuScrollReload()) ||
         type_ == "isPaused" || 

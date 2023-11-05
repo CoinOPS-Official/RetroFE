@@ -55,7 +55,7 @@ private:
     bool systemMode_;
     bool layoutMode_;
     bool commonMode_;
-    bool menuMode_;
+//    bool menuMode_;
     int randomSelect_;
     Component* loadedComponent_;
     //IVideo* videoInst_;

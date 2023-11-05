@@ -69,7 +69,7 @@ public:
     void triggerBuildInfoEnter(int menuIndex = -1);
     void triggerBuildInfoExit(int menuIndex = -1);
     void triggerJukeboxJumpEvent( int menuIndex = -1 );
-    void triggerEventOnAll(std::string event, int menuIndex);
+    void triggerEventOnAll(std::string event, size_t menuIndex);
 
     bool allocateTexture( unsigned int index, Item *i );
     void deallocateTexture( unsigned int index );
@@ -79,7 +79,6 @@ public:
     void destroyItems( );
     void setPoints( std::vector<ViewInfo *> *scrollPoints, std::vector<AnimationEvents *> *tweenPoints );
     unsigned int getSelectedIndex( );
-    void setSelectedIndex( unsigned int index );
     size_t getSize( );
     void pageUp( );
     void pageDown( );
@@ -97,8 +96,8 @@ public:
     bool isAttractIdle( );
     unsigned int getScrollOffsetIndex( );
     void setScrollOffsetIndex( unsigned int index );
-    void setSelectedIndex( int selectedIndex );
-    Item *getItemByOffset( int offset );
+    void setSelectedIndex( size_t selectedIndex );
+    Item *getItemByOffset( size_t offset );
     Item *getSelectedItem( );
     unsigned int getSelectedItemPosition();
     void allocateGraphicsMemory( );
@@ -133,8 +132,8 @@ private:
     std::vector<ViewInfo *> *scrollPoints_;
     std::vector<AnimationEvents *> *tweenPoints_;
 
-    unsigned int itemIndex_;
-    unsigned int selectedOffsetIndex_;
+    size_t itemIndex_;
+    size_t selectedOffsetIndex_;
 
     float scrollAcceleration_;
     float startScrollTime_;
