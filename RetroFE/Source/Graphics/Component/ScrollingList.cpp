@@ -1179,46 +1179,46 @@ void ScrollingList::scroll(bool forward)
     size_t scrollPointsSize = scrollPoints_->size();
 
     // Replace the item that's scrolled out
-    Item *i;
+    Item *itemToScroll;
     if (forward)
     {
-        i = (*items_)[loopIncrement(itemIndex_, scrollPointsSize, itemsSize)];
+        itemToScroll = (*items_)[loopIncrement(itemIndex_, scrollPointsSize, itemsSize)];
         itemIndex_ = loopIncrement(itemIndex_, 1, itemsSize);
         deallocateTexture(0);
-        allocateTexture(0, i);
+        allocateTexture(0, itemToScroll);
     }
     else
     {
-        i = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
+        itemToScroll = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
         deallocateTexture(loopDecrement(0, 1, components_.size()));
-        allocateTexture(loopDecrement(0, 1, components_.size()), i);
+        allocateTexture(loopDecrement(0, 1, components_.size()), itemToScroll);
     }
 
     // Set the animations
-    for (size_t i = 0; i < scrollPointsSize; ++i)
+    for (size_t index = 0; index < scrollPointsSize; ++index)  // Renamed from 'i' to 'index'
     {
-        size_t nextI;
-        if (forward) 
+        size_t nextIndex;
+        if (forward)
         {
-            nextI = (i == 0) ? scrollPointsSize - 1 : i - 1;
+            nextIndex = (index == 0) ? scrollPointsSize - 1 : index - 1;
         }
         else
         {
-            nextI = (i == scrollPointsSize - 1) ? 0 : i + 1;
+            nextIndex = (index == scrollPointsSize - 1) ? 0 : index + 1;
         }
 
-        Component *c = components_[i];
-        if (c)
+        Component* component = components_[index];  // Renamed from 'c' to 'component' for clarity
+        if (component)
         {
-            auto& nextTweenPoint = (*tweenPoints_)[nextI];
-            auto& currentScrollPoint = (*scrollPoints_)[i];
-            auto& nextScrollPoint = (*scrollPoints_)[nextI];
+            auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
+            auto& currentScrollPoint = (*scrollPoints_)[index];
+            auto& nextScrollPoint = (*scrollPoints_)[nextIndex];
 
-            c->allocateGraphicsMemory();
-            resetTweens(c, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
-            c->baseViewInfo.font = nextScrollPoint->font;
-            c->triggerEvent("menuScroll");
+            component->allocateGraphicsMemory();
+            resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
+            component->baseViewInfo.font = nextScrollPoint->font;
+            component->triggerEvent("menuScroll");
         }
     }
 
