@@ -60,9 +60,7 @@ ViewInfo::ViewInfo()
 }
 
 
-ViewInfo::~ViewInfo()
-{
-}
+ViewInfo::~ViewInfo() = default;
 
 float ViewInfo::XRelativeToOrigin() const
 {

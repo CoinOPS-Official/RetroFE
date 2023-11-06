@@ -433,7 +433,7 @@ Item *Page::getSelectedItem()
 Item *Page::getSelectedItem(int offset)
 {
     ScrollingList* amenu = getAnActiveMenu();
-    if (!amenu) return NULL;
+    if (!amenu) return nullptr;
 
     return amenu->getItemByOffset(offset);
 }
@@ -442,7 +442,7 @@ Item *Page::getSelectedItem(int offset)
 Item* Page::getSelectedMenuItem()
 {
     ScrollingList* amenu = getAnActiveMenu();
-    if (!amenu) return NULL;
+    if (!amenu) return nullptr;
 
     return amenu->getSelectedItem();
 }
@@ -457,7 +457,7 @@ void Page::removeSelectedItem()
         Menu->RemoveSelectedItem();
     }
     */
-    selectedItem_ = NULL;
+    selectedItem_ = nullptr;
 
 }
 
@@ -855,7 +855,7 @@ bool Page::pushCollection(CollectionInfo *collection)
         for(std::vector<ScrollingList *>::iterator it = activeMenu_.begin(); it != activeMenu_.end(); it++)
         {
             ScrollingList *menu    = *it;
-            ScrollingList *newMenu = new ScrollingList(*menu);
+            auto *newMenu = new ScrollingList(*menu);
             if (newMenu->isPlaylist()) {
                 playlistMenu_ = newMenu;
             }
@@ -864,8 +864,8 @@ bool Page::pushCollection(CollectionInfo *collection)
     }
     if (menus_.size()) {
         activeMenu_ = menus_[menuDepth_];
-        anActiveMenu_ = NULL;
-        selectedItem_ = NULL;
+        anActiveMenu_ = nullptr;
+        selectedItem_ = nullptr;
         for (std::vector<ScrollingList*>::iterator it = activeMenu_.begin(); it != activeMenu_.end(); it++)
         {
             ScrollingList* menu = *it;
@@ -932,8 +932,8 @@ bool Page::popCollection()
 
     menuDepth_--;
     activeMenu_ = menus_[menuDepth_ - 1];
-    anActiveMenu_ = NULL;
-    selectedItem_ = NULL;
+    anActiveMenu_ = nullptr;
+    selectedItem_ = nullptr;
     for(std::vector<Component *>::iterator it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
     {
         (*it)->collectionName = info->collection->name;
@@ -966,7 +966,7 @@ void Page::exitGame()
 }
 
 
-std::string Page::getPlaylistName()
+std::string Page::getPlaylistName() const
 {
    return !collections_.empty() ? playlist_->first : "";
 }
@@ -1043,7 +1043,7 @@ void Page::prevPlaylist()
 }
 
 
-void Page::selectPlaylist(std::string playlist)
+void Page::selectPlaylist(const std::string& playlist)
 {
     MenuInfo_S &info = collections_.back();
     //info.collection->saveFavorites();
@@ -1169,7 +1169,7 @@ void Page::prevCyclePlaylist(std::vector<std::string> list)
     
 }
 
-bool Page::playlistExists(std::string playlist)
+bool Page::playlistExists(const std::string& playlist)
 {
     MenuInfo_S& info = collections_.back();
     CollectionInfo::Playlists_T p = info.collection->playlists;
@@ -1431,7 +1431,7 @@ void Page::allocateGraphicsMemory()
 }
 
 
-void Page::deInitializeFonts()
+void Page::deInitializeFonts() const
 {
     for (auto& menuVector : menus_)
     {
@@ -1447,7 +1447,7 @@ void Page::deInitializeFonts()
     }
 }
 
-void Page::initializeFonts()
+void Page::initializeFonts() const
 {
     for (auto& menuVector : menus_)
     {
@@ -1483,7 +1483,7 @@ bool Page::isSelectPlaying()
 }
 
 
-void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu)
+void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu) const
 {
     for(ScrollingList *menu : activeMenu_)
     {
@@ -1496,13 +1496,13 @@ void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu)
 }
 
 
-bool Page::isMenuScrolling()
+bool Page::isMenuScrolling() const
 {
     return scrollActive_;
 }
 
 
-bool Page::isPlaying()
+bool Page::isPlaying() const
 {
     for(auto& component : LayerComponents)
     {
@@ -1515,7 +1515,7 @@ bool Page::isPlaying()
 }
 
 
-void Page::resetScrollPeriod()
+void Page::resetScrollPeriod() const
 {
     for(auto& menu : activeMenu_)
     {
@@ -1527,7 +1527,7 @@ void Page::resetScrollPeriod()
 }
 
 
-void Page::updateScrollPeriod()
+void Page::updateScrollPeriod() const
 {
     for(auto& menu : activeMenu_)
     {
@@ -1566,7 +1566,7 @@ void Page::setCurrentLayout(int layout)
     currentLayout_ = layout;
 }
 
-int Page::getCurrentLayout()
+int Page::getCurrentLayout() const
 {
     return currentLayout_;
 }
@@ -1637,7 +1637,7 @@ void Page::setJukebox()
 }
 
 
-bool Page::isJukebox()
+bool Page::isJukebox() const
 {
     return jukebox_;
 }
@@ -1749,7 +1749,7 @@ void Page::setLocked(bool locked)
     locked_ = locked;
 }
 
-bool Page::isLocked()
+bool Page::isLocked() const
 {
     return locked_;
 }

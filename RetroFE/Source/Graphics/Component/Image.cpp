@@ -21,15 +21,12 @@
 
 Image::Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive)
     : Component(p)
-    , texture_(NULL)
     , file_(file)
     , altFile_(altFile)
 {
     baseViewInfo.Monitor = monitor;
     baseViewInfo.Additive = additive;
     baseViewInfo.Layout = page.getCurrentLayout();
-
-    allocateGraphicsMemory();
 }
 
 Image::~Image()
@@ -42,10 +39,10 @@ void Image::freeGraphicsMemory()
     Component::freeGraphicsMemory();
 
     SDL_LockMutex(SDL::getMutex());
-    if (texture_ != NULL)
+    if (texture_ != nullptr)
     {
         SDL_DestroyTexture(texture_);
-        texture_ = NULL;
+        texture_ = nullptr;
     }
     SDL_UnlockMutex(SDL::getMutex());
 }
@@ -64,7 +61,7 @@ void Image::allocateGraphicsMemory()
             texture_ = IMG_LoadTexture(SDL::getRenderer(baseViewInfo.Monitor), altFile_.c_str());
         }
 
-        if (texture_ != NULL)
+        if (texture_ != nullptr)
         {
             if (baseViewInfo.Additive)
             {
@@ -96,7 +93,7 @@ void Image::draw()
 
     if(texture_)
     {
-        SDL_Rect rect;
+        SDL_Rect rect = { 0, 0, 0, 0 };
 
         rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
         rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());

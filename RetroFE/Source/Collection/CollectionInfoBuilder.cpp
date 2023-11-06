@@ -45,7 +45,7 @@ CollectionInfoBuilder::~CollectionInfoBuilder()
 {
 }
 
-bool CollectionInfoBuilder::createCollectionDirectory(std::string name)
+bool CollectionInfoBuilder::createCollectionDirectory(const std::string& name)
 {
     std::string collectionPath = Utils::combinePath(Configuration::absolutePath, "collections", name);
 

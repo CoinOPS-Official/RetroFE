@@ -36,11 +36,11 @@
 
 CollectionInfo::CollectionInfo(
     Configuration& c,
-    std::string name,
-    std::string listPath,
-    std::string extensions,
-    std::string metadataType,
-    std::string metadataPath)
+    const std::string& name,
+    const std::string& listPath,
+    const std::string& extensions,
+    const std::string& metadataType,
+    const std::string& metadataPath)
     : name(name)
     , listpath(listPath)
     , saveRequest(false)
@@ -128,7 +128,8 @@ bool CollectionInfo::saveFavorites(Item* removed)
             }
             std::vector<Item*>* saveitems = playlists["favorites"];
             if (globalFavLast && name != "Favorites") {
-                std::map <std::string, std::map <std::string, std::string>> existing;
+                std::map<std::string, std::map<std::string, std::string>, std::less<>> existing;
+
 
                 // remove from favorites file
                 if (removed != NULL) {
@@ -250,7 +251,7 @@ void CollectionInfo::addSubcollection(CollectionInfo *newinfo)
     items.insert(items.begin(), newinfo->items.begin(), newinfo->items.end());
 }
 
-auto CollectionInfo::itemIsLess(std::string sortType, bool currentCollectionMenusort)
+auto CollectionInfo::itemIsLess(const std::string& sortType, bool currentCollectionMenusort)
 {
     return [sortType, currentCollectionMenusort](Item* lhs, Item* rhs) {
 

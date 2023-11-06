@@ -21,33 +21,23 @@
 #include <sstream>
 #include <algorithm>
 
-Item::Item()
-    : collectionInfo(NULL)
-    , leaf(true)
-{
-    file = "";
-    isFavorite = false;
-    playCount = 0;
-    lastPlayed = "0";
-}
 
-Item::~Item()
-{
-}
+Item::~Item() = default;
 
-std::string Item::filename()
+
+std::string Item::filename() const
 {
     return Utils::getFileName(filepath);
 }
 
-std::string Item::lowercaseTitle()
+std::string Item::lowercaseTitle() const
 {
     std::string lcstr = title;
     std::transform(lcstr.begin(), lcstr.end(), lcstr.begin(), ::tolower);
     return lcstr;
 }
 
-std::string Item::lowercaseFullTitle()
+std::string Item::lowercaseFullTitle() const
 {
     std::string lcstr = fullTitle;
     std::transform(lcstr.begin(), lcstr.end(), lcstr.begin(), ::tolower);
@@ -86,78 +76,78 @@ bool Item::validSortType(std::string attribute)
     return valid;
 }
 
-std::string Item::getMetaAttribute(std::string attribute)
-{
-    std::transform(attribute.begin(), attribute.end(), attribute.begin(), ::tolower);
+std::string Item::getMetaAttribute(const std::string& attribute) const {
+    std::string lowerAttribute = attribute;
+    std::transform(lowerAttribute.begin(), lowerAttribute.end(), lowerAttribute.begin(), ::tolower);
 
     std::string value = "";
-    if (attribute == "year") value = year;
-    else if (attribute == "manufacturer") value = manufacturer;
-    else if (attribute == "developer") value = developer;
-    else if (attribute == "genre") value = genre;
-    else if (attribute == "numberplayers") value = numberPlayers;
-    else if (attribute == "numberbuttons") value = numberButtons;
-    else if (attribute == "ctrltype") value = ctrlType;
-    else if (attribute == "joyways") value = joyWays;
-    else if (attribute == "rating") value = rating;
-    else if (attribute == "score") value = score;
-    else if (attribute == "lastplayed") value = lastPlayed;
-    else if (attribute == "playcount") value = std::to_string(playCount);
 
-    std::transform(value.begin(), value.end(), value.begin(), ::tolower);
+    if (lowerAttribute == "year") value = year;
+    else if (lowerAttribute == "manufacturer") value = manufacturer;
+    else if (lowerAttribute == "developer") value = developer;
+    else if (lowerAttribute == "genre") value = genre;
+    else if (lowerAttribute == "numberplayers") value = numberPlayers;
+    else if (lowerAttribute == "numberbuttons") value = numberButtons;
+    else if (lowerAttribute == "ctrltype") value = ctrlType;
+    else if (lowerAttribute == "joyways") value = joyWays;
+    else if (lowerAttribute == "rating") value = rating;
+    else if (lowerAttribute == "score") value = score;
+    else if (lowerAttribute == "lastplayed") value = lastPlayed;
+    else if (lowerAttribute == "playcount") value = std::to_string(playCount);
 
-    return value;
+    
+    std::string lowerValue = value;
+    std::transform(lowerValue.begin(), lowerValue.end(), lowerValue.begin(), ::tolower);
+    
+    return lowerValue;
 }
 
 void Item::setInfo( std::string key, std::string value )
 {
-    info_.insert( InfoPair( key, value ) );
+    info_.try_emplace(std::move(key), std::move(value));
 }
 
 
-bool Item::getInfo( std::string key, std::string & value )
+bool Item::getInfo(const std::string& key, std::string& value)
 {
+    bool retVal = false;
+    if (!info_.empty()) {
+        if (auto it = info_.find(key); it != info_.end()) {
+            value = it->second;  // Use iterator to access the value directly
+            retVal = true;
+        }
+    }
 
-   bool retVal = false;
-
-   if (!info_.empty() && info_.find(key) != info_.end())
-   {
-       value  = info_[key];
-       retVal = true;
-   }
-
-   return retVal;
-
+    return retVal;
 }
 
 
-void Item::loadInfo( std::string path )
+void Item::loadInfo(const std::string& path)
 {
-
     int           lineCount = 0;
     std::string   line;
-    std::ifstream ifs( path.c_str( ) );
+    std::ifstream ifs(path.c_str());  // No need to call .c_str() in C++11 and above
     size_t        position;
     std::string   key;
     std::string   value;
 
-    if ( !ifs.is_open( ) )
+    if (!ifs.is_open())
     {
         return;
     }
 
-    while ( std::getline( ifs, line ) )
+    while (std::getline(ifs, line))
     {
         lineCount++;
-        line = Utils::filterComments( line );
-        // Check if the line has an assigment operator
-        if ( (position = line.find( "=" )) != std::string::npos )
+        line = Utils::filterComments(line);
+        // Check if the line has an assignment operator
+        if ((position = line.find("=")) != std::string::npos)
         {
-            key   = line.substr( 0, position );
-            key   = Utils::trimEnds( key );
-            value = line.substr( position + 1, line.size( )-1 );
-            value = Utils::trimEnds( value );
-            setInfo( key, value );
+            key = line.substr(0, position);
+            key = Utils::trimEnds(key);
+            value = line.substr(position + 1);
+            value = Utils::trimEnds(value);
+            setInfo(key, value);
         }
         else
         {
@@ -166,5 +156,5 @@ void Item::loadInfo( std::string path )
             Logger::write(Logger::ZONE_ERROR, "Item", ss.str());
         }
     }
-    
 }
+

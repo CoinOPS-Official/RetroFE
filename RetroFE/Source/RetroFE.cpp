@@ -118,7 +118,7 @@ void RetroFE::render( )
 int RetroFE::initialize( void *context )
 {
 
-    RetroFE *instance = static_cast<RetroFE *>(context);
+    auto *instance = static_cast<RetroFE *>(context);
 
     Logger::write( Logger::ZONE_INFO, "RetroFE", "Initializing" );
 
@@ -2044,7 +2044,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
                     }
                 }
                 keyLastTime_ = currentTime_;
-                return (exit) ? RETROFE_QUIT_REQUEST : RETROFE_BACK_REQUEST;
+                return exit ? RETROFE_QUIT_REQUEST : RETROFE_BACK_REQUEST;
             }
         }
     }
@@ -2425,7 +2425,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
 
 
 // Load a page
-Page* RetroFE::loadPage(std::string collectionName)
+Page* RetroFE::loadPage(const std::string& collectionName)
 {
     // check if collection's assets are in a different theme
     std::string layoutName;
@@ -2467,7 +2467,7 @@ Page *RetroFE::loadSplashPage( )
 }
 
 // Load a collection
-CollectionInfo *RetroFE::getCollection(std::string collectionName)
+CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
 {
 
     // Check if subcollections should be merged or split
@@ -2486,14 +2486,14 @@ CollectionInfo *RetroFE::getCollection(std::string collectionName)
     // check collection folder exists 
     std::string path = Utils::combinePath( Configuration::absolutePath, "collections", collectionName );
     dp = opendir( path.c_str( ) );
-    if (dp == NULL) {
+    if (dp == nullptr) {
         Logger::write(Logger::ZONE_ERROR, "RetroFE", "Failed to load collection " + collectionName);
 
-        return NULL;
+        return nullptr;
     }
 
     // Loading sub collection files
-    while ( (dirp = readdir( dp )) != NULL )
+    while ( (dirp = readdir( dp )) != nullptr )
     {
         std::string file = dirp->d_name;
 
@@ -2501,20 +2501,17 @@ CollectionInfo *RetroFE::getCollection(std::string collectionName)
         std::string basename = (std::string::npos == position)? file : file.substr( 0, position );
 
         std::string comparator = ".sub";
-        size_t start = file.length() >= comparator.length() ? file.length( ) - comparator.length() : 0;
+        size_t start = file.length() >= comparator.length() ? file.length() - comparator.length() : 0;
 
-        if ( start >= 0 )
-        {
-            if ( file.compare( start, comparator.length( ), comparator ) == 0 )
-            {
-                Logger::write( Logger::ZONE_INFO, "RetroFE", "Loading subcollection into menu: " + basename );
+        // No need to check if start >= 0, it's redundant because size_t is unsigned
+        if (file.compare(start, comparator.length(), comparator) == 0) {
+            Logger::write(Logger::ZONE_INFO, "RetroFE", "Loading subcollection into menu: " + basename);
 
-                CollectionInfo *subcollection = cib.buildCollection( basename, collectionName );
-                collection->addSubcollection( subcollection );
-                subcollection->subsSplit = subsSplit;
-                cib.injectMetadata( subcollection );
-                collection->hasSubs = true;
-            }
+            CollectionInfo* subcollection = cib.buildCollection(basename, collectionName);
+            collection->addSubcollection(subcollection);
+            subcollection->subsSplit = subsSplit;
+            cib.injectMetadata(subcollection);
+            collection->hasSubs = true;
         }
     }
     if (dp) closedir(dp);
@@ -2552,7 +2549,7 @@ CollectionInfo *RetroFE::getCollection(std::string collectionName)
     (void)config_.getProperty( "showParenthesis", showParenthesis );
     (void)config_.getProperty( "showSquareBrackets", showSquareBrackets );
 
-    typedef std::map<std::string, std::vector <Item *> *> Playlists_T;
+    using Playlists_T = std::map<std::string, std::vector<Item *> *>;
     for ( Playlists_T::iterator itP = collection->playlists.begin( ); itP != collection->playlists.end( ); itP++ )
     {
         for ( std::vector <Item *>::iterator itI = itP->second->begin( ); itI != itP->second->end( ); itI++ )
@@ -2595,7 +2592,7 @@ CollectionInfo *RetroFE::getCollection(std::string collectionName)
     return collection;
 }
 
-void RetroFE::updatePageControls(std::string type)
+void RetroFE::updatePageControls(const std::string& type)
 {
     Logger::write(Logger::ZONE_INFO, "Layout", "Layout changed controls type " + type);
     std::string controlsConfPath = Utils::combinePath(Configuration::absolutePath, "controls");
@@ -2605,13 +2602,13 @@ void RetroFE::updatePageControls(std::string type)
 }
 
 // Load a menu
-CollectionInfo *RetroFE::getMenuCollection( std::string collectionName )
+CollectionInfo *RetroFE::getMenuCollection( const std::string& collectionName )
 {
     std::string menuPath = Utils::combinePath( Configuration::absolutePath, "menu" );
     std::string menuFile = Utils::combinePath( menuPath, collectionName + ".txt" );
     std::vector<Item *> menuVector;
     CollectionInfoBuilder cib( config_, *metadb_ );
-    CollectionInfo *collection = new CollectionInfo(config_, collectionName, menuPath, "", "", "" );
+    auto *collection = new CollectionInfo(config_, collectionName, menuPath, "", "", "" );
     cib.ImportBasicList( collection, menuFile, menuVector );
     for ( std::vector<Item *>::iterator it = menuVector.begin( ); it != menuVector.end( ); ++it)
     {
@@ -2633,7 +2630,7 @@ CollectionInfo *RetroFE::getMenuCollection( std::string collectionName )
 }
 
 
-void RetroFE::saveRetroFEState( )
+void RetroFE::saveRetroFEState( ) const
 {
     std::string file = Utils::combinePath(Configuration::absolutePath, "settings_saved.conf");
     Logger::write(Logger::ZONE_INFO, "RetroFE", "Saving settings_saved.conf");

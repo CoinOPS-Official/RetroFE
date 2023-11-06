@@ -221,7 +221,7 @@ void Component::draw()
 
     if ( backgroundTexture_ )
     {
-        SDL_Rect rect;
+        SDL_Rect rect = { 0, 0, 0, 0 };
         rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
         rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
         rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
@@ -431,7 +431,7 @@ bool Component::animate()
             case TWEEN_PROPERTY_NOP:
                 break;
             case TWEEN_PROPERTY_RESTART:
-                baseViewInfo.Restart = tween->duration && !elapsedTime;
+                baseViewInfo.Restart = (tween->duration != 0.0) && (elapsedTime == 0.0);
                 break;
             }
         }

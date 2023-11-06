@@ -17,9 +17,7 @@
 #include "Animation.h"
 #include <string>
 
-Animation::Animation()
-{
-}
+Animation::Animation() = default;
 
 Animation::Animation(Animation &copy)
 {
@@ -59,7 +57,7 @@ TweenSet *Animation::tweenSet(unsigned int index)
 }
 
 
-size_t Animation::size()
+size_t Animation::size() const
 {
     return animationVector_.size();
 }

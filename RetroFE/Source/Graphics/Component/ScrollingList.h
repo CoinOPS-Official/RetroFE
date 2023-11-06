@@ -40,13 +40,13 @@ public:
                    bool          playlistType,
                    bool          selectedImage,
                    Font         *font,
-                   std::string   layoutKey,
-                   std::string   imageType,
-                   std::string   videoType );
+                   const std::string   &layoutKey,
+                   const std::string   &imageType,
+                   const std::string   &videoType );
 
     ScrollingList( const ScrollingList &copy );
-    virtual ~ScrollingList( );
-    std::vector<Item*> getItems();
+    ~ScrollingList( ) override;
+    const std::vector<Item*>& getItems() const;
     void triggerEnterEvent( );
     void triggerExitEvent( );
     void triggerMenuEnterEvent( int menuIndex = -1 );
@@ -69,18 +69,18 @@ public:
     void triggerBuildInfoEnter(int menuIndex = -1);
     void triggerBuildInfoExit(int menuIndex = -1);
     void triggerJukeboxJumpEvent( int menuIndex = -1 );
-    void triggerEventOnAll(std::string event, int menuIndex);
+    void triggerEventOnAll(const std::string& event, int menuIndex);;
 
     bool allocateTexture( unsigned int index, Item *i );
     void deallocateTexture( unsigned int index );
     void setItems( std::vector<Item *> *items );
-    void selectItemByName(const std::string& name);
+    void selectItemByName(std::string_view name);
     std::string getSelectedItemName();
     void destroyItems( );
     void setPoints( std::vector<ViewInfo *> *scrollPoints, std::vector<AnimationEvents *> *tweenPoints );
-    unsigned int getSelectedIndex( );
+    unsigned int getSelectedIndex( ) const;
     void setSelectedIndex( unsigned int index );
-    size_t getSize( );
+    size_t getSize( ) const;
     void pageUp( );
     void pageDown( );
     void letterUp( );
@@ -95,7 +95,7 @@ public:
     void random( );
     bool isIdle( );
     bool isAttractIdle( );
-    unsigned int getScrollOffsetIndex( );
+    unsigned int getScrollOffsetIndex( ) const;
     void setScrollOffsetIndex( unsigned int index );
     void setSelectedIndex( int selectedIndex );
     Item *getItemByOffset( int offset );
@@ -110,36 +110,36 @@ public:
     void setStartScrollTime( float value );
     void setMinScrollTime( float value );
     void enableTextFallback(bool value);
-    bool horizontalScroll;
+    bool horizontalScroll{ false };
     void deallocateSpritePoints( );
     void allocateSpritePoints( );
     void resetScrollPeriod( );
     void updateScrollPeriod( );
     void scroll( bool forward );
-    bool isPlaylist();
+    bool isPlaylist() const;
 private:
 
-    void resetTweens( Component *c, AnimationEvents *sets, ViewInfo *currentViewInfo, ViewInfo *nextViewInfo, double scrollTime );
-    inline unsigned int loopIncrement(size_t offset, size_t i, size_t size );
-    inline unsigned int loopDecrement(size_t offset, size_t i, size_t size );
+    void resetTweens( Component *c, AnimationEvents *sets, ViewInfo *currentViewInfo, ViewInfo *nextViewInfo, double scrollTime ) const;
+    inline unsigned int loopIncrement(size_t offset, size_t index, size_t size) const;
+    inline unsigned int loopDecrement(size_t offset, size_t index, size_t size) const;
 
     bool layoutMode_;
     bool commonMode_;
     bool playlistType_;
     bool selectedImage_;
-    bool textFallback_;
+    bool textFallback_{ true };
 
-    std::vector<Component *> *spriteList_;
-    std::vector<ViewInfo *> *scrollPoints_;
-    std::vector<AnimationEvents *> *tweenPoints_;
+    std::vector<Component*>* spriteList_{ nullptr };
+    std::vector<ViewInfo*>* scrollPoints_{ nullptr };
+    std::vector<AnimationEvents*>* tweenPoints_{ nullptr };
 
-    unsigned int itemIndex_;
-    unsigned int selectedOffsetIndex_;
+    unsigned int itemIndex_{ 0 };
+    unsigned int selectedOffsetIndex_{ 0 };
 
-    float scrollAcceleration_;
-    float startScrollTime_;
-    float minScrollTime_;
-    float scrollPeriod_;
+    float scrollAcceleration_{ 0 };
+    float startScrollTime_{ 0.500 };
+    float minScrollTime_{ 0.500 };
+    float scrollPeriod_{ 0 };
 
     Configuration &config_;
     Font          *fontInst_;
@@ -147,7 +147,7 @@ private:
     std::string    imageType_;
     std::string    videoType_;
 
-    std::vector<Item *>     *items_;
+    std::vector<Item*>* items_{ nullptr };
     std::vector<Component *> components_;
 
 };

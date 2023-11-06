@@ -34,13 +34,9 @@ bool VectorSort(Item *d1, Item *d2)
     return d1->lowercaseTitle() < d2->lowercaseTitle();
 }
 
-MenuParser::MenuParser()
-{
-}
+MenuParser::MenuParser() = default;
 
-MenuParser::~MenuParser()
-{
-}
+MenuParser::~MenuParser() = default;
 
 bool MenuParser::buildMenuItems(CollectionInfo *collection, bool sort)
 {
@@ -78,10 +74,7 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
 
             std::string comparator = ".txt";
             size_t start = file.length() >= comparator.length() ? file.length() - comparator.length() : 0;
-
-            if(start >= 0)
-            {
-                if(file.compare(start, comparator.length(), comparator) == 0)
+            if(file.compare(start, comparator.length(), comparator) == 0)
                 {
                     std::string title = basename;
                     Item *item = new Item();
@@ -93,7 +86,6 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
 
                     menuItems.push_back(item);
                 }
-            }
         }
 
         if (dp) closedir(dp);

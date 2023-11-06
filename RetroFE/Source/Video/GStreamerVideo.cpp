@@ -59,7 +59,6 @@ GStreamerVideo::GStreamerVideo( int monitor )
     , monitor_(monitor)
     , lastSetVolume_(0.0)
     , lastSetMuteState_(false)
-    , bufferLayout_(UNKNOWN)
 {
     paused_ = false;
 }
@@ -211,7 +210,7 @@ void GStreamerVideo::freeElements()
 }
 
 
-bool GStreamerVideo::play(std::string file)
+bool GStreamerVideo::play(const std::string& file)
 {
     playCount_ = 0;
 
@@ -242,20 +241,17 @@ bool GStreamerVideo::play(std::string file)
     return true;
 }
 
-bool GStreamerVideo::initializeGstElements(std::string file)
+bool GStreamerVideo::initializeGstElements(const std::string& file)
 {
     gchar *uriFile = gst_filename_to_uri(file.c_str(), NULL);
 
     if(!uriFile)
         return false;
 
-    if(!playbin_)
+    if (!playbin_ && !createAndLinkGstElements())
     {
-        if(!createAndLinkGstElements())
-        {
-            stop();
-            return false;
-        }
+        stop();
+        return false;
     }
 
     // Set properties of playbin and videoSink
@@ -334,7 +330,7 @@ void GStreamerVideo::elementSetupCallback(GstElement *playbin, GstElement *eleme
 }
 
 void GStreamerVideo::processNewBuffer(GstElement* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
-    GStreamerVideo* video = static_cast<GStreamerVideo*>(userdata);
+    auto* video = static_cast<GStreamerVideo*>(userdata);
     if (!video || !video->isPlaying_) {
         Logger::write(Logger::ZONE_ERROR, "Video", "Invalid video or not playing.");
         return; // If video is null or not playing, exit early.
@@ -439,7 +435,7 @@ void GStreamerVideo::update(float /* dt */)
                 }
 
                 // Pointers to Y and UV planes in the source buffer
-                const Uint8 *src_y = (const Uint8 *)bufInfo.data;
+                const auto *src_y = (const Uint8 *)bufInfo.data;
                 const Uint8 *src_uv = src_y + GST_ROUND_UP_4(width_) * height_;
 
                 // Pointers to Y and UV planes in the texture

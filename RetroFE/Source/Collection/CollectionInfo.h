@@ -25,14 +25,14 @@ class Configuration;
 class CollectionInfo
 {
 public:
-    CollectionInfo(Configuration& c, std::string name, std::string listPath, std::string extensions, std::string metadataType, std::string metadataPath);
+    CollectionInfo(Configuration& c, const std::string& name, const std::string& listPath, const std::string &extensions, const std::string& metadataType, const std::string& metadataPath);
     virtual ~CollectionInfo();
     std::string settingsPath() const;
     bool saveFavorites(Item* removed = NULL);
     void sortItems();
     void sortPlaylists();
     void addSubcollection(CollectionInfo *info);
-    auto itemIsLess(std::string sortType, bool currentCollectionMenusort);
+    auto itemIsLess(const std::string& sortType, bool currentCollectionMenusort);
     void extensionList(std::vector<std::string> &extensions);
     std::string name;
     std::string lowercaseName();
@@ -43,7 +43,7 @@ public:
     std::vector<Item *> items;
     std::vector<Item*> playlistItems;
 
-    typedef std::map<std::string, std::vector <Item *> *> Playlists_T;
+    using Playlists_T = std::map<std::string, std::vector<Item *> *>;
     Playlists_T playlists;
     std::string sortType;
     bool menusort;

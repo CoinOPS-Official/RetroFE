@@ -27,15 +27,14 @@ class Image;
 class ReloadableMedia : public Component
 {
 public:
-    ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, bool menuMode, std::string type, std::string imageType, Page& page,
-        int displayOffset, bool isVideo, Font* font, bool jukebox, int jukeboxNumLoops, int randomSelect);
-    virtual ~ReloadableMedia();
+    ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, bool menuMode, const std::string& type, const std::string& imageType,
+        Page& p, int displayOffset, bool isVideo, Font* font, bool jukebox, int jukeboxNumLoops, int randomSelect);
+    ~ReloadableMedia() override;
     bool update(float dt);
     void draw();
     void freeGraphicsMemory();
     void allocateGraphicsMemory();
-    Component* findComponent(const std::string& collection, const std::string& type, const std::string& basename, std::string filepath, bool systemMode, bool isVideo);
-
+    Component* findComponent(const std::string& collection, const std::string& type, const std::string& basename, std::string_view filepath, bool systemMode, bool isVideo);
     void enableTextFallback_(bool value);
     virtual bool isJukeboxPlaying();
     virtual void skipForward();
@@ -57,11 +56,11 @@ private:
     bool commonMode_;
     bool menuMode_;
     int randomSelect_;
-    Component* loadedComponent_;
-    IVideo* videoInst_;
+    Component* loadedComponent_{ nullptr };
+    IVideo* videoInst_{ nullptr };
     bool isVideo_;
     Font* FfntInst_;
-    bool textFallback_;
+    bool textFallback_{ false };
     std::string type_;
     std::string currentCollection_;
     Page* page_;
@@ -69,5 +68,5 @@ private:
     std::string imageType_;
     bool jukebox_;
     int  jukeboxNumLoops_;
-    int numberOfImages_;
+    int numberOfImages_{ 27 };
 };

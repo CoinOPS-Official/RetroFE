@@ -28,13 +28,9 @@
     #include <Windows.h>
 #endif
 
-Utils::Utils()
-{
-}
+Utils::Utils() = default;
 
-Utils::~Utils()
-{
-}
+Utils::~Utils() = default;
 
 #ifdef WIN32
 void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam ) {
@@ -103,7 +99,7 @@ std::string Utils::combinePath(std::list<std::string> &paths)
     return path;
 }
 
-std::string Utils::combinePath(std::string path1, std::string path2)
+std::string Utils::combinePath(const std::string& path1, const std::string& path2)
 {
     std::list<std::string> paths;
     paths.push_back(path1);
@@ -111,7 +107,7 @@ std::string Utils::combinePath(std::string path1, std::string path2)
     return combinePath(paths);
 }
 
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3)
+std::string Utils::combinePath(const std::string& path1, const std::string& path2, const std::string& path3)
 {
     std::list<std::string> paths;
     paths.push_back(path1);
@@ -120,7 +116,7 @@ std::string Utils::combinePath(std::string path1, std::string path2, std::string
     return combinePath(paths);
 }
 
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3, std::string path4)
+std::string Utils::combinePath(const std::string& path1, const std::string& path2, const std::string& path3, const std::string& path4)
 {
     std::list<std::string> paths;
     paths.push_back(path1);
@@ -129,7 +125,7 @@ std::string Utils::combinePath(std::string path1, std::string path2, std::string
     paths.push_back(path4);
     return combinePath(paths);
 }
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3, std::string path4, std::string path5)
+std::string Utils::combinePath(const std::string& path1, const std::string& path2, const std::string& path3, const std::string& path4, const std::string& path5)
 {
     std::list<std::string> paths;
     paths.push_back(path1);
@@ -141,7 +137,7 @@ std::string Utils::combinePath(std::string path1, std::string path2, std::string
 }
 
 
-bool Utils::findMatchingFile(std::string prefix, std::vector<std::string> &extensions, std::string &file)
+bool Utils::findMatchingFile(const std::string& prefix, std::vector<std::string> &extensions, std::string &file)
 {
     for(unsigned int i = 0; i < extensions.size(); ++i)
     {
@@ -203,7 +199,7 @@ void Utils::replaceSlashesWithUnderscores(std::string &content)
 }
 
 
-std::string Utils::getDirectory(std::string filePath)
+std::string Utils::getDirectory(const std::string& filePath)
 {
 
     std::string directory = filePath;
@@ -272,7 +268,7 @@ std::string Utils::trimEnds(std::string str)
 }
 
 
-void Utils::listToVector( std::string str, std::vector<std::string> &vec, char delimiter = ',' )
+void Utils::listToVector( const std::string& str, std::vector<std::string> &vec, char delimiter = ',' )
 {
     std::string value;
     std::size_t current, previous = 0;

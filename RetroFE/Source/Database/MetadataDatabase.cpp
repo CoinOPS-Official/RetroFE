@@ -229,12 +229,11 @@ void MetadataDatabase::injectMetadata(CollectionInfo *collection)
     sqlite3_stmt *stmt;
 
     // items into a hash to make it easily searchable
-    std::vector<Item *> *items = &collection->items;
-    std::map<std::string, Item *> itemMap;
+    std::vector<Item*>* items = &collection->items;
+    std::map<std::string, Item*, std::less<>> itemMap;
 
-    for(std::vector<Item *>::iterator it = items->begin(); it != items->end(); it++)
-    {
-        itemMap[(*it)->name] = *it;
+    for (auto* item : *items) {
+        itemMap.emplace(item->name, item);
     }
 
     //todo: program crashes if this query fails

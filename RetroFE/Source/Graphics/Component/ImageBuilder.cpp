@@ -20,7 +20,7 @@
 
 Image * ImageBuilder::CreateImage(const std::string& path, Page &p, const std::string& name, int monitor, bool additive)
 {
-    Image *image = NULL;
+    Image *image = nullptr;
     static std::vector<std::string> extensions = {
         "png", "PNG", "jpg", "JPG", "jpeg", "JPEG"
     };
@@ -31,6 +31,7 @@ Image * ImageBuilder::CreateImage(const std::string& path, Page &p, const std::s
     if(Utils::findMatchingFile(prefix, extensions, file))
     {
         image = new Image(file, "", p, monitor, additive);
+        image->allocateGraphicsMemory();
     }
 
     return image;

@@ -35,7 +35,7 @@ public:
     void clearPage( );
 
 private:
-    std::string    getKey();
+    std::string    getKey() const;
     Configuration &config_;
     UserInput     &input_;
     Page          *page_;

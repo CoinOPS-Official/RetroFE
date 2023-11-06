@@ -56,7 +56,7 @@ void Menu::clearPage( )
 }
 
 
-std::string Menu::getKey()
+std::string Menu::getKey() const
 {
 
     SDL_Event   event;

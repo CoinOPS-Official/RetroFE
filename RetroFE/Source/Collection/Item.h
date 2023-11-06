@@ -22,15 +22,15 @@
 class Item
 {
 public:
-    Item();
+    Item() = default;
     virtual ~Item();
-    std::string filename();
-    std::string lowercaseTitle() ;
-    std::string lowercaseFullTitle();
-    std::string getMetaAttribute(std::string attribute);
+    std::string filename() const;
+    std::string lowercaseTitle() const;
+    std::string lowercaseFullTitle() const;
+    std::string getMetaAttribute(const std::string& attribute) const;
     std::string name;
     std::string filepath;
-    std::string file;
+    std::string file{ "" };
     std::string title;
     std::string fullTitle;
     std::string year;
@@ -45,18 +45,18 @@ public:
     std::string rating;
     std::string score;
     std::string playlist;
-    std::string lastPlayed;
-    int playCount;
-    bool        isFavorite;
-    CollectionInfo *collectionInfo;
-    bool leaf;
+    std::string lastPlayed{ "0" };
+    int playCount{ 0 };
+    bool        isFavorite{ false };
+    CollectionInfo* collectionInfo{ nullptr };
+    bool leaf{ true };
 
-    typedef std::map<std::string, std::string> InfoType;
-    typedef std::pair<std::string, std::string> InfoPair;
+    using InfoType = std::map<std::string, std::string, std::less<>>;
+    using InfoPair = std::pair<std::string, std::string>;
     InfoType info_;
     void setInfo( std::string key, std::string value );
-    bool getInfo( std::string key, std::string &value );
-    void loadInfo( std::string path );
+    bool getInfo(const std::string& key, std::string& value);
+    void loadInfo(const std::string& path);
     bool static validSortType(std::string attribute);
     bool static isSortDesc(std::string attribute);
 };

@@ -19,8 +19,8 @@
 #include <sstream>
 #include <fstream>
 
-DB::DB(std::string dbFile)
-    : handle(NULL)
+DB::DB(const std::string& dbFile)
+    : handle(nullptr)
 , path_(dbFile)
 {
 }
@@ -52,10 +52,10 @@ bool DB::initialize()
 
 void DB::deInitialize()
 {
-    if(handle != NULL)
+    if(handle != nullptr)
     {
         sqlite3_close(handle);
-        handle = NULL;
+        handle = nullptr;
     }
 }
 

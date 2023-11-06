@@ -45,7 +45,7 @@ class RetroFE
 {
 
 public:
-    RetroFE( Configuration &c );
+    explicit RetroFE( Configuration &c );
     virtual ~RetroFE( );
     bool     deInitialize( );
     bool     run( );
@@ -135,7 +135,7 @@ private:
     bool isInAttractModeSkipPlaylist(std::string playlist);
     void goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleVector);
     void            quit( );
-    Page           *loadPage(std::string collectionName);
+    Page           *loadPage(const std::string& collectionName);
     Page           *loadSplashPage( );
 
     std::vector<std::string> collectionCycle_;
@@ -143,10 +143,10 @@ private:
 
     RETROFE_STATE   processUserInput( Page *page );
     void            update( float dt, bool scrollActive );
-    CollectionInfo *getCollection( std::string collectionName );
-    void updatePageControls(std::string type);
-    CollectionInfo *getMenuCollection( std::string collectionName );
-	void            saveRetroFEState( );
+    CollectionInfo *getCollection( const std::string& collectionName );
+    void updatePageControls(const std::string& type);
+    CollectionInfo *getMenuCollection( const std::string& collectionName );
+	void            saveRetroFEState( ) const;
     std::string getLayoutFileName();
     void resetInfoToggle();
 

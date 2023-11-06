@@ -36,25 +36,25 @@ public:
 #ifdef WIN32    
     static void postMessage(LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam );
 #endif    
-    static std::string getDirectory(std::string filePath);
+    static std::string getDirectory(const std::string& filePath);
     static std::string getParentDirectory(std::string filePath);
     static std::string getEnvVar(std::string const& key);
     static std::string getFileName(std::string filePath);
-    static bool findMatchingFile(std::string prefix, std::vector<std::string> &extensions, std::string &file);
+    static bool findMatchingFile(const std::string& prefix, std::vector<std::string> &extensions, std::string &file);
     static std::string toLower(std::string str);
     static std::string uppercaseFirst(std::string str);
     static std::string filterComments(std::string line);
     static std::string trimEnds(std::string str);
-    static void listToVector( std::string str, std::vector<std::string> &vec, char delimiter );
+    static void listToVector( const std::string& str, std::vector<std::string> &vec, char delimiter );
     static int gcd( int a, int b );
     static std::string trim(std::string& str);
 
     //todo: there has to be a better way to do this
     static std::string combinePath(std::list<std::string> &paths);
-    static std::string combinePath(std::string path1, std::string path2);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3, std::string path4);
-    static std::string combinePath(std::string path1, std::string path2, std::string path3, std::string path4, std::string path5);
+    static std::string combinePath(const std::string& path1, const std::string& path2);
+    static std::string combinePath(const std::string& path1, const std::string& path2, const std::string& path3);
+    static std::string combinePath(const std::string& path1, const std::string& path2, const std::string& path3, const std::string& path4);
+    static std::string combinePath(const std::string& path1, const std::string& path2, const std::string& path3, const std::string& path4, const std::string& path5);
    
 #ifdef WIN32
     static const char pathSeparator = '\\';

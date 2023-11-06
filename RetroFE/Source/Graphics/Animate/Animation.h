@@ -30,7 +30,7 @@ public:
     void Clear();
     std::vector<TweenSet *> *tweenSets();
     TweenSet *tweenSet(unsigned int index);
-    size_t size();
+    size_t size() const;
 private:
     std::vector<TweenSet *> animationVector_;
 };

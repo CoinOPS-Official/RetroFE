@@ -27,10 +27,10 @@ extern "C"
 class GStreamerVideo : public IVideo
 {
 public:
-    GStreamerVideo( int monitor );
+    explicit GStreamerVideo( int monitor );
     ~GStreamerVideo();
     bool initialize();
-    bool play(std::string file);
+    bool play(const std::string& file);
     bool stop();
     bool deInitialize();
     SDL_Texture *getTexture() const;
@@ -63,7 +63,7 @@ private:
     
     static void processNewBuffer (GstElement *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
     static void elementSetupCallback(GstElement *playbin, GstElement *element, GStreamerVideo *video);
-    bool initializeGstElements(std::string file);
+    bool initializeGstElements(const std::string& file);
     bool createAndLinkGstElements();
     void loopHandler();
     GstElement *playbin_;
