@@ -132,7 +132,6 @@ elif args.os == 'linux':
 elif args.os == 'mac':
   if args.build == 'full' or args.build == 'core' or args.build == 'engine':
     src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe')
-    shutil.copy(src_exe, output_path)
     app_path = os.path.join(output_path, 'RetroFE.app')
     if not os.path.exists(app_path):
       copytree(os_path, output_path)
