@@ -246,7 +246,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
     std::atomic<bool> stop_thread = true;;
     std::thread proc_thread;
     bool multiple_display = SDL::getScreenCount() > 1;
-    if (multiple_display && currentPage != NULL) {
+    bool animateDuringGame = true;
+    config_.getProperty("animateDuringGame", animateDuringGame);
+    if (animateDuringGame && multiple_display && currentPage != NULL) {
         stop_thread = false;
         proc_thread = std::thread([this, &stop_thread, &currentPage]() {
             this->keepRendering(std::ref(stop_thread), *currentPage);
@@ -287,7 +289,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
     {
 #ifdef WIN32
         // lower priority
-        SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
+        SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
 
 		if ( wait )
 		{
@@ -307,6 +309,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
         config_.getProperty("highPriority", highPriority);
         if (highPriority) {
             SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
+        }
+        else {
+            SetPriorityClass(GetCurrentProcess(), NORMAL_PRIORITY_CLASS);
         }
 
         // result = GetExitCodeProcess(processInfo.hProcess, &exitCode);

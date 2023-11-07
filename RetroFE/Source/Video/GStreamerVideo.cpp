@@ -333,36 +333,55 @@ void GStreamerVideo::elementSetupCallback(GstElement *playbin, GstElement *eleme
     g_free(elementName);
 }
 
-void GStreamerVideo::processNewBuffer(GstElement * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata)
-{
-    GStreamerVideo *video = (GStreamerVideo *)userdata;
-    if (video && video->isPlaying_)
-    {
-        if (!video->frameReady_)
-        {
-            if (!video->width_ || !video->height_)
-            {
-                GstCaps *caps = gst_pad_get_current_caps(new_pad);
-                GstStructure *s = gst_caps_get_structure(caps, 0);
-                gst_structure_get_int(s, "width", &video->width_);
-                gst_structure_get_int(s, "height", &video->height_);
-                gst_caps_unref(caps);  // Don't forget to unref the caps
+void GStreamerVideo::processNewBuffer(GstElement* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
+    GStreamerVideo* video = static_cast<GStreamerVideo*>(userdata);
+    if (!video || !video->isPlaying_) {
+        Logger::write(Logger::ZONE_ERROR, "Video", "Invalid video or not playing.");
+        return; // If video is null or not playing, exit early.
+    }
+
+    // Only proceed if the frame is not ready yet.
+    if (!video->frameReady_) {
+        // Only retrieve and set width and height if they have not been set yet.
+        if (video->width_ == 0 || video->height_ == 0) {
+            GstCaps* caps = gst_pad_get_current_caps(new_pad);
+            if (!caps) {
+                Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get current caps.");
+                return; // Exit if caps retrieval failed.
             }
-            if ((video->height_ || video->width_) && !video->videoBuffer_)
-            {
-                SDL_LockMutex(SDL::getMutex());
+
+            const GstStructure* s = gst_caps_get_structure(caps, 0);
+            if (!s || !gst_structure_get_int(s, "width", &video->width_) || !gst_structure_get_int(s, "height", &video->height_)) {
+                Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get width and height from structure.");
+                gst_caps_unref(caps);
+                return; // Exit if width or height retrieval failed.
+            }
+            gst_caps_unref(caps); // Always unref caps after use.
+        }
+
+        // If height and width are now set, and the video buffer hasn't been set yet, proceed.
+        if (video->width_ > 0 && video->height_ > 0 && !video->videoBuffer_) {
+            if (SDL_LockMutex(SDL::getMutex()) == 0) { // Lock the mutex, check for success.
                 video->videoBuffer_ = gst_buffer_ref(buf);
-                video->frameReady_ = true;
+                if (!video->videoBuffer_) {
+                    Logger::write(Logger::ZONE_ERROR, "Video", "Failed to ref buffer.");
+                    SDL_UnlockMutex(SDL::getMutex());
+                    return; // Exit if buffer ref failed.
+                }
+                video->frameReady_ = true; // Set frame ready if all operations are successful.
                 SDL_UnlockMutex(SDL::getMutex());
+            }
+            else {
+                Logger::write(Logger::ZONE_ERROR, "Video", "Failed to lock mutex.");
+                return;
             }
         }
     }
 }
 
-
-void GStreamerVideo::update(float /* dt */) 
+void GStreamerVideo::update(float /* dt */)
 {
-	if(!playbin_)
+	if(!playbin_ || frameReady_)
 	{
 		return;
 	}

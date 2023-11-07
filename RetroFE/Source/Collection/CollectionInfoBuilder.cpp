@@ -483,6 +483,10 @@ void CollectionInfoBuilder::addPlaylists(CollectionInfo *info)
             conf_.getProperty(settingPrefix + "cyclePlaylist", cycleString);
         }
     }
+    if (info->name == "Favorites") {
+        cycleString = "favorites";
+    }
+
     std::vector<std::string> cycleVector;
     Utils::listToVector(cycleString, cycleVector, ',');
 
@@ -533,6 +537,10 @@ void CollectionInfoBuilder::loadPlaylistItems(CollectionInfo* info, std::map<std
             conf_.getProperty(settingPrefix + "cyclePlaylist", cycleString);
         }
     }
+    if (info->name == "Favorites") {
+        cycleString = "favorites";
+    }
+
     std::vector<std::string> cycleVector;
     Utils::listToVector(cycleString, cycleVector, ',');
 
