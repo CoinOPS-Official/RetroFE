@@ -47,9 +47,9 @@ public:
 private:
     std::string videoFile_;
     std::string name_;
-    IVideo *videoInst_;
-    bool isPlaying_;
-    bool hasPlayedOnce_;
+    IVideo* videoInst_{ nullptr };
+    bool isPlaying_{ false };
+    bool hasPlayedOnce_{ false };
     int numLoops_;
     int monitor_;
     VideoFactory factory_;

@@ -190,9 +190,9 @@ private:
         CollectionInfo::Playlists_T::iterator playlist;
         bool queueDelete;
     };
-    typedef std::list<MenuInfo_S> CollectionVector_T;
+    using CollectionVector_T = std::list<MenuInfo_S>;
     
-    typedef std::vector< std::vector<ScrollingList *> > MenuVector_T;
+    using MenuVector_T = std::vector<std::vector<ScrollingList *>>;
     void setActiveMenuItemsFromPlaylist(MenuInfo_S info, ScrollingList* menu);
 
     std::vector<ScrollingList *> activeMenu_;

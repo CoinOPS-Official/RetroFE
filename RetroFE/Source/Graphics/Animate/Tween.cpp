@@ -74,7 +74,6 @@ std::map<std::string, TweenProperty, std::less<>> Tween::tweenPropertyMap_ = {
 Tween::Tween(TweenProperty property, TweenAlgorithm type, double start, double end, double duration, const std::string& playlistFilter)
     : property(property)
     , duration(duration)
-    , startDefined(true)
     , playlistFilter(playlistFilter)
     , type(type)
 	, start(start)

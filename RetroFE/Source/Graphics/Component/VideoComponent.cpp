@@ -27,10 +27,7 @@
 VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops)
     : Component(p)
     , videoFile_(videoFile)
-    , videoInst_(nullptr)
     , numLoops_(numLoops)
-    , isPlaying_(false)
-    , hasPlayedOnce_(false)
     , monitor_(monitor)
 {
 

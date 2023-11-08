@@ -511,6 +511,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
             // don't add videos if display doesn't exist
             if (cMonitor + 1 <= SDL::getScreenCount()) {
                 auto* c = new Video(videoPath, altVideoPath, numLoops, *page, cMonitor);
+                c->allocateGraphicsMemory();
                 c->setId(id);
 
                 if (auto const* pauseOnScroll = componentXml->first_attribute("pauseOnScroll");

@@ -69,4 +69,14 @@ private:
     bool jukebox_;
     int  jukeboxNumLoops_;
     int numberOfImages_{ 27 };
+    
+    static inline const std::vector<std::string> imageExtensions = {
+        "png", "PNG", "jpg", "JPG", "jpeg", "JPEG",
+    };
+
+    static inline const std::vector<std::string> videoExtensions = {
+        "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
+        "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
+    };
+
 };

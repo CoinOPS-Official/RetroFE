@@ -21,7 +21,7 @@
 class IVideo
 {
 public:
-    virtual ~IVideo() {}
+    virtual ~IVideo() = default;
     virtual bool initialize() = 0;
     virtual bool play(const std::string& file) = 0;
     virtual bool stop() = 0;

@@ -71,7 +71,7 @@ void Image::allocateGraphicsMemory()
             {
                 SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
             }
-            SDL_QueryTexture(texture_, NULL, NULL, &width, &height);
+            SDL_QueryTexture(texture_, nullptr, nullptr, &width, &height);
             baseViewInfo.ImageWidth  = (float)width;
             baseViewInfo.ImageHeight = (float)height;
         }
@@ -100,6 +100,6 @@ void Image::draw()
         rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
         rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
 
-        SDL::renderCopy(texture_, baseViewInfo.Alpha, NULL, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        SDL::renderCopy(texture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
     }
 }

@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <list>
+#include <filesystem>
 
 #ifdef WIN32
     #define NOMINMAX
@@ -28,33 +29,35 @@ class Utils
 {
 public:
     static std::string replace(std::string subject, const std::string& search,
-                               const std::string& replace);
+        const std::string& replace);
 
     static float convertFloat(std::string content);
     static int convertInt(std::string content);
-    static void replaceSlashesWithUnderscores(std::string &content);
+    static void replaceSlashesWithUnderscores(std::string& content);
 #ifdef WIN32    
-    static void postMessage(LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam );
+    static void postMessage(LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam);
 #endif    
     static std::string getDirectory(const std::string& filePath);
     static std::string getParentDirectory(std::string filePath);
     static std::string getEnvVar(std::string const& key);
     static std::string getFileName(std::string filePath);
-    static bool findMatchingFile(const std::string& prefix, std::vector<std::string> &extensions, std::string &file);
+    static bool findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file);
     static std::string toLower(std::string str);
     static std::string uppercaseFirst(std::string str);
     static std::string filterComments(std::string line);
     static std::string trimEnds(std::string str);
-    static void listToVector( const std::string& str, std::vector<std::string> &vec, char delimiter );
-    static int gcd( int a, int b );
+    static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter);
+    static int gcd(int a, int b);
     static std::string trim(std::string& str);
 
-    //todo: there has to be a better way to do this
-    static std::string combinePath(std::list<std::string> &paths);
-    static std::string combinePath(const std::string& path1, const std::string& path2);
-    static std::string combinePath(const std::string& path1, const std::string& path2, const std::string& path3);
-    static std::string combinePath(const std::string& path1, const std::string& path2, const std::string& path3, const std::string& path4);
-    static std::string combinePath(const std::string& path1, const std::string& path2, const std::string& path3, const std::string& path4, const std::string& path5);
+    template <typename... Paths>
+    static std::string combinePath(Paths... paths) {
+        std::filesystem::path combinedPath;
+        // Use fold expression to append paths
+        (combinedPath /= ... /= std::filesystem::path(paths));
+        return combinedPath.make_preferred().string(); // Convert to the preferred path format for the platform
+    }
+
    
 #ifdef WIN32
     static const char pathSeparator = '\\';

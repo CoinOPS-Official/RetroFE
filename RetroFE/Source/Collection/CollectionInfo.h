@@ -28,7 +28,7 @@ public:
     CollectionInfo(Configuration& c, const std::string& name, const std::string& listPath, const std::string &extensions, const std::string& metadataType, const std::string& metadataPath);
     virtual ~CollectionInfo();
     std::string settingsPath() const;
-    bool saveFavorites(Item* removed = NULL);
+    bool saveFavorites(Item* removed = nullptr);
     void sortItems();
     void sortPlaylists();
     void addSubcollection(CollectionInfo *info);
@@ -43,7 +43,7 @@ public:
     std::vector<Item *> items;
     std::vector<Item*> playlistItems;
 
-    using Playlists_T = std::map<std::string, std::vector<Item *> *>;
+    using Playlists_T = std::map<std::string, std::vector<Item*>*, std::less<>>;
     Playlists_T playlists;
     std::string sortType;
     bool menusort;

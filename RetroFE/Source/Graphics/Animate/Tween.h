@@ -33,7 +33,7 @@ public:
     static bool getTweenProperty(std::string name, TweenProperty &property);
     TweenProperty property;
     double duration;
-    bool   startDefined;
+    bool   startDefined{ true };
     std::string playlistFilter;
 
 private:

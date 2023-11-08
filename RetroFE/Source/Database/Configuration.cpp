@@ -20,6 +20,7 @@
 #include <locale>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
 
 #ifdef WIN32
 #include <windows.h>
@@ -352,13 +353,13 @@ void Configuration::childKeyCrumbs(std::string parent, std::vector<std::string> 
 
 std::string Configuration::convertToAbsolutePath(const std::string& prefix, const std::string& path)
 {
-    char first = (path.size() > 0) ? path[0] : ' ';
-    char second = (path.size() > 1) ? path[1] : ' ';
-
-    // check to see if it is already an absolute path
-    if((first != Utils::pathSeparator) && (second != ':'))
+    std::filesystem::path fsPath(path);
+    // Check if the path is already an absolute path
+    if (!fsPath.is_absolute())
     {
-        return Utils::combinePath(prefix, path);
+        // Combine prefix and path
+        std::filesystem::path absPath = std::filesystem::absolute(std::filesystem::path(prefix) / fsPath);
+        return absPath.string();
     }
     return path;
 }

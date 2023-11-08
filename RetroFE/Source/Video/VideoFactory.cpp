@@ -34,7 +34,7 @@ IVideo* VideoFactory::createVideo(int monitor, int numLoops)
     instance->initialize();
 
     int loopsToSet = (numLoops > 0) ? numLoops : numLoops_;
-    static_cast<GStreamerVideo*>(instance)->setNumLoops(loopsToSet);
+    instance->setNumLoops(loopsToSet);
 
     return instance;
 }

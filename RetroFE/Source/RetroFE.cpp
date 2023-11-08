@@ -73,9 +73,9 @@ RetroFE::RetroFE( Configuration &c )
     , reboot_(false)
     , kioskLock_(false)
     , paused_(false)
-    , gameInfo_(false)
-    , collectionInfo_(false)
     , buildInfo_(false)
+    , collectionInfo_(false)
+    , gameInfo_(false)
 {
     menuMode_                            = false;
     attractMode_                         = false;
@@ -279,20 +279,20 @@ bool RetroFE::deInitialize( )
     {
         currentPage_->deInitialize( );
         delete currentPage_;
-        currentPage_ = NULL;
+        currentPage_ = nullptr;
     }
 
     // Delete databases
     if ( metadb_ )
     {
         delete metadb_;
-        metadb_ = NULL;
+        metadb_ = nullptr;
     }
 
     if ( db_ )
     {
         delete db_;
-        db_ = NULL;
+        db_ = nullptr;
     }
 
     initialized = false;
@@ -557,7 +557,7 @@ bool RetroFE::run( )
                     config_.setProperty( "currentCollection", firstCollection );
                     info = getCollection(firstCollection);
 
-                    if (info == NULL) {
+                    if (info == nullptr) {
                         state = RETROFE_QUIT_REQUEST;
 
                         break;
@@ -1146,7 +1146,7 @@ bool RetroFE::run( )
         case RETROFE_COLLECTION_DOWN_SCROLL:
             if ( currentPage_->isMenuIdle( ) )
             {
-                Item* currentPageItem = currentPage_->getSelectedItem();
+                Item const* currentPageItem = currentPage_->getSelectedItem();
                 std::string attractModeSkipCollection = "";
                 config_.getProperty( "attractModeSkipCollection", attractModeSkipCollection );
                 // Check if we need to skip this collection in attract mode or if we can select it
@@ -1488,7 +1488,7 @@ bool RetroFE::run( )
                     currentPage_->deInitialize( );
                     delete currentPage_;
                     currentPage_ = page;
-                    if (currentPage_->getSelectedItem() != NULL) {
+                    if (currentPage_->getSelectedItem() != nullptr) {
                         currentPage_->allocateGraphicsMemory();
                         currentPage_->setLocked(kioskLock_);
                     }
@@ -1817,7 +1817,7 @@ bool RetroFE::isInAttractModeSkipPlaylist(std::string playlist)
             while (ss.good())
             {
                 getline(ss, playlist, ',');
-                lkupAttractModeSkipPlaylist_.insert(make_pair(playlist, true));
+                lkupAttractModeSkipPlaylist_.try_emplace(playlist, true);
             }
         }
     }
@@ -1828,7 +1828,7 @@ bool RetroFE::isInAttractModeSkipPlaylist(std::string playlist)
 void RetroFE::goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleVector)
 {
     // find current position
-    std::vector<std::string>::iterator it = cycleVector.begin();
+    auto it = cycleVector.begin();
     while (it != cycleVector.end() && *it != currentPage_->getPlaylistName())
         ++it;
     // find next playlist that is not in list 
@@ -2481,7 +2481,7 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
     cib.injectMetadata( collection );
 
     DIR *dp;
-    struct dirent *dirp;
+    struct dirent const *dirp;
 
     // check collection folder exists 
     std::string path = Utils::combinePath( Configuration::absolutePath, "collections", collectionName );
@@ -2536,7 +2536,7 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
     collection->sortPlaylists();
 
     // Add extra info, if available
-    for ( std::vector<Item *>::iterator it = collection->items.begin( ); it != collection->items.end( ); it++ )
+    for ( auto it = collection->items.begin( ); it != collection->items.end( ); it++ )
     {
         std::string path = Utils::combinePath( Configuration::absolutePath, "collections", collectionName, "info", (*it)->name + ".conf" );
         (*it)->loadInfo( path );
@@ -2550,9 +2550,9 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
     (void)config_.getProperty( "showSquareBrackets", showSquareBrackets );
 
     using Playlists_T = std::map<std::string, std::vector<Item *> *>;
-    for ( Playlists_T::iterator itP = collection->playlists.begin( ); itP != collection->playlists.end( ); itP++ )
+    for ( auto itP = collection->playlists.begin( ); itP != collection->playlists.end( ); itP++ )
     {
-        for ( std::vector <Item *>::iterator itI = itP->second->begin( ); itI != itP->second->end( ); itI++ )
+        for ( auto itI = itP->second->begin( ); itI != itP->second->end( ); itI++ )
         {
             if ( !showParenthesis )
             {
@@ -2610,7 +2610,7 @@ CollectionInfo *RetroFE::getMenuCollection( const std::string& collectionName )
     CollectionInfoBuilder cib( config_, *metadb_ );
     auto *collection = new CollectionInfo(config_, collectionName, menuPath, "", "", "" );
     cib.ImportBasicList( collection, menuFile, menuVector );
-    for ( std::vector<Item *>::iterator it = menuVector.begin( ); it != menuVector.end( ); ++it)
+    for ( auto it = menuVector.begin( ); it != menuVector.end( ); ++it)
     {
         (*it)->leaf = false;
         size_t position = (*it)->name.find( "=" );

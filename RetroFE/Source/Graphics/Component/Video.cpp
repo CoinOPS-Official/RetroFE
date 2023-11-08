@@ -22,6 +22,7 @@
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
+#include <filesystem>
 
 
 bool Video::enabled_ = true;
@@ -29,7 +30,6 @@ bool Video::enabled_ = true;
 
 Video::Video(const std::string& file, const std::string& altFile, int numLoops, Page &p, int monitor)
     : Component(p)
-    , video_(nullptr)
     , file_(file)
     , altFile_(altFile)
     , numLoops_(numLoops)
@@ -37,8 +37,6 @@ Video::Video(const std::string& file, const std::string& altFile, int numLoops, 
 {
     baseViewInfo.Monitor = monitor;
     baseViewInfo.Layout = p.getCurrentLayout();
-
-    allocateGraphicsMemory( );
 }
 
 Video::~Video( )
@@ -90,31 +88,32 @@ void Video::freeGraphicsMemory( )
 }
 
 
-void Video::allocateGraphicsMemory( )
+void Video::allocateGraphicsMemory()
 {
-    Component::allocateGraphicsMemory( );
+    Component::allocateGraphicsMemory();
 
-    if (enabled_ && !video_)
-    {
-        std::string file = "";
+    if (enabled_ && !video_) {
+        std::filesystem::path file;
 
-        std::ifstream f(altFile_.c_str( ));
-        if (f.good( ))
-            file = altFile_;
-
-        std::ifstream g(file_.c_str( ));
-        if (g.good( ))
+        // First, check if file_ exists and is not a directory
+        if (std::filesystem::exists(file_) && !std::filesystem::is_directory(file_)) {
             file = file_;
+        }
+        // If file_ was not found or is a directory, check for altFile_
+        else if (std::filesystem::exists(altFile_) && !std::filesystem::is_directory(altFile_)) {
+            file = altFile_;
+        }
 
-        if (file != "")
-        {
-            video_ = new VideoComponent(page, file, baseViewInfo.Monitor, numLoops_);
+        // If a valid file path was found, create a new VideoComponent
+        if (!file.empty()) {
+            video_ = new VideoComponent(page, file.string(), baseViewInfo.Monitor, numLoops_);
         }
     }
 
-    if (video_)
+    // If video_ was created, allocate graphics memory for it
+    if (video_) {
         video_->allocateGraphicsMemory();
-
+    }
 }
 
 

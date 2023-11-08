@@ -57,7 +57,7 @@ private:
     void loadReloadableImages(const rapidxml::xml_node<> *layout, const std::string& tagName, Page *page);
     float getVerticalAlignment(const rapidxml::xml_attribute<> *attribute, float valueIfNull) const;
     float getHorizontalAlignment(const rapidxml::xml_attribute<> *attribute, float valueIfNull) const;
-    void buildViewInfo(rapidxml::xml_node<> *componentXml, ViewInfo &info, rapidxml::xml_node<> *defaultXml = NULL);
+    void buildViewInfo(rapidxml::xml_node<> *componentXml, ViewInfo &info, rapidxml::xml_node<> *defaultXml = nullptr);
     bool buildComponents(rapidxml::xml_node<> *layout, Page *page, const std::string&);
     void loadTweens(Component *c, rapidxml::xml_node<> *componentXml);
     AnimationEvents *createTweenInstance(rapidxml::xml_node<> *componentXml);

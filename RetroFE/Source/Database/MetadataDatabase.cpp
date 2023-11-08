@@ -44,14 +44,12 @@ MetadataDatabase::MetadataDatabase(DB &db, Configuration &c)
 
 }
 
-MetadataDatabase::~MetadataDatabase()
-{
-}
+MetadataDatabase::~MetadataDatabase() = default;
 
 bool MetadataDatabase::resetDatabase()
 {
     int rc;
-    char *error = NULL;
+    char *error = nullptr;
     sqlite3 *handle = db_.handle;
 
     Logger::write(Logger::ZONE_INFO, "Metadata", "Erasing");
@@ -59,7 +57,7 @@ bool MetadataDatabase::resetDatabase()
     std::string sql;
     sql.append("DROP TABLE IF EXISTS Meta;");
 
-    rc = sqlite3_exec(handle, sql.c_str(), NULL, 0, &error);
+    rc = sqlite3_exec(handle, sql.c_str(), nullptr, nullptr, &error);
 
     if(rc != SQLITE_OK)
     {
@@ -77,7 +75,7 @@ bool MetadataDatabase::initialize()
     if(needsRefresh())
     {
         int rc;
-        char* error = NULL;
+        char* error = nullptr;
         sqlite3* handle = db_.handle;
 
         std::string sql;
@@ -98,7 +96,7 @@ bool MetadataDatabase::initialize()
         sql.append("score TEXT NOT NULL DEFAULT '');");
         sql.append("CREATE UNIQUE INDEX IF NOT EXISTS MetaUniqueId ON Meta(collectionName, name);");
 
-        rc = sqlite3_exec(handle, sql.c_str(), NULL, 0, &error);
+        rc = sqlite3_exec(handle, sql.c_str(), nullptr, nullptr, &error);
 
         if (rc != SQLITE_OK)
         {
@@ -125,13 +123,13 @@ bool MetadataDatabase::importDirectory()
 
     dp = opendir(hyperListPath.c_str());
 
-    if(dp == NULL)
+    if(dp == nullptr)
     {
         Logger::write(Logger::ZONE_WARNING, "MetadataDatabase", "Could not read directory \"" + hyperListPath + "\"");
     }
     else
     {
-        while((dirp = readdir(dp)) != NULL)
+        while((dirp = readdir(dp)) != nullptr)
         {
             if (dirp->d_type != DT_DIR && std::string(dirp->d_name) != "." && std::string(dirp->d_name) != "..")
             {
@@ -157,13 +155,13 @@ bool MetadataDatabase::importDirectory()
 
     dp = opendir(mameListPath.c_str());
 
-    if(dp == NULL)
+    if(dp == nullptr)
     {
         Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Could not read directory \"" + mameListPath + "\"");
     }
     else
     {
-        while((dirp = readdir(dp)) != NULL)
+        while((dirp = readdir(dp)) != nullptr)
         {
             if (dirp->d_type != DT_DIR && std::string(dirp->d_name) != "." && std::string(dirp->d_name) != "..")
             {
@@ -190,13 +188,13 @@ bool MetadataDatabase::importDirectory()
 
     dp = opendir(emuarcListPath.c_str());
 
-    if(dp == NULL)
+    if(dp == nullptr)
     {
         Logger::write(Logger::ZONE_INFO, "MetadataDatabase", "Could not read directory \"" + emuarcListPath + "\"");
     }
     else
     {
-        while((dirp = readdir(dp)) != NULL)
+        while((dirp = readdir(dp)) != nullptr)
         {
             if (dirp->d_type != DT_DIR && std::string(dirp->d_name) != "." && std::string(dirp->d_name) != "..")
             {
@@ -233,14 +231,14 @@ void MetadataDatabase::injectMetadata(CollectionInfo *collection)
     std::map<std::string, Item*, std::less<>> itemMap;
 
     for (auto* item : *items) {
-        itemMap.emplace(item->name, item);
+        itemMap.try_emplace(item->name, item);
     }
 
     //todo: program crashes if this query fails
     sqlite3_prepare_v2(handle,
                        "SELECT DISTINCT Meta.name, Meta.title, Meta.year, Meta.manufacturer, Meta.developer, Meta.genre, Meta.players, Meta.ctrltype, Meta.buttons, Meta.joyways, Meta.cloneOf, Meta.rating, Meta.score "
                        "FROM Meta WHERE collectionName=? ORDER BY title ASC;",
-                       -1, &stmt, 0);
+                       -1, &stmt, nullptr);
 
     sqlite3_bind_text(stmt, 1, collection->metadataType.c_str(), -1, SQLITE_TRANSIENT);
 
@@ -296,7 +294,7 @@ bool MetadataDatabase::needsRefresh()
 
     sqlite3_prepare_v2(handle,
                        "SELECT COUNT(*) FROM Meta;",
-                       -1, &stmt, 0);
+                       -1, &stmt, nullptr);
 
     int rc = sqlite3_step(stmt);
 
@@ -331,7 +329,7 @@ bool MetadataDatabase::needsRefresh()
 
 bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string collectionName)
 {
-    char *error = NULL;
+    char *error = nullptr;
 
     config_.setProperty("status", "Scraping data from \"" + hyperlistFile + "\"");
     rapidxml::xml_document<> doc;
@@ -352,7 +350,7 @@ bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string co
             return false;
         }
         sqlite3 *handle = db_.handle;
-        sqlite3_exec(handle, "BEGIN IMMEDIATE TRANSACTION;", NULL, NULL, &error);
+        sqlite3_exec(handle, "BEGIN IMMEDIATE TRANSACTION;", nullptr, nullptr, &error);
         for(rapidxml::xml_node<> *game = root->first_node("game"); game; game = game->next_sibling("game"))
         {
             rapidxml::xml_attribute<> *nameXml = game->first_attribute("name");
@@ -370,21 +368,21 @@ bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string co
             rapidxml::xml_node<> *numberButtonsXml = game->first_node("buttons");
             rapidxml::xml_node<> *numberJoyWaysXml = game->first_node("joyways");
             rapidxml::xml_node<> *enabledXml = game->first_node("enabled");
-            std::string name = (nameXml) ? nameXml->value() : "";
-            std::string description = (descriptionXml) ? descriptionXml->value() : "";
-            std::string crc = (crcXml) ? crcXml->value() : "";
-            std::string cloneOf = (cloneofXml) ? cloneofXml->value() : "";
-            std::string manufacturer = (manufacturerXml) ? manufacturerXml->value() : "";
-            std::string developer = (developerXml) ? developerXml->value() : "";
-            std::string year = (yearXml) ? yearXml->value() : "";
-            std::string genre = (genreXml) ? genreXml->value() : "";
-            std::string rating = (ratingXml) ? ratingXml->value() : "";
-            std::string score = (scoreXml) ? scoreXml->value() : "";
-            std::string numberPlayers = (numberPlayersXml) ? numberPlayersXml->value() : "";
-            std::string ctrlType = (ctrlTypeXml) ? ctrlTypeXml->value() : "";
-            std::string numberButtons = (numberButtonsXml) ? numberButtonsXml->value() : "";
-            std::string numberJoyWays = (numberJoyWaysXml) ? numberJoyWaysXml->value() : "";
-            std::string enabled = (enabledXml) ? enabledXml->value() : "";
+            std::string name = nameXml ? nameXml->value() : "";
+            std::string description = descriptionXml ? descriptionXml->value() : "";
+            std::string crc = crcXml ? crcXml->value() : "";
+            std::string cloneOf = cloneofXml ? cloneofXml->value() : "";
+            std::string manufacturer = manufacturerXml ? manufacturerXml->value() : "";
+            std::string developer = developerXml ? developerXml->value() : "";
+            std::string year = yearXml ? yearXml->value() : "";
+            std::string genre = genreXml ? genreXml->value() : "";
+            std::string rating = ratingXml ? ratingXml->value() : "";
+            std::string score = scoreXml ? scoreXml->value() : "";
+            std::string numberPlayers = numberPlayersXml ? numberPlayersXml->value() : "";
+            std::string ctrlType = ctrlTypeXml ? ctrlTypeXml->value() : "";
+            std::string numberButtons = numberButtonsXml ? numberButtonsXml->value() : "";
+            std::string numberJoyWays = numberJoyWaysXml ? numberJoyWaysXml->value() : "";
+            std::string enabled = enabledXml ? enabledXml->value() : "";
 
             if(name.length() > 0)
             {
@@ -392,7 +390,7 @@ bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string co
 
                 sqlite3_prepare_v2(handle,
                                    "INSERT OR REPLACE INTO Meta (name, title, year, manufacturer, developer, genre, players, ctrltype, buttons, joyways, cloneOf, collectionName, rating, score) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                                   -1, &stmt, 0);
+                                   -1, &stmt, nullptr);
 
                 sqlite3_bind_text(stmt,  1, name.c_str(), -1, SQLITE_TRANSIENT);
                 sqlite3_bind_text(stmt,  2, description.c_str(), -1, SQLITE_TRANSIENT);
@@ -414,14 +412,14 @@ bool MetadataDatabase::importHyperlist(std::string hyperlistFile, std::string co
             }
         }
         config_.setProperty("status", "Saving data from \"" + hyperlistFile + "\" to database");
-        sqlite3_exec(handle, "COMMIT TRANSACTION;", NULL, NULL, &error);
+        sqlite3_exec(handle, "COMMIT TRANSACTION;", nullptr, nullptr, &error);
 
         return true;
     }
     catch(rapidxml::parse_error &e)
     {
         std::string what = e.what();
-        long line = static_cast<long>(std::count(&buffer.front(), e.where<char>(), char('\n')) + 1);
+        auto line = static_cast<long>(std::count(&buffer.front(), e.where<char>(), char('\n')) + 1);
         std::stringstream ss;
         ss << "Could not parse layout file. [Line: " << line << "] Reason: " << e.what();
 
@@ -441,7 +439,7 @@ bool MetadataDatabase::importMamelist(std::string filename, std::string collecti
 {
     rapidxml::xml_document<> doc;
     rapidxml::xml_node<> * rootNode;
-    char *error = NULL;
+    char *error = nullptr;
     sqlite3 *handle = db_.handle;
 
     config_.setProperty("status", "Scraping data from \"" + filename + "\" (this will take a while)");

@@ -23,6 +23,7 @@
 #include <dirent.h>
 #include <locale>
 #include <list>
+#include <filesystem>
 
 #ifdef WIN32
     #include <Windows.h>
@@ -77,83 +78,30 @@ std::string Utils::filterComments(std::string line)
     return line;
 }
 
-std::string Utils::combinePath(std::list<std::string> &paths)
-{
-    std::list<std::string>::iterator it = paths.begin();
-    std::string path;
 
-    if(it != paths.end())
+bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file)
+{
+    namespace fs = std::filesystem; // If you're using C++17 or later
+
+    // Convert prefix to an absolute path only once
+    std::string base = Configuration::convertToAbsolutePath(Configuration::absolutePath, prefix);
+
+    // Use a range-based for loop
+    for (const auto& ext : extensions)
     {
-        path += *it;
-        it++;
-    }
+        fs::path temp = base; // This creates a path object, which is more robust than string concatenation
+        temp += ".";
+        temp += ext;
 
-
-    while(it != paths.end())
-    {
-        path += Utils::pathSeparator;
-        path += *it;
-        it++;
-    }
-
-    return path;
-}
-
-std::string Utils::combinePath(const std::string& path1, const std::string& path2)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    return combinePath(paths);
-}
-
-std::string Utils::combinePath(const std::string& path1, const std::string& path2, const std::string& path3)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    return combinePath(paths);
-}
-
-std::string Utils::combinePath(const std::string& path1, const std::string& path2, const std::string& path3, const std::string& path4)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    paths.push_back(path4);
-    return combinePath(paths);
-}
-std::string Utils::combinePath(const std::string& path1, const std::string& path2, const std::string& path3, const std::string& path4, const std::string& path5)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    paths.push_back(path4);
-    paths.push_back(path5);
-    return combinePath(paths);
-}
-
-
-bool Utils::findMatchingFile(const std::string& prefix, std::vector<std::string> &extensions, std::string &file)
-{
-    for(unsigned int i = 0; i < extensions.size(); ++i)
-    {
-        std::string temp = prefix + "." + extensions[i];
-        temp = Configuration::convertToAbsolutePath(Configuration::absolutePath, temp);
-
-        std::ifstream f(temp.c_str());
-
-        if (f.good())
+        // Use std::filesystem to check if the file exists
+        if (fs::exists(temp))
         {
-            file = temp;
+            file = temp.string();
             return true;
         }
     }
-
     return false;
+
 }
 
 

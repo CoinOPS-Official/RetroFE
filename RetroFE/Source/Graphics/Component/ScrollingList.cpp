@@ -203,7 +203,7 @@ void ScrollingList::allocateSpritePoints()
     for (unsigned int i = 0; i < scrollPointsSize; ++i)
     {
         unsigned int index = loopIncrement(itemIndex_, i, itemsSize);
-        Item* item = (*items_)[index];  // using [] instead of at()
+        Item const* item = (*items_)[index];  // using [] instead of at()
 
         Component* old = components_[i];  // using [] instead of at()
 
@@ -769,7 +769,7 @@ void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *
     scrollTween->Push( set );
 }
 
-bool ScrollingList::allocateTexture( unsigned int index, Item *item )
+bool ScrollingList::allocateTexture( unsigned int index, const Item *item )
 {
 
     if ( index >= components_.size( ) ) return false;
@@ -1179,7 +1179,7 @@ void ScrollingList::scroll(bool forward)
     size_t scrollPointsSize = scrollPoints_->size();
 
     // Replace the item that's scrolled out
-    Item *itemToScroll;
+    Item const *itemToScroll;
     if (forward)
     {
         itemToScroll = (*items_)[loopIncrement(itemIndex_, scrollPointsSize, itemsSize)];

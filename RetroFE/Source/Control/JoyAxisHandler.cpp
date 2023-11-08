@@ -5,7 +5,6 @@ JoyAxisHandler::JoyAxisHandler(SDL_JoystickID joyid, Uint8 axis, Sint16 min, Sin
 , axis_(axis)
 , min_(min)
 , max_(max)
-, pressed_(false)
 {
 }
 

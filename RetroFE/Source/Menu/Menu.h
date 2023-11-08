@@ -30,7 +30,7 @@ class Menu
 
 public:
     Menu( Configuration &c, UserInput &ui );
-    void handleEntry( Item *item );
+    void handleEntry( Item const *item );
     void setPage( Page *page );
     void clearPage( );
 

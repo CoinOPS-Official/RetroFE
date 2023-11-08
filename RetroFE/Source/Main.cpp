@@ -128,7 +128,7 @@ static bool ImportConfiguration(Configuration* c)
 #endif
     std::string collectionsPath = Utils::combinePath(Configuration::absolutePath, "collections");
     DIR* dp;
-    struct dirent* dirp;
+    struct dirent const* dirp;
 
     std::string settingsConfPath = Utils::combinePath(configPath, "settings");
     if (!c->import("", settingsConfPath + ".conf"))
@@ -242,9 +242,8 @@ static bool ImportConfiguration(Configuration* c)
 
 static bool StartLogging(Configuration* config)
 {
-    std::string logFile = Utils::combinePath(Configuration::absolutePath, "log.txt");
 
-    if (!Logger::initialize(logFile, config))
+    if (std::string logFile = Utils::combinePath(Configuration::absolutePath, "log.txt"); !Logger::initialize(logFile, config))
     {
         // Can't write to logs give a heads up...
         fprintf(stderr, "Could not open log: %s for writing!\nRetroFE will now exit...\n", logFile.c_str());

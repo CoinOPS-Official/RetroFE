@@ -21,14 +21,14 @@
 
 AnimationEvents::AnimationEvents() = default;
 
-AnimationEvents::AnimationEvents(AnimationEvents &copy)
+AnimationEvents::AnimationEvents(AnimationEvents& copy)
 {
-    for(std::map<std::string, std::map<int , Animation *> >::iterator it = copy.animationMap_.begin(); it != copy.animationMap_.end(); it++)
+    for (const auto& outerPair : copy.animationMap_)
     {
-        for(std::map<int, Animation *>::iterator it2 = (it->second).begin(); it2 != (it->second).end(); it2++)
+        auto& innerMap = animationMap_[outerPair.first];
+        for (const auto& innerPair : outerPair.second)
         {
-            auto *t = new Animation(*it2->second);
-            animationMap_[it->first][it2->first] = t;
+            innerMap[innerPair.first] = new Animation(*(innerPair.second));
         }
     }
 }
@@ -73,7 +73,7 @@ void AnimationEvents::clear()
 {
     for (auto& [key, innerMap] : animationMap_) // This is the structured binding declaration
     {
-        for (auto& [innerKey, animation] : innerMap) // Another structured binding
+        for (auto const& [innerKey, animation] : innerMap) // Another structured binding
         {
             delete animation;
         }

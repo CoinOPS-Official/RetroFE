@@ -19,11 +19,11 @@
 
 Animation::Animation() = default;
 
-Animation::Animation(Animation &copy)
+Animation::Animation(Animation& copy)
 {
-    for(std::vector<TweenSet *>::iterator it = copy.animationVector_.begin(); it != copy.animationVector_.end(); it++)
+    for (auto* tweenSet : copy.animationVector_)
     {
-        Push(new TweenSet(**it));
+        Push(new TweenSet(*tweenSet));
     }
 }
 

@@ -23,8 +23,8 @@
 Component::Component(Page &p)
 : page(p)
 {
-    tweens_                   = NULL;
-    backgroundTexture_        = NULL;
+    tweens_                   = nullptr;
+    backgroundTexture_        = nullptr;
     menuScrollReload_         = false;
     animationDoneRemove_      = false;
     freeGraphicsMemory();
@@ -34,8 +34,8 @@ Component::Component(Page &p)
 Component::Component(const Component &copy)
     : page(copy.page)
 {
-    tweens_ = NULL;
-    backgroundTexture_ = NULL;
+    tweens_ = nullptr;
+    backgroundTexture_ = nullptr;
     freeGraphicsMemory();
 
     if ( copy.tweens_ )
@@ -61,7 +61,7 @@ void Component::freeGraphicsMemory()
     newScrollItemSelected   = false;
     menuIndex_              = -1;
 
-    currentTweens_        = NULL;
+    currentTweens_        = nullptr;
     currentTweenIndex_    = 0;
     currentTweenComplete_ = true;
     elapsedTweenTime_     = 0;
@@ -72,7 +72,7 @@ void Component::freeGraphicsMemory()
         SDL_DestroyTexture(backgroundTexture_);
         SDL_UnlockMutex(SDL::getMutex());
 
-        backgroundTexture_ = NULL;
+        backgroundTexture_ = nullptr;
     }
 }
 void Component::allocateGraphicsMemory()
@@ -82,7 +82,7 @@ void Component::allocateGraphicsMemory()
         // make a 4x4 pixel wide surface to be stretched during rendering, make it a white background so we can use
         // color  later
         SDL_Surface *surface = SDL_CreateRGBSurface(0, 4, 4, 32, 0, 0, 0, 0);
-        SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 255, 255));
+        SDL_FillRect(surface, nullptr, SDL_MapRGB(surface->format, 255, 255, 255));
 
         SDL_LockMutex(SDL::getMutex());
         backgroundTexture_ = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), surface);
@@ -209,7 +209,7 @@ bool Component::update(float dt)
     currentTweenComplete_ = animate();
     if ( currentTweenComplete_ )
     {
-      currentTweens_     = NULL;
+      currentTweens_     = nullptr;
       currentTweenIndex_ = 0;
     }
 
@@ -233,7 +233,7 @@ void Component::draw()
                                static_cast<char>(baseViewInfo.BackgroundGreen*255),
                                static_cast<char>(baseViewInfo.BackgroundBlue*255));
 
-        SDL::renderCopy(backgroundTexture_, baseViewInfo.BackgroundAlpha, NULL, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        SDL::renderCopy(backgroundTexture_, baseViewInfo.BackgroundAlpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
     }
 }
 
@@ -252,7 +252,7 @@ bool Component::animate()
         bool foundFiltered;
         for(unsigned int i = 0; i < tweens->size(); i++)
         {
-            Tween *tween = tweens->tweens()->at(i);
+            Tween const *tween = tweens->tweens()->at(i);
             // only animate if filter matches current playlist or in playlist1,playlist2,playlist3
             if (tween->playlistFilter != "" && playlistName != "") {
                 foundFiltered = false;

@@ -2,7 +2,6 @@
 
 KeyboardHandler::KeyboardHandler(SDL_Scancode s)
 : scancode_(s)
-, pressed_(false)
 {
 }
 
@@ -31,6 +30,6 @@ bool KeyboardHandler::pressed()
 
 void KeyboardHandler::updateKeystate()
 {
-	const Uint8 *state = SDL_GetKeyboardState(NULL);
+	const Uint8 *state = SDL_GetKeyboardState(nullptr);
 	pressed_ = state[scancode_];
 }

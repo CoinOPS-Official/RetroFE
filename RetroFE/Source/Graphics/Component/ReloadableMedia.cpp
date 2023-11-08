@@ -36,15 +36,15 @@ ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool la
     , layoutMode_(layoutMode)
     , commonMode_(commonMode)
     , menuMode_(menuMode)
-    , page_(&p)
+    , randomSelect_(randomSelect)
     , isVideo_(isVideo)
     , FfntInst_(font)
     , type_(type)
+    , page_(&p)
     , displayOffset_(displayOffset)
     , imageType_(imageType)
     , jukebox_(jukebox)
     , jukeboxNumLoops_(jukeboxNumLoops)
-    , randomSelect_(randomSelect)
 {
 
 }
@@ -53,6 +53,7 @@ ReloadableMedia::~ReloadableMedia()
 {
     if (loadedComponent_ != nullptr)
     {
+        
         delete loadedComponent_;
         loadedComponent_ = nullptr;
     }
@@ -82,12 +83,14 @@ bool ReloadableMedia::update(float dt)
             foundComponent->update(dt);
             // if found and it's not the same as loaded, then finally delete the loaded component
             if (foundComponent != loadedComponent_) {
+                
                 delete loadedComponent_;
                 loadedComponent_ = foundComponent;
             }
         }
         else {
             // delete previous loaded item if none found
+            
             delete loadedComponent_;
             loadedComponent_ = nullptr;  // Set to nullptr to avoid dangling pointer.
         }
@@ -132,6 +135,7 @@ Component *ReloadableMedia::reloadTexture()
 
     if(loadedComponent_ && !selectedItem)
     {
+            
             delete loadedComponent_;
             loadedComponent_ = nullptr;
     }
@@ -363,15 +367,14 @@ Component *ReloadableMedia::reloadTexture()
             defined  = true;
         }
         else if (typeLC == "position" && !selectedItem->collectionInfo->items.empty()) {
-            size_t position = page.getSelectedIndex() + 1;
-            if (position == 1) {
+            if (size_t position = page.getSelectedIndex() + 1; position == 1) {
                 basename = '1';
             }
             else if (position == page.getCollectionSize()) {
                 basename = std::to_string(numberOfImages_);
             }
             else {
-                basename = std::to_string(int(ceil(float(position) / float(page.getCollectionSize()) * float(numberOfImages_))));
+                basename = std::to_string(static_cast<int>(ceil(static_cast<float>(position) / static_cast<float>(page.getCollectionSize()) * static_cast<float>(numberOfImages_))));
             }
             defined = true;
         }
@@ -485,8 +488,8 @@ Component* ReloadableMedia::findComponent(
 {
     std::string imagePath;
     Component *component = nullptr;
-    VideoBuilder videoBuild;
-    ImageBuilder imageBuild;
+    VideoBuilder videoBuild{};
+    ImageBuilder imageBuild{};
 
     if (filepath != "") {
         imagePath = filepath; 
@@ -542,22 +545,18 @@ Component* ReloadableMedia::findComponent(
     }
 
     // if file already loaded, don't load again
-    std::vector<std::string> extensions;
-    if (isVideo) {
-        extensions = {
-            "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
-            "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
-        };
-    } else {
-        extensions = {
-        "png", "PNG", "jpg", "JPG", "jpeg", "JPEG"
-        };
-    }
-    std::string filePath;
-    if (loadedComponent_ != nullptr && imagePath != "" && (imagePath == loadedComponent_->filePath() || 
-        (Utils::findMatchingFile(Utils::combinePath(imagePath, basename), extensions, filePath) && filePath == loadedComponent_->filePath()))
-        ) {
-        return loadedComponent_;
+    const std::vector<std::string>& extensions = isVideo ? ReloadableMedia::videoExtensions : ReloadableMedia::imageExtensions;
+    
+    if (loadedComponent_ != nullptr && !imagePath.empty()) {
+        std::string filePath;
+        if (Utils::findMatchingFile(Utils::combinePath(imagePath, basename), extensions, filePath)) {
+            if (filePath == loadedComponent_->filePath()) {
+                return loadedComponent_;
+            }
+        }
+        else if (imagePath == loadedComponent_->filePath()) {
+            return loadedComponent_;
+        }
     }
 
     if(isVideo)
