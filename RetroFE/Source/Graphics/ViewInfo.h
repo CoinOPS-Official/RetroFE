@@ -18,6 +18,7 @@
 #include "Animate/TweenTypes.h"
 #include <string>
 #include <map>
+#include <cfloat>
 
 class Font;
 

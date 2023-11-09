@@ -17,7 +17,6 @@
 #include "ViewInfo.h"
 #include "../Database/Configuration.h"
 #include "Animate/TweenTypes.h"
-#include <cfloat>
 
 ViewInfo::ViewInfo()
 {

@@ -60,8 +60,8 @@ private:
     static double easeInOutCircular(double elapsedTime, double duration, double b, double c);
     static double linear(double elapsedTime, double duration, double b, double c);
 
-    static std::map<std::string, TweenAlgorithm, std::less<>> Tween::tweenTypeMap_;
-    static std::map<std::string, TweenProperty, std::less<>> Tween::tweenPropertyMap_;
+    static std::map<std::string, TweenAlgorithm, std::less<>> tweenTypeMap_;
+    static std::map<std::string, TweenProperty, std::less<>> tweenPropertyMap_;
     TweenAlgorithm type;
     double start;
     double end;
