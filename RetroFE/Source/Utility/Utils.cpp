@@ -42,14 +42,14 @@ void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lP
 }
 #endif
 
-std::string Utils::toLower(std::string str)
+std::string Utils::toLower(const std::string& inputStr)
 {
-    for(unsigned int i=0; i < str.length(); ++i)
+    std::string str = inputStr;
+    std::locale loc; // Initialize locale once
+    for (auto& ch : str)
     {
-        std::locale loc;
-        str[i] = std::tolower(str[i], loc);
+        ch = std::tolower(ch, loc);
     }
-
     return str;
 }
 

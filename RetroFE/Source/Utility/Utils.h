@@ -42,7 +42,7 @@ public:
     static std::string getEnvVar(std::string const& key);
     static std::string getFileName(std::string filePath);
     static bool findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file);
-    static std::string toLower(std::string str);
+    static std::string toLower(const std::string& inputStr);
     static std::string uppercaseFirst(std::string str);
     static std::string filterComments(std::string line);
     static std::string trimEnds(std::string str);
