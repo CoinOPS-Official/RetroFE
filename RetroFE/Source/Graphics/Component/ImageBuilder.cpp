@@ -16,7 +16,6 @@
 #include "ImageBuilder.h"
 #include "../../Utility/Utils.h"
 #include "../../Utility/Log.h"
-#include <fstream>
 
 Image * ImageBuilder::CreateImage(const std::string& path, Page &p, const std::string& name, int monitor, bool additive)
 {
