@@ -380,10 +380,6 @@ void GStreamerVideo::update(float /* dt */)
             gint expected_uv_stride = expected_y_stride;
             gsize expected_uv_offset = height_ * static_cast<gsize>(expected_y_stride);
 
-            // Calculate total size of the contiguous Y + UV data
-            size_t total_size = width_ * height_ + (width_ * (height_ / 2)); // Y plane + UV plane
-
-
             // Assume CONTIGUOUS is more likely.
             if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
                 meta->stride[1] != expected_uv_stride || meta->offset[1] != expected_uv_offset)
@@ -394,7 +390,8 @@ void GStreamerVideo::update(float /* dt */)
             else 
             {
                 bufferLayout_ = CONTIGUOUS;
-                totalSize_ = width_ * height_ + (width_ * (height_ / 2));
+                // Calculate total size of the contiguous Y + UV data
+                totalSize_ = width_ * height_ + (width_ * (height_ / 2)); // Y plane + UV plane
                 Logger::write(Logger::ZONE_DEBUG, "Video", "Buffer is Contiguous");
             }
         }
