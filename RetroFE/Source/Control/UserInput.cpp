@@ -223,7 +223,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
                 }
                 else if (joydesc.find("hat") == 0)
                 {
-                    Uint8 hat;
+                    Uint8 hat = 0;
 
                     joydesc = Utils::replace(joydesc, "hat", "");
                     std::stringstream sshat;
@@ -250,8 +250,8 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
                 {
                     // string is now axis0+
                     unsigned int axis;
-                    Sint16       min;
-                    Sint16       max;
+                    Sint16       min = 0;
+                    Sint16       max = 0;
                     int          deadZone;
 
                     joydesc = Utils::replace(joydesc, "axis", "");

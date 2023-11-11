@@ -2549,7 +2549,7 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
     (void)config_.getProperty( "showParenthesis", showParenthesis );
     (void)config_.getProperty( "showSquareBrackets", showSquareBrackets );
 
-    using Playlists_T = std::map<std::string, std::vector<Item *> *>;
+    //using Playlists_T = std::map<std::string, std::vector<Item *> *>;
     for ( auto itP = collection->playlists.begin( ); itP != collection->playlists.end( ); itP++ )
     {
         for ( auto itI = itP->second->begin( ); itI != itP->second->end( ); itI++ )
