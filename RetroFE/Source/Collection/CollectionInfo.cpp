@@ -101,7 +101,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
             if ( stat( dir.c_str(), &info ) != 0 )
             {
 #if defined(_WIN32) && !defined(__GNUC__)
-                if(!CreateDirectory(dir.c_str(), NULL))
+                if(!CreateDirectory(dir.c_str(), nullptr))
                 {
                     if(ERROR_ALREADY_EXISTS != GetLastError())
                     {
@@ -128,11 +128,10 @@ bool CollectionInfo::saveFavorites(Item* removed)
             }
             std::vector<Item*>* saveitems = playlists["favorites"];
             if (globalFavLast && name != "Favorites") {
-                std::map<std::string, std::map<std::string, std::string>, std::less<>> existing;
-
+                std::map<std::string, std::map<std::string, std::string, std::less<>>, std::less<>> existing;
 
                 // remove from favorites file
-                if (removed != NULL) {
+                if (removed != nullptr) {
                     std::vector <std::string> remaining;
                     std::ifstream includeStream(file.c_str());
                     std::string line;
@@ -227,7 +226,7 @@ std::string CollectionInfo::settingsPath() const
 }
 
 
-void CollectionInfo::extensionList(std::vector<std::string> &extensionlist)
+void CollectionInfo::extensionList(std::vector<std::string> &extensionlist) const
 {
     std::istringstream ss(extensions_);
     std::string token;
@@ -239,7 +238,7 @@ void CollectionInfo::extensionList(std::vector<std::string> &extensionlist)
     }
 }
 
-std::string CollectionInfo::lowercaseName()
+std::string CollectionInfo::lowercaseName() const
 {
     std::string lcstr = name;
     std::transform(lcstr.begin(), lcstr.end(), lcstr.begin(), ::tolower);
@@ -251,9 +250,9 @@ void CollectionInfo::addSubcollection(CollectionInfo *newinfo)
     items.insert(items.begin(), newinfo->items.begin(), newinfo->items.end());
 }
 
-auto CollectionInfo::itemIsLess(const std::string& sortType, bool currentCollectionMenusort)
+auto CollectionInfo::itemIsLess(const std::string& sortTypeParam, bool currentCollectionMenusort) const
 {
-    return [sortType, currentCollectionMenusort](Item* lhs, Item* rhs) {
+    return [sortTypeParam, currentCollectionMenusort](Item* lhs, Item* rhs) {
 
         if (lhs->leaf && !rhs->leaf) return true;
         if (!lhs->leaf && rhs->leaf) return false;
@@ -267,10 +266,10 @@ auto CollectionInfo::itemIsLess(const std::string& sortType, bool currentCollect
             return false;
 
         // sort by another attribute
-        if (sortType != "") {
-            std::string lhsValue = lhs->getMetaAttribute(sortType);
-            std::string rhsValue = rhs->getMetaAttribute(sortType);
-            bool desc = Item::isSortDesc(sortType);
+        if (sortTypeParam != "") {
+            std::string lhsValue = lhs->getMetaAttribute(sortTypeParam);
+            std::string rhsValue = rhs->getMetaAttribute(sortTypeParam);
+            bool desc = Item::isSortDesc(sortTypeParam);
 
             if (lhsValue != rhsValue) {
                 return desc ? lhsValue > rhsValue : lhsValue < rhsValue;

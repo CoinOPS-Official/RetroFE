@@ -32,10 +32,10 @@ public:
     void sortItems();
     void sortPlaylists();
     void addSubcollection(CollectionInfo *info);
-    auto itemIsLess(const std::string& sortType, bool currentCollectionMenusort);
-    void extensionList(std::vector<std::string> &extensions);
+    auto itemIsLess(const std::string& sortType, bool currentCollectionMenusort) const;
+    void extensionList(std::vector<std::string> &extensions) const;
     std::string name;
-    std::string lowercaseName();
+    std::string lowercaseName() const;
     std::string listpath;
     bool saveRequest;
     std::string metadataType;

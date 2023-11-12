@@ -30,9 +30,9 @@ public:
 	int   minTime;
 	int   maxTime;
     bool isFast;
-    bool  isActive();
+    bool  isActive() const;
     void activate();
-    bool  isSet();
+    bool  isSet() const;
 
 private:
     bool isActive_;

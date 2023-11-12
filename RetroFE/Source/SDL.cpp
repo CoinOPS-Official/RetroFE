@@ -306,8 +306,7 @@ bool SDL::initialize( Configuration &config )
         }
     }
 
-    bool minimize_on_focus_loss_;
-    if ( config.getProperty( "minimize_on_focus_loss", minimize_on_focus_loss_ ) )
+    if (bool minimize_on_focus_loss_;  config.getProperty( "minimize_on_focus_loss", minimize_on_focus_loss_ ) )
     {
         if ( minimize_on_focus_loss_ )
         {

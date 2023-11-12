@@ -46,7 +46,7 @@ static const int MENU_FIRST = 0;   // first visible item in the list
 static const int MENU_LAST = -3;   // last visible item in the list
 static const int MENU_START = -1;  // first item transitions here after it scrolls "off the menu/screen"
 static const int MENU_END = -2;    // last item transitions here after it scrolls "off the menu/screen"
-static const int MENU_CENTER = -4;
+//static const int MENU_CENTER = -4;
 
 //todo: this file is starting to become a god class of building. Consider splitting into sub-builders
 PageBuilder::PageBuilder(const std::string& layoutKey, const std::string& layoutPage, Configuration &c, FontCache *fc, bool isMenu)
@@ -478,7 +478,6 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         xml_attribute<> const *numLoopsXml = componentXml->first_attribute("numLoops");
         xml_attribute<> const *idXml = componentXml->first_attribute("id");
         xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
-        xml_attribute<> const *pauseOnScrollXml = componentXml->first_attribute("pauseOnScroll");
 
 
 

@@ -33,14 +33,14 @@ public:
     bool resetDatabase();
 
     void injectMetadata(CollectionInfo *collection);
-    bool importHyperlist(std::string hyperlistFile, std::string collectionName);
-    bool importMamelist(std::string filename, std::string collectionName);
-    bool importEmuArclist(std::string filename);
+    bool importHyperlist(const std::string& hyperlistFile, const std::string& collectionName);
+    bool importMamelist(const std::string& filename, const std::string& collectionName);
+    bool importEmuArclist(const std::string& filename);
 
 private:
     bool importDirectory();
     bool needsRefresh();
-    time_t timeDir(std::string path);
+    time_t timeDir(const std::string& path);
     Configuration &config_;
     DB &db_;
 };

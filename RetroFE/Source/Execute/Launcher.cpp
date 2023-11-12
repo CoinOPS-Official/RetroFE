@@ -49,8 +49,7 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
     std::string args;
 
     std::string launcherFile = Utils::combinePath( Configuration::absolutePath, "collections", collectionItem->collectionInfo->name, "launchers", collectionItem->name + ".conf" );
-    std::ifstream launcherStream( launcherFile.c_str( ) );
-    if (launcherStream.good( )) // Launcher file found
+    if (std::ifstream launcherStream( launcherFile.c_str( ) ); launcherStream.good( )) // Launcher file found
     {
         std::string line;
         if (std::getline( launcherStream, line)) // Launcher found
@@ -170,8 +169,7 @@ void Launcher::LEDBlinky( int command, std::string collection, Item *collectionI
 	{
 		std::string launcherName = collectionItem->collectionInfo->launcher;
 		std::string launcherFile = Utils::combinePath( Configuration::absolutePath, "collections", collectionItem->collectionInfo->name, "launchers", collectionItem->name + ".conf" );
-		std::ifstream launcherStream( launcherFile.c_str( ) );
-		if (launcherStream.good( )) // Launcher file found
+		if (std::ifstream launcherStream( launcherFile.c_str( ) ); launcherStream.good( )) // Launcher file found
 		{
 			std::string line;
 			if (std::getline( launcherStream, line)) // Launcher found
@@ -188,8 +186,7 @@ void Launcher::LEDBlinky( int command, std::string collection, Item *collectionI
 	{
 		std::string launcherName = collectionItem->collectionInfo->launcher;
 		std::string launcherFile = Utils::combinePath( Configuration::absolutePath, "collections", collectionItem->collectionInfo->name, "launchers", collectionItem->name + ".conf" );
-		std::ifstream launcherStream( launcherFile.c_str( ) );
-		if (launcherStream.good( )) // Launcher file found
+		if (std::ifstream launcherStream( launcherFile.c_str( ) ); launcherStream.good( )) // Launcher file found
 		{
 			std::string line;
 			if (std::getline( launcherStream, line)) // Launcher found
@@ -243,12 +240,12 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
     Logger::write(Logger::ZONE_INFO, "Launcher", "Attempting to launch: " + executionString);
     Logger::write(Logger::ZONE_INFO, "Launcher", "     from within folder: " + currentDirectory);
 
-    std::atomic<bool> stop_thread = true;;
+    std::atomic<bool> stop_thread = true;
     std::thread proc_thread;
     bool multiple_display = SDL::getScreenCount() > 1;
     bool animateDuringGame = true;
     config_.getProperty("animateDuringGame", animateDuringGame);
-    if (animateDuringGame && multiple_display && currentPage != NULL) {
+    if (animateDuringGame && multiple_display && currentPage != nullptr) {
         stop_thread = false;
         proc_thread = std::thread([this, &stop_thread, &currentPage]() {
             this->keepRendering(std::ref(stop_thread), *currentPage);
@@ -271,7 +268,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
     startupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
     startupInfo.wShowWindow = SW_SHOWDEFAULT;
 
-    if(!CreateProcess(NULL, applicationName, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, currDir, &startupInfo, &processInfo))
+    if(!CreateProcess(nullptr, applicationName, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, currDir, &startupInfo, &processInfo))
 #else
     const std::size_t last_slash_idx = executable.rfind(Utils::pathSeparator);
     if (last_slash_idx != std::string::npos)
@@ -296,7 +293,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			while(WAIT_OBJECT_0 != MsgWaitForMultipleObjects(1, &processInfo.hProcess, FALSE, INFINITE, QS_ALLINPUT))
 			{
 				MSG msg;
-				while(PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+				while(PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE))
 				{
 					DispatchMessage(&msg);
                     
@@ -379,10 +376,8 @@ void Launcher::keepRendering(std::atomic<bool> &stop_thread, Page &currentPage)
 
 bool Launcher::launcherName(std::string &launcherName, std::string collection)
 {
-    std::string launcherKey = "collections." + collection + ".launcher";
-
-    // find the launcher for the particular item
-    if(!config_.getProperty(launcherKey, launcherName))
+       // find the launcher for the particular item 
+    if (std::string launcherKey = "collections." + collection + ".launcher"; !config_.getProperty(launcherKey, launcherName))
     {
         std::stringstream ss;
 
@@ -413,9 +408,8 @@ bool Launcher::launcherName(std::string &launcherName, std::string collection)
 
 bool Launcher::launcherExecutable(std::string &executable, std::string launcherName)
 {
-    std::string executableKey = "launchers." + launcherName + ".executable";
 
-    if(!config_.getProperty(executableKey, executable))
+    if(std::string executableKey = "launchers." + launcherName + ".executable"; !config_.getProperty(executableKey, executable))
     {
         return false;
     }
@@ -425,9 +419,8 @@ bool Launcher::launcherExecutable(std::string &executable, std::string launcherN
 
 bool Launcher::launcherArgs(std::string &args, std::string launcherName)
 {
-    std::string argsKey = "launchers." + launcherName + ".arguments";
 
-    if(!config_.getProperty(argsKey, args))
+    if(std::string argsKey = "launchers." + launcherName + ".arguments"; !config_.getProperty(argsKey, args))
     {
         Logger::write(Logger::ZONE_ERROR, "Launcher", "No arguments specified for: " + argsKey);
 
@@ -438,9 +431,8 @@ bool Launcher::launcherArgs(std::string &args, std::string launcherName)
 
 bool Launcher::extensions(std::string &extensions, std::string collection)
 {
-    std::string extensionsKey = "collections." + collection + ".list.extensions";
 
-    if(!config_.getProperty(extensionsKey, extensions))
+    if(std::string extensionsKey = "collections." + collection + ".list.extensions"; !config_.getProperty(extensionsKey, extensions))
     {
         Logger::write(Logger::ZONE_ERROR, "Launcher", "No extensions specified for: " + extensionsKey);
         return false;

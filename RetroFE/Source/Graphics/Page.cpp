@@ -29,7 +29,13 @@
 
 
 Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
-    : config_(config)
+    : fromPreviousPlaylist (false)
+    , fromPlaylistNav(false)
+    , config_(config)
+    , controlsType_("")
+    , locked_(false)
+    , anActiveMenu_(NULL)
+    , playlistMenu_(NULL)
     , menuDepth_(0)
     , scrollActive_(false)
     , selectedItem_(NULL)
@@ -40,13 +46,6 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , selectSoundChunk_(NULL)
     , minShowTime_(0)
     , jukebox_(false)
-    , playlistMenu_(NULL)
-    , elapsedTime_(0)
-    , anActiveMenu_(NULL)
-    , fromPreviousPlaylist (false)
-    , fromPlaylistNav(false)
-    , controlsType_("")
-    , locked_(false)
 {
 
     for (int i = 0; i < MAX_LAYOUTS; i++)

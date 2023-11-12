@@ -425,8 +425,7 @@ bool RetroFE::run( )
         float deltaTime = 0;
 
         // Exit splash mode when an active key is pressed
-        SDL_Event e;
-        if ( splashMode && (SDL_PollEvent( &e )))
+        if (SDL_Event e;  splashMode && (SDL_PollEvent( &e )))
         {
             if (screensaver || input_.update(e))
             {
@@ -877,8 +876,7 @@ bool RetroFE::run( )
                     PageBuilder pb( layoutName, getLayoutFileName(), config_, &fontcache_ );
 
                     bool defaultToCurrentLayout = false;
-                    std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
-                    if (config_.propertyExists(settingPrefix + "defaultToCurrentLayout")) {
+                    if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "defaultToCurrentLayout")) {
                         config_.getProperty(settingPrefix + "defaultToCurrentLayout", defaultToCurrentLayout);
                     }
 
@@ -908,8 +906,7 @@ bool RetroFE::run( )
                 std::string autoPlaylist = "all";
 
                 // check collection for setting
-                std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
-                if (config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                     config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                 }
                 else {
@@ -1061,8 +1058,7 @@ bool RetroFE::run( )
                 std::string autoPlaylist = "all";
 
                 // check collection for setting
-                std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
-                if (config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                     config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                 }
                 else {
@@ -1284,8 +1280,7 @@ bool RetroFE::run( )
                 std::string autoPlaylist = "all";
 
                 // check collection for setting
-                std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
-                if (config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                     config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                 }
                 else {
@@ -1506,8 +1501,7 @@ bool RetroFE::run( )
                 std::string autoPlaylist = "all";
                 
                 // check collection for setting
-                std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
-                if (config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                     config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                 }
                 else {
@@ -1581,8 +1575,7 @@ bool RetroFE::run( )
                     config_.getProperty("layout", layoutName);
                 }
                 PageBuilder pb( layoutName, getLayoutFileName(), config_, &fontcache_, true );
-                Page *page = pb.buildPage( );
-                if (page)
+                if (Page *page = pb.buildPage( ))
                 {
                     if (page->controlsType() != currentPage_->controlsType()) {
                         updatePageControls(page->controlsType());
@@ -2535,12 +2528,12 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
     cib.addPlaylists(collection);
     collection->sortPlaylists();
 
-    // Add extra info, if available
-    for ( auto it = collection->items.begin( ); it != collection->items.end( ); it++ )
-    {
-        std::string path = Utils::combinePath( Configuration::absolutePath, "collections", collectionName, "info", (*it)->name + ".conf" );
-        (*it)->loadInfo( path );
+   // Add extra info, if available
+    for (auto& item : collection->items) {
+        std::string path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info", item->name + ".conf");
+        item->loadInfo(path);
     }
+
 
     // Remove parenthesis and brackets, if so configured
     bool showParenthesis    = true;
@@ -2550,44 +2543,37 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
     (void)config_.getProperty( "showSquareBrackets", showSquareBrackets );
 
     //using Playlists_T = std::map<std::string, std::vector<Item *> *>;
-    for ( auto itP = collection->playlists.begin( ); itP != collection->playlists.end( ); itP++ )
-    {
-        for ( auto itI = itP->second->begin( ); itI != itP->second->end( ); itI++ )
-        {
-            if ( !showParenthesis )
-            {
-                std::string::size_type firstPos  = (*itI)->title.find_first_of( "(" );
-                std::string::size_type secondPos = (*itI)->title.find_first_of( ")", firstPos );
-    
-                while ( firstPos != std::string::npos && secondPos != std::string::npos )
-                {
-                    firstPos  = (*itI)->title.find_first_of( "(" );
-                    secondPos = (*itI)->title.find_first_of( ")", firstPos );
-    
-                    if ( firstPos != std::string::npos )
-                    {
-                        (*itI)->title.erase( firstPos, (secondPos - firstPos) + 1 );
+    for (auto const& playlistPair : collection->playlists) {
+        for (auto& item : *(playlistPair.second)) {
+            if (!showParenthesis) {
+                std::string::size_type firstPos = item->title.find_first_of("(");
+                std::string::size_type secondPos = item->title.find_first_of(")", firstPos);
+
+                while (firstPos != std::string::npos && secondPos != std::string::npos) {
+                    firstPos = item->title.find_first_of("(");
+                    secondPos = item->title.find_first_of(")", firstPos);
+
+                    if (firstPos != std::string::npos) {
+                        item->title.erase(firstPos, (secondPos - firstPos) + 1);
                     }
                 }
             }
-            if ( !showSquareBrackets )
-            {
-                std::string::size_type firstPos  = (*itI)->title.find_first_of( "[" );
-                std::string::size_type secondPos = (*itI)->title.find_first_of( "]", firstPos );
-    
-                while ( firstPos != std::string::npos && secondPos != std::string::npos )
-                {
-                    firstPos  = (*itI)->title.find_first_of( "[" );
-                    secondPos = (*itI)->title.find_first_of( "]", firstPos );
-    
-                    if ( firstPos != std::string::npos && secondPos != std::string::npos )
-                    {
-                        (*itI)->title.erase( firstPos, (secondPos - firstPos) + 1 );
+            if (!showSquareBrackets) {
+                std::string::size_type firstPos = item->title.find_first_of("[");
+                std::string::size_type secondPos = item->title.find_first_of("]", firstPos);
+
+                while (firstPos != std::string::npos && secondPos != std::string::npos) {
+                    firstPos = item->title.find_first_of("[");
+                    secondPos = item->title.find_first_of("]", firstPos);
+
+                    if (firstPos != std::string::npos && secondPos != std::string::npos) {
+                        item->title.erase(firstPos, (secondPos - firstPos) + 1);
                     }
                 }
             }
         }
     }
+
 
     return collection;
 }
@@ -2610,20 +2596,18 @@ CollectionInfo *RetroFE::getMenuCollection( const std::string& collectionName )
     CollectionInfoBuilder cib( config_, *metadb_ );
     auto *collection = new CollectionInfo(config_, collectionName, menuPath, "", "", "" );
     cib.ImportBasicList( collection, menuFile, menuVector );
-    for ( auto it = menuVector.begin( ); it != menuVector.end( ); ++it)
-    {
-        (*it)->leaf = false;
-        size_t position = (*it)->name.find( "=" );
-        if ( position != std::string::npos )
-        {
-            (*it)->ctrlType  = Utils::trimEnds( (*it)->name.substr( position+1, (*it)->name.size( )-1 ) );
-            (*it)->name      = Utils::trimEnds( (*it)->name.substr( 0, position ) );
-            (*it)->title     = (*it)->name;
-            (*it)->fullTitle = (*it)->name;
-            (*it)->leaf      = true;
+
+    for (auto& item : menuVector) {
+        item->leaf = false;
+        if (size_t position = item->name.find("="); position != std::string::npos) {
+            item->ctrlType = Utils::trimEnds(item->name.substr(position + 1));
+            item->name = Utils::trimEnds(item->name.substr(0, position));
+            item->title = item->name;
+            item->fullTitle = item->name;
+            item->leaf = true;
         }
-        (*it)->collectionInfo = collection;
-        collection->items.push_back( *it );
+        item->collectionInfo = collection;
+        collection->items.push_back(item);
     }
     collection->playlists["all"] = &collection->items;
     return collection;

@@ -218,7 +218,6 @@ private:
     Sound *highlightSoundChunk_;
     Sound *selectSoundChunk_;
     float minShowTime_;
-    float elapsedTime_;
     CollectionInfo::Playlists_T::iterator playlist_;
     std::vector<int> layoutWidth_;
     std::vector<int> layoutHeight_;

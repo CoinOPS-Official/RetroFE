@@ -28,19 +28,17 @@
 #include <vector>
 #include <iostream>
 
-ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, bool menuMode, const std::string& type, const std::string& imageType,
+ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, [[maybe_unused]] bool menuMode, const std::string& type, const std::string& imageType,
     Page& p, int displayOffset, bool isVideo, Font* font, bool jukebox, int jukeboxNumLoops, int randomSelect)
     : Component(p)
     , config_(config)
     , systemMode_(systemMode)
     , layoutMode_(layoutMode)
     , commonMode_(commonMode)
-    , menuMode_(menuMode)
     , randomSelect_(randomSelect)
     , isVideo_(isVideo)
     , FfntInst_(font)
     , type_(type)
-    , page_(&p)
     , displayOffset_(displayOffset)
     , imageType_(imageType)
     , jukebox_(jukebox)

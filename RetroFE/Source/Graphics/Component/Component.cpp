@@ -40,7 +40,7 @@ Component::Component(const Component &copy)
 
     if ( copy.tweens_ )
     {
-        AnimationEvents *tweens = new AnimationEvents(*copy.tweens_);
+        auto *tweens = new AnimationEvents(*copy.tweens_);
         setTweens(tweens);
     }
 
@@ -66,31 +66,10 @@ void Component::freeGraphicsMemory()
     currentTweenComplete_ = true;
     elapsedTweenTime_     = 0;
 
-    if ( backgroundTexture_ )
-    {
-        SDL_LockMutex(SDL::getMutex());
-        SDL_DestroyTexture(backgroundTexture_);
-        SDL_UnlockMutex(SDL::getMutex());
-
-        backgroundTexture_ = nullptr;
-    }
 }
 void Component::allocateGraphicsMemory()
 {
-    if ( !backgroundTexture_ )
-    {
-        // make a 4x4 pixel wide surface to be stretched during rendering, make it a white background so we can use
-        // color  later
-        SDL_Surface *surface = SDL_CreateRGBSurface(0, 4, 4, 32, 0, 0, 0, 0);
-        SDL_FillRect(surface, nullptr, SDL_MapRGB(surface->format, 255, 255, 255));
 
-        SDL_LockMutex(SDL::getMutex());
-        backgroundTexture_ = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), surface);
-        SDL_UnlockMutex(SDL::getMutex());
-
-        SDL_FreeSurface(surface);
-        SDL_SetTextureBlendMode(backgroundTexture_, SDL_BLENDMODE_BLEND);
-    }
 }
 
 
@@ -104,14 +83,14 @@ void Component::initializeFonts()
 }
 
 
-void Component::triggerEvent(std::string event, int menuIndex)
+void Component::triggerEvent(const std::string& event, int menuIndex)
 {
     animationRequestedType_ = event;
     animationRequested_     = true;
     menuIndex_              = (menuIndex > 0 ? menuIndex : 0);
 }
 
-void Component::setPlaylist(std::string name)
+void Component::setPlaylist(const std::string& name)
 {
     this->playlistName = name;
 }
@@ -131,17 +110,17 @@ void Component::setId( int id )
     id_ = id;
 }
 
-bool Component::isIdle()
+bool Component::isIdle() const
 {
     return (currentTweenComplete_ || animationType_ == "idle" || animationType_ == "menuIdle" || animationType_ == "attract");
 }
 
-bool Component::isAttractIdle()
+bool Component::isAttractIdle() const
 {
     return (currentTweenComplete_ || animationType_ == "idle" || animationType_ == "menuIdle");
 }
 
-bool Component::isMenuScrolling()
+bool Component::isMenuScrolling() const
 {
     return (!currentTweenComplete_ && animationType_ == "menuScroll");
 }
@@ -219,22 +198,6 @@ bool Component::update(float dt)
 void Component::draw()
 {
 
-    if ( backgroundTexture_ )
-    {
-        SDL_Rect rect = { 0, 0, 0, 0 };
-        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
-        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-
-
-        SDL_SetTextureColorMod(backgroundTexture_,
-                               static_cast<char>(baseViewInfo.BackgroundRed*255),
-                               static_cast<char>(baseViewInfo.BackgroundGreen*255),
-                               static_cast<char>(baseViewInfo.BackgroundBlue*255));
-
-        SDL::renderCopy(backgroundTexture_, baseViewInfo.BackgroundAlpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-    }
 }
 
 bool Component::animate()
@@ -472,7 +435,7 @@ void Component::setMenuScrollReload(bool menuScrollReload)
 }
 
 
-bool Component::getMenuScrollReload()
+bool Component::getMenuScrollReload() const
 {
     return menuScrollReload_;
 }
@@ -482,12 +445,12 @@ void Component::setAnimationDoneRemove(bool value)
     animationDoneRemove_ = value;
 }
 
-bool Component::getAnimationDoneRemove()
+bool Component::getAnimationDoneRemove() const
 {
     return animationDoneRemove_;
 }
 
-int Component::getId( )
+int Component::getId( ) const
 {
     return id_;
 }

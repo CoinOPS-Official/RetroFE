@@ -23,15 +23,16 @@ AnimationEvents::AnimationEvents() = default;
 
 AnimationEvents::AnimationEvents(AnimationEvents& copy)
 {
-    for (const auto& outerPair : copy.animationMap_)
+    for (const auto& [outerKey, outerValue] : copy.animationMap_)
     {
-        auto& innerMap = animationMap_[outerPair.first];
-        for (const auto& innerPair : outerPair.second)
+        auto& innerMap = animationMap_[outerKey];
+        for (const auto& [innerKey, innerValue] : outerValue)
         {
-            innerMap[innerPair.first] = new Animation(*(innerPair.second));
+            innerMap[innerKey] = new Animation(*innerValue);
         }
     }
 }
+
 
 AnimationEvents::~AnimationEvents()
 {

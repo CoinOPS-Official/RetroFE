@@ -825,83 +825,68 @@ bool ScrollingList::allocateTexture( unsigned int index, const Item *item )
         names.push_back( item->score );
     if (typeLC.rfind("playlist", 0) == 0)
         names.push_back(item->name);
-    names.push_back("default");
+    names.emplace_back("default");
 
     std::string name;
     std::string selectedItemName = getSelectedItemName();
-    for ( unsigned int n = 0; n < names.size() && !t; ++n )
-    {
-        // check collection path for art
-        if ( layoutMode_ )
-        {
-            if ( commonMode_ )
-                imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
-            else
-                imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", collectionName );
-            imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
-            videoPath = Utils::combinePath( imagePath, "medium_artwork", videoType_ );
+    for (const auto& name : names) {
+        std::string imagePath;
+        std::string videoPath;
+
+        // Determine paths based on modes
+        if (layoutMode_) {
+            std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections");
+            std::string subPath = commonMode_ ? "_common" : collectionName;
+            buildPaths(imagePath, videoPath, base, subPath, imageType_, videoType_);
         }
-        else
-        {
-            if ( commonMode_ )
-            {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common" );
-                imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
-                videoPath = Utils::combinePath( imagePath, "medium_artwork", videoType_ );
+        else {
+            if (commonMode_) {
+                buildPaths(imagePath, videoPath, Configuration::absolutePath, "collections/_common", imageType_, videoType_);
             }
-            else
-            {
-                config_.getMediaPropertyAbsolutePath( collectionName, imageType_, false, imagePath );
-                config_.getMediaPropertyAbsolutePath( collectionName, videoType_, false, videoPath );
+            else {
+                config_.getMediaPropertyAbsolutePath(collectionName, imageType_, false, imagePath);
+                config_.getMediaPropertyAbsolutePath(collectionName, videoType_, false, videoPath);
             }
         }
-        if ( !t )
-        {
-            if ( videoType_ != "null" )
-            {
-                t = videoBuild.createVideo( videoPath, page, names[n], baseViewInfo.Monitor);
+
+        // Create video or image
+        if (!t) {
+            if (videoType_ != "null") {
+                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
             }
-            else
-            {
-                name = names[n];
-                if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+            else {
+                std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+            }
+        }
+
+        // Check for early exit
+        if (t) break;
+
+        // Check sub-collection path for art
+        if (!commonMode_) {
+            if (layoutMode_) {
+                std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name);
+                buildPaths(imagePath, videoPath, base, "", imageType_, videoType_);
+            }
+            else {
+                config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, imageType_, false, imagePath);
+                config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, videoType_, false, videoPath);
+            }
+
+            if (!t) {
+                if (videoType_ != "null") {
+                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
                 }
-                if (!t) {
-                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                else {
+                    std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                    t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
                 }
             }
         }
 
-        // check sub-collection path for art
-        if ( !t && !commonMode_ )
-        {
-            if ( layoutMode_ )
-            {
-                imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name );
-                imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
-                videoPath = Utils::combinePath( imagePath, "medium_artwork", videoType_ );
-            }
-            else
-            {
-                config_.getMediaPropertyAbsolutePath( item->collectionInfo->name, imageType_, false, imagePath );
-                config_.getMediaPropertyAbsolutePath( item->collectionInfo->name, videoType_, false, videoPath );
-            }
-            if ( videoType_ != "null" )
-            {
-                t = videoBuild.createVideo( videoPath, page, names[n], baseViewInfo.Monitor);
-            }
-            else
-            {
-                name = names[n];
-                if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
-                }
-                if (!t) {
-                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
-                }
-            }
-        }
+        // Check for early exit again
+        if (t) break;
     }
 
     // check collection path for art based on system name
@@ -968,59 +953,46 @@ bool ScrollingList::allocateTexture( unsigned int index, const Item *item )
     // Check for fallback art in case no video could be found
     if ( videoType_ != "null" && !t)
     {
-        for ( unsigned int n = 0; n < names.size() && !t; ++n )
-        {
-            // check collection path for art
-            if ( layoutMode_ )
-            {
-                if ( commonMode_ )
-                    imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
-                else
-                    imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", collectionName );
-               imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
+        for (const auto& name : names) {
+            if (t) break; // Early exit if media is already created
+
+            // Build paths for medium artwork
+            if (layoutMode_) {
+                std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections");
+                std::string subPath = commonMode_ ? "_common" : collectionName;
+                buildPaths(imagePath, videoPath, base, subPath, imageType_, videoType_);
             }
-            else
-            {
-                if ( commonMode_ )
-                {
-                    imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common" );
-                    imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
+            else {
+                if (commonMode_) {
+                    buildPaths(imagePath, videoPath, Configuration::absolutePath, "collections/_common", imageType_, videoType_);
                 }
-                else
-                {
-                    config_.getMediaPropertyAbsolutePath( collectionName, imageType_, false, imagePath );
+                else {
+                    config_.getMediaPropertyAbsolutePath(collectionName, imageType_, false, imagePath);
+                    config_.getMediaPropertyAbsolutePath(collectionName, videoType_, false, videoPath);
                 }
             }
 
-            name = names[n];
-            if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
-            }
-            if (!t) {
-                t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
-            }
+            // Try to create image
+            std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+            t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
 
-            // check sub-collection path for art
-            if ( !t && !commonMode_ )
-            {
-                if ( layoutMode_ )
-                {
-                    imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name );
-                    imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
+            // Check sub-collection path for art if needed
+            if (!t && !commonMode_) {
+                if (layoutMode_) {
+                    std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name);
+                    buildPaths(imagePath, videoPath, base, "", imageType_, videoType_);
                 }
-                else
-                {
-                    config_.getMediaPropertyAbsolutePath( item->collectionInfo->name, imageType_, false, imagePath );
+                else {
+                    config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, imageType_, false, imagePath);
+                    config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, videoType_, false, videoPath);
                 }
-                name = names[n];
-                if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
-                }
-                if (!t) {
-                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
-                }
+
+                // Try to create image again
+                imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
             }
         }
+
 
         // check collection path for art based on system name
         if ( !t )
@@ -1088,6 +1060,11 @@ bool ScrollingList::allocateTexture( unsigned int index, const Item *item )
 }
 
 
+void ScrollingList::buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) {
+    imagePath = Utils::combinePath(base, subPath, "medium_artwork", mediaType);
+    videoPath = Utils::combinePath(imagePath, "medium_artwork", videoType);
+}
+
 void ScrollingList::deallocateTexture( unsigned int index )
 {
     if ( components_.size(  ) <= index ) return;
@@ -1126,7 +1103,7 @@ bool ScrollingList::isIdle(  )
 
     for ( unsigned int i = 0; i < componentSize; ++i )
     {
-        Component *c = components_[i];
+        Component const *c = components_[i];
         if ( c && !c->isIdle(  ) ) return false;
     }
 
@@ -1141,7 +1118,7 @@ bool ScrollingList::isAttractIdle(  )
 
     for ( unsigned int i = 0; i < componentSize; ++i )
     {
-        Component *c = components_[i];
+        Component const *c = components_[i];
         if ( c && !c->isAttractIdle(  ) ) return false;
     }
 

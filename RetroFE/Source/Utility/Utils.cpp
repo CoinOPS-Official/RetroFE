@@ -219,7 +219,8 @@ std::string Utils::trimEnds(std::string str)
 void Utils::listToVector( const std::string& str, std::vector<std::string> &vec, char delimiter = ',' )
 {
     std::string value;
-    std::size_t current, previous = 0;
+    std::size_t current;
+    std::size_t previous = 0;
     current = str.find( delimiter );
     while (current != std::string::npos)
     {
