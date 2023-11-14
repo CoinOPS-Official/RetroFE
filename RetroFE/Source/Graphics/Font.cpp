@@ -72,7 +72,7 @@ bool Font::initialize()
     {
         std::stringstream ss;
         ss << "Could not open font: " << TTF_GetError();
-        Logger::write(Logger::ZONE_WARNING, "FontCache", ss.str());
+        LOG_WARNING("FontCache", ss.str());
         return false;
     }
 

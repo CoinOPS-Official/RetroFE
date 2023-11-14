@@ -69,7 +69,20 @@ void Component::freeGraphicsMemory()
 }
 void Component::allocateGraphicsMemory()
 {
+    if (!backgroundTexture_)
+    {
+        // make a 4x4 pixel wide surface to be stretched during rendering, make it a white background so we can use
+        // color  later
+        SDL_Surface* surface = SDL_CreateRGBSurface(0, 4, 4, 32, 0, 0, 0, 0);
+        SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 255, 255));
 
+        SDL_LockMutex(SDL::getMutex());
+        backgroundTexture_ = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), surface);
+        SDL_UnlockMutex(SDL::getMutex());
+
+        SDL_FreeSurface(surface);
+        SDL_SetTextureBlendMode(backgroundTexture_, SDL_BLENDMODE_BLEND);
+    }
 }
 
 

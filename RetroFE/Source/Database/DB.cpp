@@ -38,11 +38,11 @@ bool DB::initialize()
     {
         std::stringstream ss;
         ss << "Cannot open database: \"" << path_ << "\"" << sqlite3_errmsg(handle);
-        Logger::write(Logger::ZONE_ERROR, "Database", ss.str());
+        LOG_ERROR("Database", ss.str());
     }
     else
     {
-        Logger::write(Logger::ZONE_INFO, "Database", "Opened database \"" + path_ + "\"");
+        LOG_INFO("Database", "Opened database \"" + path_ + "\"");
         retVal = true;
     }
 

@@ -120,11 +120,11 @@ int RetroFE::initialize( void *context )
 
     auto *instance = static_cast<RetroFE *>(context);
 
-    Logger::write( Logger::ZONE_INFO, "RetroFE", "Initializing" );
+    LOG_INFO("RetroFE", "Initializing" );
 
     if ( !instance->input_.initialize( ) )
     {
-        Logger::write( Logger::ZONE_ERROR, "RetroFE", "Could not initialize user controls" );
+        LOG_ERROR("RetroFE", "Could not initialize user controls" );
         instance->initializeError = true;
         return -1;
     }
@@ -133,7 +133,7 @@ int RetroFE::initialize( void *context )
 
     if ( !instance->db_->initialize( ) )
     {
-        Logger::write( Logger::ZONE_ERROR, "RetroFE", "Could not initialize database" );
+        LOG_ERROR("RetroFE", "Could not initialize database" );
         instance->initializeError = true;
         return -1;
     }
@@ -142,7 +142,7 @@ int RetroFE::initialize( void *context )
 
     if ( !instance->metadb_->initialize( ) )
     {
-        Logger::write( Logger::ZONE_ERROR, "RetroFE", "Could not initialize meta database" );
+        LOG_ERROR("RetroFE", "Could not initialize meta database" );
         instance->initializeError = true;
         return -1;
     }
@@ -299,11 +299,11 @@ bool RetroFE::deInitialize( )
 
     if ( reboot_ )
     {
-        Logger::write( Logger::ZONE_INFO, "RetroFE", "Rebooting" );
+        LOG_INFO("RetroFE", "Rebooting" );
     }
     else
     {
-        Logger::write( Logger::ZONE_INFO, "RetroFE", "Exiting" );
+        LOG_INFO("RetroFE", "Exiting" );
         SDL::deInitialize( );
         gst_deinit( );
     }
@@ -336,7 +336,7 @@ bool RetroFE::run( )
 
     if (config_.propertiesEmpty())
     {
-        Logger::write(Logger::ZONE_ERROR, "RetroFE", "No controls.conf found");
+        LOG_ERROR("RetroFE", "No controls.conf found");
 
         return false;
     }
@@ -356,7 +356,7 @@ bool RetroFE::run( )
 
     if (!initializeThread)
     {
-        Logger::write( Logger::ZONE_INFO, "RetroFE", "Could not initialize RetroFE" );
+        LOG_INFO("RetroFE", "Could not initialize RetroFE" );
 
         return false;
     }
@@ -451,7 +451,7 @@ bool RetroFE::run( )
 
         if ( !currentPage_ )
         {
-            Logger::write( Logger::ZONE_WARNING, "RetroFE", "Could not load page"  );
+            LOG_WARNING("RetroFE", "Could not load page"  );
             l.exitScript();
             running = false;
             break;
@@ -859,7 +859,7 @@ bool RetroFE::run( )
                     info = getCollection(nextPageName);
 
                 if (!info) {
-                    Logger::write(Logger::ZONE_ERROR, "RetroFE", "Collection not found with Name " + nextPageName);
+                    LOG_ERROR("RetroFE", "Collection not found with Name " + nextPageName);
                     state = RETROFE_BACK_MENU_LOAD_ART;
                     break;
                 }
@@ -893,7 +893,7 @@ bool RetroFE::run( )
                         currentPage_->setLocked(kioskLock_);
                     }
                     else {
-                        Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not create page");
+                        LOG_ERROR("RetroFE", "Could not create page");
                     }
                 }
 
@@ -1588,7 +1588,7 @@ bool RetroFE::run( )
                     m.setPage( page );
                 }
                 else {
-                    Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not create page");
+                    LOG_ERROR("RetroFE", "Could not create page");
                 }
                 config_.setProperty( "currentCollection", "menu" );
                 CollectionInfo *info = getMenuCollection( "menu" );
@@ -2430,7 +2430,7 @@ Page* RetroFE::loadPage(const std::string& collectionName)
     Page* page = pb.buildPage(collectionName);
     if (!page)
     {
-        Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not create page");
+        LOG_ERROR("RetroFE", "Could not create page");
     }
     else {
         if (page->controlsType() != "") {
@@ -2451,7 +2451,7 @@ Page *RetroFE::loadSplashPage( )
     PageBuilder pb( layoutName, "splash", config_, &fontcache_ );
     Page * page = pb.buildPage( );
     if (!page) {
-        Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not create splash page");
+        LOG_ERROR("RetroFE", "Could not create splash page");
     }
     else {
         page->start();
@@ -2480,7 +2480,7 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
     std::string path = Utils::combinePath( Configuration::absolutePath, "collections", collectionName );
     dp = opendir( path.c_str( ) );
     if (dp == nullptr) {
-        Logger::write(Logger::ZONE_ERROR, "RetroFE", "Failed to load collection " + collectionName);
+        LOG_ERROR("RetroFE", "Failed to load collection " + collectionName);
 
         return nullptr;
     }
@@ -2498,7 +2498,7 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
 
         // No need to check if start >= 0, it's redundant because size_t is unsigned
         if (file.compare(start, comparator.length(), comparator) == 0) {
-            Logger::write(Logger::ZONE_INFO, "RetroFE", "Loading subcollection into menu: " + basename);
+            LOG_INFO("RetroFE", "Loading subcollection into menu: " + basename);
 
             CollectionInfo* subcollection = cib.buildCollection(basename, collectionName);
             collection->addSubcollection(subcollection);
@@ -2580,7 +2580,7 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
 
 void RetroFE::updatePageControls(const std::string& type)
 {
-    Logger::write(Logger::ZONE_INFO, "Layout", "Layout changed controls type " + type);
+    LOG_INFO("Layout", "Layout changed controls type " + type);
     std::string controlsConfPath = Utils::combinePath(Configuration::absolutePath, "controls");
     if (config_.import("controls", controlsConfPath + " - " + type + ".conf")) {
         input_.reconfigure();
@@ -2617,7 +2617,7 @@ CollectionInfo *RetroFE::getMenuCollection( const std::string& collectionName )
 void RetroFE::saveRetroFEState( ) const
 {
     std::string file = Utils::combinePath(Configuration::absolutePath, "settings_saved.conf");
-    Logger::write(Logger::ZONE_INFO, "RetroFE", "Saving settings_saved.conf");
+    LOG_INFO("RetroFE", "Saving settings_saved.conf");
     std::ofstream filestream;
     try
     {
@@ -2627,7 +2627,7 @@ void RetroFE::saveRetroFEState( ) const
     }
     catch(std::exception &)
     {
-        Logger::write(Logger::ZONE_ERROR, "RetroFE", "Save failed: " + file);
+        LOG_ERROR("RetroFE", "Save failed: " + file);
     }
 }
 
@@ -2637,7 +2637,7 @@ std::string RetroFE::getLayoutFileName()
     std::string randomLayoutNames;
     config_.getProperty("randomLayout", randomLayoutNames);
     if (randomLayoutNames != "") {
-        Logger::write(Logger::ZONE_INFO, "RetroFE", "Choosing random layout from: " + randomLayoutNames);
+        LOG_INFO("RetroFE", "Choosing random layout from: " + randomLayoutNames);
         std::vector<std::string> randomLayoutVector;
         Utils::listToVector(randomLayoutNames, randomLayoutVector, ',');
         if (randomLayoutVector.size() > 1) {

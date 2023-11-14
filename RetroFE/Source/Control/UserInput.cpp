@@ -145,12 +145,19 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
 
     std::string configKey = "controls." + keyDescription;
 
-    if(!config_.getProperty(configKey, description))
+    if (!config_.getProperty(configKey, description))
     {
-        Logger::Zone zone = required ? Logger::ZONE_ERROR : Logger::ZONE_INFO;
-        Logger::write(zone, "Input", "Missing property " + configKey);
+        if (required)
+        {
+            LOG_ERROR("Input", "Missing required property: " + configKey);
+        }
+        else
+        {
+            LOG_INFO("Input", "Missing optional property: " + configKey);
+        }
         return false;
     }
+
 
     std::istringstream ss(description);
     std::string token;
@@ -168,7 +175,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
 
         if (scanCode != SDL_SCANCODE_UNKNOWN)
         {
-            Logger::write(Logger::ZONE_INFO, "Input", "Binding key " + configKey);
+            LOG_INFO("Input", "Binding key " + configKey);
             keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new KeyboardHandler(scanCode), key));
             found = true;
         }
@@ -191,7 +198,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
                     else if (mousedesc == "x2") button = SDL_BUTTON_X2;
 
                     keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new MouseButtonHandler(button), key));
-                    Logger::write(Logger::ZONE_INFO, "Input", "Binding mouse button " + ss.str());
+                    LOG_INFO("Input", "Binding mouse button " + ss.str());
                     found = true;
                 }
             }
@@ -218,7 +225,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
                     ss << Utils::replace(joydesc, "button", "");
                     ss >> button;
                     keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new JoyButtonHandler(joynum, button), key));
-                    Logger::write(Logger::ZONE_INFO, "Input", "Binding joypad button " + ss.str());
+                    LOG_INFO("Input", "Binding joypad button " + ss.str());
                     found = true;
                 }
                 else if (joydesc.find("hat") == 0)
@@ -243,7 +250,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
                     else if (joydesc == "rightdown") hat = SDL_HAT_RIGHTDOWN;
 
                     keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new JoyHatHandler(joynum, hatnum, hat), key));
-                    Logger::write(Logger::ZONE_INFO, "Input", "Binding joypad hat " + joydesc);
+                    LOG_INFO("Input", "Binding joypad hat " + joydesc);
                     found = true;
                 }
                 else if (joydesc.find("axis") == 0)
@@ -279,7 +286,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
                     std::stringstream ss;
                     ss << joydesc;
                     ss >> axis;
-                    Logger::write(Logger::ZONE_INFO, "Input", "Binding joypad axis " + ss.str());
+                    LOG_INFO("Input", "Binding joypad axis " + ss.str());
                     keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new JoyAxisHandler(joynum, axis, min, max), key));
                     found = true;
                 }
@@ -287,7 +294,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
 
             if (!found)
             {
-                Logger::write(Logger::ZONE_ERROR, "Input", "Unsupported property value for " + configKey + "(" + token + "). See Documentation/Keycodes.txt for valid inputs");
+                LOG_ERROR("Input", "Unsupported property value for " + configKey + "(" + token + "). See Documentation/Keycodes.txt for valid inputs");
                 success = false;
             }
         }
@@ -410,7 +417,7 @@ void UserInput::clearJoysticks( )
 
 void UserInput::reconfigure()
 {
-    Logger::write(Logger::ZONE_INFO, "Input", "Reconfigure Inputs");
+    LOG_INFO("Input", "Reconfigure Inputs");
 
     for (unsigned int i = 0; i < keyHandlers_.size(); ++i)
     {

@@ -182,21 +182,12 @@ std::string Utils::getEnvVar(std::string const& key)
 {
     char const* val = std::getenv(key.c_str());
 
-    return val == NULL ? std::string() : std::string(val);
+    return val == nullptr ? std::string() : std::string(val);
 }
 
-std::string Utils::getFileName(std::string filePath)
+std::string Utils::getFileName(const std::string& filePath)
 {
-
-    std::string filename = filePath;
-
-    const size_t last_slash_idx = filePath.rfind(pathSeparator);
-    if (std::string::npos != last_slash_idx)
-    {
-        filename = filePath.erase(0, last_slash_idx+1);
-    }
-
-    return filename;
+    return std::filesystem::path(filePath).filename().string();
 }
 
 

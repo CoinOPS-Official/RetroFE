@@ -61,22 +61,22 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
 
     if(!launcherExecutable(executablePath, launcherName))
     {
-        Logger::write(Logger::ZONE_ERROR, "Launcher", "Failed to find launcher executable (launcher: " + launcherName + " executable: " + executablePath + ")");
+        LOG_ERROR("Launcher", "Failed to find launcher executable (launcher: " + launcherName + " executable: " + executablePath + ")");
         return false;
     }
     if(!extensions(extensionstr, collection))
     {
-        Logger::write(Logger::ZONE_ERROR, "Launcher", "No file extensions configured for collection \"" + collection + "\"");
+        LOG_ERROR("Launcher", "No file extensions configured for collection \"" + collection + "\"");
         return false;
     }
     if(!collectionDirectory(selectedItemsDirectory, collection))
     {
-        Logger::write(Logger::ZONE_ERROR, "Launcher", "Could not find files in directory \"" + selectedItemsDirectory + "\" for collection \"" + collection + "\"");
+        LOG_ERROR("Launcher", "Could not find files in directory \"" + selectedItemsDirectory + "\" for collection \"" + collection + "\"");
         return false;
     }
     if(!launcherArgs(args, launcherName))
     {
-        Logger::write(Logger::ZONE_ERROR, "Launcher", "No launcher arguments specified for launcher " + launcherName);
+        LOG_ERROR("Launcher", "No launcher arguments specified for launcher " + launcherName);
         return false;
     }
 
@@ -121,7 +121,7 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
 
     if(!execute(executablePath, args, currentDirectory, true, currentPage))
     {
-        Logger::write(Logger::ZONE_ERROR, "Launcher", "Failed to launch.");
+        LOG_ERROR("Launcher", "Failed to launch.");
         return false;
     }
 
@@ -203,7 +203,7 @@ void Launcher::LEDBlinky( int command, std::string collection, Item *collectionI
 	}
 	if ( LEDBlinkyDirectory != "" && !execute( exe, args, LEDBlinkyDirectory, wait ) )
 	{
-        Logger::write( Logger::ZONE_WARNING, "LEDBlinky", "Failed to launch." );
+        LOG_WARNING("LEDBlinky", "Failed to launch." );
 	}
 	return;
 }
@@ -237,8 +237,8 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
     bool retVal = false;
     std::string executionString = "\"" + executable + "\" " + args;
 
-    Logger::write(Logger::ZONE_INFO, "Launcher", "Attempting to launch: " + executionString);
-    Logger::write(Logger::ZONE_INFO, "Launcher", "     from within folder: " + currentDirectory);
+    LOG_INFO("Launcher", "Attempting to launch: " + executionString);
+    LOG_INFO("Launcher", "     from within folder: " + currentDirectory);
 
     std::atomic<bool> stop_thread = true;
     std::thread proc_thread;
@@ -279,7 +279,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
     if(system(executionString.c_str()) != 0)
 #endif
     {
-        Logger::write(Logger::ZONE_WARNING, "Launcher", "Failed to run: " + executable);
+        LOG_WARNING("Launcher", "Failed to run: " + executable);
     }
 
     else
@@ -323,7 +323,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
         proc_thread.join();
     }
 
-    Logger::write(Logger::ZONE_INFO, "Launcher", "Completed");
+    LOG_INFO("Launcher", "Completed");
 
     return retVal;
 }
@@ -387,7 +387,7 @@ bool Launcher::launcherName(std::string &launcherName, std::string collection)
            << launcherKey
            << "\")";
 
-        Logger::write(Logger::ZONE_ERROR, "Launcher", ss.str());
+        LOG_ERROR("Launcher", ss.str());
 
         return false;
     }
@@ -399,7 +399,7 @@ bool Launcher::launcherName(std::string &launcherName, std::string collection)
               << launcherName
               << "\"";
 
-    Logger::write(Logger::ZONE_DEBUG, "Launcher", ss.str());
+    LOG_DEBUG("Launcher", ss.str());
 
     return true;
 }
@@ -422,7 +422,7 @@ bool Launcher::launcherArgs(std::string &args, std::string launcherName)
 
     if(std::string argsKey = "launchers." + launcherName + ".arguments"; !config_.getProperty(argsKey, args))
     {
-        Logger::write(Logger::ZONE_ERROR, "Launcher", "No arguments specified for: " + argsKey);
+        LOG_ERROR("Launcher", "No arguments specified for: " + argsKey);
 
         return false;
     }
@@ -434,7 +434,7 @@ bool Launcher::extensions(std::string &extensions, std::string collection)
 
     if(std::string extensionsKey = "collections." + collection + ".list.extensions"; !config_.getProperty(extensionsKey, extensions))
     {
-        Logger::write(Logger::ZONE_ERROR, "Launcher", "No extensions specified for: " + extensionsKey);
+        LOG_ERROR("Launcher", "No extensions specified for: " + extensionsKey);
         return false;
     }
 
@@ -477,7 +477,7 @@ bool Launcher::findFile(std::string &foundFilePath, std::string &foundFilename, 
 
             fileFound = true;
 
-            Logger::write(Logger::ZONE_INFO, "Launcher", ss.str());
+            LOG_INFO("Launcher", ss.str());
 
             foundFilePath = selectedItemsPath;
             foundFilename = extension;
@@ -489,7 +489,7 @@ bool Launcher::findFile(std::string &foundFilePath, std::string &foundFilename, 
             ss        << "Checking to see if \""
                       << selectedItemsPath << "\" exists  [No]";
 
-            Logger::write(Logger::ZONE_WARNING, "Launcher", ss.str());
+            LOG_WARNING("Launcher", ss.str());
         }
 
         f.close();
@@ -504,7 +504,7 @@ bool Launcher::findFile(std::string &foundFilePath, std::string &foundFilename, 
                   << filenameWithoutExtension << "\" in folder \""
                   << directory;
 
-        Logger::write(Logger::ZONE_WARNING, "Launcher", ss.str());
+        LOG_WARNING("Launcher", ss.str());
 
     }
 

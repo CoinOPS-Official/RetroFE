@@ -45,37 +45,41 @@ bool VideoComponent::update(float dt)
     {
         isPlaying_ = static_cast<GStreamerVideo*>(videoInst_)->isPlaying();
 
-        if (isPlaying_ && !hasPlayedOnce_)
+        // Update the hasBeenOnScreen_ status.
+        if (baseViewInfo.Alpha > 0)
         {
-            // Mark this video as having played at least once.
-            hasPlayedOnce_ = true;
+            hasBeenOnScreen_ = true;
         }
 
         if (isPlaying_)
         {
-            if (baseViewInfo.Restart && hasPlayedOnce_) {
+            // Handle video restarting.
+            if (baseViewInfo.Restart && hasBeenOnScreen_)
+            {
                 videoInst_->restart();
-                Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
-
+                LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
                 baseViewInfo.Restart = false;
             }
-            if (videoInst_->getTexture()) {
-                if (baseViewInfo.PauseOnScroll) {
-                    if (baseViewInfo.Alpha == 0.0 && !isPaused()) {
-                        pause();
-                        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Paused " + Utils::getFileName(videoFile_));
-                    }
-                    else if (baseViewInfo.Alpha != 0.0 && isPaused()) {
-                        pause();
-                        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
-                    }
+
+            // Handle pausing and resuming based on Alpha.
+            if (videoInst_->getTexture() && baseViewInfo.PauseOnScroll)
+            {
+                if (baseViewInfo.Alpha == 0.0 && !isPaused())
+                {
+                    pause();
+                    LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
                 }
-                videoInst_->setVolume(baseViewInfo.Volume);
+                else if (baseViewInfo.Alpha != 0.0 && isPaused())
+                {
+                    pause();
+                    LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+                }
             }
 
+            videoInst_->setVolume(baseViewInfo.Volume);
             videoInst_->update(dt);
 
-            // video needs to run a frame to start getting size info
+            // Update video size information.
             if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
             {
                 baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
@@ -84,10 +88,8 @@ bool VideoComponent::update(float dt)
         }
     }
 
-    // The rest of the update logic
     return Component::update(dt);
 }
-
 
 void VideoComponent::allocateGraphicsMemory()
 {
@@ -96,7 +98,7 @@ void VideoComponent::allocateGraphicsMemory()
     if(!isPlaying_)
     {
         if (!videoInst_) {
-            videoInst_ = VideoFactory::createVideo(monitor_, numLoops_);
+            videoInst_ = factory_.createVideo(monitor_, numLoops_);
         }
         if (videoFile_ != "") {
             isPlaying_ = videoInst_->play(videoFile_);
@@ -110,13 +112,13 @@ void VideoComponent::freeGraphicsMemory()
     //videoInst_->stop()
         
     Component::freeGraphicsMemory();
-    Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
+    LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
     
     if (videoInst_) 
     {
         delete videoInst_;
         isPlaying_ = false;
-        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
+        LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
         videoInst_ = nullptr;
         
     }

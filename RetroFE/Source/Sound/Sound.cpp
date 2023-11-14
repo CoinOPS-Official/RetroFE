@@ -28,7 +28,7 @@ Sound::Sound(std::string file, std::string altfile)
         file_ = altfile;
         if (file_ != "" && !allocate())
         {
-            Logger::write(Logger::ZONE_WARNING, "Sound", "Cannot load " + file_);
+            LOG_WARNING("Sound", "Cannot load " + file_);
         }
     }
 }

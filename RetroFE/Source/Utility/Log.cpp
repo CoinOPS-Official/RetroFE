@@ -51,36 +51,8 @@ void Logger::deInitialize()
 
 void Logger::write(Zone zone, std::string component, std::string message)
 {
-    std::string zoneStr;
+    std::string zoneStr = zoneToString(zone);
 
-    switch (zone)
-    {
-    case ZONE_INFO:
-        zoneStr = "INFO";
-        break;
-    case ZONE_DEBUG:
-        zoneStr = "DEBUG";
-        break;
-    case ZONE_NOTICE:
-        zoneStr = "NOTICE";
-        break;
-    case ZONE_WARNING:
-        zoneStr = "WARNING";
-        break;
-    case ZONE_ERROR:
-        zoneStr = "ERROR";
-        break;
-    }
-
-    // if levels defined and zone not in list then don't log
-    if (config_) {
-        std::string level; // Will be initialized to an empty string by default.
-        config_->getProperty("log", level);
-        // If level is empty or if "ALL" isn't found and the specific zone isn't found either, don't log.
-        if (level != "ALL" && (level == "" || level.find(zoneStr) == std::string::npos)) {
-            return;
-        }
-    }
     std::time_t rawtime = std::time(NULL);
     struct tm const* timeinfo = std::localtime(&rawtime);
 
@@ -91,4 +63,45 @@ void Logger::write(Zone zone, std::string component, std::string message)
     ss << "[" << timeStr << "] [" << zoneStr << "] [" << component << "] " << message << std::endl;
     std::cout << ss.str();
     std::cout.flush();
+}
+
+
+bool Logger::isLevelEnabled(Zone zone) {
+    if (!config_) return false; // do not log if log in settings.conf is not set
+
+    std::string level;
+    config_->getProperty("log", level);
+
+    if (level == "ALL") return true;
+
+    std::string zoneStr = zoneToString(zone);
+    std::stringstream ss(level);
+    std::string token;
+
+    while (std::getline(ss, token, ',')) {
+        if (token == zoneStr) {
+            return true;
+        }
+    }
+    return false;
+}
+
+
+std::string Logger::zoneToString(Zone zone)
+{
+    switch (zone)
+    {
+    case ZONE_INFO:
+        return "INFO";
+    case ZONE_DEBUG:
+        return "DEBUG";
+    case ZONE_NOTICE:
+        return "NOTICE";
+    case ZONE_WARNING:
+        return "WARNING";
+    case ZONE_ERROR:
+        return "ERROR";
+    default:
+        return "UNKNOWN";
+    }
 }

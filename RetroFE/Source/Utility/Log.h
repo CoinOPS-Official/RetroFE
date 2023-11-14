@@ -35,12 +35,33 @@ public:
 
     };
     static bool initialize(std::string file, Configuration* config);
+    static bool isLevelEnabled(Zone zone);
     static void write(Zone zone, std::string component, std::string message);
     static void deInitialize();
 private:
-
+	static std::string zoneToString(Zone zone);
     static std::streambuf* cerrStream_;
     static std::streambuf* coutStream_;
     static std::ofstream writeFileStream_;
     static Configuration* config_;
 };
+
+#define LOG_DEBUG(component, message) \
+    if (Logger::isLevelEnabled(Logger::ZONE_DEBUG)) \
+        Logger::write(Logger::ZONE_DEBUG, component, message)
+
+#define LOG_INFO(component, message) \
+    if (Logger::isLevelEnabled(Logger::ZONE_INFO)) \
+        Logger::write(Logger::ZONE_INFO, component, message)
+
+#define LOG_NOTICE(component, message) \
+    if (Logger::isLevelEnabled(Logger::ZONE_NOTICE)) \
+        Logger::write(Logger::ZONE_NOTICE, component, message)
+
+#define LOG_WARNING(component, message) \
+    if (Logger::isLevelEnabled(Logger::ZONE_WARNING)) \
+        Logger::write(Logger::ZONE_WARNING, component, message)
+
+#define LOG_ERROR(component, message) \
+    if (Logger::isLevelEnabled(Logger::ZONE_ERROR)) \
+        Logger::write(Logger::ZONE_ERROR, component, message)

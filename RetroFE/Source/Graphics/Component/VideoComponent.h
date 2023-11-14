@@ -49,7 +49,7 @@ private:
     std::string name_;
     IVideo* videoInst_{ nullptr };
     bool isPlaying_{ false };
-    bool hasPlayedOnce_{ false };
+    bool hasBeenOnScreen_{ false };
     int numLoops_;
     int monitor_;
     VideoFactory factory_;

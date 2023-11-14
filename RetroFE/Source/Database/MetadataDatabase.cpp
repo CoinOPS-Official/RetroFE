@@ -52,7 +52,7 @@ bool MetadataDatabase::resetDatabase()
     char *error = nullptr;
     sqlite3 *handle = db_.handle;
 
-    Logger::write(Logger::ZONE_INFO, "Metadata", "Erasing");
+    LOG_INFO("Metadata", "Erasing");
 
     std::string sql;
     sql.append("DROP TABLE IF EXISTS Meta;");
@@ -63,7 +63,7 @@ bool MetadataDatabase::resetDatabase()
     {
         std::stringstream ss;
         ss << "Unable to create Metadata table. Error: " << error;
-        Logger::write(Logger::ZONE_ERROR, "Metadata", ss.str());
+        LOG_ERROR("Metadata", ss.str());
         return false;
     }
 
@@ -102,7 +102,7 @@ bool MetadataDatabase::initialize()
         {
             std::stringstream ss;
             ss << "Unable to create Metadata table. Error: " << error;
-            Logger::write(Logger::ZONE_ERROR, "Metadata", ss.str());
+            LOG_ERROR("Metadata", ss.str());
 
             return false;
         }
@@ -125,7 +125,7 @@ bool MetadataDatabase::importDirectory()
 
     if(dp == nullptr)
     {
-        Logger::write(Logger::ZONE_WARNING, "MetadataDatabase", "Could not read directory \"" + hyperListPath + "\"");
+        LOG_WARNING("MetadataDatabase", "Could not read directory \"" + hyperListPath + "\"");
     }
     else
     {
@@ -144,7 +144,7 @@ bool MetadataDatabase::importDirectory()
                 if(extension == ".xml")
                 {
                     std::string importFile = Utils::combinePath(hyperListPath, std::string(dirp->d_name));
-                    Logger::write(Logger::ZONE_INFO, "Metadata", "Importing hyperlist: " + importFile);
+                    LOG_INFO("Metadata", "Importing hyperlist: " + importFile);
                     importHyperlist(importFile, collectionName);
                 }
             }
@@ -157,7 +157,7 @@ bool MetadataDatabase::importDirectory()
 
     if(dp == nullptr)
     {
-        Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Could not read directory \"" + mameListPath + "\"");
+        LOG_INFO("CollectionInfoBuilder", "Could not read directory \"" + mameListPath + "\"");
     }
     else
     {
@@ -176,7 +176,7 @@ bool MetadataDatabase::importDirectory()
                 if(extension == ".xml")
                 {
                     std::string importFile = Utils::combinePath(mameListPath, std::string(dirp->d_name));
-                    Logger::write(Logger::ZONE_INFO, "Metadata", "Importing mamelist: " + importFile);
+                    LOG_INFO("Metadata", "Importing mamelist: " + importFile);
                     config_.setProperty("status", "Scraping data from " + importFile);
                     importMamelist(importFile, collectionName);
                 }
@@ -190,7 +190,7 @@ bool MetadataDatabase::importDirectory()
 
     if(dp == nullptr)
     {
-        Logger::write(Logger::ZONE_INFO, "MetadataDatabase", "Could not read directory \"" + emuarcListPath + "\"");
+        LOG_INFO("MetadataDatabase", "Could not read directory \"" + emuarcListPath + "\"");
     }
     else
     {
@@ -208,7 +208,7 @@ bool MetadataDatabase::importDirectory()
                 if(extension == ".dat")
                 {
                     std::string importFile = Utils::combinePath(emuarcListPath, std::string(dirp->d_name));
-                    Logger::write(Logger::ZONE_INFO, "Metadata", "Importing emuarclist: " + importFile);
+                    LOG_INFO("Metadata", "Importing emuarclist: " + importFile);
                     importEmuArclist(importFile);
                 }
             }
@@ -344,7 +344,7 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
 
         if(!root)
         {
-            Logger::write(Logger::ZONE_ERROR, "Metadata", "Does not appear to be a HyperList file (missing <menu> tag)");
+            LOG_ERROR("Metadata", "Does not appear to be a HyperList file (missing <menu> tag)");
             return false;
         }
         sqlite3 *handle = db_.handle;
@@ -421,12 +421,12 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
         std::stringstream ss;
         ss << "Could not parse layout file. [Line: " << line << "] Reason: " << e.what();
 
-        Logger::write(Logger::ZONE_ERROR, "Metadata", ss.str());
+        LOG_ERROR("Metadata", ss.str());
     }
     catch(std::exception &e)
     {
         std::string what = e.what();
-        Logger::write(Logger::ZONE_ERROR, "Metadata", "Could not parse hyperlist file. Reason: " + what);
+        LOG_ERROR("Metadata", "Could not parse hyperlist file. Reason: " + what);
     }
 
 
@@ -442,7 +442,7 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
 
     config_.setProperty("status", "Scraping data from \"" + filename + "\" (this will take a while)");
 
-    Logger::write(Logger::ZONE_INFO, "Mamelist", "Importing mamelist file \"" + filename + "\" (this will take a while)");
+    LOG_INFO("Mamelist", "Importing mamelist file \"" + filename + "\" (this will take a while)");
     std::ifstream file(filename.c_str());
 
     std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
@@ -455,14 +455,14 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
 
     if(!rootNode)
     {
-        Logger::write(Logger::ZONE_ERROR, "Metadata", "Does not appear to be a MameList file (missing <mame> tag)");
+        LOG_ERROR("Metadata", "Does not appear to be a MameList file (missing <mame> tag)");
         return false;
     }
 
     if(sqlite3_exec(handle, "BEGIN IMMEDIATE TRANSACTION;", nullptr, nullptr, &error) != SQLITE_OK)
     {
         std::string emsg = error;
-        Logger::write(Logger::ZONE_ERROR, "Metadata", "SQL Error starting transaction: " + emsg);
+        LOG_ERROR("Metadata", "SQL Error starting transaction: " + emsg);
         return false;
     };
     std::string gameNodeName = "game";
@@ -532,7 +532,7 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
             {
                 std::stringstream ss;
                 ss << "Failed to insert machine \"" << name << "\" into database; " << sqlite3_errstr(code) << "; " << sqlite3_errmsg(handle);
-                Logger::write(Logger::ZONE_ERROR, "Metadata", ss.str());
+                LOG_ERROR("Metadata", ss.str());
                 sqlite3_finalize(stmt);
                 break;
             };
@@ -544,7 +544,7 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
     if (sqlite3_exec(handle, "COMMIT TRANSACTION;", nullptr, nullptr, &error) != SQLITE_OK)
     {
         std::string emsg = error;
-        Logger::write(Logger::ZONE_ERROR, "Metadata", "SQL Error closing transaction: " + emsg);
+        LOG_ERROR("Metadata", "SQL Error closing transaction: " + emsg);
     };
 
     return true;
@@ -570,20 +570,20 @@ bool MetadataDatabase::importEmuArclist(const std::string& emuarclistFile)
 
         if(!root)
         {
-            Logger::write(Logger::ZONE_ERROR, "Metadata", "Does not appear to be a EmuArcList file (missing <datafile> tag)");
+            LOG_ERROR("Metadata", "Does not appear to be a EmuArcList file (missing <datafile> tag)");
             return false;
         }
 
         rapidxml::xml_node<> const *header = root->first_node("header");
         if (!header)
         {
-            Logger::write(Logger::ZONE_ERROR, "Metadata", "Does not appear to be a EmuArcList file (missing <header> tag)");
+            LOG_ERROR("Metadata", "Does not appear to be a EmuArcList file (missing <header> tag)");
             return false;
         }
         rapidxml::xml_node<> const *name = header->first_node("name");
         if (!name)
         {
-            Logger::write(Logger::ZONE_ERROR, "Metadata", "Does not appear to be a EmuArcList SuperDat file (missing <name> in <header> tag)");
+            LOG_ERROR("Metadata", "Does not appear to be a EmuArcList SuperDat file (missing <name> in <header> tag)");
             return false;
         }
         std::string collectionName = name->value();
@@ -601,7 +601,7 @@ bool MetadataDatabase::importEmuArclist(const std::string& emuarclistFile)
             rapidxml::xml_node<> const *emuarcXml      = game->first_node("EmuArc");
             if (!emuarcXml)
             {
-                Logger::write(Logger::ZONE_ERROR, "Metadata", "Does not appear to be a EmuArcList SuperDat file (missing <emuarc> tag)");
+                LOG_ERROR("Metadata", "Does not appear to be a EmuArcList SuperDat file (missing <emuarc> tag)");
                 return false;
             }
             rapidxml::xml_node<> const *cloneofXml       = emuarcXml->first_node("cloneof");
@@ -670,12 +670,12 @@ bool MetadataDatabase::importEmuArclist(const std::string& emuarclistFile)
         std::stringstream ss;
         ss << "Could not parse layout file. [Line: " << line << "] Reason: " << e.what();
 
-        Logger::write(Logger::ZONE_ERROR, "Metadata", ss.str());
+        LOG_ERROR("Metadata", ss.str());
     }
     catch(std::exception &e)
     {
         std::string what = e.what();
-        Logger::write(Logger::ZONE_ERROR, "Metadata", "Could not parse EmuArclist file. Reason: " + what);
+        LOG_ERROR("Metadata", "Could not parse EmuArclist file. Reason: " + what);
     }
 
 

@@ -122,7 +122,7 @@ bool Configuration::import(const std::string& collection, const std::string& key
     int lineCount = 0;
     std::string line;
 
-    Logger::write(Logger::ZONE_INFO, "Configuration", "Importing \"" + file + "\"");
+    LOG_INFO("Configuration", "Importing \"" + file + "\"");
 
     std::ifstream ifs(file.c_str());
 
@@ -130,11 +130,11 @@ bool Configuration::import(const std::string& collection, const std::string& key
     {
         if (mustExist)
         {
-            Logger::write(Logger::ZONE_ERROR, "Configuration", "Could not open " + file + "\"");
+            LOG_ERROR("Configuration", "Could not open " + file + "\"");
         }
         else
         {
-            Logger::write(Logger::ZONE_WARNING, "Configuration", "Could not open " + file + "\"");
+            LOG_WARNING("Configuration", "Could not open " + file + "\"");
         }
 
         return false;
@@ -194,14 +194,14 @@ bool Configuration::parseLine(const std::string& collection, std::string keyPref
         ss << "Dump: "  << "\"" << key << "\" = \"" << value << "\"";
 
 
-        Logger::write(Logger::ZONE_INFO, "Configuration", ss.str());
+        LOG_INFO("Configuration", ss.str());
         retVal = true;
     }
     else
     {
         std::stringstream ss;
         ss << "Missing an assignment operator (=) on line " << lineCount;
-        Logger::write(Logger::ZONE_ERROR, "Configuration", ss.str());
+        LOG_ERROR("Configuration", ss.str());
     }
 
     return retVal;

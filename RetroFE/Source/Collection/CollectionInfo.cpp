@@ -91,7 +91,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
         }
         std::string dir  = Utils::combinePath(Configuration::absolutePath, "collections", playlistCollectionName, "playlists");
         std::string file = Utils::combinePath(Configuration::absolutePath, "collections", playlistCollectionName, "playlists", "favorites.txt");
-        Logger::write(Logger::ZONE_INFO, "Collection", "Saving favorites " + file);
+        LOG_INFO("Collection", "Saving favorites " + file);
 
         std::ofstream filestream;
         try
@@ -105,7 +105,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
                 {
                     if(ERROR_ALREADY_EXISTS != GetLastError())
                     {
-                        Logger::write(Logger::ZONE_WARNING, "Collection", "Could not create directory " + dir);
+                        LOG_WARNING("Collection", "Could not create directory " + dir);
                         return false;
                     }
                 }
@@ -116,14 +116,14 @@ bool CollectionInfo::saveFavorites(Item* removed)
                 if(mkdir(dir.c_str(), 0755) == -1)
 #endif        
                 {
-                    Logger::write(Logger::ZONE_WARNING, "Collection", "Could not create directory " + dir);
+                    LOG_WARNING("Collection", "Could not create directory " + dir);
                     return false;
                 }
 #endif
             }
             else if ( !(info.st_mode & S_IFDIR) )
             {
-                Logger::write(Logger::ZONE_WARNING, "Collection", dir + " exists, but is not a directory.");
+                LOG_WARNING("Collection", dir + " exists, but is not a directory.");
                 return false;
             }
             std::vector<Item*>* saveitems = playlists["favorites"];
@@ -211,7 +211,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
         }
         catch(std::exception &)
         {
-            Logger::write(Logger::ZONE_ERROR, "Collection", "Save favorites failed: " + file);
+            LOG_ERROR("Collection", "Save favorites failed: " + file);
             retval = false;
         }
     }

@@ -108,26 +108,26 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
             std::to_string(screenHeight_ / Utils::gcd(screenWidth_, screenHeight_)) + layouts[layout] +
             ".xml");
 
-        Logger::write(Logger::ZONE_INFO, "Layout", "Initializing " + layoutFileAspect);
+        LOG_INFO("Layout", "Initializing " + layoutFileAspect);
 
         rapidxml::xml_document<> doc;
         std::ifstream file(layoutFileAspect.c_str());
         // aspect layout
         if ( !file.good( ) )
         {
-            Logger::write( Logger::ZONE_INFO, "Layout", "could not find layout file: " + layoutFileAspect );
-            Logger::write( Logger::ZONE_INFO, "Layout", "Initializing " + layoutFile );
+            LOG_INFO("Layout", "could not find layout file: " + layoutFileAspect );
+            LOG_INFO("Layout", "Initializing " + layoutFile );
             
             // collection or default layout
             file.open( layoutFile.c_str( ) );
             if ( !file.good( ) )
             {
-                Logger::write( Logger::ZONE_INFO, "Layout", "could not find layout file: " + layoutFile );
+                LOG_INFO("Layout", "could not find layout file: " + layoutFile );
 
                 // try default layout
                 if (layoutPath != layoutPathDefault) {
                     layoutFile = Utils::combinePath(layoutPathDefault, layouts[layout] + ".xml");
-                    Logger::write(Logger::ZONE_INFO, "Layout", "Initializing " + layoutFile);
+                    LOG_INFO("Layout", "Initializing " + layoutFile);
 
                     file.open(layoutFile.c_str());
                     if (!file.good())
@@ -155,7 +155,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
 
             if (!root)
             {
-                Logger::write(Logger::ZONE_ERROR, "Layout", "Missing <layout> tag");
+                LOG_ERROR("Layout", "Missing <layout> tag");
                 return nullptr;
             }
             else
@@ -204,7 +204,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                     {
                         std::stringstream ss;
                         ss << layoutWidth_ << "x" << layoutHeight_ << " (scale " << (float)screenWidth_ / (float)layoutWidth_ << "x" << (float)screenHeight_ / (float)layoutHeight_ << ")";
-                        Logger::write(Logger::ZONE_INFO, "Layout", "Layout resolution " + ss.str());
+                        LOG_INFO("Layout", "Layout resolution " + ss.str());
 
                         if (!page)
                             page = new Page(config_, layoutWidth_, layoutHeight_);
@@ -229,7 +229,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                 // add additional controls to replace others based on theme/layout
 				if (controls && controls->value() && controls->value()[0] != '\0'){
                     std::string controlLayout = controls->value();
-                    Logger::write(Logger::ZONE_INFO, "Layout", "Layout set custom control type " + controlLayout);
+                    LOG_INFO("Layout", "Layout set custom control type " + controlLayout);
                     page->setControlsType(controlLayout);
                 }
 
@@ -249,7 +249,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                     std::string altfile = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, std::string(src->value()));
                     if (!type)
                     {
-                        Logger::write(Logger::ZONE_ERROR, "Layout", "Sound tag missing type attribute");
+                        LOG_ERROR("Layout", "Sound tag missing type attribute");
                     }
                     else
                     {
@@ -274,7 +274,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                         }
                         else
                         {
-                            Logger::write(Logger::ZONE_WARNING, "Layout", "Unsupported sound effect type \"" + soundType + "\"");
+                            LOG_WARNING("Layout", "Unsupported sound effect type \"" + soundType + "\"");
                         }
                     }
                 }
@@ -293,21 +293,21 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
             std::stringstream ss;
             ss << "Could not parse layout file. [Line: " << line << "] in " << layoutFile << " Reason: " << e.what();
 
-            Logger::write(Logger::ZONE_ERROR, "Layout", ss.str());
+            LOG_ERROR("Layout", ss.str());
         }
         catch(std::exception &e)
         {
             std::string what = e.what();
-            Logger::write(Logger::ZONE_ERROR, "Layout", "Could not parse layout file. Reason: " + what);
+            LOG_ERROR("Layout", "Could not parse layout file. Reason: " + what);
         }
 
         if(page)
         {
-            Logger::write(Logger::ZONE_INFO, "Layout", "Initialized");
+            LOG_INFO("Layout", "Initialized");
         }
         else
         {
-            Logger::write(Logger::ZONE_ERROR, "Layout", "Could not initialize layout (see previous messages for reason)");
+            LOG_ERROR("Layout", "Could not initialize layout (see previous messages for reason)");
         }
     }
 
@@ -433,7 +433,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
 
         if (!src)
         {
-            Logger::write(Logger::ZONE_ERROR, "Layout", "Image component in layout does not specify a source image file");
+            LOG_ERROR("Layout", "Image component in layout does not specify a source image file");
         }
         else
         {
@@ -489,7 +489,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
 
         if (!srcXml)
         {
-            Logger::write(Logger::ZONE_ERROR, "Layout", "Video component in layout does not specify a source video file");
+            LOG_ERROR("Layout", "Video component in layout does not specify a source video file");
         }
         else
         {
@@ -556,7 +556,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
 
         if (!value)
         {
-            Logger::write(Logger::ZONE_WARNING, "Layout", "Text component in layout does not specify a value");
+            LOG_WARNING("Layout", "Text component in layout does not specify a value");
         }
         else
         {
@@ -651,15 +651,15 @@ void PageBuilder::loadReloadableImages(const xml_node<> *layout, const std::stri
 
         if(!imageType && (tagName == "reloadableVideo" || tagName == "reloadableAudio"))
         {
-            Logger::write(Logger::ZONE_WARNING, "Layout", "<reloadableImage> component in layout does not specify an imageType for when the video does not exist");
+            LOG_WARNING("Layout", "<reloadableImage> component in layout does not specify an imageType for when the video does not exist");
         }
         if(!type && (tagName == "reloadableImage" || tagName == "reloadableText"))
         {
-            Logger::write(Logger::ZONE_ERROR, "Layout", "Image component in layout does not specify a source image file");
+            LOG_ERROR("Layout", "Image component in layout does not specify a source image file");
         }
         if(!type && tagName == "reloadableScrollingText")
         {
-            Logger::write(Logger::ZONE_ERROR, "Layout", "Reloadable scroling text component in layout does not specify a type");
+            LOG_ERROR("Layout", "Reloadable scroling text component in layout does not specify a type");
         }
 
         cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor;
@@ -923,7 +923,7 @@ Font *PageBuilder::addFont(const xml_node<> *component, const xml_node<> *defaul
                     Utils::combinePath(Configuration::absolutePath, "layouts", layoutKey,""),
                     fontXml->value());
 
-        Logger::write(Logger::ZONE_DEBUG, "Layout", "loading font " + fontName );
+        LOG_DEBUG("Layout", "loading font " + fontName );
     }
     if(fontColorXml)
     {
@@ -1102,7 +1102,7 @@ ScrollingList * PageBuilder::buildMenu(xml_node<> *menuXml, Page &page, int moni
     // ensure <menu> has an <itemDefaults> tag
     if(!itemDefaults)
     {
-        Logger::write(Logger::ZONE_WARNING, "Layout", "Menu tag is missing <itemDefaults> tag.");
+        LOG_WARNING("Layout", "Menu tag is missing <itemDefaults> tag.");
     }
 
     bool playlistType = false;
@@ -1338,7 +1338,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuX
            << " although there are only " << points->size()
            << " menu points that can be displayed";
 
-        Logger::write(Logger::ZONE_ERROR, "Layout", "Design error! \"duration\" attribute");
+        LOG_ERROR("Layout", "Design error! \"duration\" attribute");
 
         selectedIndex = 0;
     }
@@ -1546,7 +1546,7 @@ void PageBuilder::getAnimationEvents(const xml_node<> *node, TweenSet &tweens)
 
     if(!durationXml)
     {
-        Logger::write(Logger::ZONE_ERROR, "Layout", "Animation set tag missing \"duration\" attribute");
+        LOG_ERROR("Layout", "Animation set tag missing \"duration\" attribute");
     }
     else
     {
@@ -1568,11 +1568,11 @@ void PageBuilder::getAnimationEvents(const xml_node<> *node, TweenSet &tweens)
 
             if(!type)
             {
-                Logger::write(Logger::ZONE_ERROR, "Layout", "Animate tag missing \"type\" attribute");
+                LOG_ERROR("Layout", "Animate tag missing \"type\" attribute");
             }
             else if(!to && (animateType != "nop" && animateType != "restart"))
             {
-                Logger::write(Logger::ZONE_ERROR, "Layout", "Animate tag missing \"to\" attribute");
+                LOG_ERROR("Layout", "Animate tag missing \"to\" attribute");
             }
             else
             {
@@ -1681,7 +1681,7 @@ void PageBuilder::getAnimationEvents(const xml_node<> *node, TweenSet &tweens)
                 {
                     std::stringstream ss;
                     ss << "Unsupported tween type attribute \"" << type->value() << "\"";
-                    Logger::write(Logger::ZONE_ERROR, "Layout", ss.str());
+                    LOG_ERROR("Layout", ss.str());
                 }
             }
         }
