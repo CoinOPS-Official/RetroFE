@@ -26,20 +26,20 @@
 class Component
 {
 public:
-    Component(Page &p);
+    explicit Component(Page &p);
     Component(const Component &copy);
     virtual ~Component();
     virtual void freeGraphicsMemory();
     virtual void allocateGraphicsMemory();
     virtual void deInitializeFonts();
     virtual void initializeFonts();
-    void triggerEvent(std::string event, int menuIndex = -1);
-    void setPlaylist(std::string name );
+    void triggerEvent(const std::string& event, int menuIndex = -1);
+    void setPlaylist(const std::string& name );
     void setNewItemSelected();
     void setNewScrollItemSelected();
-    bool isIdle();
-    bool isAttractIdle();
-    bool isMenuScrolling();
+    bool isIdle() const;
+    bool isAttractIdle() const;
+    bool isMenuScrolling() const;
     bool newItemSelected;
     bool newScrollItemSelected;
     void setId( int id );
@@ -62,14 +62,14 @@ public:
     ViewInfo baseViewInfo;
     std::string collectionName;
     void setMenuScrollReload(bool menuScrollReload);
-    bool getMenuScrollReload();
+    bool getMenuScrollReload() const;
     void setAnimationDoneRemove(bool value);
-    bool getAnimationDoneRemove();
+    bool getAnimationDoneRemove() const;
     void setPauseOnScroll(bool value);
     bool getPauseOnScroll() const;
     virtual void setText(std::string text, int id = -1) {};
     virtual void setImage(std::string filePath, int id = -1) {};
-    int getId( );
+    int getId( ) const;
     std::string playlistName;
     
 

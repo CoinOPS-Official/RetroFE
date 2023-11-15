@@ -23,8 +23,8 @@
 Component::Component(Page &p)
 : page(p)
 {
-    tweens_                   = NULL;
-    backgroundTexture_        = NULL;
+    tweens_                   = nullptr;
+    backgroundTexture_        = nullptr;
     menuScrollReload_         = false;
     animationDoneRemove_      = false;
     freeGraphicsMemory();
@@ -34,13 +34,13 @@ Component::Component(Page &p)
 Component::Component(const Component &copy)
     : page(copy.page)
 {
-    tweens_ = NULL;
-    backgroundTexture_ = NULL;
+    tweens_ = nullptr;
+    backgroundTexture_ = nullptr;
     freeGraphicsMemory();
 
     if ( copy.tweens_ )
     {
-        AnimationEvents *tweens = new AnimationEvents(*copy.tweens_);
+        auto *tweens = new AnimationEvents(*copy.tweens_);
         setTweens(tweens);
     }
 
@@ -61,36 +61,15 @@ void Component::freeGraphicsMemory()
     newScrollItemSelected   = false;
     menuIndex_              = -1;
 
-    currentTweens_        = NULL;
+    currentTweens_        = nullptr;
     currentTweenIndex_    = 0;
     currentTweenComplete_ = true;
     elapsedTweenTime_     = 0;
 
-    if ( backgroundTexture_ )
-    {
-        SDL_LockMutex(SDL::getMutex());
-        SDL_DestroyTexture(backgroundTexture_);
-        SDL_UnlockMutex(SDL::getMutex());
-
-        backgroundTexture_ = NULL;
-    }
 }
 void Component::allocateGraphicsMemory()
 {
-    if ( !backgroundTexture_ )
-    {
-        // make a 4x4 pixel wide surface to be stretched during rendering, make it a white background so we can use
-        // color  later
-        SDL_Surface *surface = SDL_CreateRGBSurface(0, 4, 4, 32, 0, 0, 0, 0);
-        SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 255, 255));
 
-        SDL_LockMutex(SDL::getMutex());
-        backgroundTexture_ = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), surface);
-        SDL_UnlockMutex(SDL::getMutex());
-
-        SDL_FreeSurface(surface);
-        SDL_SetTextureBlendMode(backgroundTexture_, SDL_BLENDMODE_BLEND);
-    }
 }
 
 
@@ -104,14 +83,14 @@ void Component::initializeFonts()
 }
 
 
-void Component::triggerEvent(std::string event, int menuIndex)
+void Component::triggerEvent(const std::string& event, int menuIndex)
 {
     animationRequestedType_ = event;
     animationRequested_     = true;
     menuIndex_              = (menuIndex > 0 ? menuIndex : 0);
 }
 
-void Component::setPlaylist(std::string name)
+void Component::setPlaylist(const std::string& name)
 {
     this->playlistName = name;
 }
@@ -131,17 +110,17 @@ void Component::setId( int id )
     id_ = id;
 }
 
-bool Component::isIdle()
+bool Component::isIdle() const
 {
     return (currentTweenComplete_ || animationType_ == "idle" || animationType_ == "menuIdle" || animationType_ == "attract");
 }
 
-bool Component::isAttractIdle()
+bool Component::isAttractIdle() const
 {
     return (currentTweenComplete_ || animationType_ == "idle" || animationType_ == "menuIdle");
 }
 
-bool Component::isMenuScrolling()
+bool Component::isMenuScrolling() const
 {
     return (!currentTweenComplete_ && animationType_ == "menuScroll");
 }
@@ -209,7 +188,7 @@ bool Component::update(float dt)
     currentTweenComplete_ = animate();
     if ( currentTweenComplete_ )
     {
-      currentTweens_     = NULL;
+      currentTweens_     = nullptr;
       currentTweenIndex_ = 0;
     }
 
@@ -219,22 +198,6 @@ bool Component::update(float dt)
 void Component::draw()
 {
 
-    if ( backgroundTexture_ )
-    {
-        SDL_Rect rect;
-        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
-        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-
-
-        SDL_SetTextureColorMod(backgroundTexture_,
-                               static_cast<char>(baseViewInfo.BackgroundRed*255),
-                               static_cast<char>(baseViewInfo.BackgroundGreen*255),
-                               static_cast<char>(baseViewInfo.BackgroundBlue*255));
-
-        SDL::renderCopy(backgroundTexture_, baseViewInfo.BackgroundAlpha, NULL, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-    }
 }
 
 bool Component::animate()
@@ -252,7 +215,7 @@ bool Component::animate()
         bool foundFiltered;
         for(unsigned int i = 0; i < tweens->size(); i++)
         {
-            Tween *tween = tweens->tweens()->at(i);
+            Tween const *tween = tweens->tweens()->at(i);
             // only animate if filter matches current playlist or in playlist1,playlist2,playlist3
             if (tween->playlistFilter != "" && playlistName != "") {
                 foundFiltered = false;
@@ -431,7 +394,7 @@ bool Component::animate()
             case TWEEN_PROPERTY_NOP:
                 break;
             case TWEEN_PROPERTY_RESTART:
-                baseViewInfo.Restart = tween->duration && !elapsedTime;
+                baseViewInfo.Restart = (tween->duration != 0.0) && (elapsedTime == 0.0);
                 break;
             }
         }
@@ -472,7 +435,7 @@ void Component::setMenuScrollReload(bool menuScrollReload)
 }
 
 
-bool Component::getMenuScrollReload()
+bool Component::getMenuScrollReload() const
 {
     return menuScrollReload_;
 }
@@ -482,12 +445,12 @@ void Component::setAnimationDoneRemove(bool value)
     animationDoneRemove_ = value;
 }
 
-bool Component::getAnimationDoneRemove()
+bool Component::getAnimationDoneRemove() const
 {
     return animationDoneRemove_;
 }
 
-int Component::getId( )
+int Component::getId( ) const
 {
     return id_;
 }

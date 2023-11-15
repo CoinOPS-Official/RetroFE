@@ -21,15 +21,12 @@
 
 Image::Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive)
     : Component(p)
-    , texture_(NULL)
     , file_(file)
     , altFile_(altFile)
 {
     baseViewInfo.Monitor = monitor;
     baseViewInfo.Additive = additive;
     baseViewInfo.Layout = page.getCurrentLayout();
-
-    allocateGraphicsMemory();
 }
 
 Image::~Image()
@@ -42,10 +39,10 @@ void Image::freeGraphicsMemory()
     Component::freeGraphicsMemory();
 
     SDL_LockMutex(SDL::getMutex());
-    if (texture_ != NULL)
+    if (texture_ != nullptr)
     {
         SDL_DestroyTexture(texture_);
-        texture_ = NULL;
+        texture_ = nullptr;
     }
     SDL_UnlockMutex(SDL::getMutex());
 }
@@ -64,7 +61,7 @@ void Image::allocateGraphicsMemory()
             texture_ = IMG_LoadTexture(SDL::getRenderer(baseViewInfo.Monitor), altFile_.c_str());
         }
 
-        if (texture_ != NULL)
+        if (texture_ != nullptr)
         {
             if (baseViewInfo.Additive)
             {
@@ -74,7 +71,7 @@ void Image::allocateGraphicsMemory()
             {
                 SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
             }
-            SDL_QueryTexture(texture_, NULL, NULL, &width, &height);
+            SDL_QueryTexture(texture_, nullptr, nullptr, &width, &height);
             baseViewInfo.ImageWidth  = (float)width;
             baseViewInfo.ImageHeight = (float)height;
         }
@@ -96,13 +93,13 @@ void Image::draw()
 
     if(texture_)
     {
-        SDL_Rect rect;
+        SDL_Rect rect = { 0, 0, 0, 0 };
 
         rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
         rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
         rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
         rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
 
-        SDL::renderCopy(texture_, baseViewInfo.Alpha, NULL, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        SDL::renderCopy(texture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
     }
 }

@@ -17,52 +17,13 @@
 #include "ViewInfo.h"
 #include "../Database/Configuration.h"
 #include "Animate/TweenTypes.h"
-#include <cfloat>
 
 ViewInfo::ViewInfo()
-    : X(0)
-    , Y(0)
-    , XOrigin(0)
-    , YOrigin(0)
-    , XOffset(0)
-    , YOffset(0)
-    , Width(-1)
-    , MinWidth(0)
-    , MaxWidth(FLT_MAX)
-    , Height(-1)
-    , MinHeight(0)
-    , MaxHeight(FLT_MAX)
-    , ImageWidth(0)
-    , ImageHeight(0)
-    , FontSize(-1)
-    , font(0)
-    , Angle(0)
-    , Alpha(1)
-    , Layer(0)
-    , BackgroundRed(0)
-    , BackgroundGreen(0)
-    , BackgroundBlue(0)
-    , BackgroundAlpha(0)
-    , Reflection("")
-    , ReflectionDistance(0)
-    , ReflectionScale(.25)
-    , ReflectionAlpha(1)
-    , ContainerX(0)
-    , ContainerY(0)
-    , ContainerWidth(-1)
-    , ContainerHeight(-1)
-	, Monitor(0)
-    , Volume(0)
-    , Restart(false)
-    , Additive(false)
-    , PauseOnScroll(true)
 {
 }
 
 
-ViewInfo::~ViewInfo()
-{
-}
+ViewInfo::~ViewInfo() = default;
 
 float ViewInfo::XRelativeToOrigin() const
 {
@@ -94,7 +55,7 @@ float ViewInfo::ScaledHeight() const
         }
         else
         {
-            height = (scaleH > scaleW) ? (MinHeight) : (height * scaleW);
+            height = (scaleH > scaleW) ? MinHeight : (height * scaleW);
         }
     }
     if (width > MaxWidth || height > MaxHeight)
@@ -112,7 +73,7 @@ float ViewInfo::ScaledHeight() const
         }
         else
         {
-            height = (scaleH < scaleW) ? (MaxHeight) : (height * scaleW);
+            height = (scaleH < scaleW) ? MaxHeight : (height * scaleW);
         }
     }
 
@@ -139,7 +100,7 @@ float ViewInfo::ScaledWidth() const
         }
         else
         {
-            width = (scaleH > scaleW) ? (MinWidth) : (width * scaleH);
+            width = (scaleH > scaleW) ? MinWidth : (width * scaleH);
         }
     }
     if (width > MaxWidth || height > MaxHeight)
@@ -157,7 +118,7 @@ float ViewInfo::ScaledWidth() const
         }
         else
         {
-            width = (scaleH > scaleW) ? (MaxWidth) : (width * scaleH);
+            width = (scaleH > scaleW) ? MaxWidth : (width * scaleH);
         }
     }
 

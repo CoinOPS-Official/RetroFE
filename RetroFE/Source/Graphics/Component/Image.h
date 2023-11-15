@@ -30,7 +30,7 @@ public:
     std::string filePath();
 
 protected:
-    SDL_Texture *texture_;
+    SDL_Texture* texture_{ nullptr };
     std::string  file_;
     std::string  altFile_;
 };

@@ -3,7 +3,6 @@
 JoyButtonHandler::JoyButtonHandler(SDL_JoystickID joynum, Uint8 button)
 : joynum_(joynum)
 , button_(button)
-, pressed_(false)
 {
 }
 

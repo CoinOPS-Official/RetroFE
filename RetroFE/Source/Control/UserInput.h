@@ -83,23 +83,23 @@ public:
         KeyCodeMax,
     };
 
-    UserInput(Configuration &c);
+    UserInput(Configuration& c);
     virtual ~UserInput();
     bool initialize();
     void resetStates();
-    bool update(SDL_Event &e);
+    bool update(SDL_Event& e);
     bool keystate(KeyCode_E);
     bool lastKeyPressed(KeyCode_E code);
     bool newKeyPressed(KeyCode_E code);
-    void clearJoysticks( );
+    void clearJoysticks();
     void reconfigure();
-	void updateKeystate( );
+    void updateKeystate();
 
 private:
     bool MapKey(std::string keyDescription, KeyCode_E key);
     bool MapKey(std::string keyDescription, KeyCode_E key, bool required);
-    Configuration &config_;
-    bool updated_;
+    Configuration& config_;
+    bool updated_{ false };
     SDL_JoystickID joysticks_[cMaxJoy];
     std::vector<std::pair<InputHandler *, KeyCode_E> > keyHandlers_;
     bool lastKeyState_[KeyCodeMax]; 

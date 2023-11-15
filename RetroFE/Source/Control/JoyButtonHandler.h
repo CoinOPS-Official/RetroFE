@@ -14,6 +14,6 @@ public:
 private:
     SDL_JoystickID joynum_;
     Uint8 button_;
-    bool pressed_;
+    bool pressed_{ false };
 };
 

@@ -29,18 +29,14 @@
 #include <dirent.h>
 
 
-bool VectorSort(Item *d1, Item *d2)
+bool VectorSort(const Item* d1, const Item* d2)
 {
     return d1->lowercaseTitle() < d2->lowercaseTitle();
 }
 
-MenuParser::MenuParser()
-{
-}
+MenuParser::MenuParser() = default;
 
-MenuParser::~MenuParser()
-{
-}
+MenuParser::~MenuParser() = default;
 
 bool MenuParser::buildMenuItems(CollectionInfo *collection, bool sort)
 {
@@ -65,11 +61,11 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
         Logger::write(Logger::ZONE_INFO, "Menu", "File does not exist: \"" + file + "\"; trying menu directory.");
 
         DIR *dp;
-        struct dirent *dirp;
+        struct dirent const *dirp;
         std::string path = Utils::combinePath(Configuration::absolutePath, "collections", collection->name, "menu");
         dp = opendir(path.c_str());
 
-        while(dp && (dirp = readdir(dp)) != NULL)
+        while(dp && (dirp = readdir(dp)) != nullptr)
         {
             std::string file = dirp->d_name;
 
@@ -78,13 +74,10 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
 
             std::string comparator = ".txt";
             size_t start = file.length() >= comparator.length() ? file.length() - comparator.length() : 0;
-
-            if(start >= 0)
-            {
-                if(file.compare(start, comparator.length(), comparator) == 0)
+            if(file.compare(start, comparator.length(), comparator) == 0)
                 {
                     std::string title = basename;
-                    Item *item = new Item();
+                    auto *item = new Item();
                     item->title = title;
                     item->fullTitle = title;
                     item->name = title;
@@ -93,11 +86,10 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
 
                     menuItems.push_back(item);
                 }
-            }
         }
 
         if (dp) closedir(dp);
-        std::sort(menuItems.begin(), menuItems.end(), [](Item *a, Item *b) {return Utils::toLower(a->fullTitle) <= Utils::toLower(b->fullTitle);});
+        std::sort(menuItems.begin(), menuItems.end(), [](Item const *a, Item const *b) {return Utils::toLower(a->fullTitle) <= Utils::toLower(b->fullTitle);});
 
     }
     else
@@ -114,7 +106,7 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
             if(!line.empty())
             {
                 std::string title = line;
-                Item *item = new Item();
+                auto *item = new Item();
                 item->title = title;
                 item->fullTitle = title;
                 item->name = title;
@@ -138,7 +130,7 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
     //todo: magic string
     std::string menuFilename = Utils::combinePath(Configuration::absolutePath, "collections", collection->name, "menu.xml");
     rapidxml::xml_document<> doc;
-    rapidxml::xml_node<> * rootNode;
+    rapidxml::xml_node<> const * rootNode;
     std::vector<Item *> menuItems;
 
     try
@@ -158,9 +150,9 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
 
             rootNode = doc.first_node("menu");
 
-            for (rapidxml::xml_node<> * itemNode = rootNode->first_node("item"); itemNode; itemNode = itemNode->next_sibling())
+            for (rapidxml::xml_node<> const * itemNode = rootNode->first_node("item"); itemNode; itemNode = itemNode->next_sibling())
             {
-                rapidxml::xml_attribute<> *collectionAttribute = itemNode->first_attribute("collection");
+                rapidxml::xml_attribute<> const *collectionAttribute = itemNode->first_attribute("collection");
 
                 if(!collectionAttribute)
                 {
@@ -170,7 +162,7 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
                 }
                 //todo, check for empty string
                 std::string title = collectionAttribute->value();
-                Item *item = new Item();
+                auto *item = new Item();
                 item->title = title;
                 item->fullTitle = title;
                 item->name = collectionAttribute->value();

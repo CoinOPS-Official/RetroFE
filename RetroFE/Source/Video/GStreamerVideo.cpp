@@ -36,32 +36,11 @@
 bool GStreamerVideo::initialized_ = false;
 
 GStreamerVideo::GStreamerVideo( int monitor )
-    : playbin_(NULL)
-    , videoBin_(NULL)
-    , videoSink_(NULL)
-    , videoConvert_(NULL)
-    , capsFilter_(NULL)
-    , videoConvertCaps_(NULL)
-    , videoBus_(NULL)
-    , texture_(NULL)
-    , elementSetupHandlerId_(0)
-    , handoffHandlerId_(0)
-    , height_(0)
-    , width_(0)
-    , videoBuffer_(NULL)
-    , frameReady_(false)
-    , isPlaying_(false)
-    , playCount_(0)
-    , currentFile_("")
-    , numLoops_(0)
-    , volume_(0.0)
-    , currentVolume_(0.0)
-    , monitor_(monitor)
-    , lastSetVolume_(0.0)
-    , lastSetMuteState_(false)
-    , bufferLayout_(UNKNOWN)
+
+   : monitor_(monitor)
+
 {
-    paused_ = false;
+    
 }
 
 GStreamerVideo::~GStreamerVideo()
@@ -89,7 +68,7 @@ bool GStreamerVideo::initialize()
     }
 
     std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
-    gst_init(NULL, NULL);
+    gst_init(nullptr, nullptr);
 
 #ifdef WIN32
     GstRegistry *registry = gst_registry_get();
@@ -147,7 +126,7 @@ bool GStreamerVideo::stop()
             return false;
         }
 
-        ret = gst_element_get_state(playbin_, NULL, NULL, GST_CLOCK_TIME_NONE);
+        ret = gst_element_get_state(playbin_, nullptr, nullptr, GST_CLOCK_TIME_NONE);
         if (ret == GST_STATE_CHANGE_FAILURE) 
         {
             Logger::write(Logger::ZONE_ERROR, "Video", "Failed to wait for playbin to reach NULL state");
@@ -159,14 +138,14 @@ bool GStreamerVideo::stop()
     if(texture_)
     {
         SDL_DestroyTexture(texture_);
-        texture_ = NULL;
+        texture_ = nullptr;
     }
 
     // Unref the video buffer
     if(videoBuffer_)
     {
         gst_buffer_unref(videoBuffer_);
-        videoBuffer_ = NULL;
+        videoBuffer_ = nullptr;
     }
 
     // Free GStreamer elements and related resources
@@ -187,31 +166,31 @@ void GStreamerVideo::freeElements()
     if(videoBus_)
     {
         gst_object_unref(videoBus_);
-        videoBus_ = NULL;
+        videoBus_ = nullptr;
     }
 
     // Unref the playbin
     if(playbin_)
     {
         gst_object_unref(playbin_);
-        playbin_ = NULL;
+        playbin_ = nullptr;
     }
 
     // Unref caps associated with video conversion
     if(videoConvertCaps_)
     {
         gst_caps_unref(videoConvertCaps_);
-        videoConvertCaps_ = NULL;
+        videoConvertCaps_ = nullptr;
     }
 
     // Nullify video elements
-    videoSink_    = NULL;
-    videoConvert_ = NULL;
-    videoBin_     = NULL;
+    videoSink_    = nullptr;
+    videoConvert_ = nullptr;
+    videoBin_     = nullptr;
 }
 
 
-bool GStreamerVideo::play(std::string file)
+bool GStreamerVideo::play(const std::string& file)
 {
     playCount_ = 0;
 
@@ -224,8 +203,7 @@ bool GStreamerVideo::play(std::string file)
         return false;
 
     // Start playing
-    GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-    if (playState != GST_STATE_CHANGE_ASYNC)
+    if (GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING); playState != GST_STATE_CHANGE_ASYNC)
     {
         isPlaying_ = false;
         Logger::write(Logger::ZONE_ERROR, "Video", "Unable to set the pipeline to the playing state.");
@@ -242,20 +220,17 @@ bool GStreamerVideo::play(std::string file)
     return true;
 }
 
-bool GStreamerVideo::initializeGstElements(std::string file)
+bool GStreamerVideo::initializeGstElements(const std::string& file)
 {
-    gchar *uriFile = gst_filename_to_uri(file.c_str(), NULL);
+    gchar *uriFile = gst_filename_to_uri(file.c_str(), nullptr);
 
     if(!uriFile)
         return false;
 
-    if(!playbin_)
+    if (!playbin_ && !createAndLinkGstElements())
     {
-        if(!createAndLinkGstElements())
-        {
-            stop();
-            return false;
-        }
+        stop();
+        return false;
     }
 
     // Set properties of playbin and videoSink
@@ -304,7 +279,7 @@ bool GStreamerVideo::createAndLinkGstElements()
 }
 
 
-void GStreamerVideo::elementSetupCallback(GstElement *playbin, GstElement *element, GStreamerVideo *video) {
+void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video) {
     #ifdef WIN32
     bool hardwareVideoAccel = Configuration::HardwareVideoAccel;
     if (!hardwareVideoAccel) {
@@ -333,8 +308,8 @@ void GStreamerVideo::elementSetupCallback(GstElement *playbin, GstElement *eleme
     g_free(elementName);
 }
 
-void GStreamerVideo::processNewBuffer(GstElement* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
-    GStreamerVideo* video = static_cast<GStreamerVideo*>(userdata);
+void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
+    auto* video = static_cast<GStreamerVideo*>(userdata);
     if (!video || !video->isPlaying_) {
         Logger::write(Logger::ZONE_ERROR, "Video", "Invalid video or not playing.");
         return; // If video is null or not playing, exit early.
@@ -350,8 +325,8 @@ void GStreamerVideo::processNewBuffer(GstElement* /* fakesink */, GstBuffer* buf
                 return; // Exit if caps retrieval failed.
             }
 
-            const GstStructure* s = gst_caps_get_structure(caps, 0);
-            if (!s || !gst_structure_get_int(s, "width", &video->width_) || !gst_structure_get_int(s, "height", &video->height_)) {
+            if (const GstStructure* s = gst_caps_get_structure(caps, 0);
+                !s || !gst_structure_get_int(s, "width", &video->width_) || !gst_structure_get_int(s, "height", &video->height_)) {
                 Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get width and height from structure.");
                 gst_caps_unref(caps);
                 return; // Exit if width or height retrieval failed.
@@ -400,10 +375,10 @@ void GStreamerVideo::update(float /* dt */)
         // Check buffer layout only once
         if (bufferLayout_ == UNKNOWN)
         {
-            GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
+            GstVideoMeta const *meta = gst_buffer_get_video_meta(videoBuffer_);
             gint expected_y_stride = width_;
             gint expected_uv_stride = expected_y_stride;
-            gsize expected_uv_offset = height_ * expected_y_stride;
+            gsize expected_uv_offset = height_ * static_cast<gsize>(expected_y_stride);
 
             // Assume CONTIGUOUS is more likely.
             if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
@@ -415,6 +390,8 @@ void GStreamerVideo::update(float /* dt */)
             else 
             {
                 bufferLayout_ = CONTIGUOUS;
+                // Calculate total size of the contiguous Y + UV data
+                totalSize_ = width_ * height_ + (width_ * (height_ / 2)); // Y plane + UV plane
                 Logger::write(Logger::ZONE_DEBUG, "Video", "Buffer is Contiguous");
             }
         }
@@ -428,53 +405,35 @@ void GStreamerVideo::update(float /* dt */)
 
         switch (bufferLayout_)
         {
-            case CONTIGUOUS:
-            {
-                // Directly lock the texture for the entire area
-                Uint8 *texture_pixels;
-                int texture_pitch;
-                if (SDL_LockTexture(texture_, NULL, (void**)&texture_pixels, &texture_pitch) < 0) {
-                    Logger::write(Logger::ZONE_ERROR, "Video", "Unable to lock texture");
-                    break;
-                }
-
-                // Pointers to Y and UV planes in the source buffer
-                const Uint8 *src_y = (const Uint8 *)bufInfo.data;
-                const Uint8 *src_uv = src_y + GST_ROUND_UP_4(width_) * height_;
-
-                // Pointers to Y and UV planes in the texture
-                Uint8 *dst_y = texture_pixels;
-                Uint8 *dst_uv = dst_y + texture_pitch * height_;
-
-                // Y plane copying
-                for (int i = height_; i--;) {
-                    SDL_memcpy(dst_y, src_y, width_);
-                    src_y += GST_ROUND_UP_4(width_);
-                    dst_y += texture_pitch;
-                }
-
-                // UV plane copying (NV12 specific)
-                int uv_height = (height_ + 1) / 2;
-                int uv_width = ((width_ + 1) / 2) * 2;
-                int uv_src_pitch = ((GST_ROUND_UP_4(width_) + 1) / 2) * 2;
-                for (int i = uv_height; i--;) {
-                    SDL_memcpy(dst_uv, src_uv, uv_width);
-                    src_uv += uv_src_pitch;
-                    dst_uv += texture_pitch;
-                }
-
-                SDL_UnlockTexture(texture_);
+        case CONTIGUOUS:
+        {
+            // Directly lock the texture for the entire area
+            Uint8* texture_pixels = nullptr;
+            int texture_pitch;
+            if (SDL_LockTexture(texture_, nullptr, (void**)&texture_pixels, &texture_pitch) < 0) {
+                Logger::write(Logger::ZONE_ERROR, "Video", "Unable to lock texture");
                 break;
             }
 
+            // Assuming src_y points to a contiguous block of Y and UV data
+            const Uint8* src_y = (const Uint8*)bufInfo.data;
+
+            // Perform a single SDL_memcpy operation
+            SDL_memcpy(texture_pixels, src_y, totalSize_);
+
+            SDL_UnlockTexture(texture_);
+            break;
+        }
+
+
             case NON_CONTIGUOUS:
             {
-                GstVideoMeta *meta = gst_buffer_get_video_meta(videoBuffer_);
-                void *y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
-                void *uv_plane = bufInfo.data + (meta ? meta->offset[1] : width_ * height_);
+                GstVideoMeta const *meta = gst_buffer_get_video_meta(videoBuffer_);
+                void const *y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
+                void const* uv_plane = bufInfo.data + (meta ? meta->offset[1] : static_cast<size_t>(width_) * static_cast<size_t>(height_));
                 int y_stride = meta ? meta->stride[0] : GST_ROUND_UP_4(width_);
                 int uv_stride = meta ? meta->stride[1] : GST_ROUND_UP_4(y_stride);
-                SDL_UpdateNVTexture(texture_, NULL, (const Uint8*)y_plane, y_stride, (const Uint8*)uv_plane, uv_stride);
+                SDL_UpdateNVTexture(texture_, nullptr, (const Uint8*)y_plane, y_stride, (const Uint8*)uv_plane, uv_stride);
                 break;
             }
             
@@ -485,7 +444,7 @@ void GStreamerVideo::update(float /* dt */)
 
         gst_buffer_unmap(videoBuffer_, &bufInfo);
         gst_buffer_unref(videoBuffer_);
-        videoBuffer_ = NULL;
+        videoBuffer_ = nullptr;
     }
     SDL_UnlockMutex(SDL::getMutex());
     volumeUpdate();
@@ -526,8 +485,7 @@ void GStreamerVideo::volumeUpdate()
 {    
     bool shouldMute = false;
     double targetVolume = 0.0;
-    bool muteVideo = Configuration::MuteVideo;
-    if (muteVideo)
+    if (bool muteVideo = Configuration::MuteVideo; muteVideo)
     {
         shouldMute = true;
     }
@@ -539,7 +497,7 @@ void GStreamerVideo::volumeUpdate()
             currentVolume_ = volume_;
         else
             currentVolume_ += 0.005;
-        targetVolume = static_cast<double>(currentVolume_);
+        targetVolume = currentVolume_;
         if (currentVolume_ < 0.1)
             shouldMute = true;
     }
@@ -561,12 +519,12 @@ void GStreamerVideo::volumeUpdate()
 
 int GStreamerVideo::getHeight()
 {
-    return static_cast<int>(height_);
+    return height_;
 }
 
 int GStreamerVideo::getWidth()
 {
-    return static_cast<int>(width_);
+    return width_;
 }
 
 

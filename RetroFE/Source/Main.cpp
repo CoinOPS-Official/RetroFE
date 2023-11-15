@@ -64,7 +64,7 @@ int main(int argc, char** argv)
     setlocale(LC_ALL, "");
 
     // Initialize random seed
-    srand(static_cast<unsigned int>(time(0)));
+    srand(static_cast<unsigned int>(time(nullptr)));
 
     Configuration::initialize();
 
@@ -116,7 +116,7 @@ int main(int argc, char** argv)
     return 0;
 }
 
-bool ImportConfiguration(Configuration* c)
+static bool ImportConfiguration(Configuration* c)
 {
     std::string configPath = Configuration::absolutePath;
 #ifdef WIN32
@@ -128,7 +128,7 @@ bool ImportConfiguration(Configuration* c)
 #endif
     std::string collectionsPath = Utils::combinePath(Configuration::absolutePath, "collections");
     DIR* dp;
-    struct dirent* dirp;
+    struct dirent const* dirp;
 
     std::string settingsConfPath = Utils::combinePath(configPath, "settings");
     if (!c->import("", settingsConfPath + ".conf"))
@@ -155,19 +155,19 @@ bool ImportConfiguration(Configuration* c)
 
     dp = opendir(launchersPath.c_str());
 
-    if (dp == NULL)
+    if (dp == nullptr)
     {
         Logger::write(Logger::ZONE_INFO, "RetroFE", "Could not read directory \"" + launchersPath + "\"");
         launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers");
         dp = opendir(launchersPath.c_str());
-        if (dp == NULL)
+        if (dp == nullptr)
         {
             Logger::write(Logger::ZONE_NOTICE, "RetroFE", "Could not read directory \"" + launchersPath + "\"");
             return false;
         }
     }
 
-    while ((dirp = readdir(dp)) != NULL)
+    while ((dirp = readdir(dp)) != nullptr)
     {
         if (dirp->d_type != DT_DIR && std::string(dirp->d_name) != "." && std::string(dirp->d_name) != "..")
         {
@@ -203,16 +203,16 @@ bool ImportConfiguration(Configuration* c)
 
     dp = opendir(collectionsPath.c_str());
 
-    if (dp == NULL)
+    if (dp == nullptr)
     {
         Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not read directory \"" + collectionsPath + "\"");
         return false;
     }
 
     bool settingsImported;
-    while ((dirp = readdir(dp)) != NULL)
+    while ((dirp = readdir(dp)) != nullptr)
     {
-        std::string collection = (dirp->d_name);
+        std::string collection = dirp->d_name;
         if (dirp->d_type == DT_DIR && collection != "." && collection != ".." && collection.length() > 0 && collection[0] != '_')
         {
             std::string prefix = "collections." + collection;
@@ -240,11 +240,10 @@ bool ImportConfiguration(Configuration* c)
     return true;
 }
 
-bool StartLogging(Configuration* config)
+static bool StartLogging(Configuration* config)
 {
-    std::string logFile = Utils::combinePath(Configuration::absolutePath, "log.txt");
 
-    if (!Logger::initialize(logFile, config))
+    if (std::string logFile = Utils::combinePath(Configuration::absolutePath, "log.txt"); !Logger::initialize(logFile, config))
     {
         // Can't write to logs give a heads up...
         fprintf(stderr, "Could not open log: %s for writing!\nRetroFE will now exit...\n", logFile.c_str());

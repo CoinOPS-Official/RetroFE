@@ -33,41 +33,41 @@ class Font;
 class PageBuilder
 {
 public:
-    PageBuilder(std::string layoutKey, std::string layoutPage, Configuration &c, FontCache *fc, bool isMenu = false);
+    PageBuilder(const std::string& layoutKey, const std::string& layoutPage, Configuration &c, FontCache *fc, bool isMenu = false);
     virtual ~PageBuilder();
-    Page *buildPage( std::string collectionName = "", bool defaultToCurrentLayout = false);
+    Page *buildPage( const std::string& collectionName = "", bool defaultToCurrentLayout = false);
 
 private:
     std::string layoutKey;
     std::string layoutPage;
     std::string layoutPath;
     Configuration &config_;
-    int screenHeight_;
-    int screenWidth_;
-    int layoutHeight_;
-    int layoutWidth_;
-    int monitor_;
+    int screenHeight_{ 0 };
+    int screenWidth_{ 0 };
+    int layoutHeight_{ 0 };
+    int layoutWidth_{ 0 };
+    int monitor_{ 0 };
     SDL_Color fontColor_;
     std::string fontName_;
-    int fontSize_;
+    int fontSize_{ 24 };
     FontCache *fontCache_;
     bool isMenu_;
 
-    Font *addFont(rapidxml::xml_node<> *component, rapidxml::xml_node<> *defaults, int monitor);
-    void loadReloadableImages(rapidxml::xml_node<> *layout, std::string tagName, Page *page);
-    float getVerticalAlignment(rapidxml::xml_attribute<> *attribute, float valueIfNull);
-    float getHorizontalAlignment(rapidxml::xml_attribute<> *attribute, float valueIfNull);
-    void buildViewInfo(rapidxml::xml_node<> *componentXml, ViewInfo &info, rapidxml::xml_node<> *defaultXml = NULL);
-    bool buildComponents(rapidxml::xml_node<> *layout, Page *page, std::string);
+    Font *addFont(const rapidxml::xml_node<> *component, const rapidxml::xml_node<> *defaults, int monitor);
+    void loadReloadableImages(const rapidxml::xml_node<> *layout, const std::string& tagName, Page *page);
+    float getVerticalAlignment(const rapidxml::xml_attribute<> *attribute, float valueIfNull) const;
+    float getHorizontalAlignment(const rapidxml::xml_attribute<> *attribute, float valueIfNull) const;
+    void buildViewInfo(rapidxml::xml_node<> *componentXml, ViewInfo &info, rapidxml::xml_node<> *defaultXml = nullptr);
+    bool buildComponents(rapidxml::xml_node<> *layout, Page *page, const std::string&);
     void loadTweens(Component *c, rapidxml::xml_node<> *componentXml);
     AnimationEvents *createTweenInstance(rapidxml::xml_node<> *componentXml);
-    void buildTweenSet(AnimationEvents *tweens, rapidxml::xml_node<> *componentXml, std::string tagName, std::string tweenName);
+    void buildTweenSet(AnimationEvents *tweens, rapidxml::xml_node<> *componentXml, const std::string& tagName, const std::string& tweenName);
     ScrollingList * buildMenu(rapidxml::xml_node<> *menuXml, Page &p, int monitor);
-    void buildCustomMenu(ScrollingList *menu, rapidxml::xml_node<> *menuXml, rapidxml::xml_node<> *itemDefaults);
-    void buildVerticalMenu(ScrollingList *menu, rapidxml::xml_node<> *menuXml, rapidxml::xml_node<> *itemDefaults);
-    int parseMenuPosition(std::string strIndex);
-    rapidxml::xml_attribute<> *findAttribute(rapidxml::xml_node<> *componentXml, std::string attribute, rapidxml::xml_node<> *defaultXml);
-    void getTweenSet(rapidxml::xml_node<> *node, Animation *animation);
-    void getAnimationEvents(rapidxml::xml_node<> *node, TweenSet &tweens);
-    ViewInfo * createMenuItemInfo(rapidxml::xml_node<> *component, rapidxml::xml_node<> *defaults, ViewInfo& info);
+    void buildCustomMenu(ScrollingList *menu, const rapidxml::xml_node<> *menuXml, rapidxml::xml_node<> *itemDefaults);
+    void buildVerticalMenu(ScrollingList *menu, const rapidxml::xml_node<> *menuXml, rapidxml::xml_node<> *itemDefaults);
+    int parseMenuPosition(const std::string& strIndex);
+    rapidxml::xml_attribute<> *findAttribute(const rapidxml::xml_node<> *componentXml, const std::string& attribute, const rapidxml::xml_node<> *defaultXml);
+    void getTweenSet(const rapidxml::xml_node<> *node, Animation *animation);
+    void getAnimationEvents(const rapidxml::xml_node<> *node, TweenSet &tweens);
+    ViewInfo * createMenuItemInfo(rapidxml::xml_node<> *component, rapidxml::xml_node<> *defaults, const ViewInfo& info);
 };

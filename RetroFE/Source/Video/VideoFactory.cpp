@@ -21,26 +21,24 @@
 
 bool VideoFactory::enabled_ = true;
 int VideoFactory::numLoops_ = 0;
-IVideo *VideoFactory::instance_ = NULL;
+IVideo *VideoFactory::instance_ = nullptr;
 
 
-IVideo *VideoFactory::createVideo( int monitor, int numLoops )
+IVideo* VideoFactory::createVideo(int monitor, int numLoops) 
 {
-    IVideo *instance = NULL;
-    if (enabled_)
-    {
-        instance = new GStreamerVideo( monitor );
-        instance->initialize();
+    if (!enabled_) {
+        return nullptr; // Early return if not enabled
     }
 
+    auto* instance = new GStreamerVideo(monitor);
+    instance->initialize();
 
-    if (numLoops > 0 )
-        ((GStreamerVideo *)(instance))->setNumLoops(numLoops);
-    else
-        ((GStreamerVideo *)(instance))->setNumLoops(numLoops_);
+    int loopsToSet = (numLoops > 0) ? numLoops : numLoops_;
+    instance->setNumLoops(loopsToSet);
 
     return instance;
 }
+
 
 
 void VideoFactory::setEnabled(bool enabled)

@@ -48,32 +48,20 @@ ScrollingList::ScrollingList( Configuration &c,
                               bool          playlistType,
                               bool          selectedImage,
                               Font          *font,
-                              std::string    layoutKey,
-                              std::string    imageType,
-                              std::string    videoType)
+                              const std::string    &layoutKey,
+                              const std::string    &imageType,
+                              const std::string    &videoType)
     : Component( p )
-    , horizontalScroll( false )
     , layoutMode_( layoutMode )
     , commonMode_( commonMode )
     , playlistType_( playlistType )
     , selectedImage_( selectedImage)
-    , spriteList_( NULL )
-    , scrollPoints_( NULL )
-    , tweenPoints_( NULL )
-    , itemIndex_( 0 )
-    , selectedOffsetIndex_( 0 )
-    , scrollAcceleration_( 0 )
-    , startScrollTime_( 0.500 )
-    , minScrollTime_( 0.500 )
-    , scrollPeriod_( 0 )
     , config_( c )
     , fontInst_( font )
     , layoutKey_( layoutKey )
     , imageType_( imageType )
     , videoType_( videoType )
-    , items_( NULL )
-    , textFallback_(true)
-{
+ {
 }
 
 
@@ -84,9 +72,6 @@ ScrollingList::ScrollingList( const ScrollingList &copy )
     , commonMode_( copy.commonMode_ )
     , playlistType_(copy.playlistType_)
     , selectedImage_(copy.selectedImage_)
-    , textFallback_(true)
-    , spriteList_( NULL )
-    , itemIndex_( 0 )
     , selectedOffsetIndex_( copy.selectedOffsetIndex_ )
     , scrollAcceleration_( copy.scrollAcceleration_ )
     , startScrollTime_( copy.startScrollTime_ )
@@ -96,28 +81,26 @@ ScrollingList::ScrollingList( const ScrollingList &copy )
     , fontInst_( copy.fontInst_ )
     , layoutKey_( copy.layoutKey_ )
     , imageType_( copy.imageType_ )
-    , items_( NULL )
 {
-    scrollPoints_ = NULL;
-    tweenPoints_  = NULL;
+
 
     setPoints( copy.scrollPoints_, copy.tweenPoints_ );
 
 }
 
 
-ScrollingList::~ScrollingList( )
+ScrollingList::~ScrollingList()
 {
-    destroyItems( );
-    while( scrollPoints_->size( ) > 0 )
+    destroyItems();
+    while (!scrollPoints_->empty()) // Using empty() here for clarity.
     {
-        ViewInfo *scrollPoint = scrollPoints_->back( );
+        ViewInfo* scrollPoint = scrollPoints_->back();
         delete scrollPoint;
-        scrollPoints_->pop_back( );
+        scrollPoints_->pop_back();
     }
 }
 
-std::vector<Item*> ScrollingList::getItems()
+const std::vector<Item*>& ScrollingList::getItems() const
 {
     return *items_;
 }
@@ -131,7 +114,7 @@ void ScrollingList::setItems( std::vector<Item *> *items )
     }
 }
 
-void ScrollingList::selectItemByName(const std::string& name)
+void ScrollingList::selectItemByName(std::string_view name)
 {
     size_t size = items_->size();
     unsigned int index = 0;
@@ -140,6 +123,7 @@ void ScrollingList::selectItemByName(const std::string& name)
     {
         index = loopDecrement(itemIndex_, i, size);
 
+        // Since items_ is likely storing std::string, using std::string_view for comparison is fine.
         if ((*items_)[(index + selectedOffsetIndex_) % size]->name == name) {
             itemIndex_ = index;
             break;
@@ -158,19 +142,19 @@ std::string ScrollingList::getSelectedItemName()
 }
 
 
-unsigned int ScrollingList::loopIncrement(size_t offset, size_t index, size_t size )
+unsigned int ScrollingList::loopIncrement(size_t offset, size_t index, size_t size) const
 {
-    if ( size == 0 ) return 0;
-    return static_cast<int>((offset + index) % size);
+    if (size == 0) return 0;
+    return static_cast<unsigned int>((offset + index) % size);
 }
 
-
-unsigned int ScrollingList::loopDecrement(size_t offset, size_t index, size_t size)
+unsigned int ScrollingList::loopDecrement(size_t offset, size_t index, size_t size) const
 {
     if (size == 0) return 0;
     size_t result = offset + size - index;
     return static_cast<unsigned int>(result % size);
 }
+
 
 
 
@@ -219,7 +203,7 @@ void ScrollingList::allocateSpritePoints()
     for (unsigned int i = 0; i < scrollPointsSize; ++i)
     {
         unsigned int index = loopIncrement(itemIndex_, i, itemsSize);
-        Item* item = (*items_)[index];  // using [] instead of at()
+        Item const* item = (*items_)[index];  // using [] instead of at()
 
         Component* old = components_[i];  // using [] instead of at()
 
@@ -285,7 +269,7 @@ void ScrollingList::setPoints( std::vector<ViewInfo *> *scrollPoints, std::vecto
 }
 
 
-unsigned int ScrollingList::getScrollOffsetIndex( )
+unsigned int ScrollingList::getScrollOffsetIndex( ) const
 {
     return loopIncrement( itemIndex_, selectedOffsetIndex_, items_->size());
 }
@@ -306,7 +290,7 @@ void ScrollingList::setSelectedIndex( int selectedIndex )
 Item *ScrollingList::getItemByOffset(int offset)
 {
     size_t itemSize = items_->size();
-    if (!items_ || itemSize == 0) return NULL;
+    if (!items_ || itemSize == 0) return nullptr;
 
     unsigned int index = getSelectedIndex();
     if (offset >= 0)
@@ -326,7 +310,7 @@ Item *ScrollingList::getItemByOffset(int offset)
 Item* ScrollingList::getSelectedItem()
 {
     size_t itemSize = items_->size();
-    if (!items_ || itemSize == 0) return NULL;
+    if (!items_ || itemSize == 0) return nullptr;
     
     return (*items_)[loopIncrement(itemIndex_, selectedOffsetIndex_, itemSize)];
 }
@@ -334,14 +318,13 @@ Item* ScrollingList::getSelectedItem()
 
 void ScrollingList::pageUp()
 {
-    if (components_.size() == 0) return;
+    if (components_.empty()) return; // More idiomatic
     itemIndex_ = loopDecrement(itemIndex_, components_.size(), items_->size());
 }
 
-
 void ScrollingList::pageDown()
 {
-    if (components_.size() == 0) return;
+    if (components_.empty()) return; // More idiomatic
     itemIndex_ = loopIncrement(itemIndex_, components_.size(), items_->size());
 }
 
@@ -371,7 +354,7 @@ void ScrollingList::letterChange(bool increment)
     size_t itemSize = items_->size();
     if (!items_ || itemSize == 0) return;
 
-    Item* startItem = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize];
+    Item const* startItem = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize];
     std::string startname = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize]->lowercaseFullTitle();
 
     for (unsigned int i = 0; i < itemSize; ++i)
@@ -436,7 +419,7 @@ void ScrollingList::metaChange(bool increment, const std::string& attribute)
 
     if (!items_ || itemSize == 0) return;
 
-    Item* startItem = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize];
+    const Item* startItem = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize];
     std::string startValue = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize]->getMetaAttribute(attribute);
 
     for (unsigned int i = 0; i < itemSize; ++i)
@@ -483,7 +466,7 @@ void ScrollingList::subChange(bool increment)
 
     if (!items_ || itemSize == 0) return;
 
-    Item* startItem = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize];
+    const Item* startItem = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize];
     std::string startname = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize]->collectionInfo->lowercaseName();
 
     for (unsigned int i = 0; i < itemSize; ++i)
@@ -682,10 +665,10 @@ void ScrollingList::triggerJukeboxJumpEvent( int menuIndex )
     triggerEventOnAll("jukeboxJump", menuIndex);
 }
 
-void ScrollingList::triggerEventOnAll(std::string event, int menuIndex)
+void ScrollingList::triggerEventOnAll(const std::string& event, int menuIndex)
 {
     size_t componentSize = components_.size();
-    for (unsigned int i = 0; i < componentSize; ++i)
+    for (size_t i = 0; i < componentSize; ++i)
     {
         Component* c = components_[i];
         if (c) c->triggerEvent(event, menuIndex);
@@ -719,7 +702,7 @@ bool ScrollingList::update(float dt)
 
 
 
-unsigned int ScrollingList::getSelectedIndex( )
+unsigned int ScrollingList::getSelectedIndex( ) const
 {
     if ( !items_ ) return 0;
     return loopIncrement( itemIndex_, selectedOffsetIndex_, items_->size( ) );
@@ -733,14 +716,14 @@ void ScrollingList::setSelectedIndex( unsigned int index )
 }
 
 
-size_t ScrollingList::getSize()
+size_t ScrollingList::getSize() const
 {
     if ( !items_ ) return 0;
     return items_->size();
 }
 
 
-void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *currentViewInfo, ViewInfo *nextViewInfo, double scrollTime )
+void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *currentViewInfo, ViewInfo *nextViewInfo, double scrollTime ) const
 {
     if ( !c ) return;
     if ( !sets ) return;
@@ -760,7 +743,7 @@ void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *
     scrollTween->Clear( );
     c->baseViewInfo = *currentViewInfo;
 
-    TweenSet *set = new TweenSet( );
+    auto *set = new TweenSet( );
     // don't trigger video restart if scrolling fast 
     if (currentViewInfo->Restart && scrollPeriod_ > minScrollTime_)
         set->push(new Tween(TWEEN_PROPERTY_RESTART, LINEAR, currentViewInfo->Restart, nextViewInfo->Restart, 0));
@@ -786,7 +769,7 @@ void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *
     scrollTween->Push( set );
 }
 
-bool ScrollingList::allocateTexture( unsigned int index, Item *item )
+bool ScrollingList::allocateTexture( unsigned int index, const Item *item )
 {
 
     if ( index >= components_.size( ) ) return false;
@@ -794,10 +777,10 @@ bool ScrollingList::allocateTexture( unsigned int index, Item *item )
     std::string imagePath;
     std::string videoPath;
 
-    Component *t = NULL;
+    Component *t = nullptr;
 
     ImageBuilder imageBuild;
-    VideoBuilder videoBuild;
+    VideoBuilder videoBuild{};
 
     std::string layoutName;
     config_.getProperty( "layout", layoutName );
@@ -842,83 +825,68 @@ bool ScrollingList::allocateTexture( unsigned int index, Item *item )
         names.push_back( item->score );
     if (typeLC.rfind("playlist", 0) == 0)
         names.push_back(item->name);
-    names.push_back("default");
+    names.emplace_back("default");
 
     std::string name;
     std::string selectedItemName = getSelectedItemName();
-    for ( unsigned int n = 0; n < names.size() && !t; ++n )
-    {
-        // check collection path for art
-        if ( layoutMode_ )
-        {
-            if ( commonMode_ )
-                imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
-            else
-                imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", collectionName );
-            imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
-            videoPath = Utils::combinePath( imagePath, "medium_artwork", videoType_ );
+    for (const auto& name : names) {
+        std::string imagePath;
+        std::string videoPath;
+
+        // Determine paths based on modes
+        if (layoutMode_) {
+            std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections");
+            std::string subPath = commonMode_ ? "_common" : collectionName;
+            buildPaths(imagePath, videoPath, base, subPath, imageType_, videoType_);
         }
-        else
-        {
-            if ( commonMode_ )
-            {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common" );
-                imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
-                videoPath = Utils::combinePath( imagePath, "medium_artwork", videoType_ );
+        else {
+            if (commonMode_) {
+                buildPaths(imagePath, videoPath, Configuration::absolutePath, "collections/_common", imageType_, videoType_);
             }
-            else
-            {
-                config_.getMediaPropertyAbsolutePath( collectionName, imageType_, false, imagePath );
-                config_.getMediaPropertyAbsolutePath( collectionName, videoType_, false, videoPath );
+            else {
+                config_.getMediaPropertyAbsolutePath(collectionName, imageType_, false, imagePath);
+                config_.getMediaPropertyAbsolutePath(collectionName, videoType_, false, videoPath);
             }
         }
-        if ( !t )
-        {
-            if ( videoType_ != "null" )
-            {
-                t = videoBuild.createVideo( videoPath, page, names[n], baseViewInfo.Monitor);
+
+        // Create video or image
+        if (!t) {
+            if (videoType_ != "null") {
+                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
             }
-            else
-            {
-                name = names[n];
-                if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+            else {
+                std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+            }
+        }
+
+        // Check for early exit
+        if (t) break;
+
+        // Check sub-collection path for art
+        if (!commonMode_) {
+            if (layoutMode_) {
+                std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name);
+                buildPaths(imagePath, videoPath, base, "", imageType_, videoType_);
+            }
+            else {
+                config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, imageType_, false, imagePath);
+                config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, videoType_, false, videoPath);
+            }
+
+            if (!t) {
+                if (videoType_ != "null") {
+                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
                 }
-                if (!t) {
-                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                else {
+                    std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                    t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
                 }
             }
         }
 
-        // check sub-collection path for art
-        if ( !t && !commonMode_ )
-        {
-            if ( layoutMode_ )
-            {
-                imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name );
-                imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
-                videoPath = Utils::combinePath( imagePath, "medium_artwork", videoType_ );
-            }
-            else
-            {
-                config_.getMediaPropertyAbsolutePath( item->collectionInfo->name, imageType_, false, imagePath );
-                config_.getMediaPropertyAbsolutePath( item->collectionInfo->name, videoType_, false, videoPath );
-            }
-            if ( videoType_ != "null" )
-            {
-                t = videoBuild.createVideo( videoPath, page, names[n], baseViewInfo.Monitor);
-            }
-            else
-            {
-                name = names[n];
-                if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
-                }
-                if (!t) {
-                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
-                }
-            }
-        }
+        // Check for early exit again
+        if (t) break;
     }
 
     // check collection path for art based on system name
@@ -985,59 +953,46 @@ bool ScrollingList::allocateTexture( unsigned int index, Item *item )
     // Check for fallback art in case no video could be found
     if ( videoType_ != "null" && !t)
     {
-        for ( unsigned int n = 0; n < names.size() && !t; ++n )
-        {
-            // check collection path for art
-            if ( layoutMode_ )
-            {
-                if ( commonMode_ )
-                    imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
-                else
-                    imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", collectionName );
-               imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
+        for (const auto& name : names) {
+            if (t) break; // Early exit if media is already created
+
+            // Build paths for medium artwork
+            if (layoutMode_) {
+                std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections");
+                std::string subPath = commonMode_ ? "_common" : collectionName;
+                buildPaths(imagePath, videoPath, base, subPath, imageType_, videoType_);
             }
-            else
-            {
-                if ( commonMode_ )
-                {
-                    imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common" );
-                    imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
+            else {
+                if (commonMode_) {
+                    buildPaths(imagePath, videoPath, Configuration::absolutePath, "collections/_common", imageType_, videoType_);
                 }
-                else
-                {
-                    config_.getMediaPropertyAbsolutePath( collectionName, imageType_, false, imagePath );
+                else {
+                    config_.getMediaPropertyAbsolutePath(collectionName, imageType_, false, imagePath);
+                    config_.getMediaPropertyAbsolutePath(collectionName, videoType_, false, videoPath);
                 }
             }
 
-            name = names[n];
-            if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
-            }
-            if (!t) {
-                t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
-            }
+            // Try to create image
+            std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+            t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
 
-            // check sub-collection path for art
-            if ( !t && !commonMode_ )
-            {
-                if ( layoutMode_ )
-                {
-                    imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name );
-                    imagePath = Utils::combinePath( imagePath, "medium_artwork", imageType_ );
+            // Check sub-collection path for art if needed
+            if (!t && !commonMode_) {
+                if (layoutMode_) {
+                    std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name);
+                    buildPaths(imagePath, videoPath, base, "", imageType_, videoType_);
                 }
-                else
-                {
-                    config_.getMediaPropertyAbsolutePath( item->collectionInfo->name, imageType_, false, imagePath );
+                else {
+                    config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, imageType_, false, imagePath);
+                    config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, videoType_, false, videoPath);
                 }
-                name = names[n];
-                if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
-                }
-                if (!t) {
-                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
-                }
+
+                // Try to create image again
+                imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
             }
         }
+
 
         // check collection path for art based on system name
         if ( !t )
@@ -1105,6 +1060,11 @@ bool ScrollingList::allocateTexture( unsigned int index, Item *item )
 }
 
 
+void ScrollingList::buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) {
+    imagePath = Utils::combinePath(base, subPath, "medium_artwork", mediaType);
+    videoPath = Utils::combinePath(imagePath, "medium_artwork", videoType);
+}
+
 void ScrollingList::deallocateTexture( unsigned int index )
 {
     if ( components_.size(  ) <= index ) return;
@@ -1143,7 +1103,7 @@ bool ScrollingList::isIdle(  )
 
     for ( unsigned int i = 0; i < componentSize; ++i )
     {
-        Component *c = components_[i];
+        Component const *c = components_[i];
         if ( c && !c->isIdle(  ) ) return false;
     }
 
@@ -1158,7 +1118,7 @@ bool ScrollingList::isAttractIdle(  )
 
     for ( unsigned int i = 0; i < componentSize; ++i )
     {
-        Component *c = components_[i];
+        Component const *c = components_[i];
         if ( c && !c->isAttractIdle(  ) ) return false;
     }
 
@@ -1196,46 +1156,46 @@ void ScrollingList::scroll(bool forward)
     size_t scrollPointsSize = scrollPoints_->size();
 
     // Replace the item that's scrolled out
-    Item *i;
+    Item const *itemToScroll;
     if (forward)
     {
-        i = (*items_)[loopIncrement(itemIndex_, scrollPointsSize, itemsSize)];
+        itemToScroll = (*items_)[loopIncrement(itemIndex_, scrollPointsSize, itemsSize)];
         itemIndex_ = loopIncrement(itemIndex_, 1, itemsSize);
         deallocateTexture(0);
-        allocateTexture(0, i);
+        allocateTexture(0, itemToScroll);
     }
     else
     {
-        i = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
+        itemToScroll = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
         deallocateTexture(loopDecrement(0, 1, components_.size()));
-        allocateTexture(loopDecrement(0, 1, components_.size()), i);
+        allocateTexture(loopDecrement(0, 1, components_.size()), itemToScroll);
     }
 
     // Set the animations
-    for (size_t i = 0; i < scrollPointsSize; ++i)
+    for (size_t index = 0; index < scrollPointsSize; ++index)  // Renamed from 'i' to 'index'
     {
-        size_t nextI;
-        if (forward) 
+        size_t nextIndex;
+        if (forward)
         {
-            nextI = (i == 0) ? scrollPointsSize - 1 : i - 1;
+            nextIndex = (index == 0) ? scrollPointsSize - 1 : index - 1;
         }
         else
         {
-            nextI = (i == scrollPointsSize - 1) ? 0 : i + 1;
+            nextIndex = (index == scrollPointsSize - 1) ? 0 : index + 1;
         }
 
-        Component *c = components_[i];
-        if (c)
+        Component* component = components_[index];  // Renamed from 'c' to 'component' for clarity
+        if (component)
         {
-            auto& nextTweenPoint = (*tweenPoints_)[nextI];
-            auto& currentScrollPoint = (*scrollPoints_)[i];
-            auto& nextScrollPoint = (*scrollPoints_)[nextI];
+            auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
+            auto& currentScrollPoint = (*scrollPoints_)[index];
+            auto& nextScrollPoint = (*scrollPoints_)[nextIndex];
 
-            c->allocateGraphicsMemory();
-            resetTweens(c, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
-            c->baseViewInfo.font = nextScrollPoint->font;
-            c->triggerEvent("menuScroll");
+            component->allocateGraphicsMemory();
+            resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
+            component->baseViewInfo.font = nextScrollPoint->font;
+            component->triggerEvent("menuScroll");
         }
     }
 
@@ -1253,7 +1213,7 @@ void ScrollingList::scroll(bool forward)
 }
 
 
-bool ScrollingList::isPlaylist()
+bool ScrollingList::isPlaylist() const
 {
     return playlistType_;
 }

@@ -21,7 +21,7 @@
 
 VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops)
 {
-    VideoComponent *component = NULL;
+    VideoComponent *component = nullptr;
     
     // Declare the extensions vector as static so it's only initialized once.
     static std::vector<std::string> extensions = {
@@ -30,11 +30,11 @@ VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, 
     };
 
     std::string prefix = Utils::combinePath(path, name);
-    std::string file;
 
-    if(Utils::findMatchingFile(prefix, extensions, file))
+    if(std::string file; Utils::findMatchingFile(prefix, extensions, file))
     {
         component = new VideoComponent(page, file, monitor, numLoops);
+        component->allocateGraphicsMemory();
     }
 
     return component;

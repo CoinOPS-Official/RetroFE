@@ -41,11 +41,9 @@ CollectionInfoBuilder::CollectionInfoBuilder(Configuration &c, MetadataDatabase 
 {
 }
 
-CollectionInfoBuilder::~CollectionInfoBuilder()
-{
-}
+CollectionInfoBuilder::~CollectionInfoBuilder() = default;
 
-bool CollectionInfoBuilder::createCollectionDirectory(std::string name)
+bool CollectionInfoBuilder::createCollectionDirectory(const std::string& name)
 {
     std::string collectionPath = Utils::combinePath(Configuration::absolutePath, "collections", name);
 
@@ -69,7 +67,7 @@ bool CollectionInfoBuilder::createCollectionDirectory(std::string name)
         std::cout << "Creating folder \"" << *it << "\"" << std::endl;
 
 #if defined(_WIN32) && !defined(__GNUC__)
-        if (!CreateDirectory(it->c_str(), NULL))
+        if (!CreateDirectory(it->c_str(), nullptr))
         {
             if (ERROR_ALREADY_EXISTS != GetLastError())
             {

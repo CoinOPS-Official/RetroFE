@@ -46,37 +46,29 @@ static const int MENU_FIRST = 0;   // first visible item in the list
 static const int MENU_LAST = -3;   // last visible item in the list
 static const int MENU_START = -1;  // first item transitions here after it scrolls "off the menu/screen"
 static const int MENU_END = -2;    // last item transitions here after it scrolls "off the menu/screen"
-static const int MENU_CENTER = -4;
+//static const int MENU_CENTER = -4;
 
 //todo: this file is starting to become a god class of building. Consider splitting into sub-builders
-PageBuilder::PageBuilder(std::string layoutKey, std::string layoutPage, Configuration &c, FontCache *fc, bool isMenu)
+PageBuilder::PageBuilder(const std::string& layoutKey, const std::string& layoutPage, Configuration &c, FontCache *fc, bool isMenu)
     : layoutKey(layoutKey)
     , layoutPage(layoutPage)
     , config_(c)
-    , screenHeight_(0)
-    , screenWidth_(0)
-    , layoutHeight_(0)
-    , layoutWidth_(0)
-    , fontSize_(24)
     , fontCache_(fc)
     , isMenu_(isMenu)
 {
     screenWidth_  = SDL::getWindowWidth(0);
     screenHeight_ = SDL::getWindowHeight(0);
-    monitor_      = 0;
     fontColor_.a  = 255;
     fontColor_.r  = 0;
     fontColor_.g  = 0;
     fontColor_.b  = 0;
 }
 
-PageBuilder::~PageBuilder()
-{
-}
+PageBuilder::~PageBuilder() = default;
 
-Page *PageBuilder::buildPage( std::string collectionName, bool defaultToCurrentLayout)
+Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToCurrentLayout)
 {
-    Page *page = NULL;
+    Page *page = nullptr;
 
     std::string layoutFile;
     std::string layoutFileAspect;
@@ -96,7 +88,7 @@ Page *PageBuilder::buildPage( std::string collectionName, bool defaultToCurrentL
             std::ifstream file((layoutPath + ".xml").c_str());
             // check collection has layout otherwise it would have used default folder layout
             if (!file.good()) {
-                return NULL;
+                return nullptr;
             }
         }
     }
@@ -164,18 +156,18 @@ Page *PageBuilder::buildPage( std::string collectionName, bool defaultToCurrentL
             if (!root)
             {
                 Logger::write(Logger::ZONE_ERROR, "Layout", "Missing <layout> tag");
-                return NULL;
+                return nullptr;
             }
             else
             {
-                xml_attribute<>* layoutWidthXml = root->first_attribute("width");
-                xml_attribute<>* layoutHeightXml = root->first_attribute("height");
-                xml_attribute<>* fontXml = root->first_attribute("font");
-                xml_attribute<>* fontColorXml = root->first_attribute("fontColor");
-                xml_attribute<>* fontSizeXml = root->first_attribute("loadFontSize");
-                xml_attribute<>* minShowTimeXml = root->first_attribute("minShowTime");
-                xml_attribute<>* controls = root->first_attribute("controls");
-                xml_attribute<>* layoutMonitorXml = root->first_attribute("monitor");
+                xml_attribute<> const* layoutWidthXml = root->first_attribute("width");
+                xml_attribute<> const* layoutHeightXml = root->first_attribute("height");
+                xml_attribute<> const* fontXml = root->first_attribute("font");
+                xml_attribute<> const* fontColorXml = root->first_attribute("fontColor");
+                xml_attribute<> const* fontSizeXml = root->first_attribute("loadFontSize");
+                xml_attribute<> const* minShowTimeXml = root->first_attribute("minShowTime");
+                xml_attribute<> const* controls = root->first_attribute("controls");
+                xml_attribute<> const* layoutMonitorXml = root->first_attribute("monitor");
 
                 if (fontXml)
                 {
@@ -242,10 +234,10 @@ Page *PageBuilder::buildPage( std::string collectionName, bool defaultToCurrentL
                 }
 
                 // load sounds
-                for (xml_node<>* sound = root->first_node("sound"); sound; sound = sound->next_sibling("sound"))
+                for (xml_node<> const* sound = root->first_node("sound"); sound; sound = sound->next_sibling("sound"))
                 {
-                    xml_attribute<>* src = sound->first_attribute("src");
-                    xml_attribute<>* type = sound->first_attribute("type");
+                    xml_attribute<> const* src = sound->first_attribute("src");
+                    xml_attribute<> const* type = sound->first_attribute("type");
                     std::string file = Configuration::convertToAbsolutePath(layoutPath, src->value());
 
                     // check if collection's assets are in a different theme
@@ -261,7 +253,7 @@ Page *PageBuilder::buildPage( std::string collectionName, bool defaultToCurrentL
                     }
                     else
                     {
-                        Sound* sound = new Sound(file, altfile);
+                        auto* sound = new Sound(file, altfile);
                         std::string soundType = type->value();
 
                         if (!soundType.compare("load"))
@@ -290,14 +282,14 @@ Page *PageBuilder::buildPage( std::string collectionName, bool defaultToCurrentL
                 if (!buildComponents(root, page, collectionName))
                 {
                     delete page;
-                    page = NULL;
+                    page = nullptr;
                 }
             }
         }
         catch(rapidxml::parse_error &e)
         {
             std::string what = e.what();
-            long line = static_cast<long>(std::count(&buffer.front(), e.where<char>(), char('\n')) + 1);
+            auto line = static_cast<long>(std::count(&buffer.front(), e.where<char>(), char('\n')) + 1);
             std::stringstream ss;
             ss << "Could not parse layout file. [Line: " << line << "] in " << layoutFile << " Reason: " << e.what();
 
@@ -324,7 +316,7 @@ Page *PageBuilder::buildPage( std::string collectionName, bool defaultToCurrentL
 
 
 
-float PageBuilder::getHorizontalAlignment(xml_attribute<> *attribute, float valueIfNull)
+float PageBuilder::getHorizontalAlignment(const xml_attribute<> *attribute, float valueIfNull) const
 {
     float value;
     std::string str;
@@ -358,7 +350,7 @@ float PageBuilder::getHorizontalAlignment(xml_attribute<> *attribute, float valu
     return value;
 }
 
-float PageBuilder::getVerticalAlignment(xml_attribute<> *attribute, float valueIfNull)
+float PageBuilder::getVerticalAlignment(const xml_attribute<> *attribute, float valueIfNull) const
 {
     float value;
     std::string str;
@@ -391,14 +383,15 @@ float PageBuilder::getVerticalAlignment(xml_attribute<> *attribute, float valueI
     return value;
 }
 
-bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string collectionName)
+bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::string& collectionName)
+
 {
-    xml_attribute<>* layoutMonitorXml = layout->first_attribute("monitor");
+    xml_attribute<> const* layoutMonitorXml = layout->first_attribute("monitor");
     int monitor = layoutMonitorXml ? Utils::convertInt(layoutMonitorXml->value()) : monitor_;
     for(xml_node<> *componentXml = layout->first_node("menu"); componentXml; componentXml = componentXml->next_sibling("menu"))
     {
         ScrollingList *scrollingList = buildMenu(componentXml,*page, monitor);
-        xml_attribute<> *indexXml = componentXml->first_attribute("menuIndex");
+        xml_attribute<> const *indexXml = componentXml->first_attribute("menuIndex");
         int index = indexXml ? Utils::convertInt(indexXml->value()) : -1;
         if (scrollingList->isPlaylist()) {
             page->setPlaylistMenu(scrollingList);
@@ -408,15 +401,14 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
 
     for(xml_node<> *componentXml = layout->first_node("container"); componentXml; componentXml = componentXml->next_sibling("container"))
     {
-        Container *c = new Container(*page);
-        xml_attribute<> *menuScrollReload = componentXml->first_attribute("menuScrollReload");
-        if (menuScrollReload &&
-            (Utils::toLower(menuScrollReload->value()) == "true" ||
-             Utils::toLower(menuScrollReload->value()) == "yes"))
+        auto* c = new Container(*page);
+        if (auto const* menuScrollReload = componentXml->first_attribute("menuScrollReload");
+            menuScrollReload && (Utils::toLower(menuScrollReload->value()) == "true" ||
+                Utils::toLower(menuScrollReload->value()) == "yes")) 
         {
-            c->setMenuScrollReload(true);
+                    c->setMenuScrollReload(true);
         }
-        xml_attribute<>* monitorXml = componentXml->first_attribute("monitor");
+        xml_attribute<> const* monitorXml = componentXml->first_attribute("monitor");
         c->baseViewInfo.Monitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor;
         c->baseViewInfo.Layout = page->getCurrentLayout();
 
@@ -428,10 +420,10 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
     int cMonitor;
     for(xml_node<> *componentXml = layout->first_node("image"); componentXml; componentXml = componentXml->next_sibling("image"))
     {
-        xml_attribute<> *src        = componentXml->first_attribute("src");
-        xml_attribute<> *idXml      = componentXml->first_attribute("id");
-        xml_attribute<> *monitorXml = componentXml->first_attribute("monitor");
-        xml_attribute<>* additiveXml = componentXml->first_attribute("additive");
+        xml_attribute<> const *src        = componentXml->first_attribute("src");
+        xml_attribute<> const *idXml      = componentXml->first_attribute("id");
+        xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
+        xml_attribute<> const* additiveXml = componentXml->first_attribute("additive");
 
         int id = -1;
         if (idXml)
@@ -460,15 +452,17 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
             // don't add videos if display doesn't exist
             if (cMonitor + 1 <= SDL::getScreenCount()) {
                 bool additive = additiveXml ? bool(additiveXml->value()) : false;
-                Image* c = new Image(imagePath, altImagePath, *page, cMonitor, additive);
+                auto* c = new Image(imagePath, altImagePath, *page, cMonitor, additive);
+                c->allocateGraphicsMemory();
                 c->setId(id);
-                xml_attribute<>* menuScrollReload = componentXml->first_attribute("menuScrollReload");
-                if (menuScrollReload &&
-                    (Utils::toLower(menuScrollReload->value()) == "true" ||
-                        Utils::toLower(menuScrollReload->value()) == "yes"))
+
+                if (auto const* menuScrollReload = componentXml->first_attribute("menuScrollReload");
+                    menuScrollReload &&
+                    (Utils::toLower(menuScrollReload->value()) == "true" || Utils::toLower(menuScrollReload->value()) == "yes"))
                 {
                     c->setMenuScrollReload(true);
                 }
+
 
                 buildViewInfo(componentXml, c->baseViewInfo);
                 loadTweens(c, componentXml);
@@ -480,11 +474,10 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
 
     for(xml_node<> *componentXml = layout->first_node("video"); componentXml; componentXml = componentXml->next_sibling("video"))
     {
-        xml_attribute<> *srcXml      = componentXml->first_attribute("src");
-        xml_attribute<> *numLoopsXml = componentXml->first_attribute("numLoops");
-        xml_attribute<> *idXml = componentXml->first_attribute("id");
-        xml_attribute<> *monitorXml = componentXml->first_attribute("monitor");
-        xml_attribute<> *pauseOnScrollXml = componentXml->first_attribute("pauseOnScroll");
+        xml_attribute<> const *srcXml      = componentXml->first_attribute("src");
+        xml_attribute<> const *numLoopsXml = componentXml->first_attribute("numLoops");
+        xml_attribute<> const *idXml = componentXml->first_attribute("id");
+        xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
 
 
 
@@ -516,28 +509,26 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
 
             // don't add videos if display doesn't exist
             if (cMonitor + 1 <= SDL::getScreenCount()) {
-                Video* c = new Video(videoPath, altVideoPath, numLoops, *page, cMonitor);
+                auto* c = new Video(videoPath, altVideoPath, numLoops, *page, cMonitor);
+                c->allocateGraphicsMemory();
                 c->setId(id);
-                
-                xml_attribute<>* pauseOnScroll = componentXml->first_attribute("pauseOnScroll");
-                if (pauseOnScroll && 
-                    (Utils::toLower(pauseOnScrollXml->value()) == "false" ||
-                    Utils::toLower(pauseOnScrollXml->value()) == "no"))
+
+                if (auto const* pauseOnScroll = componentXml->first_attribute("pauseOnScroll");
+                    pauseOnScroll &&
+                    (Utils::toLower(pauseOnScroll->value()) == "false" || Utils::toLower(pauseOnScroll->value()) == "no"))
                 {
                     c->setPauseOnScroll(false);
                 }
-       
+
                 
-                xml_attribute<>* menuScrollReload = componentXml->first_attribute("menuScrollReload");
-                if (menuScrollReload &&
+                if (xml_attribute<> const* menuScrollReload = componentXml->first_attribute("menuScrollReload"); menuScrollReload &&
                     (Utils::toLower(menuScrollReload->value()) == "true" ||
                         Utils::toLower(menuScrollReload->value()) == "yes"))
                 {
                     c->setMenuScrollReload(true);
                 }
-                xml_attribute<>* animationDoneRemove = componentXml->first_attribute("animationDoneRemove");
                 
-                if (animationDoneRemove &&
+                if (xml_attribute<> const* animationDoneRemove = componentXml->first_attribute("animationDoneRemove"); animationDoneRemove &&
                     (Utils::toLower(animationDoneRemove->value()) == "true" ||
                         Utils::toLower(animationDoneRemove->value()) == "yes"))
                 {
@@ -553,9 +544,9 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
 
     for(xml_node<> *componentXml = layout->first_node("text"); componentXml; componentXml = componentXml->next_sibling("text"))
     {
-        xml_attribute<> *value      = componentXml->first_attribute("value");
-        xml_attribute<> *idXml      = componentXml->first_attribute("id");
-        xml_attribute<> *monitorXml = componentXml->first_attribute("monitor");
+        xml_attribute<> const *value      = componentXml->first_attribute("value");
+        xml_attribute<> const *idXml      = componentXml->first_attribute("id");
+        xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
 
         int id = -1;
         if (idXml)
@@ -572,10 +563,9 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
             cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor;
             Font *font = addFont(componentXml, NULL, cMonitor);
 
-            Text *c = new Text(value->value(), *page, font, cMonitor);
+            auto *c = new Text(value->value(), *page, font, cMonitor);
             c->setId( id );
-            xml_attribute<> *menuScrollReload = componentXml->first_attribute("menuScrollReload");
-            if (menuScrollReload &&
+            if (xml_attribute<> const *menuScrollReload = componentXml->first_attribute("menuScrollReload"); menuScrollReload &&
                 (Utils::toLower(menuScrollReload->value()) == "true" ||
                  Utils::toLower(menuScrollReload->value()) == "yes"))
             {
@@ -590,15 +580,14 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
 
     for(xml_node<> *componentXml = layout->first_node("statusText"); componentXml; componentXml = componentXml->next_sibling("statusText"))
     {
-        xml_attribute<> *monitorXml = componentXml->first_attribute("monitor");
+        xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
         cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor;
         Font* font = addFont(componentXml, NULL, cMonitor);
 
-        Text *c = new Text("", *page, font, cMonitor);
-        xml_attribute<> *menuScrollReload = componentXml->first_attribute("menuScrollReload");
-        if (menuScrollReload &&
-            (Utils::toLower(menuScrollReload->value()) == "true" ||
-             Utils::toLower(menuScrollReload->value()) == "yes"))
+        auto* c = new Text("", *page, font, cMonitor);
+        if (auto const* menuScrollReload = componentXml->first_attribute("menuScrollReload");
+            menuScrollReload && (Utils::toLower(menuScrollReload->value()) == "true" ||
+                Utils::toLower(menuScrollReload->value()) == "yes")) 
         {
             c->setMenuScrollReload(true);
         }
@@ -619,34 +608,34 @@ bool PageBuilder::buildComponents(xml_node<> *layout, Page *page, std::string co
     return true;
 }
 
-void PageBuilder::loadReloadableImages(xml_node<> *layout, std::string tagName, Page *page)
+void PageBuilder::loadReloadableImages(const xml_node<> *layout, const std::string& tagName, Page *page)
 {
-    xml_attribute<>* layoutMonitorXml = layout->first_attribute("monitor");
+    xml_attribute<> const* layoutMonitorXml = layout->first_attribute("monitor");
     int monitor = layoutMonitorXml ? Utils::convertInt(layoutMonitorXml->value()) : monitor_;
     int cMonitor = 0;
     for(xml_node<> *componentXml = layout->first_node(tagName.c_str()); componentXml; componentXml = componentXml->next_sibling(tagName.c_str()))
     {
         std::string reloadableImagePath;
         std::string reloadableVideoPath;
-        xml_attribute<> *type              = componentXml->first_attribute("type");
-        xml_attribute<> *imageType         = componentXml->first_attribute("imageType");
-        xml_attribute<> *mode              = componentXml->first_attribute("mode");
-        xml_attribute<> *timeFormatXml     = componentXml->first_attribute("timeFormat");
-        xml_attribute<> *textFormatXml     = componentXml->first_attribute("textFormat");
-        xml_attribute<> *singlePrefixXml   = componentXml->first_attribute("singlePrefix");
-        xml_attribute<> *singlePostfixXml  = componentXml->first_attribute("singlePostfix");
-        xml_attribute<> *pluralPrefixXml   = componentXml->first_attribute("pluralPrefix");
-        xml_attribute<> *pluralPostfixXml  = componentXml->first_attribute("pluralPostfix");
-        xml_attribute<> *selectedOffsetXml = componentXml->first_attribute("selectedOffset");
-        xml_attribute<> *directionXml      = componentXml->first_attribute("direction");
-        xml_attribute<> *scrollingSpeedXml = componentXml->first_attribute("scrollingSpeed");
-        xml_attribute<> *startPositionXml  = componentXml->first_attribute("startPosition");
-        xml_attribute<> *startTimeXml      = componentXml->first_attribute("startTime");
-        xml_attribute<> *endTimeXml        = componentXml->first_attribute("endTime");
-        xml_attribute<> *alignmentXml      = componentXml->first_attribute("alignment");
-        xml_attribute<> *idXml             = componentXml->first_attribute("id");
-        xml_attribute<>* randomSelectXml = componentXml->first_attribute("randomSelect");
-        xml_attribute<>* monitorXml = componentXml->first_attribute("monitor");
+        xml_attribute<> const *type              = componentXml->first_attribute("type");
+        xml_attribute<> const *imageType         = componentXml->first_attribute("imageType");
+        xml_attribute<> const *mode              = componentXml->first_attribute("mode");
+        xml_attribute<> const *timeFormatXml     = componentXml->first_attribute("timeFormat");
+        xml_attribute<> const *textFormatXml     = componentXml->first_attribute("textFormat");
+        xml_attribute<> const *singlePrefixXml   = componentXml->first_attribute("singlePrefix");
+        xml_attribute<> const *singlePostfixXml  = componentXml->first_attribute("singlePostfix");
+        xml_attribute<> const *pluralPrefixXml   = componentXml->first_attribute("pluralPrefix");
+        xml_attribute<> const *pluralPostfixXml  = componentXml->first_attribute("pluralPostfix");
+        xml_attribute<> const *selectedOffsetXml = componentXml->first_attribute("selectedOffset");
+        xml_attribute<> const *directionXml      = componentXml->first_attribute("direction");
+        xml_attribute<> const *scrollingSpeedXml = componentXml->first_attribute("scrollingSpeed");
+        xml_attribute<> const *startPositionXml  = componentXml->first_attribute("startPosition");
+        xml_attribute<> const *startTimeXml      = componentXml->first_attribute("startTime");
+        xml_attribute<> const *endTimeXml        = componentXml->first_attribute("endTime");
+        xml_attribute<> const *alignmentXml      = componentXml->first_attribute("alignment");
+        xml_attribute<> const *idXml             = componentXml->first_attribute("id");
+        xml_attribute<> const *randomSelectXml = componentXml->first_attribute("randomSelect");
+        xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
 
         bool systemMode = false;
         bool layoutMode = false;
@@ -714,7 +703,7 @@ void PageBuilder::loadReloadableImages(xml_node<> *layout, std::string tagName, 
         }
 
 
-        Component *c = NULL;
+        Component *c = nullptr;
 
         if(tagName == "reloadableText")
         {
@@ -756,7 +745,7 @@ void PageBuilder::loadReloadableImages(xml_node<> *layout, std::string tagName, 
                 c->baseViewInfo.Layout = page->getCurrentLayout();
 
                 c->setId( id );
-                xml_attribute<> *menuScrollReload = componentXml->first_attribute("menuScrollReload");
+                xml_attribute<> const *menuScrollReload = componentXml->first_attribute("menuScrollReload");
                 if (menuScrollReload &&
                     (Utils::toLower(menuScrollReload->value()) == "true" ||
                      Utils::toLower(menuScrollReload->value()) == "yes"))
@@ -831,7 +820,7 @@ void PageBuilder::loadReloadableImages(xml_node<> *layout, std::string tagName, 
                 c->baseViewInfo.Monitor = cMonitor;
                 c->baseViewInfo.Layout = page->getCurrentLayout();
 
-                xml_attribute<> *menuScrollReload = componentXml->first_attribute("menuScrollReload");
+                xml_attribute<> const *menuScrollReload = componentXml->first_attribute("menuScrollReload");
                 if (menuScrollReload &&
                     (Utils::toLower(menuScrollReload->value()) == "true" ||
                      Utils::toLower(menuScrollReload->value()) == "yes"))
@@ -842,7 +831,7 @@ void PageBuilder::loadReloadableImages(xml_node<> *layout, std::string tagName, 
         }
         else
         {
-            xml_attribute<> *jukeboxXml = componentXml->first_attribute("jukebox");
+            xml_attribute<> const *jukeboxXml = componentXml->first_attribute("jukebox");
             bool jukebox         = false;
             int  jukeboxNumLoops = 0;
             if(jukeboxXml &&
@@ -851,7 +840,7 @@ void PageBuilder::loadReloadableImages(xml_node<> *layout, std::string tagName, 
             {
                 jukebox = true;
                 page->setJukebox();
-                xml_attribute<> *numLoopsXml = componentXml->first_attribute("jukeboxNumLoops");
+                xml_attribute<> const *numLoopsXml = componentXml->first_attribute("jukeboxNumLoops");
                 jukeboxNumLoops = numLoopsXml ? Utils::convertInt(numLoopsXml->value()) : 1;
             }
             Font *font = addFont(componentXml, NULL, cMonitor);
@@ -871,15 +860,14 @@ void PageBuilder::loadReloadableImages(xml_node<> *layout, std::string tagName, 
             c->baseViewInfo.Layout = page->getCurrentLayout();
 
             c->setId( id );
-
-            xml_attribute<> *menuScrollReload = componentXml->first_attribute("menuScrollReload");
-            if (menuScrollReload &&
+            c->allocateGraphicsMemory();
+            if (xml_attribute<> const *menuScrollReload = componentXml->first_attribute("menuScrollReload"); menuScrollReload &&
                 (Utils::toLower(menuScrollReload->value()) == "true" ||
                  Utils::toLower(menuScrollReload->value()) == "yes"))
             {
                 c->setMenuScrollReload(true);
             }
-            xml_attribute<> *textFallback = componentXml->first_attribute("textFallback");
+            xml_attribute<> const *textFallback = componentXml->first_attribute("textFallback");
             if(textFallback && Utils::toLower(textFallback->value()) == "true")
             {
                 static_cast<ReloadableMedia *>(c)->enableTextFallback_(true);
@@ -899,11 +887,11 @@ void PageBuilder::loadReloadableImages(xml_node<> *layout, std::string tagName, 
     }
 }
 
-Font *PageBuilder::addFont(xml_node<> *component, xml_node<> *defaults, int monitor)
+Font *PageBuilder::addFont(const xml_node<> *component, const xml_node<> *defaults, int monitor)
 {
-    xml_attribute<> *fontXml = component->first_attribute("font");
-    xml_attribute<> *fontColorXml = component->first_attribute("fontColor");
-    xml_attribute<> *fontSizeXml = component->first_attribute("loadFontSize");
+    xml_attribute<> const *fontXml = component->first_attribute("font");
+    xml_attribute<> const *fontColorXml = component->first_attribute("fontColor");
+    xml_attribute<> const *fontSizeXml = component->first_attribute("loadFontSize");
 
     if(defaults)
     {
@@ -931,8 +919,8 @@ Font *PageBuilder::addFont(xml_node<> *component, xml_node<> *defaults, int moni
 
     if(fontXml)
     {
-        fontName = config_.convertToAbsolutePath(
-                    Utils::combinePath(config_.absolutePath, "layouts", layoutKey,""),
+        fontName = Configuration::convertToAbsolutePath(
+                    Utils::combinePath(Configuration::absolutePath, "layouts", layoutKey,""),
                     fontXml->value());
 
         Logger::write(Logger::ZONE_DEBUG, "Layout", "loading font " + fontName );
@@ -970,7 +958,7 @@ void PageBuilder::loadTweens(Component *c, xml_node<> *componentXml)
 
 AnimationEvents *PageBuilder::createTweenInstance(xml_node<> *componentXml)
 {
-    AnimationEvents *tweens = new AnimationEvents();
+    auto *tweens = new AnimationEvents();
 
     buildTweenSet(tweens, componentXml, "onEnter",          "enter");
     buildTweenSet(tweens, componentXml, "onExit",           "exit");
@@ -1012,11 +1000,11 @@ AnimationEvents *PageBuilder::createTweenInstance(xml_node<> *componentXml)
     return tweens;
 }
 
-void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXml, std::string tagName, std::string tweenName)
+void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXml, const std::string& tagName, const std::string& tweenName)
 {
     for(componentXml = componentXml->first_node(tagName.c_str()); componentXml; componentXml = componentXml->next_sibling(tagName.c_str()))
     {
-        xml_attribute<> *indexXml = componentXml->first_attribute("menuIndex");
+        xml_attribute<> const *indexXml = componentXml->first_attribute("menuIndex");
 
         if(indexXml)
         {
@@ -1029,7 +1017,7 @@ void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXm
                 {
                     if(i != index)
                     {
-                        Animation *animation = new Animation();
+                        auto *animation = new Animation();
                         getTweenSet(componentXml, animation);
                         tweens->setAnimation(tweenName, i, animation);
                     }
@@ -1043,7 +1031,7 @@ void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXm
                 {
                     if(i < index)
                     {
-                        Animation *animation = new Animation();
+                        auto *animation = new Animation();
                         getTweenSet(componentXml, animation);
                         tweens->setAnimation(tweenName, i, animation);
                     }
@@ -1057,7 +1045,7 @@ void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXm
                 {
                     if(i > index)
                     {
-                        Animation *animation = new Animation();
+                        auto *animation = new Animation();
                         getTweenSet(componentXml, animation);
                         tweens->setAnimation(tweenName, i, animation);
                     }
@@ -1065,21 +1053,21 @@ void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXm
             }
             else if(indexs[0] == 'i')
             {
-                Animation *animation = new Animation();
+                auto *animation = new Animation();
                 getTweenSet(componentXml, animation);
                 tweens->setAnimation(tweenName, MENU_INDEX_HIGH, animation);
             }
             else
             {
                 int index = Utils::convertInt(indexXml->value());
-                Animation *animation = new Animation();
+                auto *animation = new Animation();
                 getTweenSet(componentXml, animation);
                 tweens->setAnimation(tweenName, index, animation);
             }
         }
         else
         {
-            Animation *animation = new Animation();
+            auto *animation = new Animation();
             getTweenSet(componentXml, animation);
             tweens->setAnimation(tweenName, -1, animation);
         }
@@ -1088,23 +1076,23 @@ void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXm
 
 ScrollingList * PageBuilder::buildMenu(xml_node<> *menuXml, Page &page, int monitor)
 {
-    ScrollingList *menu = NULL;
+    ScrollingList *menu = nullptr;
     std::string menuType = "vertical";
     std::string imageType = "null";
     std::string videoType = "null";
     std::map<int, xml_node<> *> overrideItems;
     xml_node<> *itemDefaults               = menuXml->first_node("itemDefaults");
-    xml_attribute<> *modeXml               = menuXml->first_attribute("mode");
-    xml_attribute<> *imageTypeXml          = menuXml->first_attribute("imageType");
-    xml_attribute<> *videoTypeXml          = menuXml->first_attribute("videoType");
-    xml_attribute<> *menuTypeXml           = menuXml->first_attribute("type");
-    xml_attribute<> *scrollTimeXml         = menuXml->first_attribute("scrollTime");
-    xml_attribute<> *scrollAccelerationXml = menuXml->first_attribute("scrollAcceleration");
-    xml_attribute<> *minScrollTimeXml      = menuXml->first_attribute("minScrollTime");
-    xml_attribute<> *scrollOrientationXml  = menuXml->first_attribute("orientation");
-    xml_attribute<>* selectedImage         = menuXml->first_attribute("selectedImage");
-    xml_attribute<>* textFallback          = menuXml->first_attribute("textFallback");
-    xml_attribute<>* monitorXml = menuXml->first_attribute("monitor");
+    xml_attribute<> const *modeXml               = menuXml->first_attribute("mode");
+    xml_attribute<> const *imageTypeXml          = menuXml->first_attribute("imageType");
+    xml_attribute<> const *videoTypeXml          = menuXml->first_attribute("videoType");
+    xml_attribute<> const *menuTypeXml           = menuXml->first_attribute("type");
+    xml_attribute<> const *scrollTimeXml         = menuXml->first_attribute("scrollTime");
+    xml_attribute<> const *scrollAccelerationXml = menuXml->first_attribute("scrollAcceleration");
+    xml_attribute<> const *minScrollTimeXml      = menuXml->first_attribute("minScrollTime");
+    xml_attribute<> const *scrollOrientationXml  = menuXml->first_attribute("orientation");
+    xml_attribute<> const *selectedImage         = menuXml->first_attribute("selectedImage");
+    xml_attribute<> const *textFallback          = menuXml->first_attribute("textFallback");
+    xml_attribute<> const *monitorXml = menuXml->first_attribute("monitor");
 
     if(menuTypeXml)
     {
@@ -1209,16 +1197,16 @@ ScrollingList * PageBuilder::buildMenu(xml_node<> *menuXml, Page &page, int moni
 }
 
 
-void PageBuilder::buildCustomMenu(ScrollingList *menu, xml_node<> *menuXml, xml_node<> *itemDefaults)
+void PageBuilder::buildCustomMenu(ScrollingList *menu, const xml_node<> *menuXml, xml_node<> *itemDefaults)
 {
-    std::vector<ViewInfo *> *points = new std::vector<ViewInfo *>();
-    std::vector<AnimationEvents *> *tweenPoints = new std::vector<AnimationEvents *>();
+    auto *points = new std::vector<ViewInfo *>();
+    auto *tweenPoints = new std::vector<AnimationEvents *>();
 
     int i = 0;
 
     for(xml_node<> *componentXml = menuXml->first_node("item"); componentXml; componentXml = componentXml->next_sibling("item"))
     {
-        ViewInfo *viewInfo = new ViewInfo();
+        auto *viewInfo = new ViewInfo();
         viewInfo->Monitor = menu->baseViewInfo.Monitor;
         viewInfo->Layout = menu->baseViewInfo.Layout;
 
@@ -1227,9 +1215,8 @@ void PageBuilder::buildCustomMenu(ScrollingList *menu, xml_node<> *menuXml, xml_
 
         points->push_back(viewInfo);
         tweenPoints->push_back(createTweenInstance(componentXml));
-        xml_attribute<> *selected = componentXml->first_attribute("selected");
 
-        if(selected)
+        if(xml_attribute<> const *selected = componentXml->first_attribute("selected"))
         {
             menu->setSelectedIndex(i);
         }
@@ -1240,10 +1227,10 @@ void PageBuilder::buildCustomMenu(ScrollingList *menu, xml_node<> *menuXml, xml_
     menu->setPoints(points, tweenPoints);
 }
 
-void PageBuilder::buildVerticalMenu(ScrollingList *menu, xml_node<> *menuXml, xml_node<> *itemDefaults)
+void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuXml, xml_node<> *itemDefaults)
 {
-    std::vector<ViewInfo *> *points = new std::vector<ViewInfo *>();
-    std::vector<AnimationEvents *> *tweenPoints = new std::vector<AnimationEvents *>();
+    auto *points = new std::vector<ViewInfo *>();
+    auto *tweenPoints = new std::vector<AnimationEvents *>();
 
     int selectedIndex = MENU_FIRST;
     std::map<int, xml_node<> *> overrideItems;
@@ -1253,7 +1240,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, xml_node<> *menuXml, xm
     // make the selected item a different color).
     for(xml_node<> *componentXml = menuXml->first_node("item"); componentXml; componentXml = componentXml->next_sibling("item"))
     {
-        xml_attribute<> *xmlIndex = componentXml->first_attribute("index");
+        xml_attribute<> const *xmlIndex = componentXml->first_attribute("index");
 
         if(xmlIndex)
         {
@@ -1261,7 +1248,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, xml_node<> *menuXml, xm
             overrideItems[itemIndex] = componentXml;
 
             // check to see if the item specified is the selected index
-            xml_attribute<> *xmlSelectedIndex = componentXml->first_attribute("selected");
+            xml_attribute<> const *xmlSelectedIndex = componentXml->first_attribute("selected");
 
             if(xmlSelectedIndex)
             {
@@ -1291,7 +1278,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, xml_node<> *menuXml, xm
     }
     while(!end)
     {
-        ViewInfo *viewInfo = new ViewInfo();
+        auto *viewInfo = new ViewInfo();
         viewInfo->Monitor = menu->baseViewInfo.Monitor;
         viewInfo->Layout = menu->baseViewInfo.Layout;
 
@@ -1305,7 +1292,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, xml_node<> *menuXml, xm
 
         // calculate the total height of our menu items if we can load any additional items
         buildViewInfo(component, *viewInfo, itemDefaults);
-        xml_attribute<> *itemSpacingXml = component->first_attribute("spacing");
+        xml_attribute<> const *itemSpacingXml = component->first_attribute("spacing");
         int itemSpacing = itemSpacingXml ? Utils::convertInt(itemSpacingXml->value()) : 0;
         float nextHeight = height + viewInfo->Height + itemSpacing;
 
@@ -1320,12 +1307,12 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, xml_node<> *menuXml, xm
             component = overrideItems[MENU_LAST];
 
             buildViewInfo(component, *viewInfo, itemDefaults);
-            xml_attribute<> *itemSpacingXml = component->first_attribute("spacing");
+            xml_attribute<> const *itemSpacingXml = component->first_attribute("spacing");
             int itemSpacing = itemSpacingXml ? Utils::convertInt(itemSpacingXml->value()) : 0;
             nextHeight = height + viewInfo->Height + itemSpacing;
         }
 
-        viewInfo->Y = menu->baseViewInfo.Y + (float)height;
+        viewInfo->Y = menu->baseViewInfo.Y + height;
         points->push_back(viewInfo);
         tweenPoints->push_back(createTweenInstance(component));
         index++;
@@ -1361,9 +1348,9 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, xml_node<> *menuXml, xm
     menu->setPoints(points, tweenPoints);
 }
 
-ViewInfo *PageBuilder::createMenuItemInfo(xml_node<> *component, xml_node<> *defaults, ViewInfo& menuViewInfo)
+ViewInfo *PageBuilder::createMenuItemInfo(xml_node<> *component, xml_node<> *defaults, const ViewInfo& menuViewInfo)
 {
-    ViewInfo *viewInfo = new ViewInfo();
+    auto *viewInfo = new ViewInfo();
     viewInfo->Monitor = menuViewInfo.Monitor;
 
     buildViewInfo(component, *viewInfo, defaults);
@@ -1371,7 +1358,7 @@ ViewInfo *PageBuilder::createMenuItemInfo(xml_node<> *component, xml_node<> *def
     return viewInfo;
 }
 
-int PageBuilder::parseMenuPosition(std::string strIndex)
+int PageBuilder::parseMenuPosition(const std::string& strIndex)
 {
     int index = MENU_FIRST;
 
@@ -1398,7 +1385,7 @@ int PageBuilder::parseMenuPosition(std::string strIndex)
     return index;
 }
 
-xml_attribute<> *PageBuilder::findAttribute(xml_node<> *componentXml, std::string attribute, xml_node<> *defaultXml = NULL)
+xml_attribute<> *PageBuilder::findAttribute(const xml_node<> *componentXml, const std::string& attribute, const xml_node<> *defaultXml = nullptr)
 {
     xml_attribute<> *attributeXml = componentXml->first_attribute(attribute.c_str());
 
@@ -1412,38 +1399,38 @@ xml_attribute<> *PageBuilder::findAttribute(xml_node<> *componentXml, std::strin
 
 void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_node<> *defaultXml)
 {
-    xml_attribute<> *x                  = findAttribute(componentXml, "x", defaultXml);
-    xml_attribute<> *y                  = findAttribute(componentXml, "y", defaultXml);
-    xml_attribute<> *xOffset            = findAttribute(componentXml, "xOffset", defaultXml);
-    xml_attribute<> *yOffset            = findAttribute(componentXml, "yOffset", defaultXml);
-    xml_attribute<> *xOrigin            = findAttribute(componentXml, "xOrigin", defaultXml);
-    xml_attribute<> *yOrigin            = findAttribute(componentXml, "yOrigin", defaultXml);
-    xml_attribute<> *height             = findAttribute(componentXml, "height", defaultXml);
-    xml_attribute<> *width              = findAttribute(componentXml, "width", defaultXml);
-    xml_attribute<> *fontSize           = findAttribute(componentXml, "fontSize", defaultXml);
-    xml_attribute<> *fontColor          = findAttribute(componentXml, "fontColor", defaultXml);
-    xml_attribute<> *minHeight          = findAttribute(componentXml, "minHeight", defaultXml);
-    xml_attribute<> *minWidth           = findAttribute(componentXml, "minWidth", defaultXml);
-    xml_attribute<> *maxHeight          = findAttribute(componentXml, "maxHeight", defaultXml);
-    xml_attribute<> *maxWidth           = findAttribute(componentXml, "maxWidth", defaultXml);
-    xml_attribute<> *alpha              = findAttribute(componentXml, "alpha", defaultXml);
-    xml_attribute<> *angle              = findAttribute(componentXml, "angle", defaultXml);
-    xml_attribute<> *layer              = findAttribute(componentXml, "layer", defaultXml);
-    xml_attribute<> *backgroundColor    = findAttribute(componentXml, "backgroundColor", defaultXml);
-    xml_attribute<> *backgroundAlpha    = findAttribute(componentXml, "backgroundAlpha", defaultXml);
-    xml_attribute<> *reflection         = findAttribute(componentXml, "reflection", defaultXml);
-    xml_attribute<> *reflectionDistance = findAttribute(componentXml, "reflectionDistance", defaultXml);
-    xml_attribute<> *reflectionScale    = findAttribute(componentXml, "reflectionScale", defaultXml);
-    xml_attribute<> *reflectionAlpha    = findAttribute(componentXml, "reflectionAlpha", defaultXml);
-    xml_attribute<> *containerX         = findAttribute(componentXml, "containerX", defaultXml);
-    xml_attribute<> *containerY         = findAttribute(componentXml, "containerY", defaultXml);
-    xml_attribute<> *containerWidth     = findAttribute(componentXml, "containerWidth", defaultXml);
-    xml_attribute<> *containerHeight    = findAttribute(componentXml, "containerHeight", defaultXml);
-    xml_attribute<> *monitor            = findAttribute(componentXml, "monitor", defaultXml);
-    xml_attribute<> *volume             = findAttribute(componentXml, "volume", defaultXml);
-    xml_attribute<> *restart            = findAttribute(componentXml, "restart", defaultXml);
-    xml_attribute<> *additive           = findAttribute(componentXml, "additive", defaultXml);
-    xml_attribute<> *pauseOnScroll      = findAttribute(componentXml, "pauseOnScroll", defaultXml);
+    xml_attribute<> const *x                  = findAttribute(componentXml, "x", defaultXml);
+    xml_attribute<> const *y                  = findAttribute(componentXml, "y", defaultXml);
+    xml_attribute<> const *xOffset            = findAttribute(componentXml, "xOffset", defaultXml);
+    xml_attribute<> const *yOffset            = findAttribute(componentXml, "yOffset", defaultXml);
+    xml_attribute<> const *xOrigin            = findAttribute(componentXml, "xOrigin", defaultXml);
+    xml_attribute<> const *yOrigin            = findAttribute(componentXml, "yOrigin", defaultXml);
+    xml_attribute<> const *height             = findAttribute(componentXml, "height", defaultXml);
+    xml_attribute<> const *width              = findAttribute(componentXml, "width", defaultXml);
+    xml_attribute<> const *fontSize           = findAttribute(componentXml, "fontSize", defaultXml);
+    xml_attribute<> const *fontColor          = findAttribute(componentXml, "fontColor", defaultXml);
+    xml_attribute<> const *minHeight          = findAttribute(componentXml, "minHeight", defaultXml);
+    xml_attribute<> const *minWidth           = findAttribute(componentXml, "minWidth", defaultXml);
+    xml_attribute<> const *maxHeight          = findAttribute(componentXml, "maxHeight", defaultXml);
+    xml_attribute<> const *maxWidth           = findAttribute(componentXml, "maxWidth", defaultXml);
+    xml_attribute<> const *alpha              = findAttribute(componentXml, "alpha", defaultXml);
+    xml_attribute<> const *angle              = findAttribute(componentXml, "angle", defaultXml);
+    xml_attribute<> const *layer              = findAttribute(componentXml, "layer", defaultXml);
+    xml_attribute<> const *backgroundColor    = findAttribute(componentXml, "backgroundColor", defaultXml);
+    xml_attribute<> const *backgroundAlpha    = findAttribute(componentXml, "backgroundAlpha", defaultXml);
+    xml_attribute<> const *reflection         = findAttribute(componentXml, "reflection", defaultXml);
+    xml_attribute<> const *reflectionDistance = findAttribute(componentXml, "reflectionDistance", defaultXml);
+    xml_attribute<> const *reflectionScale    = findAttribute(componentXml, "reflectionScale", defaultXml);
+    xml_attribute<> const *reflectionAlpha    = findAttribute(componentXml, "reflectionAlpha", defaultXml);
+    xml_attribute<> const *containerX         = findAttribute(componentXml, "containerX", defaultXml);
+    xml_attribute<> const *containerY         = findAttribute(componentXml, "containerY", defaultXml);
+    xml_attribute<> const *containerWidth     = findAttribute(componentXml, "containerWidth", defaultXml);
+    xml_attribute<> const *containerHeight    = findAttribute(componentXml, "containerHeight", defaultXml);
+    xml_attribute<> const *monitor            = findAttribute(componentXml, "monitor", defaultXml);
+    xml_attribute<> const *volume             = findAttribute(componentXml, "volume", defaultXml);
+    xml_attribute<> const *restart            = findAttribute(componentXml, "restart", defaultXml);
+    xml_attribute<> const *additive           = findAttribute(componentXml, "additive", defaultXml);
+    xml_attribute<> const *pauseOnScroll      = findAttribute(componentXml, "pauseOnScroll", defaultXml);
 
     info.X = getHorizontalAlignment(x, 0);
     info.Y = getVerticalAlignment(y, 0);
@@ -1488,17 +1475,29 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
     info.Volume             = volume             ? Utils::convertFloat(volume->value())            : 1.f;
     info.Restart            = restart            ? Utils::toLower(restart->value())     == "true" : false;
     info.Additive           = additive           ? Utils::toLower(additive->value())    == "true" : false;
-    info.PauseOnScroll      = pauseOnScroll      ? (Utils::toLower(pauseOnScroll->value()) == "false" ? false : true) : true;
-
-    bool disableVideoRestart;
-    config_.getProperty("disableVideoRestart", disableVideoRestart);
-    if (disableVideoRestart)
-        info.Restart = false;
-    bool disablePauseOnScroll;
     
-    config_.getProperty("disablePauseOnScroll", disablePauseOnScroll);
-    if (disablePauseOnScroll)
+    if (pauseOnScroll) {
+        // If pauseOnScroll's value is "false", then set to false, otherwise true
+        info.PauseOnScroll = Utils::toLower(pauseOnScroll->value()) != "false";
+    }
+    else {
+        // If pauseOnScroll is null, default to true
+        info.PauseOnScroll = true;
+    }
+
+    // This reads the configuration and sets Restart or PauseOnScroll accordingly
+    bool disableVideoRestart = false;
+    bool disablePauseOnScroll = false;
+
+    // Check if the property exists and is set to true
+    if (config_.getProperty("disableVideoRestart", disableVideoRestart) && disableVideoRestart) {
+        info.Restart = false;
+    }
+
+    // Check if the property exists and is set to true
+    if (config_.getProperty("disablePauseOnScroll", disablePauseOnScroll) && disablePauseOnScroll) {
         info.PauseOnScroll = false;
+    }
 
     if(fontColor)
     {
@@ -1526,22 +1525,22 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
     }
 }
 
-void PageBuilder::getTweenSet(xml_node<> *node, Animation *animation)
+void PageBuilder::getTweenSet(const xml_node<> *node, Animation *animation)
 {
     if(node)
     {
         for(xml_node<> *set = node->first_node("set"); set; set = set->next_sibling("set"))
         {
-            TweenSet *ts = new TweenSet();
+            auto *ts = new TweenSet();
             getAnimationEvents(set, *ts);
             animation->Push(ts);
         }
     }
 }
 
-void PageBuilder::getAnimationEvents(xml_node<> *node, TweenSet &tweens)
+void PageBuilder::getAnimationEvents(const xml_node<> *node, TweenSet &tweens)
 {
-    xml_attribute<> *durationXml = node->first_attribute("duration");
+    xml_attribute<> const *durationXml = node->first_attribute("duration");
     std::string actionSetting;
     config_.getProperty("action", actionSetting);
 
@@ -1551,14 +1550,14 @@ void PageBuilder::getAnimationEvents(xml_node<> *node, TweenSet &tweens)
     }
     else
     {
-        for(xml_node<> *animate = node->first_node("animate"); animate; animate = animate->next_sibling("animate"))
+        for(xml_node<> const *animate = node->first_node("animate"); animate; animate = animate->next_sibling("animate"))
         {
-            xml_attribute<> *type = animate->first_attribute("type");
-            xml_attribute<> *from = animate->first_attribute("from");
-            xml_attribute<> *to = animate->first_attribute("to");
-            xml_attribute<> *algorithmXml = animate->first_attribute("algorithm");
-            xml_attribute<>* setting = animate->first_attribute("setting");
-            xml_attribute<>* playlist = animate->first_attribute("playlist");
+            xml_attribute<> const *type = animate->first_attribute("type");
+            xml_attribute<> const *from = animate->first_attribute("from");
+            xml_attribute<> const *to = animate->first_attribute("to");
+            xml_attribute<> const *algorithmXml = animate->first_attribute("algorithm");
+            xml_attribute<> const* setting = animate->first_attribute("setting");
+            xml_attribute<> const* playlist = animate->first_attribute("playlist");
 
             std::string animateType;
             if (type)
@@ -1673,7 +1672,7 @@ void PageBuilder::getAnimationEvents(xml_node<> *node, TweenSet &tweens)
 
                     // if in layout action has playlist="<current playlist name>" then perform action
                     std::string playlistFilter = playlist && playlist->value() ? playlist->value() : "";
-                    Tween *t = new Tween(property, algorithm, fromValue, toValue, durationValue, playlistFilter);
+                    auto *t = new Tween(property, algorithm, fromValue, toValue, durationValue, playlistFilter);
                     if (!fromDefined)
                       t->startDefined = false;
                     tweens.push(t);

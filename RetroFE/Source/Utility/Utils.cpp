@@ -23,18 +23,15 @@
 #include <dirent.h>
 #include <locale>
 #include <list>
+#include <filesystem>
 
 #ifdef WIN32
     #include <Windows.h>
 #endif
 
-Utils::Utils()
-{
-}
+Utils::Utils() = default;
 
-Utils::~Utils()
-{
-}
+Utils::~Utils() = default;
 
 #ifdef WIN32
 void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam ) {
@@ -45,14 +42,14 @@ void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lP
 }
 #endif
 
-std::string Utils::toLower(std::string str)
+std::string Utils::toLower(const std::string& inputStr)
 {
-    for(unsigned int i=0; i < str.length(); ++i)
+    std::string str = inputStr;
+    std::locale loc; // Initialize locale once
+    for (auto& ch : str)
     {
-        std::locale loc;
-        str[i] = std::tolower(str[i], loc);
+        ch = std::tolower(ch, loc);
     }
-
     return str;
 }
 
@@ -81,83 +78,30 @@ std::string Utils::filterComments(std::string line)
     return line;
 }
 
-std::string Utils::combinePath(std::list<std::string> &paths)
-{
-    std::list<std::string>::iterator it = paths.begin();
-    std::string path;
 
-    if(it != paths.end())
+bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file)
+{
+    namespace fs = std::filesystem; // If you're using C++17 or later
+
+    // Convert prefix to an absolute path only once
+    std::string base = Configuration::convertToAbsolutePath(Configuration::absolutePath, prefix);
+
+    // Use a range-based for loop
+    for (const auto& ext : extensions)
     {
-        path += *it;
-        it++;
-    }
+        fs::path temp = base; // This creates a path object, which is more robust than string concatenation
+        temp += ".";
+        temp += ext;
 
-
-    while(it != paths.end())
-    {
-        path += Utils::pathSeparator;
-        path += *it;
-        it++;
-    }
-
-    return path;
-}
-
-std::string Utils::combinePath(std::string path1, std::string path2)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    return combinePath(paths);
-}
-
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    return combinePath(paths);
-}
-
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3, std::string path4)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    paths.push_back(path4);
-    return combinePath(paths);
-}
-std::string Utils::combinePath(std::string path1, std::string path2, std::string path3, std::string path4, std::string path5)
-{
-    std::list<std::string> paths;
-    paths.push_back(path1);
-    paths.push_back(path2);
-    paths.push_back(path3);
-    paths.push_back(path4);
-    paths.push_back(path5);
-    return combinePath(paths);
-}
-
-
-bool Utils::findMatchingFile(std::string prefix, std::vector<std::string> &extensions, std::string &file)
-{
-    for(unsigned int i = 0; i < extensions.size(); ++i)
-    {
-        std::string temp = prefix + "." + extensions[i];
-        temp = Configuration::convertToAbsolutePath(Configuration::absolutePath, temp);
-
-        std::ifstream f(temp.c_str());
-
-        if (f.good())
+        // Use std::filesystem to check if the file exists
+        if (fs::exists(temp))
         {
-            file = temp;
+            file = temp.string();
             return true;
         }
     }
-
     return false;
+
 }
 
 
@@ -203,7 +147,7 @@ void Utils::replaceSlashesWithUnderscores(std::string &content)
 }
 
 
-std::string Utils::getDirectory(std::string filePath)
+std::string Utils::getDirectory(const std::string& filePath)
 {
 
     std::string directory = filePath;
@@ -272,10 +216,11 @@ std::string Utils::trimEnds(std::string str)
 }
 
 
-void Utils::listToVector( std::string str, std::vector<std::string> &vec, char delimiter = ',' )
+void Utils::listToVector( const std::string& str, std::vector<std::string> &vec, char delimiter = ',' )
 {
     std::string value;
-    std::size_t current, previous = 0;
+    std::size_t current;
+    std::size_t previous = 0;
     current = str.find( delimiter );
     while (current != std::string::npos)
     {

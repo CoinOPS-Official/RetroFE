@@ -13,6 +13,6 @@ public:
 
 private:
     SDL_Scancode scancode_;
-    bool pressed_;
+    bool pressed_{ false };
 };
 

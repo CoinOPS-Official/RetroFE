@@ -20,6 +20,7 @@
 #include <locale>
 #include <fstream>
 #include <sstream>
+#include <filesystem>
 
 #ifdef WIN32
 #include <windows.h>
@@ -37,13 +38,9 @@ bool Configuration::HardwareVideoAccel = false;
 int Configuration::AvdecMaxThreads = 2;
 bool Configuration::MuteVideo = false;
 
-Configuration::Configuration()
-{
-}
+Configuration::Configuration() = default;
 
-Configuration::~Configuration()
-{
-}
+Configuration::~Configuration() = default;
 
 void Configuration::initialize()
 {
@@ -56,7 +53,7 @@ void Configuration::initialize()
 #endif
 
     // Check Environment for path
-    if (environment != NULL)
+    if (environment != nullptr)
     {
         absolutePath = environment;
     }
@@ -114,12 +111,12 @@ void Configuration::clearProperties( )
 }
 
 
-bool Configuration::import(std::string keyPrefix, std::string file, bool mustExist)
+bool Configuration::import(const std::string& keyPrefix, const std::string& file, bool mustExist)
 {
     return import("", keyPrefix, file, mustExist);
 }
 
-bool Configuration::import(std::string collection, std::string keyPrefix, std::string file, bool mustExist)
+bool Configuration::import(const std::string& collection, const std::string& keyPrefix, const std::string& file, bool mustExist)
 {
     bool retVal = true;
     int lineCount = 0;
@@ -155,7 +152,7 @@ bool Configuration::import(std::string collection, std::string keyPrefix, std::s
 }
 
 
-bool Configuration::parseLine(std::string collection, std::string keyPrefix, std::string line, int lineCount)
+bool Configuration::parseLine(const std::string& collection, std::string keyPrefix, std::string line, int lineCount)
 {
     bool retVal = false;
     std::string key;
@@ -225,7 +222,7 @@ std::string Configuration::trimEnds(std::string str)
     return str;
 }
 
-bool Configuration::getRawProperty(std::string key, std::string &value)
+bool Configuration::getRawProperty(const std::string& key, std::string &value)
 {
     bool retVal = false;
 
@@ -238,7 +235,7 @@ bool Configuration::getRawProperty(std::string key, std::string &value)
 
     return retVal;
 }
-bool Configuration::getProperty(std::string key, std::string &value)
+bool Configuration::getProperty(const std::string& key, std::string &value)
 {
     bool retVal = getRawProperty(key, value);
 
@@ -256,7 +253,7 @@ bool Configuration::getProperty(std::string key, std::string &value)
     return retVal;
 }
 
-bool Configuration::getProperty(std::string key, int &value)
+bool Configuration::getProperty(const std::string& key, int &value)
 {
     std::string strValue;
 
@@ -272,7 +269,7 @@ bool Configuration::getProperty(std::string key, int &value)
     return retVal;
 }
 
-bool Configuration::getProperty(std::string key, bool &value)
+bool Configuration::getProperty(const std::string& key, bool &value)
 {
     std::string strValue;
 
@@ -293,22 +290,22 @@ bool Configuration::getProperty(std::string key, bool &value)
     return retVal;
 }
 
-void Configuration::setProperty(std::string key, std::string value)
+void Configuration::setProperty(const std::string& key, const std::string& value)
 {
     properties_[key] = value;
 }
 
-bool Configuration::propertiesEmpty()
+bool Configuration::propertiesEmpty() const
 {
     return properties_.empty();
 }
 
-bool Configuration::propertyExists(std::string key)
+bool Configuration::propertyExists(const std::string& key)
 {
     return (properties_.find(key) != properties_.end());
 }
 
-bool Configuration::propertyPrefixExists(std::string key)
+bool Configuration::propertyPrefixExists(const std::string& key)
 {
     PropertiesType::iterator it;
 
@@ -324,7 +321,7 @@ bool Configuration::propertyPrefixExists(std::string key)
     return false;
 }
 
-void Configuration::childKeyCrumbs(std::string parent, std::vector<std::string> &children)
+void Configuration::childKeyCrumbs(const std::string& parent, std::vector<std::string> &children)
 {
     PropertiesType::iterator it;
 
@@ -352,19 +349,19 @@ void Configuration::childKeyCrumbs(std::string parent, std::vector<std::string> 
 
 std::string Configuration::convertToAbsolutePath(const std::string& prefix, const std::string& path)
 {
-    char first = (path.size() > 0) ? path[0] : ' ';
-    char second = (path.size() > 1) ? path[1] : ' ';
-
-    // check to see if it is already an absolute path
-    if((first != Utils::pathSeparator) && (second != ':'))
+    std::filesystem::path fsPath(path);
+    // Check if the path is already an absolute path
+    if (!fsPath.is_absolute())
     {
-        return Utils::combinePath(prefix, path);
+        // Combine prefix and path
+        std::filesystem::path absPath = std::filesystem::absolute(std::filesystem::path(prefix) / fsPath);
+        return absPath.string();
     }
     return path;
 }
 
 
-bool Configuration::getPropertyAbsolutePath(std::string key, std::string &value)
+bool Configuration::getPropertyAbsolutePath(const std::string& key, std::string &value)
 {
     bool retVal = getProperty(key, value);
 
@@ -376,13 +373,13 @@ bool Configuration::getPropertyAbsolutePath(std::string key, std::string &value)
     return retVal;
 }
 
-void Configuration::getMediaPropertyAbsolutePath(std::string collectionName, std::string mediaType, std::string &value)
+void Configuration::getMediaPropertyAbsolutePath(const std::string& collectionName, const std::string& mediaType, std::string &value)
 {
     return getMediaPropertyAbsolutePath(collectionName, mediaType, false, value);
 }
 
 
-void Configuration::getMediaPropertyAbsolutePath(std::string collectionName, std::string mediaType, bool system, std::string &value)
+void Configuration::getMediaPropertyAbsolutePath(const std::string& collectionName, const std::string& mediaType, bool system, std::string &value)
 {
     std::string key = "collections." + collectionName + ".media." + mediaType;
     if (system) 
@@ -414,7 +411,7 @@ void Configuration::getMediaPropertyAbsolutePath(std::string collectionName, std
     }
 }
 
-void Configuration::getCollectionAbsolutePath(std::string collectionName, std::string &value)
+void Configuration::getCollectionAbsolutePath(const std::string& collectionName, std::string &value)
 {
     std::string key = "collections." + collectionName + ".list.path";
 

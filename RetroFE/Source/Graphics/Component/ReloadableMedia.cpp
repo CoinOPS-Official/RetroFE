@@ -28,36 +28,32 @@
 #include <vector>
 #include <iostream>
 
-ReloadableMedia::ReloadableMedia(Configuration &config, bool systemMode, bool layoutMode, bool commonMode, bool menuMode, std::string type, std::string imageType, 
-    Page &p, int displayOffset, bool isVideo, Font *font, bool jukebox, int jukeboxNumLoops, int randomSelect)
+ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, [[maybe_unused]] bool menuMode, const std::string& type, const std::string& imageType,
+    Page& p, int displayOffset, bool isVideo, Font* font, bool jukebox, int jukeboxNumLoops, int randomSelect)
     : Component(p)
     , config_(config)
     , systemMode_(systemMode)
     , layoutMode_(layoutMode)
     , commonMode_(commonMode)
-    , menuMode_(menuMode)
-    , loadedComponent_(NULL)
-    , videoInst_(NULL)
+    , randomSelect_(randomSelect)
     , isVideo_(isVideo)
     , FfntInst_(font)
-    , textFallback_(false)
     , type_(type)
     , displayOffset_(displayOffset)
     , imageType_(imageType)
     , jukebox_(jukebox)
     , jukeboxNumLoops_(jukeboxNumLoops)
-    , numberOfImages_(27)
-    , randomSelect_(randomSelect)
 {
-    allocateGraphicsMemory();
+
 }
 
 ReloadableMedia::~ReloadableMedia()
 {
-    if (loadedComponent_ != NULL)
+    if (loadedComponent_ != nullptr)
     {
+        
         delete loadedComponent_;
-        loadedComponent_ = NULL;
+        loadedComponent_ = nullptr;
     }
 }
 
@@ -68,32 +64,33 @@ void ReloadableMedia::enableTextFallback_(bool value)
 
 bool ReloadableMedia::update(float dt)
 {
-    Component* foundComponent = loadedComponent_;
     if (newItemSelected ||
-       (newScrollItemSelected && getMenuScrollReload()) ||
-        type_ == "isPaused" || 
-        type_ == "playCount" || 
+        (newScrollItemSelected && getMenuScrollReload()) ||
+        type_ == "isPaused" ||
+        type_ == "playCount" ||
         type_ == "playcount")
     {
         newItemSelected = false;
         newScrollItemSelected = false;
-        Component* foundComponent = reloadTexture();
+        Component* foundComponent = reloadTexture();  // Removed the re-declaration here.
         if (foundComponent) {
             foundComponent->playlistName = page.getPlaylistName();
             foundComponent->allocateGraphicsMemory();
             baseViewInfo.ImageWidth = foundComponent->baseViewInfo.ImageWidth;
             baseViewInfo.ImageHeight = foundComponent->baseViewInfo.ImageHeight;
             foundComponent->update(dt);
-            // if found and it's not the same as loaded, then finnaly delete the loaded component
+            // if found and it's not the same as loaded, then finally delete the loaded component
             if (foundComponent != loadedComponent_) {
+                
                 delete loadedComponent_;
                 loadedComponent_ = foundComponent;
             }
         }
         else {
             // delete previous loaded item if none found
+            
             delete loadedComponent_;
-            loadedComponent_ = foundComponent;
+            loadedComponent_ = nullptr;  // Set to nullptr to avoid dangling pointer.
         }
     }
     else if (loadedComponent_)
@@ -104,6 +101,7 @@ bool ReloadableMedia::update(float dt)
     // needs to be ran at the end to prevent the NewItemSelected flag from being detected
     return Component::update(dt);
 }
+
 
 void ReloadableMedia::allocateGraphicsMemory()
 {
@@ -133,17 +131,14 @@ Component *ReloadableMedia::reloadTexture()
     std::string typeLC = Utils::toLower(type_);
     Item* selectedItem = page.getSelectedItem(displayOffset_);
 
-    if(loadedComponent_)
+    if(loadedComponent_ && !selectedItem)
     {
-        // delete image/video/text if no selected Item
-        if (!selectedItem)
-        {
+            
             delete loadedComponent_;
-            loadedComponent_ = NULL;
-        }
+            loadedComponent_ = nullptr;
     }
 
-    if(!selectedItem) return NULL;
+    if(!selectedItem) return nullptr;
 
     config_.getProperty("currentCollection", currentCollection_);
 
@@ -161,40 +156,40 @@ Component *ReloadableMedia::reloadTexture()
     {
         if (selectedItem->isFavorite)
         {
-            names.push_back("yes");
+            names.emplace_back("yes");
         }
         else
         {
-            names.push_back("no");
+            names.emplace_back("no");
         }
     }
     if (typeLC == "ispaused")
     {
         if (page.isPaused( ))
         {
-            names.push_back("yes");
+            names.emplace_back("yes");
         }
         else
         {
-            names.push_back("no");
+            names.emplace_back("no");
         }
     }
     if (typeLC == "islocked")
     {
         if (page.isLocked())
         {
-            names.push_back("yes");
+            names.emplace_back("yes");
         }
         else
         {
-            names.push_back("no");
+            names.emplace_back("no");
         }
     }
 
-    names.push_back("default");
+    names.emplace_back("default");
     // if same playlist then use existing loaded component
-    Component* foundComponent = NULL;
-    if (loadedComponent_ != NULL && 
+    Component* foundComponent = nullptr;
+    if (loadedComponent_ != nullptr && 
         (typeLC.rfind("playlist", 0) == 0 && 
         page.getPlaylistName() == loadedComponent_->playlistName)
     ) {
@@ -369,21 +364,17 @@ Component *ReloadableMedia::reloadTexture()
             basename = selectedItem->fullTitle.at(0);
             defined  = true;
         }
-        else if (typeLC == "position")
-        {
-            if (!selectedItem->collectionInfo->items.empty()) {
-                size_t position = page.getSelectedIndex() + 1;
-                if (position == 1) {
-                    basename = '1';
-                }
-                else if (position == page.getCollectionSize()) {
-                    basename = std::to_string(numberOfImages_);
-                }
-                else {
-                    basename = std::to_string(int(ceil(float(position) / float(page.getCollectionSize()) * float(numberOfImages_))));
-                }
-                defined = true;
+        else if (typeLC == "position" && !selectedItem->collectionInfo->items.empty()) {
+            if (size_t position = page.getSelectedIndex() + 1; position == 1) {
+                basename = '1';
             }
+            else if (position == page.getCollectionSize()) {
+                basename = std::to_string(numberOfImages_);
+            }
+            else {
+                basename = std::to_string(static_cast<int>(ceil(static_cast<float>(position) / static_cast<float>(page.getCollectionSize()) * static_cast<float>(numberOfImages_))));
+            }
+            defined = true;
         }
 
         if (!selectedItem->leaf) // item is not a leaf
@@ -469,7 +460,7 @@ Component *ReloadableMedia::reloadTexture()
 
         }
 
-        if (foundComponent != NULL)
+        if (foundComponent != nullptr)
         {
             return foundComponent;
         }
@@ -485,12 +476,18 @@ Component *ReloadableMedia::reloadTexture()
 }
 
 
-Component *ReloadableMedia::findComponent(const std::string& collection, const std::string& type, const std::string& basename, std::string filepath, bool systemMode, bool isVideo)
+Component* ReloadableMedia::findComponent(
+    const std::string& collection,
+    const std::string& type,
+    const std::string& basename,
+    std::string_view filepath, // pass by const reference
+    bool systemMode,
+    bool isVideo) 
 {
     std::string imagePath;
-    Component *component = NULL;
-    VideoBuilder videoBuild;
-    ImageBuilder imageBuild;
+    Component *component = nullptr;
+    VideoBuilder videoBuild{};
+    ImageBuilder imageBuild{};
 
     if (filepath != "") {
         imagePath = filepath; 
@@ -546,22 +543,18 @@ Component *ReloadableMedia::findComponent(const std::string& collection, const s
     }
 
     // if file already loaded, don't load again
-    std::vector<std::string> extensions;
-    if (isVideo) {
-        extensions = {
-            "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
-            "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
-        };
-    } else {
-        extensions = {
-        "png", "PNG", "jpg", "JPG", "jpeg", "JPEG"
-        };
-    }
-    std::string filePath;
-    if (loadedComponent_ != NULL && imagePath != "" && (imagePath == loadedComponent_->filePath() || 
-        (Utils::findMatchingFile(Utils::combinePath(imagePath, basename), extensions, filePath) && filePath == loadedComponent_->filePath()))
-        ) {
-        return loadedComponent_;
+    const std::vector<std::string>& extensions = isVideo ? ReloadableMedia::videoExtensions : ReloadableMedia::imageExtensions;
+    
+    if (loadedComponent_ != nullptr && !imagePath.empty()) {
+        std::string filePath;
+        if (Utils::findMatchingFile(Utils::combinePath(imagePath, basename), extensions, filePath)) {
+            if (filePath == loadedComponent_->filePath()) {
+                return loadedComponent_;
+            }
+        }
+        else if (imagePath == loadedComponent_->filePath()) {
+            return loadedComponent_;
+        }
     }
 
     if(isVideo)

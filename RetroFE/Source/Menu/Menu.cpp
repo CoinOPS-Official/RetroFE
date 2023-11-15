@@ -25,13 +25,13 @@
 
 Menu::Menu( Configuration &c, UserInput &ui )
     : config_( c ),
-      input_( ui )
+      input_( ui ),
+      page_(nullptr)
 {
-    page_ = nullptr;
 }
 
 
-void Menu::handleEntry( Item *item )
+void Menu::handleEntry( Item const *item )
 {
     std::cout << "Handling " + item->ctrlType + "." << std::endl;
     std::string key  = getKey();
@@ -56,7 +56,7 @@ void Menu::clearPage( )
 }
 
 
-std::string Menu::getKey()
+std::string Menu::getKey() const
 {
 
     SDL_Event   event;

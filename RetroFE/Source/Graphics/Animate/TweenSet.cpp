@@ -15,15 +15,13 @@
  */
 #include "TweenSet.h"
 
-TweenSet::TweenSet()
-{
-}
+TweenSet::TweenSet() = default;
 
 TweenSet::TweenSet(TweenSet &copy)
 {
-    for(std::vector<Tween *>::iterator it = copy.set_.begin(); it != copy.set_.end(); it++)
+    for(auto it = copy.set_.begin(); it != copy.set_.end(); it++)
     {
-        Tween *t = new Tween(**it);
+        auto *t = new Tween(**it);
         set_.push_back(t);
     }
 }

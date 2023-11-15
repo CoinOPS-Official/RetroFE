@@ -29,29 +29,29 @@ public:
     static std::string trimEnds(std::string str);
 	void clearProperties( );
     // gets the global configuration
-    bool import(std::string keyPrefix, std::string file, bool mustExist = true);
-    bool import(std::string collection, std::string keyPrefix, std::string file, bool mustExist = true);
-    bool getProperty(std::string key, std::string &value);
-    bool getProperty(std::string key, int &value);
-    bool getProperty(std::string key, bool &value);
-    void childKeyCrumbs(std::string parent, std::vector<std::string> &children);
-    void setProperty(std::string key, std::string value);
-    bool propertiesEmpty();
-    bool propertyExists(std::string key);
-    bool propertyPrefixExists(std::string key);
-    bool getPropertyAbsolutePath(std::string key, std::string &value);
-    void getMediaPropertyAbsolutePath(std::string collectionName, std::string mediaType, std::string &value);
-    void getMediaPropertyAbsolutePath(std::string collectionName, std::string mediaType, bool system, std::string &value);
-    void getCollectionAbsolutePath(std::string collectionName, std::string &value);
+    bool import(const std::string& keyPrefix, const std::string& file, bool mustExist = true);
+    bool import(const std::string& collection, const std::string& keyPrefix, const std::string& file, bool mustExist = true);
+    bool getProperty(const std::string& key, std::string &value);
+    bool getProperty(const std::string& key, int &value);
+    bool getProperty(const std::string& key, bool &value);
+    void childKeyCrumbs(const std::string& parent, std::vector<std::string> &children);
+    void setProperty(const std::string& key, const std::string& value);
+    bool propertiesEmpty() const;
+    bool propertyExists(const std::string& key);
+    bool propertyPrefixExists(const std::string& key);
+    bool getPropertyAbsolutePath(const std::string& key, std::string &value);
+    void getMediaPropertyAbsolutePath(const std::string& collectionName, const std::string& mediaType, std::string &value);
+    void getMediaPropertyAbsolutePath(const std::string& collectionName, const std::string& mediaType, bool system, std::string &value);
+    void getCollectionAbsolutePath(const std::string& collectionName, std::string &value);
     static std::string absolutePath;
 	static int AvdecMaxThreads;
 	static bool HardwareVideoAccel; // Declare HardwareVideoAccel as a static member variable
 	static bool MuteVideo;
 
 private:
-    bool getRawProperty(std::string key, std::string &value);
-    bool parseLine(std::string collection, std::string keyPrefix, std::string line, int lineCount);
-    typedef std::map<std::string, std::string> PropertiesType;
+    bool getRawProperty(const std::string& key, std::string &value);
+    bool parseLine(const std::string& collection, std::string keyPrefix, std::string line, int lineCount);
+    using PropertiesType = std::map<std::string, std::string, std::less<>>;
     typedef std::pair<std::string, std::string> PropertiesPair;
 
     PropertiesType properties_;

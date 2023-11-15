@@ -133,7 +133,7 @@ void Text::draw( )
     baseViewInfo.ImageHeight = oldImageHeight;
 
 
-    SDL_Rect rect;
+    SDL_Rect rect = { 0, 0, 0, 0 };
     rect.x = static_cast<int>( xOrigin );
 
     for ( unsigned int i = 0; i <= textIndexMax; ++i )

@@ -16,21 +16,20 @@
 #include "ImageBuilder.h"
 #include "../../Utility/Utils.h"
 #include "../../Utility/Log.h"
-#include <fstream>
 
 Image * ImageBuilder::CreateImage(const std::string& path, Page &p, const std::string& name, int monitor, bool additive)
 {
-    Image *image = NULL;
+    Image *image = nullptr;
     static std::vector<std::string> extensions = {
         "png", "PNG", "jpg", "JPG", "jpeg", "JPEG"
     };
 
     std::string prefix = Utils::combinePath(path, name);
-    std::string file;
 
-    if(Utils::findMatchingFile(prefix, extensions, file))
+    if(std::string file; Utils::findMatchingFile(prefix, extensions, file))
     {
         image = new Image(file, "", p, monitor, additive);
+        image->allocateGraphicsMemory();
     }
 
     return image;

@@ -17,6 +17,6 @@ private:
     Sint16 min_;
     Sint16 max_;
         
-    bool pressed_;
+    bool pressed_{ false };
 };
 

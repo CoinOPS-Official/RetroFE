@@ -4,7 +4,6 @@ JoyHatHandler::JoyHatHandler(SDL_JoystickID joynum, Uint8 hatnum, Uint8 directio
 : joynum_(joynum)
 , hatnum_(hatnum)
 , direction_(direction)
-, pressed_(false)
 {
 }
 

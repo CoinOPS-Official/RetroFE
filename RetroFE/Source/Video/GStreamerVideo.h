@@ -27,10 +27,10 @@ extern "C"
 class GStreamerVideo : public IVideo
 {
 public:
-    GStreamerVideo( int monitor );
+    explicit GStreamerVideo( int monitor );
     ~GStreamerVideo();
     bool initialize();
-    bool play(std::string file);
+    bool play(const std::string& file);
     bool stop();
     bool deInitialize();
     SDL_Texture *getTexture() const;
@@ -55,42 +55,43 @@ public:
 
 private:
         
+    size_t totalSize_{ 0 };
+    
     enum BufferLayout {
         UNKNOWN,        // Initial state
         CONTIGUOUS,     // Contiguous buffer layout
         NON_CONTIGUOUS  // Non-contiguous buffer layout
     };
     
-    static void processNewBuffer (GstElement *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
-    static void elementSetupCallback(GstElement *playbin, GstElement *element, GStreamerVideo *video);
-    bool initializeGstElements(std::string file);
+    static void processNewBuffer (GstElement const *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
+    static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
+    bool initializeGstElements(const std::string& file);
     bool createAndLinkGstElements();
     void loopHandler();
-    GstElement *playbin_;
-    GstElement *videoBin_;
-    GstElement *videoSink_;
-    GstElement *videoConvert_;
-    GstElement *capsFilter_;
-    GstCaps *videoConvertCaps_;
-    GstBus *videoBus_;
-    SDL_Texture* texture_;
-    gulong elementSetupHandlerId_;
-    gulong handoffHandlerId_;
-    gint height_;
-    gint width_;
-    GstBuffer *videoBuffer_;
-    bool frameReady_;
-    bool isPlaying_;
+    GstElement* playbin_{ nullptr };
+    GstElement* videoBin_{ nullptr };
+    GstElement* videoSink_{ nullptr };
+    GstElement* videoConvert_{ nullptr };
+    GstElement* capsFilter_{ nullptr };
+    GstCaps* videoConvertCaps_{ nullptr };
+    GstBus* videoBus_{ nullptr };
+    SDL_Texture* texture_{ nullptr };
+    gulong elementSetupHandlerId_{ 0 };
+    gulong handoffHandlerId_{ 0 };
+    gint height_{ 0 };
+    gint width_{ 0 };
+    GstBuffer* videoBuffer_{ nullptr };
+    bool frameReady_{ false };
+    bool isPlaying_{ false };
     static bool initialized_;
-    int playCount_;
-    std::string currentFile_;
-    int numLoops_;
-    float volume_;
-    double currentVolume_;
+    int playCount_{ 0 };
+    std::string currentFile_{};
+    int numLoops_{ 0 };
+    float volume_{ 0.0f };
+    double currentVolume_{ 0.0 };
     int monitor_;
-    bool paused_;
-    double lastSetVolume_;
-    bool lastSetMuteState_;
-    guint busWatchId_;
-    BufferLayout bufferLayout_ = UNKNOWN;
+    bool paused_{ false };
+    double lastSetVolume_{ 0.0 };
+    bool lastSetMuteState_{ false };
+    BufferLayout bufferLayout_{ UNKNOWN };
 };

@@ -121,7 +121,7 @@ int AttractMode::update(float dt, Page &page)
 }
 
 
-bool AttractMode::isActive()
+bool AttractMode::isActive() const
 {
     return isActive_;
 }
@@ -132,7 +132,7 @@ void AttractMode::activate()
 }
 
 
-bool AttractMode::isSet()
+bool AttractMode::isSet() const
 {
     return isSet_;
 }

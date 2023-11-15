@@ -33,7 +33,7 @@ public:
     std::string filePath();
 
 protected:
-    Component  *video_;
+    Component* video_{ nullptr };
     std::string file_;
     std::string altFile_;
     int         numLoops_;

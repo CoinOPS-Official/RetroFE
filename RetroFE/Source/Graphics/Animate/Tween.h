@@ -25,15 +25,15 @@ class Tween
 {
 public:
 
-    Tween(TweenProperty name, TweenAlgorithm type, double start, double end, double duration, std::string playlistFilter = "");
-    float animate(double elapsedTime);
-    float animate(double elapsedTime, double startValue);
+    Tween(TweenProperty name, TweenAlgorithm type, double start, double end, double duration, const std::string& playlistFilter = "");
+    float animate(double elapsedTime) const;
+    float animate(double elapsedTime, double startValue) const;
     static float animateSingle(TweenAlgorithm type, double start, double end, double duration, double elapsedTime);
     static TweenAlgorithm getTweenType(std::string name);
     static bool getTweenProperty(std::string name, TweenProperty &property);
     TweenProperty property;
     double duration;
-    bool   startDefined;
+    bool   startDefined{ true };
     std::string playlistFilter;
 
 private:
@@ -60,8 +60,8 @@ private:
     static double easeInOutCircular(double elapsedTime, double duration, double b, double c);
     static double linear(double elapsedTime, double duration, double b, double c);
 
-    static std::map<std::string, TweenAlgorithm> tweenTypeMap_;
-    static std::map<std::string, TweenProperty> tweenPropertyMap_;
+    static std::map<std::string, TweenAlgorithm, std::less<>> tweenTypeMap_;
+    static std::map<std::string, TweenProperty, std::less<>> tweenPropertyMap_;
     TweenAlgorithm type;
     double start;
     double end;

@@ -23,7 +23,7 @@
 
 std::vector<SDL_Window *>   SDL::window_;
 std::vector<SDL_Renderer *> SDL::renderer_;
-SDL_mutex                  *SDL::mutex_ = NULL;
+SDL_mutex                  *SDL::mutex_ = nullptr;
 std::vector<int>            SDL::displayWidth_;
 std::vector<int>            SDL::displayHeight_;
 std::vector<int>            SDL::windowWidth_;
@@ -306,8 +306,7 @@ bool SDL::initialize( Configuration &config )
         }
     }
 
-    bool minimize_on_focus_loss_;
-    if ( config.getProperty( "minimize_on_focus_loss", minimize_on_focus_loss_ ) )
+    if (bool minimize_on_focus_loss_;  config.getProperty( "minimize_on_focus_loss", minimize_on_focus_loss_ ) )
     {
         if ( minimize_on_focus_loss_ )
         {
@@ -321,7 +320,7 @@ bool SDL::initialize( Configuration &config )
 
     mutex_ = SDL_CreateMutex( );
 
-    if ( mutex_ == NULL )
+    if ( mutex_ == nullptr )
     {
         std::string error = SDL_GetError( );
         Logger::write( Logger::ZONE_ERROR, "SDL", "Mutex creation failed: " + error );
@@ -351,12 +350,12 @@ bool SDL::deInitialize( )
     if ( mutex_ )
     {
         SDL_DestroyMutex(mutex_);
-        mutex_ = NULL;
+        mutex_ = nullptr;
     }
 
     for ( int i = 0; i < screenCount_; ++i )
     {
-        if ( renderer_.size( ) > 0 )
+        if ( !renderer_.empty() )
         {
             if ( renderer_[0] )
             {
@@ -365,7 +364,7 @@ bool SDL::deInitialize( )
             renderer_.erase( renderer_.begin( ) );
         }
 
-        if ( window_.size( ) > 0 )
+        if ( !window_.empty() )
         {
             if ( window_[0] )
             {
@@ -410,7 +409,7 @@ SDL_Window* SDL::getWindow( int index )
 
 
 // Render a copy of a texture
-bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect *dest, ViewInfo &viewInfo, int layoutWidth, int layoutHeight )
+bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect const *src, SDL_Rect const *dest, ViewInfo &viewInfo, int layoutWidth, int layoutHeight )
 {
 
     // Skip rendering if the object is invisible anyway or if renderer does not exist
@@ -439,12 +438,12 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
         viewInfo.ContainerHeight = static_cast<float>( layoutHeight );
     }
 
-    SDL_Rect srcRect;
-    SDL_Rect dstRect;
-    SDL_Rect srcRectCopy;
-    SDL_Rect dstRectCopy;
-    SDL_Rect srcRectOrig;
-    SDL_Rect dstRectOrig;
+    SDL_Rect srcRect{};
+    SDL_Rect dstRect{};
+    SDL_Rect srcRectCopy{};
+    SDL_Rect dstRectCopy{};
+    SDL_Rect srcRectOrig{};
+    SDL_Rect dstRectOrig{};
     double   imageScaleX;
     double   imageScaleY;
 
@@ -476,7 +475,7 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
         srcRect.y = 0;
         int w = 0;
         int h = 0;
-        SDL_QueryTexture(texture, NULL, NULL, &w, &h);
+        SDL_QueryTexture(texture, nullptr, nullptr, &w, &h);
         srcRect.w = w;
         srcRect.h = h;
     }
@@ -560,11 +559,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
             {
                 dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
                 SDL_SetTextureAlphaMod( texture, static_cast<char>( alpha * 255 ) );
-                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_NONE );
+                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE );
                 dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                 dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                 angle    += 180;
-                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_NONE );
+                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE );
             }
         }
         else
@@ -576,11 +575,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                 dstRect.y = tmp - dstRect.h/2 + dstRect.w/2;
                 angle    += 90;
                 SDL_SetTextureAlphaMod( texture, static_cast<char>( alpha * 255 ) );
-                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_NONE );
+                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE );
                 dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                 dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                 angle    += 180;
-                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_NONE );
+                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE );
             }
         }
     }
@@ -607,7 +606,7 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
         if ( srcRect.h > 0 && srcRect.w > 0 )
         {
             SDL_SetTextureAlphaMod( texture, static_cast<char>( alpha * 255 ) );
-            SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_NONE );
+            SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE );
         }
     }
 
@@ -693,11 +692,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                 {
                     dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
                     SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
                     dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                     dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                     angle    += 180;
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
                 }
             }
             else
@@ -709,11 +708,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                     dstRect.y = tmp - dstRect.h/2 + dstRect.w/2;
                     angle    += 90;
                     SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
                     dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                     dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                     angle    += 180;
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
                 }
             }
         }
@@ -740,7 +739,7 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
             if ( srcRect.h > 0 && srcRect.w > 0 )
             {
                 SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
             }
         }
     }
@@ -827,11 +826,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                 {
                     dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
                     SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
                     dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                     dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                     angle    += 180;
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
                 }
             }
             else
@@ -843,11 +842,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                     dstRect.y = tmp - dstRect.h/2 + dstRect.w/2;
                     angle    += 90;
                     SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
                     dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                     dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                     angle    += 180;
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
                 }
             }
         }
@@ -874,7 +873,7 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
             if ( srcRect.h > 0 && srcRect.w > 0 )
             {
                 SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_VERTICAL );
+                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL );
             }
         }
     }
@@ -961,11 +960,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                 {
                     dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
                     SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
                     dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                     dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                     angle    += 180;
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
                 }
             }
             else
@@ -977,11 +976,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                     dstRect.y = tmp - dstRect.h/2 + dstRect.w/2;
                     angle    += 90;
                     SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
                     dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                     dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                     angle    += 180;
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
                 }
             }
         }
@@ -1008,7 +1007,7 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
             if ( srcRect.h > 0 && srcRect.w > 0 )
             {
                 SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
             }
         }
     }
@@ -1095,11 +1094,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                 {
                     dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
                     SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
                     dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                     dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                     angle    += 180;
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
                 }
             }
             else
@@ -1111,11 +1110,11 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
                     dstRect.y = tmp - dstRect.h/2 + dstRect.w/2;
                     angle    += 90;
                     SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
                     dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
                     dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
                     angle    += 180;
-                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                    SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
                 }
             }
         }
@@ -1142,7 +1141,7 @@ bool SDL::renderCopy( SDL_Texture *texture, float alpha, SDL_Rect *src, SDL_Rect
             if ( srcRect.h > 0 && srcRect.w > 0 )
             {
                 SDL_SetTextureAlphaMod( texture, static_cast<char>( viewInfo.ReflectionAlpha * alpha * 255 ) );
-                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, NULL, SDL_FLIP_HORIZONTAL );
+                SDL_RenderCopyEx( renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL );
             }
         }
     }

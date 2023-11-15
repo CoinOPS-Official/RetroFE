@@ -55,11 +55,11 @@ public:
     void exitMenu();
     void enterGame();
     void exitGame();
-    std::string getPlaylistName();
+    std::string getPlaylistName() const;
     void favPlaylist();
     void nextPlaylist();
     void prevPlaylist();
-    void selectPlaylist(std::string playlist);
+    void selectPlaylist(const std::string& playlist);
     void nextCyclePlaylist(std::vector<std::string> list);
     void prevCyclePlaylist(std::vector<std::string> list);
     void pushMenu(ScrollingList *s, int index = -1);
@@ -82,7 +82,7 @@ public:
     void start();
     void stop();
     void setCurrentLayout(int layout);
-    int getCurrentLayout();
+    int getCurrentLayout() const;
     int getLayoutWidthByMonitor(int monitor);
     int getLayoutHeightByMonitor(int monitor);
     void setLayoutWidthByMonitor(int monitor, int width);
@@ -106,8 +106,8 @@ public:
     void draw();
     void freeGraphicsMemory();
     void allocateGraphicsMemory();
-    void deInitializeFonts( );
-    void initializeFonts( );
+    void deInitializeFonts( ) const;
+    void initializeFonts( ) const;
     void playSelect();
     bool isSelectPlaying();
     std::string getCollectionName();
@@ -143,11 +143,11 @@ public:
     void  addPlaylist();
     void  removePlaylist();
     void  togglePlaylist();
-    void  reallocateMenuSpritePoints(bool updatePlaylistMenu = true);
-    bool  isMenuScrolling();
-    bool  isPlaying();
-    void  resetScrollPeriod();
-    void  updateScrollPeriod();
+    void  reallocateMenuSpritePoints(bool updatePlaylistMenu = true) const;
+    bool  isMenuScrolling() const;
+    bool  isPlaying() const;
+    void  resetScrollPeriod() const;
+    void  updateScrollPeriod() const;
     void  scroll(bool forward);
     bool  hasSubs();
     int   getLayoutWidth(int layout);
@@ -155,7 +155,7 @@ public:
     void  setLayoutWidth(int layout, int width);
     void  setLayoutHeight(int layout, int height);
     void  setJukebox();
-    bool  isJukebox();
+    bool  isJukebox() const;
     bool  isJukeboxPlaying();
     void  skipForward( );
     void  skipBackward( );
@@ -167,10 +167,10 @@ public:
     unsigned long long getDuration( );
     bool  isPaused( );
     void setLocked(bool locked);
-    bool isLocked();
+    bool isLocked() const;
     ScrollingList* getPlaylistMenu();
     void setPlaylistMenu(ScrollingList*);
-    bool playlistExists(std::string);
+    bool playlistExists(const std::string&);
     void setSelectedItem();
     bool fromPreviousPlaylist = false;
     bool fromPlaylistNav = false;
@@ -190,9 +190,9 @@ private:
         CollectionInfo::Playlists_T::iterator playlist;
         bool queueDelete;
     };
-    typedef std::list<MenuInfo_S> CollectionVector_T;
+    using CollectionVector_T = std::list<MenuInfo_S>;
     
-    typedef std::vector< std::vector<ScrollingList *> > MenuVector_T;
+    using MenuVector_T = std::vector<std::vector<ScrollingList *>>;
     void setActiveMenuItemsFromPlaylist(MenuInfo_S info, ScrollingList* menu);
 
     std::vector<ScrollingList *> activeMenu_;
@@ -218,7 +218,6 @@ private:
     Sound *highlightSoundChunk_;
     Sound *selectSoundChunk_;
     float minShowTime_;
-    float elapsedTime_;
     CollectionInfo::Playlists_T::iterator playlist_;
     std::vector<int> layoutWidth_;
     std::vector<int> layoutHeight_;

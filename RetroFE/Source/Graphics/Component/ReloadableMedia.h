@@ -27,26 +27,25 @@ class Image;
 class ReloadableMedia : public Component
 {
 public:
-    ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, bool menuMode, std::string type, std::string imageType, Page& page,
-        int displayOffset, bool isVideo, Font* font, bool jukebox, int jukeboxNumLoops, int randomSelect);
-    virtual ~ReloadableMedia();
-    bool update(float dt);
-    void draw();
-    void freeGraphicsMemory();
-    void allocateGraphicsMemory();
-    Component* findComponent(const std::string& collection, const std::string& type, const std::string& basename, std::string filepath, bool systemMode, bool isVideo);
-
+    ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, [[maybe_unused]] bool menuMode, const std::string& type, const std::string& imageType,
+        Page& p, int displayOffset, bool isVideo, Font* font, bool jukebox, int jukeboxNumLoops, int randomSelect);
+    ~ReloadableMedia() override;
+    bool update(float dt) override;
+    void draw() override;
+    void freeGraphicsMemory() override;
+    void allocateGraphicsMemory() override;
+    Component* findComponent(const std::string& collection, const std::string& type, const std::string& basename, std::string_view filepath, bool systemMode, bool isVideo);
     void enableTextFallback_(bool value);
-    virtual bool isJukeboxPlaying();
-    virtual void skipForward();
-    virtual void skipBackward();
-    virtual void skipForwardp();
-    virtual void skipBackwardp();
-    virtual void pause();
-    virtual void restart();
-    virtual unsigned long long getCurrent();
-    virtual unsigned long long getDuration();
-    virtual bool isPaused();
+    bool isJukeboxPlaying() override;
+    void skipForward() override;
+    void skipBackward() override;
+    void skipForwardp() override;
+    void skipBackwardp() override;
+    void pause() override;
+    void restart() override;
+    unsigned long long getCurrent() override;
+    unsigned long long getDuration() override;
+    bool isPaused() override;
 
 
 private:
@@ -55,19 +54,26 @@ private:
     bool systemMode_;
     bool layoutMode_;
     bool commonMode_;
-    bool menuMode_;
     int randomSelect_;
-    Component* loadedComponent_;
-    IVideo* videoInst_;
+    Component* loadedComponent_{ nullptr };
     bool isVideo_;
     Font* FfntInst_;
-    bool textFallback_;
+    bool textFallback_{ false };
     std::string type_;
     std::string currentCollection_;
-    Page* page_;
     int displayOffset_;
     std::string imageType_;
     bool jukebox_;
     int  jukeboxNumLoops_;
-    int numberOfImages_;
+    int numberOfImages_{ 27 };
+    
+    static inline const std::vector<std::string> imageExtensions = {
+        "png", "PNG", "jpg", "JPG", "jpeg", "JPEG",
+    };
+
+    static inline const std::vector<std::string> videoExtensions = {
+        "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
+        "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
+    };
+
 };

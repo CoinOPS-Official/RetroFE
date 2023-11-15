@@ -30,12 +30,12 @@ class Menu
 
 public:
     Menu( Configuration &c, UserInput &ui );
-    void handleEntry( Item *item );
+    void handleEntry( Item const *item );
     void setPage( Page *page );
     void clearPage( );
 
 private:
-    std::string    getKey();
+    std::string    getKey() const;
     Configuration &config_;
     UserInput     &input_;
     Page          *page_;

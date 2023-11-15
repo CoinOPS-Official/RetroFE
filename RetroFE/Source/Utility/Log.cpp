@@ -82,7 +82,7 @@ void Logger::write(Zone zone, std::string component, std::string message)
         }
     }
     std::time_t rawtime = std::time(NULL);
-    struct tm* timeinfo = std::localtime(&rawtime);
+    struct tm const* timeinfo = std::localtime(&rawtime);
 
     static char timeStr[60];
     std::strftime(timeStr, sizeof(timeStr), "%Y-%m-%d %H:%M:%S", timeinfo);

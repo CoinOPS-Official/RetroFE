@@ -18,6 +18,7 @@
 #include "Animate/TweenTypes.h"
 #include <string>
 #include <map>
+#include <cfloat>
 
 class Font;
 
@@ -40,43 +41,43 @@ public:
     static const int AlignRight = -4;
     static const int AlignBottom = -5;
 
-    float        X;
-    float        Y;
-    float        XOrigin;
-    float        YOrigin;
-    float        XOffset;
-    float        YOffset;
-    float        Width;
-    float        MinWidth;
-    float        MaxWidth;
-    float        Height;
-    float        MinHeight;
-    float        MaxHeight;
-    float        ImageWidth;
-    float        ImageHeight;
-    float        FontSize;
-    Font        *font;
-    float        Angle;
-    float        Alpha;
-    unsigned int Layer;
-    unsigned int Layout;
-    float        BackgroundRed;
-    float        BackgroundGreen;
-    float        BackgroundBlue;
-    float        BackgroundAlpha;
-    std::string  Reflection;
-    unsigned int ReflectionDistance;
-    float        ReflectionScale;
-    float        ReflectionAlpha;
-    float        ContainerX;
-    float        ContainerY;
-    float        ContainerWidth;
-    float        ContainerHeight;
-    int          Monitor;
-    float        Volume;
-    bool         Restart;
-    bool         Additive;
-    bool         PauseOnScroll;
+    float        X{ 0 };
+    float        Y{ 0 };
+    float        XOrigin{ 0 };
+    float        YOrigin{ 0 };
+    float        XOffset{ 0 };
+    float        YOffset{ 0 };
+    float        Width{ -1 };
+    float        MinWidth{ 0 };
+    float        MaxWidth{ FLT_MAX };
+    float        Height{ -1 };
+    float        MinHeight{ 0 };
+    float        MaxHeight{ FLT_MAX };
+    float        ImageWidth{ 0 };
+    float        ImageHeight{ 0 };
+    float        FontSize{ -1 };
+    Font* font{ nullptr };
+    float        Angle{ 0 };
+    float        Alpha{ 1 };
+    unsigned int Layer{ 0 };
+    unsigned int Layout{ 0 };
+    float        BackgroundRed{ 0 };
+    float        BackgroundGreen{ 0 };
+    float        BackgroundBlue{ 0 };
+    float        BackgroundAlpha{ 0 };
+    std::string  Reflection{ "" };
+    unsigned int ReflectionDistance{ 0 };
+    float        ReflectionScale{ .25 };
+    float        ReflectionAlpha{ 1 };
+    float        ContainerX{ 0 };
+    float        ContainerY{ 0 };
+    float        ContainerWidth{ -1 };
+    float        ContainerHeight{ -1 };
+    int          Monitor{ 0 };
+    float        Volume{ 0 };
+    bool         Restart{ false };
+    bool         Additive{ false };
+    bool         PauseOnScroll{ true };
 
 private:
     float AbsoluteHeight() const;

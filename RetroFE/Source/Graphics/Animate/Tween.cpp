@@ -20,7 +20,7 @@
 #include <math.h>
 #include <string>
 
-std::map<std::string, TweenAlgorithm> Tween::tweenTypeMap_ = {
+std::map<std::string, TweenAlgorithm, std::less<>> Tween::tweenTypeMap_ = {
     {"easeinquadratic", EASE_IN_QUADRATIC},
     {"easeoutquadratic", EASE_OUT_QUADRATIC},
     {"easeinoutquadratic", EASE_INOUT_QUADRATIC},
@@ -46,7 +46,7 @@ std::map<std::string, TweenAlgorithm> Tween::tweenTypeMap_ = {
 };
 
 
-std::map<std::string, TweenProperty> Tween::tweenPropertyMap_ = {
+std::map<std::string, TweenProperty, std::less<>> Tween::tweenPropertyMap_ = {
     {"x", TWEEN_PROPERTY_X},
     {"y", TWEEN_PROPERTY_Y},
     {"angle", TWEEN_PROPERTY_ANGLE},
@@ -71,10 +71,9 @@ std::map<std::string, TweenProperty> Tween::tweenPropertyMap_ = {
     {"restart", TWEEN_PROPERTY_RESTART}
 };
 
-Tween::Tween(TweenProperty property, TweenAlgorithm type, double start, double end, double duration, std::string playlistFilter)
+Tween::Tween(TweenProperty property, TweenAlgorithm type, double start, double end, double duration, const std::string& playlistFilter)
     : property(property)
     , duration(duration)
-    , startDefined(true)
     , playlistFilter(playlistFilter)
     , type(type)
 	, start(start)
@@ -112,12 +111,12 @@ TweenAlgorithm Tween::getTweenType(std::string name)
 }
 
 
-float Tween::animate(double elapsedTime)
+float Tween::animate(double elapsedTime) const
 {
     return animateSingle(type, start, end, duration, elapsedTime);
 }
 
-float Tween::animate(double elapsedTime, double startValue)
+float Tween::animate(double elapsedTime, double startValue) const
 {
     return animateSingle(type, startValue, end, duration, elapsedTime);
 }

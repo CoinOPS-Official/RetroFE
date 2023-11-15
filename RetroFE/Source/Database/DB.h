@@ -20,7 +20,7 @@
 class DB
 {
 public:
-    DB(std::string dbFile);
+    DB(const std::string& dbFile);
     bool initialize();
     void deInitialize();
     virtual ~DB();
