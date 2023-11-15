@@ -3,7 +3,7 @@ FILE(TO_CMAKE_PATH "${GLIB2_ROOT}" TRY2_DIR)
 FILE(GLOB GLIB2_ROOT ${TRY1_DIR} ${TRY2_DIR})
 
 FIND_PATH(GLIB_glib_2_INCLUDE_DIR glib.h
-                                  PATHS /opt/homebrew/include/glib-2.0 ${GLIB2_ROOT}/include ${GLIB2_ROOT}/include/glib-2.0 /usr/local/include/glib-2.0 /usr/include/glib-2.0 /opt/local/include/glib-2.0
+                                  PATHS /opt/homebrew/include/glib-2.0/include ${GLIB2_ROOT}/include ${GLIB2_ROOT}/include/glib-2.0 /usr/local/include/glib-2.0 /usr/include/glib-2.0 /opt/local/include/glib-2.0
                                   ENV INCLUDE DOC "Directory containing glib.h include file")
 
 FIND_PATH(GLIB_glibconfig_2_INCLUDE_DIR glibconfig.h
