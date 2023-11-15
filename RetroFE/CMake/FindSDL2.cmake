@@ -40,7 +40,7 @@ pkg_check_modules(PC_SDL2 QUIET sdl2)
 find_path(SDL2_INCLUDE_DIR
   NAMES SDL2/SDL.h
   HINTS
-    ${SDL2_ROOT}/include
+    ${SDL2_ROOT}/include /opt/homebrew/include/SDL2
 )
 
 find_library(SDL2_LIBRARY
