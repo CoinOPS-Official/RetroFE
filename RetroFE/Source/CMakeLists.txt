@@ -1,4 +1,5 @@
-cmake_minimum_required (VERSION 3.0)
+# CMake minimum version
+cmake_minimum_required(VERSION 3.10)
 
 project (retrofe)
 
@@ -58,8 +59,7 @@ else()
 	pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-app-1.0)
 	pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
 	find_package(Threads REQUIRED)
-
-if(APPLE)
+if(CMAKE_SYSTEM MATCHES "Darwin")
 	include(FindPkgConfig)
 	find_package(GStreamer REQUIRED)
 	find_package(Glib2 REQUIRED)
@@ -81,7 +81,7 @@ set(RETROFE_INCLUDE_DIRS
 	"${ZLIB_INCLUDE_DIRS}"
 	"${SQLITE3_ROOT}"
 	"${RAPIDXML_ROOT}"
-	if(APPLE)
+	if(CMAKE_SYSTEM MATCHES "Darwin") #codename for MacOS systems
 		"/opt/homebrew/include/SDL2"
 		"/opt/homebrew/include/glib-2.0"
 		"/opt/homebrew/lib/glib-2.0"
@@ -219,8 +219,89 @@ set(LIBRARY_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORC
 
 include_directories(${RETROFE_INCLUDE_DIRS})
 add_executable(retrofe  ${RETROFE_SOURCES} ${RETROFE_HEADERS})
-target_link_libraries(retrofe ${RETROFE_LIBRARIES})
-set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
+# target_link_libraries(retrofe ${RETROFE_LIBRARIES})
+
+if(APPLE)
+	# Get the current dir then go to package contents
+	get_filename_component(DIR_ABOVE ../../Package/Environment/Common ABSOLUTE)
+	# set as var
+	set(RETROFE_PACKAGE_DIR ${DIR_ABOVE})
+
+	# Set the output directory for the executable inside the app bundle
+	set_target_properties(retrofe PROPERTIES
+		MACOSX_BUNDLE TRUE
+		MACOSX_BUNDLE_BUNDLE_NAME "RetroFE"
+		MACOSX_BUNDLE_BUNDLE_VERSION "0.10.34.3"
+		MACOSX_BUNDLE_COPYRIGHT "CoinOPS Project 2023, ported to Apple Silicon by aidenjbass, Program originally by the RetroFE team"
+		MACOSX_BUNDLE_ICON_FILE "RetroFE.png"
+	)
+	# Copy necessary resources into the app bundle
+	set(APP_RESOURCES
+	# List of resource files to be copied into the bundle
+	${RETROFE_PACKAGE_DIR}/RetroFE.png
+	)
+	foreach(RESOURCE ${APP_RESOURCES})
+		add_custom_command(TARGET retrofe POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:retrofe>/../Resources
+			COMMAND ${CMAKE_COMMAND} -E copy ${RESOURCE} $<TARGET_FILE_DIR:retrofe>/../Resources
+		)
+	endforeach()
+
+	# Get the list of linked libraries
+	set(EXTERNAL_LIBRARIES ${RETROFE_LIBRARIES})
+	# Remove the last element from the LIBRARIES list (trailing z?)
+	list(POP_BACK EXTERNAL_LIBRARIES)
+
+	foreach(LIBRARY ${EXTERNAL_LIBRARIES})
+		get_filename_component(LIB_NAME ${LIBRARY} NAME)
+
+		# Copy the library to the app bundle
+		add_custom_command(TARGET retrofe POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy
+				${LIBRARY}
+				$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${LIB_NAME}
+			COMMAND ${CMAKE_INSTALL_NAME_TOOL} -id
+				"@rpath/${LIB_NAME}"
+				$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${LIB_NAME}
+		)
+
+		# Use otool to get the list of dependencies for the library
+		execute_process(
+			COMMAND otool -L ${LIBRARY}
+			COMMAND grep -o "/[^ ]*" OUTPUT_VARIABLE LIB_DEPENDENCIES
+		)
+
+		# Copy each dependency to the app bundle
+		foreach(DEPENDENCY ${LIB_DEPENDENCIES})
+			string(STRIP ${DEPENDENCY} DEPENDENCY)
+			string(REGEX REPLACE ":" "" DEPENDENCY "${DEPENDENCY}")
+			# message(${DEPENDENCY})
+			get_filename_component(DEPENDENCY_NAME ${DEPENDENCY} NAME)
+			# message(${DEPENDENCY_NAME})
+			add_custom_command(TARGET retrofe POST_BUILD
+				COMMAND ${CMAKE_COMMAND} -E copy
+					${DEPENDENCY}
+					$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${DEPENDENCY_NAME}
+				COMMAND ${CMAKE_INSTALL_NAME_TOOL} -id
+					"@rpath/${DEPENDENCY_NAME}"
+					$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${DEPENDENCY_NAME}
+			)
+		endforeach()
+
+	endforeach()
+
+
+	# # Link the app bundle to the bundled libraries
+	# target_link_libraries(retrofe
+	# 	"-Wl,-rpath,@executable_path/../Frameworks"
+	# 	${EXTERNAL_LIBRARIES}
+	# 	# Add other dependencies here
+	# )
+
+else()
+	set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
+endif()
+
 if(MINGW)
   set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++ -lmingw32 -mwindows")
 endif()
