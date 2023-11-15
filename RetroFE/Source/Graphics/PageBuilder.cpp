@@ -1216,7 +1216,7 @@ void PageBuilder::buildCustomMenu(ScrollingList *menu, const xml_node<> *menuXml
         points->push_back(viewInfo);
         tweenPoints->push_back(createTweenInstance(componentXml));
 
-        if(xml_attribute<> const *selected = componentXml->first_attribute("selected"))
+        if(componentXml->first_attribute("selected"))
         {
             menu->setSelectedIndex(i);
         }
