@@ -74,6 +74,7 @@ bool VideoComponent::update(float dt)
                     pause();
                     LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
                 }
+                videoInst_->setVolume(baseViewInfo.Volume);
             }
 
             videoInst_->setVolume(baseViewInfo.Volume);
@@ -88,8 +89,10 @@ bool VideoComponent::update(float dt)
         }
     }
 
+    // The rest of the update logic
     return Component::update(dt);
 }
+
 
 void VideoComponent::allocateGraphicsMemory()
 {
@@ -98,7 +101,7 @@ void VideoComponent::allocateGraphicsMemory()
     if(!isPlaying_)
     {
         if (!videoInst_) {
-            videoInst_ = factory_.createVideo(monitor_, numLoops_);
+            videoInst_ = VideoFactory::createVideo(monitor_, numLoops_);
         }
         if (videoFile_ != "") {
             isPlaying_ = videoInst_->play(videoFile_);

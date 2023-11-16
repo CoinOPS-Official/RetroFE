@@ -155,6 +155,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
         {
             LOG_INFO("Input", "Missing optional property: " + configKey);
         }
+
         return false;
     }
 

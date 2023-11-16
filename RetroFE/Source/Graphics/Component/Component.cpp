@@ -79,10 +79,6 @@ void Component::allocateGraphicsMemory()
         SDL_LockMutex(SDL::getMutex());
         backgroundTexture_ = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), surface);
         SDL_UnlockMutex(SDL::getMutex());
-
-        SDL_FreeSurface(surface);
-        SDL_SetTextureBlendMode(backgroundTexture_, SDL_BLENDMODE_BLEND);
-    }
 }
 
 
