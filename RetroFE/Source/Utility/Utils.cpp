@@ -24,10 +24,15 @@
 #include <locale>
 #include <list>
 #include <filesystem>
+#include <unordered_set>
+#include <unordered_map>
 
 #ifdef WIN32
     #include <Windows.h>
 #endif
+
+std::unordered_map<std::filesystem::path, std::unordered_map<std::filesystem::path, std::unordered_set<std::string>>> Utils::fileCache;
+std::unordered_set<std::filesystem::path> Utils::nonExistingDirectories;
 
 Utils::Utils() = default;
 
@@ -79,30 +84,92 @@ std::string Utils::filterComments(std::string line)
 }
 
 
-bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file)
-{
-    namespace fs = std::filesystem; // If you're using C++17 or later
-
-    // Convert prefix to an absolute path only once
-    std::string base = Configuration::convertToAbsolutePath(Configuration::absolutePath, prefix);
-
-    // Use a range-based for loop
-    for (const auto& ext : extensions)
-    {
-        fs::path temp = base; // This creates a path object, which is more robust than string concatenation
-        temp += ".";
-        temp += ext;
-
-        // Use std::filesystem to check if the file exists
-        if (fs::exists(temp))
-        {
-            file = temp.string();
-            return true;
+void Utils::populateCache(const std::filesystem::path& directory) {
+    try {
+        Logger::write(Logger::ZONE_DEBUG, "File Cache", "Populating cache for directory: " + directory.string());
+        
+        std::unordered_set<std::string> files;
+        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+            if (entry.is_regular_file()) {
+                fileCache[directory][directory].insert(entry.path().filename().string());
+            }
         }
     }
-    return false;
-
+    catch (const std::filesystem::filesystem_error& e) {
+        return;
+    }
 }
+
+bool Utils::isFileInCache(const std::filesystem::path& baseDir, const std::string& filename) {
+    auto baseDirIt = fileCache.find(baseDir);
+    if (baseDirIt != fileCache.end()) {
+        auto& subDirs = baseDirIt->second;
+        for (const auto& [dir, files] : subDirs) {
+            if (files.find(filename) != files.end()) {
+                // Logging cache hit
+                Logger::write(Logger::ZONE_DEBUG, "File Cache", "Cache hit: " + baseDir.string() + " contains " + filename);
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+
+bool Utils::isFileCachePopulated(const std::filesystem::path& baseDir) {
+    return fileCache.find(baseDir) != fileCache.end();
+}
+
+bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file) {
+    try {
+        namespace fs = std::filesystem;
+
+        fs::path absolutePath = Configuration::convertToAbsolutePath(Configuration::absolutePath, prefix);
+        fs::path baseDir = absolutePath.parent_path();
+
+        // Check if the directory is known to not exist
+        if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
+            Logger::write(Logger::ZONE_DEBUG, "File Cache", "Skipping non-existing directory: " + baseDir.string());
+            return false; // Directory was previously found not to exist
+        }
+
+        if (!fs::is_directory(baseDir)) {
+            // Handle the case where baseDir is not a directory
+            nonExistingDirectories.insert(baseDir); // Add to non-existing directories cache
+            return false;
+        }
+
+        std::string baseFileName = absolutePath.filename().string();
+
+        if (!isFileCachePopulated(baseDir)) {
+            populateCache(baseDir);
+        }
+
+        bool foundInCache = false;
+        for (const auto& ext : extensions) {
+            std::string tempFileName = baseFileName + "." + ext;
+            if (isFileInCache(baseDir, tempFileName)) {
+                file = (baseDir / tempFileName).string();
+                foundInCache = true;
+                break;
+            }
+        }
+
+        if (!foundInCache) {
+            // Log cache miss only once per directory after checking all extensions
+            Logger::write(Logger::ZONE_DEBUG, "File Cache", "Cache miss: " + baseDir.string() + " does not contain file '" + baseFileName + "'");
+        }
+
+        return foundInCache;
+    }
+    catch (const std::filesystem::filesystem_error& e) {
+        // Optionally, log the filesystem error
+        Logger::write(Logger::ZONE_ERROR, "File Cache", "Filesystem error: " + std::string(e.what()));
+        return false;
+    }
+}
+
 
 
 std::string Utils::replace(

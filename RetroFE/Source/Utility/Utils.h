@@ -19,6 +19,8 @@
 #include <vector>
 #include <list>
 #include <filesystem>
+#include <unordered_map>
+#include <unordered_set>
 
 #ifdef WIN32
     #define NOMINMAX
@@ -66,6 +68,12 @@ public:
 #endif
 
 private:
+    static std::unordered_map<std::filesystem::path, std::unordered_map<std::filesystem::path, std::unordered_set<std::string>>> fileCache;
+    static std::unordered_set<std::filesystem::path> nonExistingDirectories; // Cache for non-existing directories
+    static void populateCache(const std::filesystem::path& directory);
+    static bool isFileInCache(const std::filesystem::path& directory, const std::string& filename);
+    static bool isFileCachePopulated(const std::filesystem::path& directory);
+    
     Utils();
     virtual ~Utils();
 };
