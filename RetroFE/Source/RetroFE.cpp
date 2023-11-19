@@ -942,7 +942,7 @@ bool RetroFE::run( )
                         pages_.push(currentPage_);
                         currentPage_ = page;
                         currentPage_->setLocked(kioskLock_);
-                        CollectionInfo* info = getCollection(settingsCollection);
+                        info = getCollection(settingsCollection);
                         if (info == nullptr) {
                             state = RETROFE_BACK_MENU_LOAD_ART;
                             break;
@@ -1622,7 +1622,7 @@ bool RetroFE::run( )
                 std::string autoPlaylist = "all";
                 
                 // check collection for setting
-                if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                if (settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                     config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                 }
                 else {
