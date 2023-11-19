@@ -424,8 +424,7 @@ bool RetroFE::run( )
     std::string settingsPlaylist = "settings";
     std::string settingsCollectionPlaylist;
     config_.getProperty("settingsCollectionPlaylist", settingsCollectionPlaylist);
-    size_t position = settingsCollectionPlaylist.find(":");
-    if (position != std::string::npos) {
+    if (size_t position = settingsCollectionPlaylist.find(":"); position != std::string::npos) {
         settingsCollection = settingsCollectionPlaylist.substr(0, position);
         settingsPlaylist = settingsCollectionPlaylist.erase(0, position + 1);
         config_.setProperty("settingsPlaylist", settingsPlaylist);
@@ -472,7 +471,7 @@ bool RetroFE::run( )
 
         std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
         std::string cycleString;
-        std::string firstCollection = "";
+        firstCollection = "";
         std::vector<std::string> cycleVector;
 
         switch(state)
@@ -551,17 +550,15 @@ bool RetroFE::run( )
                 delete currentPage_;
 
                 // find first collection
-                std::string firstCollection = "Main";
+                firstCollection = "Main";
                 config_.getProperty("firstCollection", firstCollection);
                 currentPage_ = loadPage(firstCollection);
                 splashMode = false;
                 if ( currentPage_ )
                 {
                     currentPage_->setLocked(kioskLock_);
-                    CollectionInfo* info;
 
                     // add collections to cycle
-                    std::string cycleString;
                     config_.getProperty("cycleCollection", cycleString);
                     Utils::listToVector(cycleString, collectionCycle_, ',');
                     collectionCycleIt_ = collectionCycle_.begin();
@@ -580,7 +577,7 @@ bool RetroFE::run( )
                     // use the global setting as overide if firstCollection == current
                     if (firstPlaylist_ == "" || firstCollection != currentPage_->getCollectionName()) {
                         // check collection for setting
-                        std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
+                        settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
                         if (config_.propertyExists(settingPrefix + "firstPlaylist")) {
                             config_.getProperty(settingPrefix + "firstPlaylist", firstPlaylist_);
                         }
@@ -694,7 +691,7 @@ bool RetroFE::run( )
 
                     std::string autoPlaylist = "all";
 
-                    if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                    if (settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                         config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                     }
                     else {
@@ -930,7 +927,7 @@ bool RetroFE::run( )
                     PageBuilder pb(layoutName, getLayoutFileName(), config_, &fontcache_);
 
                     bool defaultToCurrentLayout = false;
-                    if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "defaultToCurrentLayout")) {
+                    if (settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "defaultToCurrentLayout")) {
                         config_.getProperty(settingPrefix + "defaultToCurrentLayout", defaultToCurrentLayout);
                     }
 
@@ -1004,7 +1001,7 @@ bool RetroFE::run( )
                     PageBuilder pb( layoutName, getLayoutFileName(), config_, &fontcache_ );
 
                     bool defaultToCurrentLayout = false;
-                    if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "defaultToCurrentLayout")) {
+                    if (settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "defaultToCurrentLayout")) {
                         config_.getProperty(settingPrefix + "defaultToCurrentLayout", defaultToCurrentLayout);
                     }
 
@@ -1033,7 +1030,7 @@ bool RetroFE::run( )
                 std::string autoPlaylist = "all";
 
                 // check collection for setting
-                if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                if (settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                     config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                 }
                 else {
@@ -1183,7 +1180,7 @@ bool RetroFE::run( )
                 std::string autoPlaylist = "all";
 
                 // check collection for setting
-                if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                if (settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                     config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                 }
                 else {
@@ -1279,7 +1276,7 @@ bool RetroFE::run( )
                 }
                 else
                 {
-                    RETROFE_STATE state_tmp = processUserInput( currentPage_ );
+                    state_tmp = processUserInput( currentPage_ );
                     if ( state_tmp == RETROFE_COLLECTION_DOWN_REQUEST )
                     {
                         state = RETROFE_COLLECTION_DOWN_REQUEST;
@@ -1340,7 +1337,7 @@ bool RetroFE::run( )
             {
                 nextPageItem_ = currentPage_->getSelectedItem();
 
-                RETROFE_STATE state_tmp = processUserInput( currentPage_ );
+                state_tmp = processUserInput( currentPage_ );
                 if ( state_tmp == RETROFE_COLLECTION_DOWN_REQUEST )
                 {
                     state = RETROFE_COLLECTION_DOWN_REQUEST;
@@ -1405,7 +1402,7 @@ bool RetroFE::run( )
                 std::string autoPlaylist = "all";
 
                 // check collection for setting
-                if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
+                if (settingPrefix = "collections." + currentPage_->getCollectionName() + "."; config_.propertyExists(settingPrefix + "autoPlaylist")) {
                     config_.getProperty(settingPrefix + "autoPlaylist", autoPlaylist);
                 }
                 else {
@@ -1463,7 +1460,6 @@ bool RetroFE::run( )
         case RETROFE_COLLECTION_UP_SCROLL:
             if ( currentPage_->isMenuIdle( ) )
             {
-                RETROFE_STATE state_tmp;
                 state_tmp = processUserInput( currentPage_ );
                 if ( state_tmp == RETROFE_COLLECTION_DOWN_REQUEST )
                 {
@@ -1677,7 +1673,6 @@ bool RetroFE::run( )
                 if (  collectionInputClear  )
                 {
                     // Empty event queue
-                    SDL_Event e;
                     while ( SDL_PollEvent( &e ) )
                         input_.update(e);
                     input_.resetStates( );
@@ -1716,7 +1711,7 @@ bool RetroFE::run( )
                     Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not create page");
                 }
                 config_.setProperty( "currentCollection", "menu" );
-                CollectionInfo *info = getMenuCollection( "menu" );
+                info = getMenuCollection( "menu" );
                 currentPage_->pushCollection(info);
                 currentPage_->onNewItemSelected();
                 currentPage_->reallocateMenuSpritePoints(); // update playlist menu
@@ -1732,7 +1727,6 @@ bool RetroFE::run( )
         case RETROFE_MENUMODE_START_ENTER:
             if ( currentPage_->isIdle( ) )
             {
-                SDL_Event e;
                 while ( SDL_PollEvent( &e ) )
                     input_.update(e);
                 input_.resetStates( );
@@ -1798,11 +1792,11 @@ bool RetroFE::run( )
                     if (!kioskLock_ && attractReturn == 1) // Change playlist
                     {
                         attract_.reset( attract_.isSet( ) );
-                        std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
+                        settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
 
                         bool cyclePlaylist = true;
-                        std::string firstCollection = "";
-                        std::string cycleString = "";
+                        firstCollection = "";
+                        cycleString = "";
                         config_.getProperty("firstCollection", firstCollection);
                         config_.getProperty("attractModeCyclePlaylist", cyclePlaylist);
                         config_.getProperty("cyclePlaylist", cycleString);
@@ -1818,7 +1812,6 @@ bool RetroFE::run( )
                         }
 
                         // go to next playlist in cycle or from all found playlists
-                        std::vector<std::string> cycleVector;
                         Utils::listToVector(cycleString, cycleVector, ',');
                         if (cyclePlaylist)
                             currentPage_->nextCyclePlaylist(cycleVector);
@@ -1931,7 +1924,7 @@ bool RetroFE::isInAttractModeSkipPlaylist(std::string playlist)
         if (attractModeSkipPlaylist != "") {
             // see if any of the comma seperated match current playlist
             std::stringstream ss(attractModeSkipPlaylist);
-            std::string playlist = "";
+            playlist = "";
             while (ss.good())
             {
                 getline(ss, playlist, ',');
@@ -2662,7 +2655,7 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
 
    // Add extra info, if available
     for (auto& item : collection->items) {
-        std::string path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info", item->name + ".conf");
+        path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info", item->name + ".conf");
         item->loadInfo(path);
     }
 
