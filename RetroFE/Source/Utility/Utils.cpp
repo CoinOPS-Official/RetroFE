@@ -31,7 +31,7 @@
     #include <Windows.h>
 #endif
 
-std::unordered_map<std::filesystem::path, std::unordered_map<std::filesystem::path, std::unordered_set<std::string>>> Utils::fileCache;
+std::unordered_map<std::filesystem::path, std::unordered_set<std::string>> Utils::fileCache;
 std::unordered_set<std::filesystem::path> Utils::nonExistingDirectories;
 
 Utils::Utils() = default;
@@ -85,30 +85,30 @@ std::string Utils::filterComments(std::string line)
 
 
 void Utils::populateCache(const std::filesystem::path& directory) {
-        Logger::write(Logger::ZONE_DEBUG, "File Cache", "Populating cache for directory: " + directory.string());
-        
-        std::unordered_set<std::string> files;
-        for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-            if (entry.is_regular_file()) {
-                fileCache[directory][directory].insert(entry.path().filename().string());
-            }
+    Logger::write(Logger::ZONE_DEBUG, "File Cache", "Populating cache for directory: " + directory.string());
+
+    std::unordered_set<std::string>& files = fileCache[directory];
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (entry.is_regular_file()) {
+            files.insert(entry.path().filename().string());
         }
+    }
 }
 
 bool Utils::isFileInCache(const std::filesystem::path& baseDir, const std::string& filename) {
-    if (auto baseDirIt = fileCache.find(baseDir); baseDirIt != fileCache.end()) {
-        auto const& subDirs = baseDirIt->second;
-        for (const auto& [dir, files] : subDirs) {
-            if (files.find(filename) != files.end()) {
-                // Logging cache hit
-                Logger::write(Logger::ZONE_DEBUG, "File Cache", "Cache hit: " + baseDir.string() + " contains " + filename);
-                return true;
-            }
+    auto baseDirIt = fileCache.find(baseDir);
+    if (baseDirIt != fileCache.end()) {
+        const auto& files = baseDirIt->second;
+        if (files.find(filename) != files.end()) {
+            // Logging cache hit
+            Logger::write(Logger::ZONE_DEBUG, "File Cache", "Cache hit: " + baseDir.string() + " contains " + filename);
+            return true;
         }
     }
 
     return false;
 }
+
 
 
 bool Utils::isFileCachePopulated(const std::filesystem::path& baseDir) {
