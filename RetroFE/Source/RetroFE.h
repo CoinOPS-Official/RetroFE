@@ -30,6 +30,7 @@
 #include <stack>
 #include <map>
 #include <string>
+#include <atomic>
 #include "Graphics/Page.h"
 #ifdef WIN32
     #include <windows.h>
@@ -57,12 +58,12 @@ public:
 
 private:
 #ifdef WIN32	
-    HWND hwnd;
+    HWND hwnd{ nullptr };
 #endif
-    volatile bool initialized;
-    volatile bool initializeError;
-    SDL_Thread   *initializeThread;
-    static int    initialize( void *context );
+    std::atomic<bool> initialized{ false };
+    std::atomic<bool> initializeError{ false };
+    SDL_Thread* initializeThread{ nullptr };
+    static int initialize(void* context);
 
     enum RETROFE_STATE
     {
@@ -154,31 +155,31 @@ private:
     void resetInfoToggle();
 
 
-    Configuration     &config_;
-    DB                *db_;
-    MetadataDatabase  *metadb_;
-    UserInput          input_;
-    Page              *currentPage_;
-    std::stack<Page *> pages_;
-    float              keyInputDisable_;
-    float              currentTime_;
-    float              lastLaunchReturnTime_;
-    float              keyLastTime_;
-    float              keyDelayTime_;
-    Item              *nextPageItem_;
-    FontCache          fontcache_;
-    AttractMode        attract_;
-    bool               menuMode_;
-    bool               attractMode_;
-	int                attractModePlaylistCollectionNumber_;
-	bool               reboot_;
-    bool               kioskLock_;
-    bool               paused_;
-    bool                buildInfo_;
-    bool                collectionInfo_;
-    bool                gameInfo_;
-	std::string        firstPlaylist_;
+    Configuration& config_; // Reference members cannot have a default initializer
+    DB* db_{ nullptr };
+    MetadataDatabase* metadb_{ nullptr };
+    UserInput input_{ config_ }; // Assuming UserInput has a constructor that accepts Configuration&
+    Page* currentPage_{ nullptr };
+    std::stack<Page*> pages_;
+    float keyInputDisable_{ 0.0f };
+    float currentTime_{ 0.0f };
+    float lastLaunchReturnTime_{ 0.0f };
+    float keyLastTime_{ 0.0f };
+    float keyDelayTime_{ 0.3f };
+    Item* nextPageItem_{ nullptr };
+    FontCache fontcache_; // Assuming default constructor is appropriate
+    AttractMode attract_; // Assuming default constructor is appropriate
+    bool menuMode_{ false };
+    bool attractMode_{ false };
+    int attractModePlaylistCollectionNumber_{ 0 };
+    bool reboot_{ false };
+    bool kioskLock_{ false };
+    bool paused_{ false };
+    bool buildInfo_{ false };
+    bool collectionInfo_{ false };
+    bool gameInfo_{ false };
+    std::string firstPlaylist_{ "all" };
     std::map<std::string, bool> lkupAttractModeSkipPlaylist_;
     std::map<std::string, unsigned int> lastMenuOffsets_;
-    std::map<std::string, std::string>  lastMenuPlaylists_;
+    std::map<std::string, std::string> lastMenuPlaylists_;
 };

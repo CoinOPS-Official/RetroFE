@@ -57,30 +57,13 @@
 
 
 RetroFE::RetroFE( Configuration &c )
-    : initialized(false)
-    , initializeError(false)
-    , initializeThread(NULL)
-    , config_(c)
-    , db_(NULL)
-    , metadb_(NULL)
-    , input_(config_)
-    , currentPage_(NULL)
+    : config_(c)
     , keyInputDisable_(0)
     , currentTime_(0)
     , lastLaunchReturnTime_(0)
     , keyLastTime_(0)
-    , keyDelayTime_(.3f)
-    , reboot_(false)
-    , kioskLock_(false)
-    , paused_(false)
-    , buildInfo_(false)
-    , collectionInfo_(false)
-    , gameInfo_(false)
 {
-    menuMode_                            = false;
-    attractMode_                         = false;
-    attractModePlaylistCollectionNumber_ = 0;
-    firstPlaylist_                       = "all"; // todo
+
 }
 
 RetroFE::~RetroFE( )
@@ -437,10 +420,9 @@ bool RetroFE::run( )
         float deltaTime = 0;
 
         // Exit splash mode when an active key is pressed
-        if (SDL_Event e;  splashMode && (SDL_PollEvent( &e )))
+        if (SDL_Event e; splashMode && SDL_PollEvent(&e) && (screensaver || input_.update(e))) 
         {
-            if (screensaver || input_.update(e))
-            {
+            
                 if (screensaver || input_.keystate(UserInput::KeyCodeSelect)) {
                     exitSplashMode = true;
                     while (SDL_PollEvent(&e))
@@ -458,7 +440,7 @@ bool RetroFE::run( )
                     running = false;
                     break;
                 }
-            }
+            
         }
 
         if ( !currentPage_ )
@@ -483,17 +465,13 @@ bool RetroFE::run( )
             currentPage_->cleanup( );
 
             // Not in splash mode
-            if ( currentPage_ && !splashMode )
+            if (currentPage_ && !splashMode && (lastLaunchReturnTime_ == 0 || (currentTime_ - lastLaunchReturnTime_ > .3))) 
             {
-                // account for when returning from a menu and the previous key was still "stuck"
-                if ( lastLaunchReturnTime_ == 0 || (currentTime_ - lastLaunchReturnTime_ > .3) )
-                {
                     if ( currentPage_->isIdle( ) )
                     {
                         state = processUserInput( currentPage_ );
                     }
                     lastLaunchReturnTime_ = 0;
-                }
             }
 
             // Handle end of splash mode
@@ -714,12 +692,12 @@ bool RetroFE::run( )
                             currentPage_->selectPlaylist("all");
                     }
 
-                    if (returnToRememberedPlaylist)
+                    if (returnToRememberedPlaylist && lastMenuOffsets_.size() 
+                        && lastMenuPlaylists_.find(nextPageItem_->name) != lastMenuPlaylists_.end()) 
                     {
-                        if (lastMenuOffsets_.size() && lastMenuPlaylists_.find(nextPageItem_->name) != lastMenuPlaylists_.end()) {
-                            currentPage_->setScrollOffsetIndex(lastMenuOffsets_[nextPageItem_->name]);
-                        }
+                        currentPage_->setScrollOffsetIndex(lastMenuOffsets_[nextPageItem_->name]);
                     }
+
                 }
                 break;
             }
@@ -730,12 +708,12 @@ bool RetroFE::run( )
             config_.getProperty("firstCollection", firstCollection);
             config_.getProperty("cyclePlaylist", cycleString);
             // use the global setting as overide if firstCollection == current
-            if (cycleString == "" || firstCollection != currentPage_->getCollectionName()) {
-                // check if collection has different setting
-                if (config_.propertyExists(settingPrefix + "cyclePlaylist")) {
-                    config_.getProperty(settingPrefix + "cyclePlaylist", cycleString);
-                }
+            if ((cycleString == "" || firstCollection != currentPage_->getCollectionName()) 
+                && config_.propertyExists(settingPrefix + "cyclePlaylist")) 
+            {
+                config_.getProperty(settingPrefix + "cyclePlaylist", cycleString);
             }
+
             Utils::listToVector(cycleString, cycleVector, ',');
             currentPage_->playlistPrevEnter();
             currentPage_->prevCyclePlaylist(cycleVector);
@@ -747,12 +725,12 @@ bool RetroFE::run( )
             config_.getProperty("firstCollection", firstCollection);
             config_.getProperty("cyclePlaylist", cycleString);
             // use the global setting as overide if firstCollection == current
-            if (cycleString == "" || firstCollection != currentPage_->getCollectionName()) {
-                // check if collection has different setting
-                if (config_.propertyExists(settingPrefix + "cyclePlaylist")) {
-                    config_.getProperty(settingPrefix + "cyclePlaylist", cycleString);
-                }
+            if ((cycleString == "" || firstCollection != currentPage_->getCollectionName()) 
+                && config_.propertyExists(settingPrefix + "cyclePlaylist")) 
+            {
+                config_.getProperty(settingPrefix + "cyclePlaylist", cycleString);
             }
+
             Utils::listToVector(cycleString, cycleVector, ',');
             currentPage_->nextCyclePlaylist(cycleVector);
 
@@ -1053,12 +1031,12 @@ bool RetroFE::run( )
                         currentPage_->selectPlaylist( "all" );
                 }
 
-                if (returnToRememberedPlaylist)
+                if (returnToRememberedPlaylist && !lastMenuOffsets_.empty() 
+                    && lastMenuPlaylists_.find(nextPageName) != lastMenuPlaylists_.end()) 
                 {
-                    if (lastMenuOffsets_.size() && lastMenuPlaylists_.find(nextPageName) != lastMenuPlaylists_.end()) {
-                        currentPage_->setScrollOffsetIndex(lastMenuOffsets_[nextPageName]);
-                    }
+                    currentPage_->setScrollOffsetIndex(lastMenuOffsets_[nextPageName]);
                 }
+
 
                 currentPage_->onNewItemSelected();
                 currentPage_->reallocateMenuSpritePoints(); // update playlist menu
@@ -1203,12 +1181,12 @@ bool RetroFE::run( )
                         currentPage_->selectPlaylist( "all" );
                 }
 
-                if (returnToRememberedPlaylist)
+                if (returnToRememberedPlaylist && !lastMenuOffsets_.empty() 
+                    && lastMenuPlaylists_.find(collectionName) != lastMenuPlaylists_.end())
                 {
-                    if (lastMenuOffsets_.size() && lastMenuPlaylists_.find(collectionName) != lastMenuPlaylists_.end()) {
-                        currentPage_->setScrollOffsetIndex(lastMenuOffsets_[collectionName]);
-                    }
+                    currentPage_->setScrollOffsetIndex(lastMenuOffsets_[collectionName]);
                 }
+
 
                 state = RETROFE_COLLECTION_DOWN_MENU_ENTER;
                 currentPage_->onNewItemSelected( );
@@ -1425,12 +1403,12 @@ bool RetroFE::run( )
                         currentPage_->selectPlaylist( "all" );
                 }
 
-                if (returnToRememberedPlaylist)
+                if (returnToRememberedPlaylist && !lastMenuOffsets_.empty() 
+                    && lastMenuPlaylists_.find(collectionName) != lastMenuPlaylists_.end())
                 {
-                   if (lastMenuOffsets_.size() && lastMenuPlaylists_.find(collectionName) != lastMenuPlaylists_.end()) {
-                       currentPage_->setScrollOffsetIndex(lastMenuOffsets_[collectionName]);
-                   }
+                    currentPage_->setScrollOffsetIndex(lastMenuOffsets_[collectionName]);
                 }
+
 
                 currentPage_->onNewItemSelected( );
                 state = RETROFE_COLLECTION_UP_MENU_ENTER;
@@ -1645,12 +1623,12 @@ bool RetroFE::run( )
                         currentPage_->selectPlaylist( "all" );
                 }
 
-                if (returnToRememberedPlaylist)
+                if (returnToRememberedPlaylist && !lastMenuOffsets_.empty() 
+                    && lastMenuPlaylists_.find(collectionName) != lastMenuPlaylists_.end())
                 {
-                    if (lastMenuOffsets_.size() && lastMenuPlaylists_.find(collectionName) != lastMenuPlaylists_.end()) {
-                        currentPage_->setScrollOffsetIndex(lastMenuOffsets_[collectionName]);
-                    }
+                    currentPage_->setScrollOffsetIndex(lastMenuOffsets_[collectionName]);
                 }
+
 
                 currentPage_->onNewItemSelected();
                 currentPage_->reallocateMenuSpritePoints(); // update playlist menu
@@ -1776,13 +1754,11 @@ bool RetroFE::run( )
                 sleepTime = fpsIdleTime - deltaTime*1000;
             else
                 sleepTime = fpsTime - deltaTime*1000;
-            if ( sleepTime > 0 && sleepTime < 1000 )
-			{
-				if (vSync == false)
-				{
-					SDL_Delay( static_cast<unsigned int>( sleepTime ) );
-				}
-			}
+            if (sleepTime > 0 && sleepTime < 1000 && vSync == false)
+            {
+                SDL_Delay(static_cast<unsigned int>(sleepTime));
+            }
+
 		
             if ( currentPage_ )
             {
@@ -1844,34 +1820,33 @@ bool RetroFE::run( )
                 currentPage_->update( deltaTime );
                 SDL_PumpEvents( );
                 input_.updateKeystate( );
-                if (!splashMode && !paused_)
+                if (!splashMode && !paused_ && currentPage_->isAttractIdle()) 
                 {
-                    if ( currentPage_->isAttractIdle( ) )
+                    if (!attractMode_ && attract_.isSet()) 
                     {
-                        if ( !attractMode_ && attract_.isSet( ) )
+                        // hide toggle before attract mode
+                        if (buildInfo_ || collectionInfo_ || gameInfo_) 
                         {
-                            // hide toggle before attract mode
-                            if (buildInfo_ || collectionInfo_ || gameInfo_) {
-                                resetInfoToggle();
-                            } else {
-                                currentPage_->attractEnter( );
-                                l.LEDBlinky( 5 );
-                            }
+                            resetInfoToggle();
                         }
-                        else if ( attractMode_ && !attract_.isSet( ) )
+                        else 
                         {
-                            currentPage_->attractExit( );
-                            l.LEDBlinky( 6 );
+                            currentPage_->attractEnter();
+                            l.LEDBlinky(5);
                         }
-                        else if ( attract_.isSet( ) )
-                        {
-                            currentPage_->attract( );
-                        }
-                        attractMode_ = attract_.isSet( );
                     }
+                    else if (attractMode_ && !attract_.isSet()) 
+                    {
+                        currentPage_->attractExit();
+                        l.LEDBlinky(6);
+                    }
+                    else if (attract_.isSet()) 
+                    {
+                        currentPage_->attract();
+                    }
+                    attractMode_ = attract_.isSet();
                 }
             }
-
             render( );
         }
     }
@@ -1914,12 +1889,12 @@ bool RetroFE::isInAttractModeSkipPlaylist(std::string playlist)
         config_.getProperty("firstCollection", firstCollection);
         config_.getProperty("attractModeSkipPlaylist", attractModeSkipPlaylist);
         // use the global setting as overide if firstCollection == current
-        if (attractModeSkipPlaylist == "" || firstCollection != currentPage_->getCollectionName()) {
-            // check if collection has different setting
-            if (config_.propertyExists(settingPrefix + "attractModeSkipPlaylist")) {
-                config_.getProperty(settingPrefix + "attractModeSkipPlaylist", attractModeSkipPlaylist);
-            }
+        if ((attractModeSkipPlaylist == "" || firstCollection != currentPage_->getCollectionName()) 
+            && config_.propertyExists(settingPrefix + "attractModeSkipPlaylist")) 
+        {
+            config_.getProperty(settingPrefix + "attractModeSkipPlaylist", attractModeSkipPlaylist);
         }
+
 
         if (attractModeSkipPlaylist != "") {
             // see if any of the comma seperated match current playlist
@@ -2149,11 +2124,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
             if (back(exit) || exit)
             {
                 // if collection cycle then also update it's position
-                if (collectionCycle_.size()) {
-                    if (collectionCycleIt_ != collectionCycle_.begin()) {
-                        collectionCycleIt_--;
-                    }
-                }
+                if (!collectionCycle_.empty() && collectionCycleIt_ != collectionCycle_.begin()) 
+                    collectionCycleIt_--;
                 keyLastTime_ = currentTime_;
                 return exit ? RETROFE_QUIT_REQUEST : RETROFE_BACK_REQUEST;
             }
