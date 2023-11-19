@@ -85,7 +85,6 @@ std::string Utils::filterComments(std::string line)
 
 
 void Utils::populateCache(const std::filesystem::path& directory) {
-    try {
         Logger::write(Logger::ZONE_DEBUG, "File Cache", "Populating cache for directory: " + directory.string());
         
         std::unordered_set<std::string> files;
@@ -94,16 +93,11 @@ void Utils::populateCache(const std::filesystem::path& directory) {
                 fileCache[directory][directory].insert(entry.path().filename().string());
             }
         }
-    }
-    catch (const std::filesystem::filesystem_error& e) {
-        return;
-    }
 }
 
 bool Utils::isFileInCache(const std::filesystem::path& baseDir, const std::string& filename) {
-    auto baseDirIt = fileCache.find(baseDir);
-    if (baseDirIt != fileCache.end()) {
-        auto& subDirs = baseDirIt->second;
+    if (auto baseDirIt = fileCache.find(baseDir); baseDirIt != fileCache.end()) {
+        auto const& subDirs = baseDirIt->second;
         for (const auto& [dir, files] : subDirs) {
             if (files.find(filename) != files.end()) {
                 // Logging cache hit
@@ -122,7 +116,7 @@ bool Utils::isFileCachePopulated(const std::filesystem::path& baseDir) {
 }
 
 bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file) {
-    try {
+
         namespace fs = std::filesystem;
 
         fs::path absolutePath = Configuration::convertToAbsolutePath(Configuration::absolutePath, prefix);
@@ -162,12 +156,7 @@ bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::s
         }
 
         return foundInCache;
-    }
-    catch (const std::filesystem::filesystem_error& e) {
-        // Optionally, log the filesystem error
-        Logger::write(Logger::ZONE_ERROR, "File Cache", "Filesystem error: " + std::string(e.what()));
-        return false;
-    }
+
 }
 
 
