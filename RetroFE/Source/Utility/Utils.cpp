@@ -101,7 +101,7 @@ bool Utils::isFileInCache(const std::filesystem::path& baseDir, const std::strin
         const auto& files = baseDirIt->second;
         if (files.find(filename) != files.end()) {
             // Logging cache hit
-            Logger::write(Logger::ZONE_DEBUG, "File Cache", "Cache hit: " + baseDir.string() + " contains " + filename);
+            Logger::write(Logger::ZONE_DEBUG, "File Cache", "Hit:  " + baseDir.string() + " contains " + filename);
             return true;
         }
     }
@@ -152,7 +152,7 @@ bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::s
 
         if (!foundInCache) {
             // Log cache miss only once per directory after checking all extensions
-            Logger::write(Logger::ZONE_DEBUG, "File Cache", "Cache miss: " + baseDir.string() + " does not contain file '" + baseFileName + "'");
+            Logger::write(Logger::ZONE_DEBUG, "File Cache", "Miss: " + baseDir.string() + " does not contain file '" + baseFileName + "'");
         }
 
         return foundInCache;
