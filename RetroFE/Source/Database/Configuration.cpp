@@ -190,6 +190,10 @@ bool Configuration::parseLine(const std::string& collection, std::string keyPref
 
         properties_[key] = value;
 
+        if (key == "log" && value != "") {
+            StartLogging(this);
+        }
+
         std::stringstream ss;
         ss << "Dump: "  << "\"" << key << "\" = \"" << value << "\"";
 
@@ -430,3 +434,16 @@ void Configuration::getCollectionAbsolutePath(const std::string& collectionName,
     value = Utils::combinePath(absolutePath, "collections", collectionName, "roms");
 }
 
+bool Configuration::StartLogging(Configuration* config)
+{
+
+    if (std::string logFile = Utils::combinePath(Configuration::absolutePath, "log.txt"); !Logger::initialize(logFile, config))
+    {
+        // Can't write to logs give a heads up...
+        fprintf(stderr, "Could not open log: %s for writing!\nRetroFE will now exit...\n", logFile.c_str());
+        //LOG_ERROR("RetroFE", "Could not open \"" + logFile + "\" for writing");
+        return false;
+    }
+
+    return true;
+}

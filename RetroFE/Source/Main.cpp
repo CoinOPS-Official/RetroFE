@@ -29,7 +29,6 @@
 #include <locale>
 
 static bool ImportConfiguration(Configuration* c);
-static bool StartLogging(Configuration* c);
 
 int main(int argc, char** argv)
 {
@@ -69,11 +68,6 @@ int main(int argc, char** argv)
     Configuration::initialize();
 
     Configuration config;
-
-    if (!StartLogging(&config))
-    {
-        return -1;
-    }
 
     // check to see if createcollection was requested
     if (argc == 3)
@@ -236,20 +230,6 @@ static bool ImportConfiguration(Configuration* c)
     if (dp) closedir(dp);
 
     LOG_INFO("RetroFE", "Imported configuration");
-
-    return true;
-}
-
-static bool StartLogging(Configuration* config)
-{
-
-    if (std::string logFile = Utils::combinePath(Configuration::absolutePath, "log.txt"); !Logger::initialize(logFile, config))
-    {
-        // Can't write to logs give a heads up...
-        fprintf(stderr, "Could not open log: %s for writing!\nRetroFE will now exit...\n", logFile.c_str());
-        //LOG_ERROR("RetroFE", "Could not open \"" + logFile + "\" for writing");
-        return false;
-    }
 
     return true;
 }
