@@ -51,6 +51,7 @@ public:
     static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter);
     static int gcd(int a, int b);
     static std::string trim(std::string& str);
+    static std::string removeAbsolutePath(const std::string& fullPath);
 
     template <typename... Paths>
     static std::string combinePath(Paths... paths) {
