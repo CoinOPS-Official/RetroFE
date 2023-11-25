@@ -56,7 +56,7 @@
 #endif
 
 
-RetroFE::RetroFE( Configuration &c )
+RetroFE::RetroFE(Configuration& c)
     : initialized(false)
     , initializeError(false)
     , initializeThread(NULL)
@@ -78,72 +78,84 @@ RetroFE::RetroFE( Configuration &c )
     , gameInfo_(false)
     , playlistCycledOnce_(false)
 {
-    menuMode_                            = false;
-    attractMode_                         = false;
+    menuMode_ = false;
+    attractMode_ = false;
     attractModePlaylistCollectionNumber_ = 0;
-    firstPlaylist_                       = "all"; // todo
+    firstPlaylist_ = "all"; // todo
 }
 
-RetroFE::~RetroFE( )
+RetroFE::~RetroFE()
 {
-    deInitialize( );
+    deInitialize();
 }
 
 
 // Render the current page to the screen
-void RetroFE::render( )
+void RetroFE::render()
 {
 
-    SDL_LockMutex( SDL::getMutex( ) );
-    for ( int i = 0; i < SDL::getScreenCount( ); ++i )
+    SDL_LockMutex(SDL::getMutex());
+    for (int i = 0; i < SDL::getScreenCount(); ++i)
     {
-        SDL_SetRenderDrawColor( SDL::getRenderer( i ), 0x0, 0x0, 0x00, 0xFF );
-        SDL_RenderClear( SDL::getRenderer( i ) );
+        SDL_SetRenderDrawColor(SDL::getRenderer(i), 0x0, 0x0, 0x00, 0xFF);
+        SDL_RenderClear(SDL::getRenderer(i));
     }
 
-    if ( currentPage_ )
+    if (currentPage_)
     {
-        currentPage_->draw( );
+        currentPage_->draw();
     }
 
-    for ( int i = 0; i < SDL::getScreenCount( ); ++i )
+    for (int i = 0; i < SDL::getScreenCount(); ++i)
     {
-        SDL_RenderPresent( SDL::getRenderer( i ) );
+        SDL_RenderPresent(SDL::getRenderer(i));
     }
-    SDL_UnlockMutex( SDL::getMutex( ) );
+    SDL_UnlockMutex(SDL::getMutex());
 
 }
 
 
 // Initialize the configuration and database
-int RetroFE::initialize( void *context )
+int RetroFE::initialize(void* context)
 {
 
-    auto *instance = static_cast<RetroFE *>(context);
+    auto* instance = static_cast<RetroFE*>(context);
 
     LOG_INFO("RetroFE", "Initializing");
 
-    if ( !instance->input_.initialize( ) )
+    if (!instance->input_.initialize())
     {
         LOG_ERROR("RetroFE", "Could not initialize user controls");
         instance->initializeError = true;
         return -1;
     }
 
-    instance->db_ = new DB( Utils::combinePath( Configuration::absolutePath, "meta.db" ) );
+    instance->db_ = new DB(Utils::combinePath(Configuration::absolutePath, "meta.db"));
 
-    if ( !instance->db_->initialize( ) )
+    if (!instance->db_->initialize())
     {
         LOG_ERROR("RetroFE", "Could not initialize database");
         instance->initializeError = true;
         return -1;
     }
 
-    instance->metadb_ = new MetadataDatabase( *(instance->db_), instance->config_ );
+    instance->metadb_ = new MetadataDatabase(*(instance->db_), instance->config_);
 
-    if ( !instance->metadb_->initialize( ) )
+    if (!instance->metadb_->initialize())
     {
         LOG_ERROR("RetroFE", "Could not initialize meta database");
+        instance->initializeError = true;
+        return -1;
+    }
+    gst_init(nullptr, nullptr);
+    // Check if GStreamer initialization was successful
+    if (gst_is_initialized())
+    {
+        LOG_INFO("RetroFE", "GStreamer successfully initialized");
+    }
+    else
+    {
+        LOG_ERROR("RetroFE", "Failed to initialize GStreamer");
         instance->initializeError = true;
         return -1;
     }

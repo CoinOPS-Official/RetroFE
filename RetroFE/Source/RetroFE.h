@@ -24,6 +24,7 @@
 #include "Graphics/FontCache.h"
 #include "Video/IVideo.h"
 #include "Video/VideoFactory.h"
+#include "Video/GStreamerVideo.h"
 #include <SDL2/SDL.h>
 #include <SDL2/SDL_ttf.h>
 #include <list>
@@ -162,6 +163,7 @@ private:
     MetadataDatabase  *metadb_;
     UserInput          input_;
     Page              *currentPage_;
+    
     std::stack<Page *> pages_;
     float              keyInputDisable_;
     float              currentTime_;
