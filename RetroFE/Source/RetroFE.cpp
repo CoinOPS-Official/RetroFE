@@ -146,23 +146,7 @@ int RetroFE::initialize(void* context)
         instance->initializeError = true;
         return -1;
     }
-    gst_init(nullptr, nullptr);
-    // Check if GStreamer initialization was successful
-    if (gst_is_initialized())
-    {
-    #ifdef WIN32
-        std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
-        GstRegistry* registry = gst_registry_get();
-        gst_registry_scan_path(registry, path.c_str());
-    #endif
-        LOG_INFO("RetroFE", "GStreamer successfully initialized");
-    }
-    else
-    {
-        LOG_ERROR("RetroFE", "Failed to initialize GStreamer");
-        instance->initializeError = true;
-        return -1;
-    }
+
 
     instance->initialized = true;
     return 0;

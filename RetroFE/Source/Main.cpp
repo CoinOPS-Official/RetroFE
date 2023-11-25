@@ -14,6 +14,7 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 
+#include "Video/GStreamerVideo.h"
 #include "Database/Configuration.h"
 #include "Collection/CollectionInfoBuilder.h"
 #include "Execute/Launcher.h"
@@ -68,6 +69,23 @@ int main(int argc, char** argv)
     Configuration::initialize();
 
     Configuration config;
+
+    gst_init(nullptr, nullptr);
+    // Check if GStreamer initialization was successful
+    if (gst_is_initialized())
+    {
+#ifdef WIN32
+        std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
+        GstRegistry* registry = gst_registry_get();
+        gst_registry_scan_path(registry, path.c_str());
+#endif
+        LOG_INFO("RetroFE", "GStreamer successfully initialized");
+    }
+    else
+    {
+        LOG_ERROR("RetroFE", "Failed to initialize GStreamer");
+        return -1;
+    }
 
     // check to see if createcollection was requested
     if (argc == 3)
