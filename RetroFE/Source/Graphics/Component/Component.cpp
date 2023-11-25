@@ -88,11 +88,6 @@ Component& Component::operator=(const Component& other) {
 
 Component::~Component()
 {
-    if (tweens_) {
-        delete tweens_;
-        tweens_ = nullptr;
-    }
-
     freeGraphicsMemory();
 }
 
