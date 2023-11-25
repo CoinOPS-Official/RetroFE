@@ -30,7 +30,6 @@
 #include "Graphics/PageBuilder.h"
 #include "Graphics/Page.h"
 #include "Graphics/Component/ScrollingList.h"
-#include "Graphics/Component/Video.h"
 #include <gst/gst.h>
 #include "Video/VideoFactory.h"
 #include <algorithm>
@@ -151,6 +150,11 @@ int RetroFE::initialize(void* context)
     // Check if GStreamer initialization was successful
     if (gst_is_initialized())
     {
+    #ifdef WIN32
+        std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
+        GstRegistry* registry = gst_registry_get();
+        gst_registry_scan_path(registry, path.c_str());
+    #endif
         LOG_INFO("RetroFE", "GStreamer successfully initialized");
     }
     else
@@ -364,7 +368,6 @@ bool RetroFE::run( )
     config_.getProperty( "videoLoop", videoLoop );
     VideoFactory::setEnabled( videoEnable );
     VideoFactory::setNumLoops( videoLoop );
-    Video::setEnabled( videoEnable );
 
     initializeThread = SDL_CreateThread( initialize, "RetroFEInit", (void *)this );
 

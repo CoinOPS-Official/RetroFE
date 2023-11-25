@@ -67,14 +67,16 @@ bool GStreamerVideo::initialize()
         return true;
     }
 
-    std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
-    if(!gst_is_initialized())
-        gst_init(nullptr, nullptr);
 
-#ifdef WIN32
-    GstRegistry *registry = gst_registry_get();
-    gst_registry_scan_path(registry, path.c_str());
-#endif
+    if (!gst_is_initialized())
+    {
+        gst_init(nullptr, nullptr);
+        std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
+    #ifdef WIN32
+        GstRegistry* registry = gst_registry_get();
+        gst_registry_scan_path(registry, path.c_str());
+    #endif
+    }
 
     initialized_ = true;
     paused_      = false;
