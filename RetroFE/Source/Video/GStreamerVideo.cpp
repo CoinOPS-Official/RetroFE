@@ -255,7 +255,11 @@ bool GStreamerVideo::createAndLinkGstElements()
     videoSink_ = gst_element_factory_make("fakesink", "video_sink");
     videoConvert_ = gst_element_factory_make("videoconvert", "video_convert");
     capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
-    videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+    if(Configuration::HardwareVideoAccel && SDL::getRendererBackend(0) == "direct3d11")
+        videoConvertCaps_ = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+    else
+        videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+
 
     if(!playbin_ || !videoSink_ || !videoConvert_ || !capsFilter_ || !videoConvertCaps_)
     {

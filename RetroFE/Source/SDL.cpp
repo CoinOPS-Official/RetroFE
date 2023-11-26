@@ -393,6 +393,19 @@ SDL_Renderer* SDL::getRenderer( int index )
     return (index < screenCount_ ? renderer_[index] : renderer_[0]);
 }
 
+std::string SDL::getRendererBackend(int index) {
+    SDL_Renderer* renderer = getRenderer(index);
+    if (!renderer) {
+        return "Invalid renderer index";
+    }
+
+    SDL_RendererInfo info;
+    if (SDL_GetRendererInfo(renderer, &info) != 0) {
+        return std::string("Error getting renderer info: ") + SDL_GetError();
+    }
+
+    return std::string(info.name);
+}
 
 // Get the mutex
 SDL_mutex* SDL::getMutex( )
