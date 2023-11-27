@@ -53,6 +53,9 @@ public:
     void     allocateGraphicsMemory( );
     void     launchEnter( );
     void     launchExit( );
+    std::vector<std::string>     getPlaylistCycle();
+    void selectRandomOnFirstCycle();
+    bool getAttractModeCyclePlaylist();
 
 
 private:
@@ -116,6 +119,9 @@ private:
         RETROFE_MENUMODE_START_LOAD_ART,
         RETROFE_MENUMODE_START_ENTER,
        // RETROFE_GAMEINFO_REQUEST,
+        RETROFE_SETTINGS_REQUEST,
+        RETROFE_SETTINGS_PAGE_REQUEST,
+        RETROFE_SETTINGS_PAGE_MENU_EXIT,
         RETROFE_GAMEINFO_EXIT,
         RETROFE_GAMEINFO_ENTER,
         RETROFE_COLLECTIONINFO_ENTER,
@@ -174,8 +180,10 @@ private:
     bool                buildInfo_;
     bool                collectionInfo_;
     bool                gameInfo_;
+    bool playlistCycledOnce_;
 	std::string        firstPlaylist_;
     std::map<std::string, bool> lkupAttractModeSkipPlaylist_;
     std::map<std::string, unsigned int> lastMenuOffsets_;
     std::map<std::string, std::string>  lastMenuPlaylists_;
+    std::vector<std::string> cycleVector_;
 };

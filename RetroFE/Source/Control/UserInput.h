@@ -79,6 +79,7 @@ public:
         KeyCodeToggleGameInfo,
         KeyCodeToggleCollectionInfo,
         KeyCodeToggleBuildInfo,
+        KeyCodeSettings,
         // leave KeyCodeMax at the end
         KeyCodeMax,
     };

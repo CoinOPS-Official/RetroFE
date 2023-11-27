@@ -55,7 +55,7 @@ bool VideoComponent::update(float dt)
         {
             if (baseViewInfo.Restart && hasPlayedOnce_) {
                 videoInst_->restart();
-                Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
+                LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
 
                 baseViewInfo.Restart = false;
             }
@@ -63,16 +63,15 @@ bool VideoComponent::update(float dt)
                 if (baseViewInfo.PauseOnScroll) {
                     if (baseViewInfo.Alpha == 0.0 && !isPaused()) {
                         pause();
-                        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+                        LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
                     }
                     else if (baseViewInfo.Alpha != 0.0 && isPaused()) {
                         pause();
-                        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+                        LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
                     }
                 }
-                videoInst_->setVolume(baseViewInfo.Volume);
             }
-
+            videoInst_->setVolume(baseViewInfo.Volume);
             videoInst_->update(dt);
 
             // video needs to run a frame to start getting size info
@@ -110,13 +109,13 @@ void VideoComponent::freeGraphicsMemory()
     //videoInst_->stop()
         
     Component::freeGraphicsMemory();
-    Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
+    LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
     
     if (videoInst_) 
     {
         delete videoInst_;
         isPlaying_ = false;
-        Logger::write(Logger::ZONE_DEBUG, "VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
+        LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
         videoInst_ = nullptr;
         
     }

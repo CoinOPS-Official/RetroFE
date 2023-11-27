@@ -22,6 +22,16 @@ v0.10.34.3
     - fixed adding and removing from global playlist; fixed starting on favorite playlist on faorites collection (monkofthefunk)
     - added randomStart to start on random game (monkofthefunk)
     - added animateDuringGame to turn off animated marquee animation during game launch (monkofthefunk)
+    - fixed case where 3 games in a menu with 4 each side of selected would dysync from selected relodables (monkofthefunk)
+    - fixed global favorites adding and removing and how it affects current collection's favorites list (monkofthefunk)
+    - fixed using mp3 in video element (monkofthefunk)
+    - added settings control toggle and settingsCollectionPlaylist to determine what collection/playlist it's in (monkofthefunk)
+    - added random playlist to randomStart (monkofthefunk)
+    - added random highlight on first playlist scroll if randomStart (monkofthefunk)
+    - fixed collection animation crash due to memleak overfix (monkofthefunk)
+    - fixed clearing runtime playlist cycle cache upon collection change (monkofthefunk
+    - fixed resuming on menu with less items then size of menu (monkofthefunk)
+    - fixed global menu item removal menu update (monkofthefunk)
 
 v0.10.34.2
     - update version *.2 (monkofthefunk)

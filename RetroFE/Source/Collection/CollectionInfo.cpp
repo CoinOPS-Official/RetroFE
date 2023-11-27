@@ -91,7 +91,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
         }
         std::string dir  = Utils::combinePath(Configuration::absolutePath, "collections", playlistCollectionName, "playlists");
         std::string file = Utils::combinePath(Configuration::absolutePath, "collections", playlistCollectionName, "playlists", "favorites.txt");
-        Logger::write(Logger::ZONE_INFO, "Collection", "Saving favorites " + file);
+        LOG_INFO("Collection", "Saving favorites " + file);
 
         std::ofstream filestream;
         try
@@ -105,7 +105,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
                 {
                     if(ERROR_ALREADY_EXISTS != GetLastError())
                     {
-                        Logger::write(Logger::ZONE_WARNING, "Collection", "Could not create directory " + dir);
+                        LOG_WARNING("Collection", "Could not create directory " + dir);
                         return false;
                     }
                 }
@@ -116,17 +116,24 @@ bool CollectionInfo::saveFavorites(Item* removed)
                 if(mkdir(dir.c_str(), 0755) == -1)
 #endif        
                 {
-                    Logger::write(Logger::ZONE_WARNING, "Collection", "Could not create directory " + dir);
+                    LOG_WARNING("Collection", "Could not create directory " + dir);
                     return false;
                 }
 #endif
             }
             else if ( !(info.st_mode & S_IFDIR) )
             {
-                Logger::write(Logger::ZONE_WARNING, "Collection", dir + " exists, but is not a directory.");
+                LOG_WARNING("Collection", dir + " exists, but is not a directory.");
                 return false;
             }
-            std::vector<Item*>* saveitems = playlists["favorites"];
+            std::vector<Item*> saveitems;
+            std::vector<Item*>::iterator it = playlists["favorites"]->begin();
+            while (it != playlists["favorites"]->end())
+            {
+                saveitems.push_back(*it);
+                it++;
+            }
+
             if (globalFavLast && name != "Favorites") {
                 std::map<std::string, std::map<std::string, std::string, std::less<>>, std::less<>> existing;
 
@@ -176,13 +183,13 @@ bool CollectionInfo::saveFavorites(Item* removed)
                         existing[collectionName][itemName] = itemName;
                     }
                 }
-                std::vector<Item*>::iterator it = saveitems->begin();
-                while (it != saveitems->end())
+                std::vector<Item*>::iterator it = saveitems.begin();
+                while (it != saveitems.end())
                 {
                     if (existing.find((*it)->collectionInfo->name) != existing.end() &&
                         existing[(*it)->collectionInfo->name].find((*it)->name) != existing[(*it)->collectionInfo->name].end()) {
                         // exists so don't add to file
-                        it = saveitems->erase(it);
+                        it = saveitems.erase(it);
                     }
                     else {
                         it++;
@@ -195,7 +202,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
                 filestream.open(file.c_str());
             }
             
-            for(std::vector<Item *>::iterator it = saveitems->begin(); it != saveitems->end(); it++)
+            for(std::vector<Item *>::iterator it = saveitems.begin(); it != saveitems.end(); it++)
             {
                 if ((*it)->collectionInfo->name == (*it)->name)
                 {
@@ -211,7 +218,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
         }
         catch(std::exception &)
         {
-            Logger::write(Logger::ZONE_ERROR, "Collection", "Save favorites failed: " + file);
+            LOG_ERROR("Collection", "Save favorites failed: " + file);
             retval = false;
         }
     }

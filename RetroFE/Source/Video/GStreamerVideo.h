@@ -54,9 +54,6 @@ public:
     bool isPaused( );
 
 private:
-        
-    size_t totalSize_{ 0 };
-    
     enum BufferLayout {
         UNKNOWN,        // Initial state
         CONTIGUOUS,     // Contiguous buffer layout

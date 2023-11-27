@@ -24,10 +24,15 @@
 #include <locale>
 #include <list>
 #include <filesystem>
+#include <unordered_set>
+#include <unordered_map>
 
 #ifdef WIN32
     #include <Windows.h>
 #endif
+
+std::unordered_map<std::filesystem::path, std::unordered_set<std::string>> Utils::fileCache;
+std::unordered_set<std::filesystem::path> Utils::nonExistingDirectories;
 
 Utils::Utils() = default;
 
@@ -79,30 +84,81 @@ std::string Utils::filterComments(std::string line)
 }
 
 
-bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file)
-{
-    namespace fs = std::filesystem; // If you're using C++17 or later
+void Utils::populateCache(const std::filesystem::path& directory) {
+    LOG_DEBUG("File Cache", "Populating cache for directory: " + directory.string());
 
-    // Convert prefix to an absolute path only once
-    std::string base = Configuration::convertToAbsolutePath(Configuration::absolutePath, prefix);
+    std::unordered_set<std::string>& files = fileCache[directory];
+    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
+        if (entry.is_regular_file()) {
+            files.insert(entry.path().filename().string());
+        }
+    }
+}
 
-    // Use a range-based for loop
-    for (const auto& ext : extensions)
-    {
-        fs::path temp = base; // This creates a path object, which is more robust than string concatenation
-        temp += ".";
-        temp += ext;
-
-        // Use std::filesystem to check if the file exists
-        if (fs::exists(temp))
-        {
-            file = temp.string();
+bool Utils::isFileInCache(const std::filesystem::path& baseDir, const std::string& filename) {
+    auto baseDirIt = fileCache.find(baseDir);
+    if (baseDirIt != fileCache.end()) {
+        const auto& files = baseDirIt->second;
+        if (files.find(filename) != files.end()) {
+            // Logging cache hit
+            LOG_DEBUG("File Cache", "Hit:  " + removeAbsolutePath(baseDir.string()) + " contains " + filename);
             return true;
         }
     }
+
     return false;
+}
+
+
+
+bool Utils::isFileCachePopulated(const std::filesystem::path& baseDir) {
+    return fileCache.find(baseDir) != fileCache.end();
+}
+
+bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file) {
+
+        namespace fs = std::filesystem;
+
+        fs::path absolutePath = Configuration::convertToAbsolutePath(Configuration::absolutePath, prefix);
+        fs::path baseDir = absolutePath.parent_path();
+
+        // Check if the directory is known to not exist
+        if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
+            LOG_DEBUG("File Cache", "Skipping non-existing directory: " + removeAbsolutePath(baseDir.string()));
+            return false; // Directory was previously found not to exist
+        }
+
+        if (!fs::is_directory(baseDir)) {
+            // Handle the case where baseDir is not a directory
+            nonExistingDirectories.insert(baseDir); // Add to non-existing directories cache
+            return false;
+        }
+
+        std::string baseFileName = absolutePath.filename().string();
+
+        if (!isFileCachePopulated(baseDir)) {
+            populateCache(baseDir);
+        }
+
+        bool foundInCache = false;
+        for (const auto& ext : extensions) {
+            std::string tempFileName = baseFileName + "." + ext;
+            if (isFileInCache(baseDir, tempFileName)) {
+                file = (baseDir / tempFileName).string();
+                foundInCache = true;
+                break;
+            }
+        }
+
+        if (!foundInCache) {
+            // Log cache miss only once per directory after checking all extensions
+            LOG_DEBUG("File Cache", "Miss: " + removeAbsolutePath(baseDir.string()) + " does not contain file '" + baseFileName + "'");
+        }
+
+        return foundInCache;
 
 }
+
 
 
 std::string Utils::replace(
@@ -250,4 +306,15 @@ std::string Utils::trim(std::string& str)
     str.erase(str.find_last_not_of(' ') + 1);         //suffixing spaces
     str.erase(0, str.find_first_not_of(' '));       //prefixing spaces
     return str;
+}
+
+std::string Utils::removeAbsolutePath(const std::string& fullPath) {
+    std::string rootPath = Configuration::absolutePath; // Get the absolute path
+    std::size_t found = fullPath.find(rootPath);
+
+    if (found != std::string::npos) {
+        // Remove the rootPath part from fullPath
+        return fullPath.substr(0, found) + "." + fullPath.substr(found + rootPath.length());
+    }
+    return fullPath; // Return the original path if root is not found
 }

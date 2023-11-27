@@ -40,7 +40,6 @@
 #include <iomanip>
 #include <algorithm>
 
-
 ScrollingList::ScrollingList( Configuration &c,
                               Page          &p,
                               bool           layoutMode,
@@ -64,7 +63,6 @@ ScrollingList::ScrollingList( Configuration &c,
  {
 }
 
-
 ScrollingList::ScrollingList( const ScrollingList &copy )
     : Component( copy )
     , horizontalScroll( copy.horizontalScroll )
@@ -82,12 +80,9 @@ ScrollingList::ScrollingList( const ScrollingList &copy )
     , layoutKey_( copy.layoutKey_ )
     , imageType_( copy.imageType_ )
 {
-
-
     setPoints( copy.scrollPoints_, copy.tweenPoints_ );
 
 }
-
 
 ScrollingList::~ScrollingList()
 {
@@ -110,7 +105,8 @@ void ScrollingList::setItems( std::vector<Item *> *items )
     items_ = items;
     if (items_)
     {
-        itemIndex_ = loopDecrement(0, selectedOffsetIndex_, items_->size());
+        size_t size = items_->size();
+        itemIndex_ = loopDecrement(size, selectedOffsetIndex_, size);
     }
 }
 
@@ -131,7 +127,6 @@ void ScrollingList::selectItemByName(std::string_view name)
     }
 }
 
-
 std::string ScrollingList::getSelectedItemName()
 {
     size_t size = items_->size();
@@ -140,7 +135,6 @@ std::string ScrollingList::getSelectedItemName()
     
     return (*items_)[(itemIndex_ + selectedOffsetIndex_) % static_cast<int>(size)]->name;
 }
-
 
 unsigned int ScrollingList::loopIncrement(size_t offset, size_t index, size_t size) const
 {
@@ -151,24 +145,18 @@ unsigned int ScrollingList::loopIncrement(size_t offset, size_t index, size_t si
 unsigned int ScrollingList::loopDecrement(size_t offset, size_t index, size_t size) const
 {
     if (size == 0) return 0;
-    size_t result = offset + size - index;
-    return static_cast<unsigned int>(result % size);
+    return  static_cast<unsigned int>((static_cast<int>((offset % size) - (index % size)) + static_cast<int>(size)) % static_cast<int>(size));
 }
-
-
-
 
 void ScrollingList::setScrollAcceleration( float value )
 {
     scrollAcceleration_ = value;
 }
 
-
 void ScrollingList::setStartScrollTime( float value )
 {
     startScrollTime_ = value;
 }
-
 
 void ScrollingList::setMinScrollTime( float value )
 {
@@ -189,7 +177,6 @@ void ScrollingList::deallocateSpritePoints( )
         deallocateTexture( i );
     }
 }
-
 
 void ScrollingList::allocateSpritePoints()
 {
@@ -227,8 +214,6 @@ void ScrollingList::allocateSpritePoints()
     }
 }
 
-
-
 void ScrollingList::destroyItems()
 {
     size_t componentSize = components_.size();
@@ -244,7 +229,6 @@ void ScrollingList::destroyItems()
         }
     }
 }
-
 
 void ScrollingList::setPoints( std::vector<ViewInfo *> *scrollPoints, std::vector<AnimationEvents *> *tweenPoints )
 {
@@ -268,24 +252,20 @@ void ScrollingList::setPoints( std::vector<ViewInfo *> *scrollPoints, std::vecto
     }
 }
 
-
 unsigned int ScrollingList::getScrollOffsetIndex( ) const
 {
     return loopIncrement( itemIndex_, selectedOffsetIndex_, items_->size());
 }
-
 
 void ScrollingList::setScrollOffsetIndex( unsigned int index )
 {
     itemIndex_ = loopDecrement( index, selectedOffsetIndex_, items_->size());
 }
 
-
 void ScrollingList::setSelectedIndex( int selectedIndex )
 {
     selectedOffsetIndex_ = selectedIndex;
 }
-
 
 Item *ScrollingList::getItemByOffset(int offset)
 {
@@ -305,8 +285,6 @@ Item *ScrollingList::getItemByOffset(int offset)
     return (*items_)[index];
 }
 
-
-
 Item* ScrollingList::getSelectedItem()
 {
     size_t itemSize = items_->size();
@@ -314,7 +292,6 @@ Item* ScrollingList::getSelectedItem()
     
     return (*items_)[loopIncrement(itemIndex_, selectedOffsetIndex_, itemSize)];
 }
-
 
 void ScrollingList::pageUp()
 {
@@ -328,7 +305,6 @@ void ScrollingList::pageDown()
     itemIndex_ = loopIncrement(itemIndex_, components_.size(), items_->size());
 }
 
-
 void ScrollingList::random( )
 {
     size_t itemSize = items_->size();
@@ -336,18 +312,15 @@ void ScrollingList::random( )
     itemIndex_ = rand( ) % itemSize;
 }
 
-
 void ScrollingList::letterUp( )
 {
     letterChange( true );
 }
 
-
 void ScrollingList::letterDown( )
 {
     letterChange( false );
 }
-
 
 void ScrollingList::letterChange(bool increment)
 {
@@ -400,18 +373,15 @@ void ScrollingList::letterChange(bool increment)
     }
 }
 
-
 void ScrollingList::metaUp(const std::string& attribute)
 {
     metaChange(true, attribute);
 }
 
-
 void ScrollingList::metaDown(const std::string& attribute)
 {
     metaChange(false, attribute);
 }
-
 
 void ScrollingList::metaChange(bool increment, const std::string& attribute)
 {
@@ -458,7 +428,6 @@ void ScrollingList::metaChange(bool increment, const std::string& attribute)
         }
     }
 }
-
 
 void ScrollingList::subChange(bool increment)
 {
@@ -508,7 +477,6 @@ void ScrollingList::subChange(bool increment)
     }
 }
 
-
 void ScrollingList::cfwLetterSubUp()
 {
     if (Utils::toLower(collectionName) != (*items_)[(itemIndex_+selectedOffsetIndex_) % items_->size()]->collectionInfo->lowercaseName())
@@ -516,7 +484,6 @@ void ScrollingList::cfwLetterSubUp()
     else
         letterChange(true);
 }
-
 
 void ScrollingList::cfwLetterSubDown()
 {
@@ -540,7 +507,6 @@ void ScrollingList::cfwLetterSubDown()
     }
 }
 
-
 void ScrollingList::allocateGraphicsMemory( )
 {
     Component::allocateGraphicsMemory( );
@@ -548,7 +514,6 @@ void ScrollingList::allocateGraphicsMemory( )
 
     allocateSpritePoints( );
 }
-
 
 void ScrollingList::freeGraphicsMemory( )
 {
@@ -675,7 +640,6 @@ void ScrollingList::triggerEventOnAll(const std::string& event, int menuIndex)
     }
 }
 
-
 bool ScrollingList::update(float dt)
 {
     bool done = Component::update(dt);
@@ -700,14 +664,11 @@ bool ScrollingList::update(float dt)
     return done;
 }
 
-
-
 unsigned int ScrollingList::getSelectedIndex( ) const
 {
     if ( !items_ ) return 0;
     return loopIncrement( itemIndex_, selectedOffsetIndex_, items_->size( ) );
 }
-
 
 void ScrollingList::setSelectedIndex( unsigned int index )
 {
@@ -715,13 +676,11 @@ void ScrollingList::setSelectedIndex( unsigned int index )
      itemIndex_ = loopDecrement( index, selectedOffsetIndex_, items_->size( ) );
 }
 
-
 size_t ScrollingList::getSize() const
 {
     if ( !items_ ) return 0;
     return items_->size();
 }
-
 
 void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *currentViewInfo, ViewInfo *nextViewInfo, double scrollTime ) const
 {
@@ -735,7 +694,6 @@ void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *
     nextViewInfo->ImageHeight     = c->baseViewInfo.ImageHeight;
     nextViewInfo->ImageWidth      = c->baseViewInfo.ImageWidth;
     nextViewInfo->BackgroundAlpha = c->baseViewInfo.BackgroundAlpha;
-	
 
     c->setTweens(sets );
 
@@ -993,7 +951,6 @@ bool ScrollingList::allocateTexture( unsigned int index, const Item *item )
             }
         }
 
-
         // check collection path for art based on system name
         if ( !t )
         {
@@ -1059,7 +1016,6 @@ bool ScrollingList::allocateTexture( unsigned int index, const Item *item )
     return true;
 }
 
-
 void ScrollingList::buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) {
     imagePath = Utils::combinePath(base, subPath, "medium_artwork", mediaType);
     videoPath = Utils::combinePath(imagePath, "medium_artwork", videoType);
@@ -1081,7 +1037,6 @@ void ScrollingList::draw(  )
     // caller should instead call ScrollingList::Draw( unsigned int layer )
 }
 
-
 void ScrollingList::draw(unsigned int layer)
 {
     size_t componentSize = components_.size();
@@ -1094,7 +1049,6 @@ void ScrollingList::draw(unsigned int layer)
         if (c && c->baseViewInfo.Layer == layer) c->draw();
     }
 }
-
 
 bool ScrollingList::isIdle(  )
 {
@@ -1110,7 +1064,6 @@ bool ScrollingList::isIdle(  )
     return true;
 }
 
-
 bool ScrollingList::isAttractIdle(  )
 {
     size_t componentSize = components_.size();
@@ -1125,13 +1078,11 @@ bool ScrollingList::isAttractIdle(  )
     return true;
 }
 
-
 void ScrollingList::resetScrollPeriod(  )
 {
     scrollPeriod_ = startScrollTime_;
     return;
 }
-
 
 void ScrollingList::updateScrollPeriod(  )
 {
@@ -1141,7 +1092,6 @@ void ScrollingList::updateScrollPeriod(  )
         scrollPeriod_ = minScrollTime_;
     }
 }
-
 
 void ScrollingList::scroll(bool forward)
 {
@@ -1211,7 +1161,6 @@ void ScrollingList::scroll(bool forward)
 
     return;
 }
-
 
 bool ScrollingList::isPlaylist() const
 {

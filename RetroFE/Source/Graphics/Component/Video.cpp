@@ -46,7 +46,7 @@ Video::~Video( )
         Component::freeGraphicsMemory();
         delete video_;
         video_ = nullptr;
-        Logger::write(Logger::ZONE_DEBUG, "Video", "Deleted " + Utils::getFileName(file_));
+        LOG_DEBUG("Video", "Deleted " + Utils::getFileName(file_));
 
     }
 }
@@ -82,7 +82,7 @@ void Video::freeGraphicsMemory( )
     {
         video_->freeGraphicsMemory();
         video_ = nullptr;
-        Logger::write(Logger::ZONE_DEBUG, "Video", "Deleted " + Utils::getFileName(file_));
+        LOG_DEBUG("Video", "Deleted " + Utils::getFileName(file_));
 
     }
 }

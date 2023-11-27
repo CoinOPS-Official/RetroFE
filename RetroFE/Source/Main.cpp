@@ -29,7 +29,6 @@
 #include <locale>
 
 static bool ImportConfiguration(Configuration* c);
-static bool StartLogging(Configuration* c);
 
 int main(int argc, char** argv)
 {
@@ -70,11 +69,6 @@ int main(int argc, char** argv)
 
     Configuration config;
 
-    if (!StartLogging(&config))
-    {
-        return -1;
-    }
-
     // check to see if createcollection was requested
     if (argc == 3)
     {
@@ -108,7 +102,7 @@ int main(int argc, char** argv)
     }
     catch (std::exception& e)
     {
-        Logger::write(Logger::ZONE_ERROR, "EXCEPTION", e.what());
+        LOG_ERROR("EXCEPTION", e.what());
     }
 
     Logger::deInitialize();
@@ -133,7 +127,7 @@ static bool ImportConfiguration(Configuration* c)
     std::string settingsConfPath = Utils::combinePath(configPath, "settings");
     if (!c->import("", settingsConfPath + ".conf"))
     {
-        Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not import \"" + settingsConfPath + ".conf\"");
+        LOG_ERROR("RetroFE", "Could not import \"" + settingsConfPath + ".conf\"");
         return false;
     }
     for (int i = 1; i < 16; i++)
@@ -141,28 +135,28 @@ static bool ImportConfiguration(Configuration* c)
     c->import("", "", settingsConfPath + "_saved.conf", false);
 
     // log version
-    Logger::write(Logger::ZONE_INFO, "RetroFE", "Version " + Version::getString() + " starting");
+    LOG_INFO("RetroFE", "Version " + Version::getString() + " starting");
 
 #ifdef WIN32
-    Logger::write(Logger::ZONE_INFO, "RetroFE", "OS: Windows");
+    LOG_INFO("RetroFE", "OS: Windows");
 #elif __APPLE__
-    Logger::write(Logger::ZONE_INFO, "RetroFE", "OS: Mac");
+    LOG_INFO("RetroFE", "OS: Mac");
 #else
-    Logger::write(Logger::ZONE_INFO, "RetroFE", "OS: Linux");
+    LOG_INFO("RetroFE", "OS: Linux");
 #endif
 
-    Logger::write(Logger::ZONE_INFO, "RetroFE", "Absolute path: " + Configuration::absolutePath);
+    LOG_INFO("RetroFE", "Absolute path: " + Configuration::absolutePath);
 
     dp = opendir(launchersPath.c_str());
 
     if (dp == nullptr)
     {
-        Logger::write(Logger::ZONE_INFO, "RetroFE", "Could not read directory \"" + launchersPath + "\"");
+        LOG_INFO("RetroFE", "Could not read directory \"" + launchersPath + "\"");
         launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers");
         dp = opendir(launchersPath.c_str());
         if (dp == nullptr)
         {
-            Logger::write(Logger::ZONE_NOTICE, "RetroFE", "Could not read directory \"" + launchersPath + "\"");
+            LOG_NOTICE("RetroFE", "Could not read directory \"" + launchersPath + "\"");
             return false;
         }
     }
@@ -176,7 +170,7 @@ static bool ImportConfiguration(Configuration* c)
 
             if (dot_position == std::string::npos)
             {
-                Logger::write(Logger::ZONE_NOTICE, "RetroFE", "Extension missing on launcher file \"" + basename + "\"");
+                LOG_NOTICE("RetroFE", "Extension missing on launcher file \"" + basename + "\"");
                 continue;
             }
 
@@ -191,7 +185,7 @@ static bool ImportConfiguration(Configuration* c)
 
                 if (!c->import(prefix, importFile))
                 {
-                    Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not import \"" + importFile + "\"");
+                    LOG_ERROR("RetroFE", "Could not import \"" + importFile + "\"");
                     if (dp) closedir(dp);
                     return false;
                 }
@@ -205,7 +199,7 @@ static bool ImportConfiguration(Configuration* c)
 
     if (dp == nullptr)
     {
-        Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not read directory \"" + collectionsPath + "\"");
+        LOG_ERROR("RetroFE", "Could not read directory \"" + collectionsPath + "\"");
         return false;
     }
 
@@ -228,28 +222,14 @@ static bool ImportConfiguration(Configuration* c)
 
             if (!settingsImported)
             {
-                Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not import any collection settings for " + collection);
+                LOG_ERROR("RetroFE", "Could not import any collection settings for " + collection);
             }
         }
     }
 
     if (dp) closedir(dp);
 
-    Logger::write(Logger::ZONE_INFO, "RetroFE", "Imported configuration");
-
-    return true;
-}
-
-static bool StartLogging(Configuration* config)
-{
-
-    if (std::string logFile = Utils::combinePath(Configuration::absolutePath, "log.txt"); !Logger::initialize(logFile, config))
-    {
-        // Can't write to logs give a heads up...
-        fprintf(stderr, "Could not open log: %s for writing!\nRetroFE will now exit...\n", logFile.c_str());
-        //Logger::write(Logger::ZONE_ERROR, "RetroFE", "Could not open \"" + logFile + "\" for writing");
-        return false;
-    }
+    LOG_INFO("RetroFE", "Imported configuration");
 
     return true;
 }

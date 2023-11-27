@@ -65,10 +65,7 @@ void ReloadableMedia::enableTextFallback_(bool value)
 bool ReloadableMedia::update(float dt)
 {
     if (newItemSelected ||
-        (newScrollItemSelected && getMenuScrollReload()) ||
-        type_ == "isPaused" ||
-        type_ == "playCount" ||
-        type_ == "playcount")
+        (newScrollItemSelected && getMenuScrollReload()))
     {
         newItemSelected = false;
         newScrollItemSelected = false;

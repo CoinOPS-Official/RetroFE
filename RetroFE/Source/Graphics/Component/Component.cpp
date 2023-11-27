@@ -24,9 +24,9 @@ Component::Component(Page &p)
 : page(p)
 {
     tweens_                   = nullptr;
-    backgroundTexture_        = nullptr;
     menuScrollReload_         = false;
     animationDoneRemove_      = false;
+    backgroundTexture_ = nullptr;
     freeGraphicsMemory();
     id_                       = -1;
 }
@@ -35,8 +35,8 @@ Component::Component(const Component &copy)
     : page(copy.page)
 {
     tweens_ = nullptr;
-    backgroundTexture_ = nullptr;
     freeGraphicsMemory();
+    backgroundTexture_ = nullptr;
 
     if ( copy.tweens_ )
     {
@@ -65,11 +65,32 @@ void Component::freeGraphicsMemory()
     currentTweenIndex_    = 0;
     currentTweenComplete_ = true;
     elapsedTweenTime_     = 0;
-
+    SDL_LockMutex(SDL::getMutex());
+    if (backgroundTexture_ != nullptr)
+    {
+        SDL_DestroyTexture(backgroundTexture_);
+        backgroundTexture_ = nullptr;
+    }
+    SDL_UnlockMutex(SDL::getMutex());
 }
+
+// used to draw lines in the layout using <container>
 void Component::allocateGraphicsMemory()
 {
+    if (!backgroundTexture_)
+    {
+        // make a 4x4 pixel wide surface to be stretched during rendering, make it a white background so we can use
+        // color  later
+        SDL_Surface* surface = SDL_CreateRGBSurface(0, 4, 4, 32, 0, 0, 0, 0);
+        SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 255, 255));
 
+        SDL_LockMutex(SDL::getMutex());
+        backgroundTexture_ = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), surface);
+        SDL_UnlockMutex(SDL::getMutex());
+
+        SDL_FreeSurface(surface);
+        SDL_SetTextureBlendMode(backgroundTexture_, SDL_BLENDMODE_BLEND);
+    }
 }
 
 
@@ -195,9 +216,25 @@ bool Component::update(float dt)
     return currentTweenComplete_;
 }
 
+// used to draw lines in the layout using <container>
 void Component::draw()
 {
+    if (backgroundTexture_)
+    {
+        SDL_Rect rect;
+        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
+        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
+        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
+        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
 
+
+        SDL_SetTextureColorMod(backgroundTexture_,
+            static_cast<char>(baseViewInfo.BackgroundRed * 255),
+            static_cast<char>(baseViewInfo.BackgroundGreen * 255),
+            static_cast<char>(baseViewInfo.BackgroundBlue * 255));
+
+        SDL::renderCopy(backgroundTexture_, baseViewInfo.BackgroundAlpha, NULL, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+    }
 }
 
 bool Component::animate()

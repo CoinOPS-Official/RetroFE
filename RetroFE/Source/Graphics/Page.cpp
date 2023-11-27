@@ -26,6 +26,7 @@
 #include "PageBuilder.h"
 #include <algorithm>
 #include <sstream>
+#include "../Utility/Utils.h"
 
 
 Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
@@ -289,7 +290,7 @@ bool Page::addComponent(Component *c)
     {
         std::stringstream ss;
         ss << "Component layer too large Layer: " << c->baseViewInfo.Layer;
-        Logger::write(Logger::ZONE_ERROR, "Page", ss.str());
+        LOG_ERROR("Page", ss.str());
     }
 
     return retVal;
@@ -761,6 +762,28 @@ void Page::selectRandom()
     }
 }
 
+void Page::selectRandomPlaylist(CollectionInfo* collection, std::vector<std::string> cycleVector)
+{
+    size_t size = collection->playlists.size();
+    if (size == 0) return;
+
+    int index = rand() % size;
+    int i = 0;
+    std::string playlistName;
+    std::string settingsPlaylist = "settings";
+    config_.setProperty("settingsPlaylist", settingsPlaylist);
+
+    for (auto it = collection->playlists.begin(); it != collection->playlists.end(); it++)
+    {
+        if (i == index && it->first != settingsPlaylist && std::find(cycleVector.begin(), cycleVector.end(), it->first) != cycleVector.end()) {
+            playlistName = it->first;
+            break;
+        }
+        i++;
+    }
+    if (playlistName != "")
+        selectPlaylist(playlistName);
+}
 
 void Page::letterScroll(ScrollDirection direction)
 {
@@ -880,7 +903,7 @@ bool Page::pushCollection(CollectionInfo *collection)
         }
     }
     else {
-        Logger::write(Logger::ZONE_WARNING, "RetroFE", "layout.xml doesn't have any menus");
+        LOG_WARNING("RetroFE", "layout.xml doesn't have any menus");
     }
 
     // build the collection info instance
@@ -983,7 +1006,6 @@ void Page::favPlaylist()
     }
     return;
 }
-
 
 void Page::nextPlaylist()
 {
@@ -1091,6 +1113,9 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
     // Empty list
     if (list.empty())
         return;
+    
+    std::string settingsPlaylist = "";
+    config_.getProperty("settingsPlaylist", settingsPlaylist);
 
     // Find the current playlist in the list
     auto it = list.begin();
@@ -1104,7 +1129,7 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
     {
         for (auto it2 = list.begin(); it2 != list.end(); ++it2)
         {
-            if (playlistExists(*it2)) {
+            if (*it2 != settingsPlaylist && playlistExists(*it2)) {
                 selectPlaylist(*it2);
                 break;
             }
@@ -1119,7 +1144,7 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
             if (it == list.end()) 
                 it = list.begin(); // wrap
 
-            if (playlistExists(*it)) {
+            if (*it != settingsPlaylist && playlistExists(*it)) {
                 selectPlaylist(*it);
                 break;
             }
@@ -1135,6 +1160,9 @@ void Page::prevCyclePlaylist(std::vector<std::string> list)
     if (list.empty())
         return;
 
+    std::string settingsPlaylist = "";
+    config_.getProperty("settingsPlaylist", settingsPlaylist);
+
     // Find the current playlist in the list
     auto it = list.begin();
     while (it != list.end() && *it != getPlaylistName())
@@ -1145,7 +1173,7 @@ void Page::prevCyclePlaylist(std::vector<std::string> list)
     {
         for (auto it2 = list.begin(); it2 != list.end(); ++it2)
         {
-            if (playlistExists(*it2)) {
+            if (*it2 != settingsPlaylist && playlistExists(*it2)) {
                 selectPlaylist(*it2);
                 break;
             }
@@ -1159,7 +1187,7 @@ void Page::prevCyclePlaylist(std::vector<std::string> list)
             if (it == list.begin()) 
                 it = list.end(); // wrap
             --it;
-            if (playlistExists(*it)) {
+            if (*it != settingsPlaylist && playlistExists(*it)) {
                 selectPlaylist(*it);
                 break;
             }
@@ -1282,15 +1310,6 @@ void Page::removePlaylist()
     MenuInfo_S &info = collections_.back();
     CollectionInfo *collection = info.collection;
 
-    bool globalFavLast = false;
-    (void)config_.getProperty("globalFavLast", globalFavLast);
-    if (globalFavLast && collection->name != "Favorites") {
-        collection->saveRequest = true;
-        collection->saveFavorites(selectedItem_);
-
-        return;
-    }
-
     std::vector<Item *> *items = collection->playlists["favorites"];
     auto it = std::find(items->begin(), items->end(), selectedItem_);
 
@@ -1315,10 +1334,20 @@ void Page::removePlaylist()
         // set to position to the old deleted position
         if (amenu)
         {
-            amenu->setScrollOffsetIndex(index);
+            setScrollOffsetIndex(index);
         }
     }
+    bool globalFavLast = false;
+    (void)config_.getProperty("globalFavLast", globalFavLast);
+    if (globalFavLast && collection->name != "Favorites") {
+        collection->saveRequest = true;
+        collection->saveFavorites(selectedItem_);
+
+        return;
+    }
+
     collection->saveFavorites();
+    onNewItemSelected();
 }
 
 
@@ -1354,7 +1383,6 @@ void Page::togglePlaylist()
             addPlaylist();
     }
 }
-
 
 std::string Page::getCollectionName()
 {
@@ -1396,7 +1424,7 @@ void Page::freeGraphicsMemory()
 
 void Page::allocateGraphicsMemory()
 {
-    Logger::write(Logger::ZONE_DEBUG, "Page", "Allocating graphics memory");
+    LOG_DEBUG("Page", "Allocating graphics memory");
 
     int currentDepth = 0;
     for (auto const& menuList : menus_)
@@ -1426,7 +1454,7 @@ void Page::allocateGraphicsMemory()
             component->allocateGraphicsMemory();
         }
     }
-    Logger::write(Logger::ZONE_DEBUG, "Page", "Allocate graphics memory complete");
+    LOG_DEBUG("Page", "Allocate graphics memory complete");
 }
 
 

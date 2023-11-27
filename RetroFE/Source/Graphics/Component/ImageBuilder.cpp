@@ -29,7 +29,6 @@ Image * ImageBuilder::CreateImage(const std::string& path, Page &p, const std::s
     if(std::string file; Utils::findMatchingFile(prefix, extensions, file))
     {
         image = new Image(file, "", p, monitor, additive);
-        image->allocateGraphicsMemory();
     }
 
     return image;
