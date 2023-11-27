@@ -79,7 +79,6 @@ public:
     size_t getCollectionSize();
     unsigned int getSelectedIndex();
     void selectRandom();
-    void selectRandomPlaylist(CollectionInfo* collection, std::vector<std::string> cycleVector);
     void start();
     void stop();
     void setCurrentLayout(int layout);

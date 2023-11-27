@@ -58,7 +58,7 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
     if (!includeStream.good())
     {
 
-        LOG_INFO("Menu", "File does not exist: \"" + file + "\"; trying menu directory.");
+        Logger::write(Logger::ZONE_INFO, "Menu", "File does not exist: \"" + file + "\"; trying menu directory.");
 
         DIR *dp;
         struct dirent const *dirp;
@@ -95,7 +95,7 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
     else
     {
 
-        LOG_INFO("Menu", "Found: \"" + file + "\"");
+        Logger::write(Logger::ZONE_INFO, "Menu", "Found: \"" + file + "\"");
 
         std::string line;
 
@@ -140,8 +140,8 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
         // gracefully exit if there is no menu file for the pa
         if(file.good())
         {
-            LOG_INFO("Menu", "Found: \"" + menuFilename + "\"");
-            LOG_INFO("Menu", "Using legacy menu.xml file. Consider using the new menu.txt format");
+            Logger::write(Logger::ZONE_INFO, "Menu", "Found: \"" + menuFilename + "\"");
+            Logger::write(Logger::ZONE_INFO, "Menu", "Using legacy menu.xml file. Consider using the new menu.txt format");
             std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
             buffer.push_back('\0');
@@ -157,7 +157,7 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
                 if(!collectionAttribute)
                 {
                     retVal = false;
-                    LOG_ERROR("Menu", "Menu item tag is missing collection attribute");
+                    Logger::write(Logger::ZONE_ERROR, "Menu", "Menu item tag is missing collection attribute");
                     break;
                 }
                 //todo, check for empty string
@@ -183,7 +183,7 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
     {
         std::stringstream ss;
         ss << "Unable to open menu file \"" << menuFilename << "\": " << e.what();
-        LOG_ERROR("Menu", ss.str());
+        Logger::write(Logger::ZONE_ERROR, "Menu", ss.str());
     }
 
     return retVal;

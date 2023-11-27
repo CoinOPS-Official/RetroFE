@@ -48,16 +48,16 @@ bool SDL::initialize( Configuration &config )
 #ifdef WIN32
     if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE)) 
     {
-    LOG_ERROR("SDL", "Unable to set DPI awareness hint" );
+    Logger::write( Logger::ZONE_ERROR, "SDL", "Unable to set DPI awareness hint" );
     }
 #endif    
 
     
-    LOG_INFO("SDL", "Initializing" );
+    Logger::write( Logger::ZONE_INFO, "SDL", "Initializing" );
     if ( SDL_Init( SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS ) != 0 )
     {
         std::string error = SDL_GetError( );
-        LOG_ERROR("SDL", "Initialize failed: " + error );
+        Logger::write( Logger::ZONE_ERROR, "SDL", "Initialize failed: " + error );
         return false;
     }
 
@@ -87,13 +87,13 @@ bool SDL::initialize( Configuration &config )
 
     if ( numScreens_ <= 0 )
     {
-        LOG_ERROR("SDL", "Number of requested displays < 0." );
+        Logger::write( Logger::ZONE_ERROR, "SDL", "Number of requested displays < 0." );
         return false;
     }
 
     numDisplays_ = SDL_GetNumVideoDisplays( );
-    LOG_INFO("SDL", "Number of displays found: " + std::to_string( numDisplays_ ) );
-    LOG_INFO("SDL", "Number of displays requested: " + std::to_string( numScreens_ ) );
+    Logger::write( Logger::ZONE_INFO, "SDL", "Number of displays found: " + std::to_string( numDisplays_ ) );
+    Logger::write( Logger::ZONE_INFO, "SDL", "Number of displays requested: " + std::to_string( numScreens_ ) );
 
     // Preset the SDL settings for all monitors
     int mainScreen = 0;
@@ -115,7 +115,7 @@ bool SDL::initialize( Configuration &config )
 
         if ( !config.getProperty( "screenNum" + screenIndex, screenNum ) && screenNum != mainScreen)
         {
-            LOG_ERROR("SDL", "screenNum" + screenIndex + " parameter not defined.");
+            Logger::write( Logger::ZONE_ERROR, "SDL", "screenNum" + screenIndex + " parameter not defined.");
             return false;
         }
 
@@ -123,12 +123,12 @@ bool SDL::initialize( Configuration &config )
         {
             if (screenNum == mainScreen)
             {
-                LOG_ERROR("SDL", "Display " + std::to_string(screenNum) + " does not exist.");
+                Logger::write( Logger::ZONE_ERROR, "SDL", "Display " + std::to_string(screenNum) + " does not exist.");
                 return false;
             }
             else
             {
-                LOG_WARNING("SDL", "Display " + std::to_string(screenNum) + " does not exist.");
+                Logger::write( Logger::ZONE_WARNING, "SDL", "Display " + std::to_string(screenNum) + " does not exist.");
                 windowWidth_.push_back(0);
                 windowHeight_.push_back(0);
                 displayWidth_.push_back(0);
@@ -148,23 +148,23 @@ bool SDL::initialize( Configuration &config )
             config.getProperty( "horizontal" + screenIndex, hString );
             if ( hString == "" )
             {
-                LOG_ERROR("Configuration", "Missing property \"horizontal\"" + screenIndex );
+                Logger::write( Logger::ZONE_ERROR, "Configuration", "Missing property \"horizontal\"" + screenIndex );
                 return false;
             }
 			else if ( hString == "envvar" ) // from environment variable
 			{
 				hString = Utils::getEnvVar("H_RES_" + screenIndex);
                 if (hString == "" || !Utils::convertInt(hString)) {
-                    LOG_WARNING("Configuration", "Invalid property value for \"horizontal\"" + screenIndex + " defaulted to 'stretch'");
+                    Logger::write(Logger::ZONE_WARNING, "Configuration", "Invalid property value for \"horizontal\"" + screenIndex + " defaulted to 'stretch'");
                 }
                 else {
-                    LOG_WARNING("Configuration", "H_RES_" + screenIndex + " for  \"horizontal\" set to " + hString);
+                    Logger::write(Logger::ZONE_WARNING, "Configuration", "H_RES_" + screenIndex + " for  \"horizontal\" set to " + hString);
                     windowWidth_[screenNum] = Utils::convertInt(hString);
                 }
 			}
 			else if ( hString != "stretch" && (screenNum != mainScreen || !config.getProperty( "horizontal", windowWidth_[screenNum] )) && !config.getProperty( "horizontal" + screenIndex, windowWidth_[screenNum] ))
             {
-                LOG_ERROR("Configuration", "Invalid property value for \"horizontal\"" + screenIndex );
+                Logger::write( Logger::ZONE_ERROR, "Configuration", "Invalid property value for \"horizontal\"" + screenIndex );
                 return false;
             }
 
@@ -177,24 +177,24 @@ bool SDL::initialize( Configuration &config )
             config.getProperty( "vertical" + screenIndex, vString );
             if ( vString == "" )
             {
-                LOG_ERROR("Configuration", "Missing property \"vertical\"" + screenIndex );
+                Logger::write( Logger::ZONE_ERROR, "Configuration", "Missing property \"vertical\"" + screenIndex );
                 return false;
             }
 			else if ( vString == "envvar") // from environment variable
 			{
 				vString = Utils::getEnvVar("V_RES_" + screenIndex);
                 if (vString == "" || !Utils::convertInt(vString)) {
-                    LOG_WARNING("Configuration", "Invalid property value for \"vertical\"" + screenIndex + " defaulted to 'stretch'");
+                    Logger::write(Logger::ZONE_WARNING, "Configuration", "Invalid property value for \"vertical\"" + screenIndex + " defaulted to 'stretch'");
                 }
                 else {
-                    LOG_WARNING("Configuration", "V_RES_" + screenIndex + " for  \"vertical\" set to " + vString);
+                    Logger::write(Logger::ZONE_WARNING, "Configuration", "V_RES_" + screenIndex + " for  \"vertical\" set to " + vString);
                     windowHeight_[screenNum] = Utils::convertInt(vString);
 
                 }
 			}
 			else if ( vString != "stretch" && (screenNum != mainScreen || !config.getProperty( "vertical", windowHeight_[screenNum] )) && !config.getProperty( "vertical" + screenIndex, windowHeight_[screenNum] ) )
             {
-                LOG_ERROR("Configuration", "Invalid property value for \"vertical\"" + screenIndex );
+                Logger::write( Logger::ZONE_ERROR, "Configuration", "Invalid property value for \"vertical\"" + screenIndex );
                 return false;
             }
 
@@ -203,7 +203,7 @@ bool SDL::initialize( Configuration &config )
             config.getProperty( "fullscreen", fullscreen );
             if (screenNum == mainScreen && !config.getProperty( "fullscreen", fullscreen ) && !config.getProperty( "fullscreen" + screenIndex, fullscreen ) )
             {
-                LOG_ERROR("Configuration", "Missing property: \"fullscreen\"" + screenIndex );
+                Logger::write( Logger::ZONE_ERROR, "Configuration", "Missing property: \"fullscreen\"" + screenIndex );
                 return false;
             }
             fullscreen_.push_back( fullscreen );
@@ -219,13 +219,13 @@ bool SDL::initialize( Configuration &config )
 
             int rotation= 0;
             config.getProperty( "rotation" + screenIndex, rotation );
-            LOG_INFO("Configuration", "Setting rotation for screen " + screenIndex + " to " + std::to_string( rotation * 90 ) + " degrees." );
+            Logger::write( Logger::ZONE_INFO, "Configuration", "Setting rotation for screen " + screenIndex + " to " + std::to_string( rotation * 90 ) + " degrees." );
             rotation_.push_back( rotation );
 
             bool mirror = false;
             config.getProperty( "mirror" + screenIndex, mirror );
             if ( mirror )
-                LOG_INFO("Configuration", "Setting mirror mode for screen " + screenIndex + "." );
+                Logger::write( Logger::ZONE_INFO, "Configuration", "Setting mirror mode for screen " + screenIndex + "." );
             mirror_.push_back( mirror );
 
             window_.push_back(NULL);
@@ -233,7 +233,7 @@ bool SDL::initialize( Configuration &config )
             std::string fullscreenStr = fullscreen_[screenNum] ? "yes" : "no";
             std::stringstream ss;
             ss << "Creating "<< windowWidth_[screenNum] << "x" << windowHeight_[screenNum] << " window (fullscreen: " << fullscreenStr << ")" << " on display " << screenNum;
-            LOG_INFO("SDL", ss.str( ));
+            Logger::write( Logger::ZONE_INFO, "SDL", ss.str( ));
             std::string retrofeTitle = "RetroFE " + std::to_string(screenNum);
             if (!window_[screenNum]) {
                 window_[screenNum] = SDL_CreateWindow(retrofeTitle.c_str(), SDL_WINDOWPOS_CENTERED_DISPLAY(screenNum), SDL_WINDOWPOS_CENTERED_DISPLAY(screenNum), windowWidth_[screenNum], windowHeight_[screenNum], windowFlags);
@@ -244,14 +244,14 @@ bool SDL::initialize( Configuration &config )
 			config.getProperty("SDLRenderDriver", SDLRenderDriver);
 			if ( SDL_SetHint(SDL_HINT_RENDER_DRIVER, SDLRenderDriver.c_str()) != SDL_TRUE )
 			{
-				LOG_ERROR("SDL", "Error setting renderer to" + SDLRenderDriver + ". Available direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software");
+				Logger::write( Logger::ZONE_ERROR, "SDL", "Error setting renderer to" + SDLRenderDriver + ". Available direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software");
 			}
 #endif			
 			std::string ScaleQuality = "1";
 			config.getProperty("ScaleQuality", ScaleQuality);
 			if ( SDL_SetHint( SDL_HINT_RENDER_SCALE_QUALITY, ScaleQuality.c_str()) != SDL_TRUE )
 			{
-				LOG_ERROR("SDL", "Improve scale quality. Continuing with low-quality settings 1 = linear. 0 = nearest, 2 = best (linear)" );
+				Logger::write( Logger::ZONE_ERROR, "SDL", "Improve scale quality. Continuing with low-quality settings 1 = linear. 0 = nearest, 2 = best (linear)" );
 			}
 
             if ( window_[screenNum] == NULL )
@@ -259,12 +259,12 @@ bool SDL::initialize( Configuration &config )
                 std::string error = SDL_GetError( );
                 if (screenNum == mainScreen)
                 {
-                    LOG_ERROR("SDL", "Create window " + screenIndex + " on display " + std::to_string(screenNum) + " failed: " + error );
+                    Logger::write( Logger::ZONE_ERROR, "SDL", "Create window " + screenIndex + " on display " + std::to_string(screenNum) + " failed: " + error );
                     return false;
                 }
                 else
                 {
-                    LOG_WARNING("SDL", "Create window " + screenIndex + " on display " + std::to_string(screenNum) + " failed: " + error );
+                    Logger::write( Logger::ZONE_WARNING, "SDL", "Create window " + screenIndex + " on display " + std::to_string(screenNum) + " failed: " + error );
                 }
             }
             else
@@ -275,7 +275,7 @@ bool SDL::initialize( Configuration &config )
                     if (vSync == true)
                     {
                         renderer_[screenNum] = SDL_CreateRenderer(window_[screenNum], -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-                        LOG_INFO("SDL", "vSync Enabled");
+                        Logger::write(Logger::ZONE_INFO, "SDL", "vSync Enabled");
                     }
                     else
                     {
@@ -285,7 +285,7 @@ bool SDL::initialize( Configuration &config )
 				if (renderer_[screenNum] == NULL) 
 				{
 					std::string error = SDL_GetError();
-					LOG_ERROR("SDL", "Create renderer " + screenIndex + " failed: " + error);
+					Logger::write(Logger::ZONE_ERROR, "SDL", "Create renderer " + screenIndex + " failed: " + error);
 					return false;
 				}
 				else 
@@ -295,11 +295,11 @@ bool SDL::initialize( Configuration &config )
 					{
 						std::string logMessage = "Current rendering backend for renderer " + screenIndex + ": ";
 						logMessage += info.name;
-						LOG_INFO("SDL", logMessage);
+						Logger::write(Logger::ZONE_INFO, "SDL", logMessage);
 					}		 
 					else 
 					{
-						LOG_ERROR("SDL", "Could not retrieve renderer info for renderer " + screenIndex + " Error: " + SDL_GetError());
+						Logger::write(Logger::ZONE_ERROR, "SDL", "Could not retrieve renderer info for renderer " + screenIndex + " Error: " + SDL_GetError());
 					}
 				}
             }
@@ -323,14 +323,14 @@ bool SDL::initialize( Configuration &config )
     if ( mutex_ == nullptr )
     {
         std::string error = SDL_GetError( );
-        LOG_ERROR("SDL", "Mutex creation failed: " + error );
+        Logger::write( Logger::ZONE_ERROR, "SDL", "Mutex creation failed: " + error );
         return false;
     }
 
     if ( Mix_OpenAudio( audioRate, audioFormat, audioChannels, audioBuffers ) == -1 )
     {
         std::string error = Mix_GetError( );
-        LOG_WARNING("SDL", "Audio initialize failed: " + error );
+        Logger::write( Logger::ZONE_WARNING, "SDL", "Audio initialize failed: " + error );
     }
 
     return true;
@@ -342,7 +342,7 @@ bool SDL::initialize( Configuration &config )
 bool SDL::deInitialize( )
 {
     std::string error = SDL_GetError( );
-    LOG_INFO("SDL", "DeInitializing" );
+    Logger::write( Logger::ZONE_INFO, "SDL", "DeInitializing" );
 
     Mix_CloseAudio( );
     Mix_Quit( );

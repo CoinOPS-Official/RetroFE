@@ -19,8 +19,6 @@
 #include <vector>
 #include <list>
 #include <filesystem>
-#include <unordered_map>
-#include <unordered_set>
 
 #ifdef WIN32
     #define NOMINMAX
@@ -51,7 +49,6 @@ public:
     static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter);
     static int gcd(int a, int b);
     static std::string trim(std::string& str);
-    static std::string removeAbsolutePath(const std::string& fullPath);
 
     template <typename... Paths>
     static std::string combinePath(Paths... paths) {
@@ -69,12 +66,6 @@ public:
 #endif
 
 private:
-    static std::unordered_map<std::filesystem::path, std::unordered_set<std::string>> fileCache;
-    static std::unordered_set<std::filesystem::path> nonExistingDirectories; // Cache for non-existing directories
-    static void populateCache(const std::filesystem::path& directory);
-    static bool isFileInCache(const std::filesystem::path& directory, const std::string& filename);
-    static bool isFileCachePopulated(const std::filesystem::path& directory);
-    
     Utils();
     virtual ~Utils();
 };
