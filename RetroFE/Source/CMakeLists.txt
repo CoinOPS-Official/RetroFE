@@ -49,6 +49,16 @@ if(WIN32)
 	find_package(SDL2_mixer REQUIRED)
 	find_package(SDL2_ttf REQUIRED)
 	find_package(ZLIB REQUIRED)
+
+elseif(APPLE)
+	find_package(Glib2 REQUIRED)
+	find_package(GStreamer REQUIRED)
+	find_package(SDL2 REQUIRED)
+	find_package(SDL2_image REQUIRED)
+	find_package(SDL2_mixer REQUIRED)
+	find_package(SDL2_ttf REQUIRED)
+	find_package(ZLIB REQUIRED)
+	
 else()
 	include(FindPkgConfig)
 	pkg_search_module(SDL2 REQUIRED sdl2)
@@ -59,15 +69,6 @@ else()
 	pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-app-1.0)
 	pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
 	find_package(Threads REQUIRED)
-if(CMAKE_SYSTEM MATCHES "Darwin")
-	include(FindPkgConfig)
-	find_package(GStreamer REQUIRED)
-	find_package(Glib2 REQUIRED)
-	find_package(SDL2 REQUIRED)
-	find_package(SDL2_image REQUIRED)
-	find_package(SDL2_mixer REQUIRED)
-	find_package(SDL2_ttf REQUIRED)
-endif()
 endif()
 
 set(RETROFE_INCLUDE_DIRS
@@ -81,16 +82,11 @@ set(RETROFE_INCLUDE_DIRS
 	"${ZLIB_INCLUDE_DIRS}"
 	"${SQLITE3_ROOT}"
 	"${RAPIDXML_ROOT}"
-	if(CMAKE_SYSTEM MATCHES "Darwin") #codename for MacOS systems
-		"/opt/homebrew/include/SDL2"
-		"/opt/homebrew/include/glib-2.0"
-		"/opt/homebrew/lib/glib-2.0"
-		"/opt/homebrew/include/gstreamer-1.0"
-	endif()
+	"/opt/homebrew/lib/glib-2.0/include"
 )
 
 if(MSVC)
-LIST(APPEND RETROFE_INCLUDE_DIRS 	"${DIRENT_INCLUDE_DIR}")
+	LIST(APPEND RETROFE_INCLUDE_DIRS "${DIRENT_INCLUDE_DIR}")
 endif()
 
 set(RETROFE_LIBRARIES
@@ -219,7 +215,10 @@ set(LIBRARY_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORC
 
 include_directories(${RETROFE_INCLUDE_DIRS})
 add_executable(retrofe  ${RETROFE_SOURCES} ${RETROFE_HEADERS})
-# target_link_libraries(retrofe ${RETROFE_LIBRARIES})
+
+if(WIN32)
+	target_link_libraries(retrofe ${RETROFE_LIBRARIES})
+endif()
 
 if(APPLE)
 	# Get the current dir then go to package contents
@@ -236,13 +235,17 @@ if(APPLE)
 		MACOSX_BUNDLE_ICON_FILE "RetroFE.png"
 	)
 	# Copy necessary resources into the app bundle
+		# List of resource files to be copied into the bundle
 	set(APP_RESOURCES
-	# List of resource files to be copied into the bundle
-	${RETROFE_PACKAGE_DIR}/RetroFE.png
+		${RETROFE_PACKAGE_DIR}/RetroFE.png
+	)
+	# Create folder
+	add_custom_command(TARGET retrofe POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:retrofe>/../Resources 
 	)
 	foreach(RESOURCE ${APP_RESOURCES})
+		message("COPYING RESOURCE ${RESOURCE} TO BUNDLE")
 		add_custom_command(TARGET retrofe POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:retrofe>/../Resources
 			COMMAND ${CMAKE_COMMAND} -E copy ${RESOURCE} $<TARGET_FILE_DIR:retrofe>/../Resources
 		)
 	endforeach()
@@ -252,51 +255,45 @@ if(APPLE)
 	# Remove the last element from the LIBRARIES list (trailing z?)
 	list(POP_BACK EXTERNAL_LIBRARIES)
 
-	foreach(LIBRARY ${EXTERNAL_LIBRARIES})
-		get_filename_component(LIB_NAME ${LIBRARY} NAME)
+	# # Copies Parent dylibs to the app bundle
+	# foreach(LIBRARY ${EXTERNAL_LIBRARIES})
+	# 	# Gets library name from dylib at path location
+	# 	get_filename_component(LIB_NAME ${LIBRARY} NAME) 
+	# 	if (${LIB_NAME} MATCHES "\\.dylib$")
+	# 		# Copy the dylibs to /Frameworks
+	# 		add_custom_command(TARGET retrofe POST_BUILD
+	# 			COMMAND ${CMAKE_COMMAND} -E copy
+	# 				${LIBRARY}
+	# 				$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${LIB_NAME}
+	# 			COMMAND ${CMAKE_INSTALL_NAME_TOOL} $<TARGET_BUNDLE_DIR:retrofe>/Contents/MacOS/retrofe -change
+	# 				"${LIBRARY}"
+	# 				"@executable_path/../Frameworks/${LIB_NAME}"
+	# 		)
+	# 	endif()
+		# # Use otool to get the list of dependencies for the library
+		# execute_process(
+		# 	COMMAND otool -L ${LIBRARY}
+		# 	COMMAND grep -o "/[^ ]*" OUTPUT_VARIABLE LIB_DEPENDENCIES
+		# )
+		# # Copies child dylibs to the app bundle
+		# foreach(DEPENDENCY ${LIB_DEPENDENCIES})
+		# 	string(REGEX REPLACE "[^%]*:" "" DEPENDENCY "${DEPENDENCY}")
+		# 	string(REGEX REPLACE "/System/[^%]*" "" DEPENDENCY "${DEPENDENCY}")
+		# 	string(REGEX REPLACE "/usr/[^%]*" "" DEPENDENCY "${DEPENDENCY}")
+		# 	# message(${DEPENDENCY})
+		# 	get_filename_component(DEPENDENCY_NAME ${DEPENDENCY} NAME)
+		# 	# if (${DEPENDENCY} MATCHES "\\.dylib$")
+		# 	 	# Copy the dylibs to /Frameworks
+		# 	# 	add_custom_command(TARGET retrofe POST_BUILD
+		# 	# 		COMMAND ${CMAKE_COMMAND} -E copy
+		# 	# 			${DEPENDENCY}
+		# 	# 			$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${DEPENDENCY_NAME}
+		# 	# 	)
+		# 	# endif()
+		# endforeach() 
+	# endforeach()
 
-		# Copy the library to the app bundle
-		add_custom_command(TARGET retrofe POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E copy
-				${LIBRARY}
-				$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${LIB_NAME}
-			COMMAND ${CMAKE_INSTALL_NAME_TOOL} -id
-				"@rpath/${LIB_NAME}"
-				$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${LIB_NAME}
-		)
-
-		# Use otool to get the list of dependencies for the library
-		execute_process(
-			COMMAND otool -L ${LIBRARY}
-			COMMAND grep -o "/[^ ]*" OUTPUT_VARIABLE LIB_DEPENDENCIES
-		)
-
-		# Copy each dependency to the app bundle
-		foreach(DEPENDENCY ${LIB_DEPENDENCIES})
-			string(STRIP ${DEPENDENCY} DEPENDENCY)
-			string(REGEX REPLACE ":" "" DEPENDENCY "${DEPENDENCY}")
-			# message(${DEPENDENCY})
-			get_filename_component(DEPENDENCY_NAME ${DEPENDENCY} NAME)
-			# message(${DEPENDENCY_NAME})
-			add_custom_command(TARGET retrofe POST_BUILD
-				COMMAND ${CMAKE_COMMAND} -E copy
-					${DEPENDENCY}
-					$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${DEPENDENCY_NAME}
-				COMMAND ${CMAKE_INSTALL_NAME_TOOL} -id
-					"@rpath/${DEPENDENCY_NAME}"
-					$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${DEPENDENCY_NAME}
-			)
-		endforeach()
-
-	endforeach()
-
-
-	# # Link the app bundle to the bundled libraries
-	# target_link_libraries(retrofe
-	# 	"-Wl,-rpath,@executable_path/../Frameworks"
-	# 	${EXTERNAL_LIBRARIES}
-	# 	# Add other dependencies here
-	# )
+	target_link_libraries(retrofe ${RETROFE_LIBRARIES})
 
 else()
 	set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
