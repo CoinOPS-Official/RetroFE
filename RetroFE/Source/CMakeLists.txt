@@ -250,49 +250,6 @@ if(APPLE)
 		)
 	endforeach()
 
-	# Get the list of linked libraries
-	set(EXTERNAL_LIBRARIES ${RETROFE_LIBRARIES})
-	# Remove the last element from the LIBRARIES list (trailing z?)
-	list(POP_BACK EXTERNAL_LIBRARIES)
-
-	# # Copies Parent dylibs to the app bundle
-	# foreach(LIBRARY ${EXTERNAL_LIBRARIES})
-	# 	# Gets library name from dylib at path location
-	# 	get_filename_component(LIB_NAME ${LIBRARY} NAME) 
-	# 	if (${LIB_NAME} MATCHES "\\.dylib$")
-	# 		# Copy the dylibs to /Frameworks
-	# 		add_custom_command(TARGET retrofe POST_BUILD
-	# 			COMMAND ${CMAKE_COMMAND} -E copy
-	# 				${LIBRARY}
-	# 				$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${LIB_NAME}
-	# 			COMMAND ${CMAKE_INSTALL_NAME_TOOL} $<TARGET_BUNDLE_DIR:retrofe>/Contents/MacOS/retrofe -change
-	# 				"${LIBRARY}"
-	# 				"@executable_path/../Frameworks/${LIB_NAME}"
-	# 		)
-	# 	endif()
-		# # Use otool to get the list of dependencies for the library
-		# execute_process(
-		# 	COMMAND otool -L ${LIBRARY}
-		# 	COMMAND grep -o "/[^ ]*" OUTPUT_VARIABLE LIB_DEPENDENCIES
-		# )
-		# # Copies child dylibs to the app bundle
-		# foreach(DEPENDENCY ${LIB_DEPENDENCIES})
-		# 	string(REGEX REPLACE "[^%]*:" "" DEPENDENCY "${DEPENDENCY}")
-		# 	string(REGEX REPLACE "/System/[^%]*" "" DEPENDENCY "${DEPENDENCY}")
-		# 	string(REGEX REPLACE "/usr/[^%]*" "" DEPENDENCY "${DEPENDENCY}")
-		# 	# message(${DEPENDENCY})
-		# 	get_filename_component(DEPENDENCY_NAME ${DEPENDENCY} NAME)
-		# 	# if (${DEPENDENCY} MATCHES "\\.dylib$")
-		# 	 	# Copy the dylibs to /Frameworks
-		# 	# 	add_custom_command(TARGET retrofe POST_BUILD
-		# 	# 		COMMAND ${CMAKE_COMMAND} -E copy
-		# 	# 			${DEPENDENCY}
-		# 	# 			$<TARGET_BUNDLE_DIR:retrofe>/Contents/Frameworks/${DEPENDENCY_NAME}
-		# 	# 	)
-		# 	# endif()
-		# endforeach() 
-	# endforeach()
-
 	target_link_libraries(retrofe ${RETROFE_LIBRARIES})
 
 else()
