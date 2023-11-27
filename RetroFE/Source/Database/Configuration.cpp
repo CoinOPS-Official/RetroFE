@@ -122,7 +122,7 @@ bool Configuration::import(const std::string& collection, const std::string& key
     int lineCount = 0;
     std::string line;
 
-    LOG_INFO("Configuration", "Importing \"" + file + "\"");
+    Logger::write(Logger::ZONE_INFO, "Configuration", "Importing \"" + file + "\"");
 
     std::ifstream ifs(file.c_str());
 
@@ -130,11 +130,11 @@ bool Configuration::import(const std::string& collection, const std::string& key
     {
         if (mustExist)
         {
-            LOG_ERROR("Configuration", "Could not open " + file + "\"");
+            Logger::write(Logger::ZONE_ERROR, "Configuration", "Could not open " + file + "\"");
         }
         else
         {
-            LOG_WARNING("Configuration", "Could not open " + file + "\"");
+            Logger::write(Logger::ZONE_WARNING, "Configuration", "Could not open " + file + "\"");
         }
 
         return false;
@@ -190,22 +190,18 @@ bool Configuration::parseLine(const std::string& collection, std::string keyPref
 
         properties_[key] = value;
 
-        if (key == "log" && value != "") {
-            StartLogging(this);
-        }
-
         std::stringstream ss;
         ss << "Dump: "  << "\"" << key << "\" = \"" << value << "\"";
 
 
-        LOG_INFO("Configuration", ss.str());
+        Logger::write(Logger::ZONE_INFO, "Configuration", ss.str());
         retVal = true;
     }
     else
     {
         std::stringstream ss;
         ss << "Missing an assignment operator (=) on line " << lineCount;
-        LOG_ERROR("Configuration", ss.str());
+        Logger::write(Logger::ZONE_ERROR, "Configuration", ss.str());
     }
 
     return retVal;
@@ -434,16 +430,3 @@ void Configuration::getCollectionAbsolutePath(const std::string& collectionName,
     value = Utils::combinePath(absolutePath, "collections", collectionName, "roms");
 }
 
-bool Configuration::StartLogging(Configuration* config)
-{
-
-    if (std::string logFile = Utils::combinePath(Configuration::absolutePath, "log.txt"); !Logger::initialize(logFile, config))
-    {
-        // Can't write to logs give a heads up...
-        fprintf(stderr, "Could not open log: %s for writing!\nRetroFE will now exit...\n", logFile.c_str());
-        //LOG_ERROR("RetroFE", "Could not open \"" + logFile + "\" for writing");
-        return false;
-    }
-
-    return true;
-}

@@ -179,7 +179,7 @@ CollectionInfo *CollectionInfoBuilder::buildCollection(std::string name, std::st
                   << "). Your collection will be viewable, however you will not be able to "
                   << "launch any of the items in your collection.";
 
-        LOG_NOTICE("Collections", ss.str());
+        Logger::write(Logger::ZONE_NOTICE, "Collections", ss.str());
     }
 
     CollectionInfo *collection = new CollectionInfo(conf_, name, listItemsPath, extensions, metadataType, metadataPath);
@@ -288,7 +288,7 @@ bool CollectionInfoBuilder::ImportDirectory(CollectionInfo *info, std::string me
     {
         
         std::string mergedFile = Utils::combinePath(Configuration::absolutePath, "collections", mergedCollectionName, info->name + ".sub");
-        LOG_INFO("CollectionInfoBuilder", "Checking for \"" + mergedFile + "\"");
+        Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Checking for \"" + mergedFile + "\"");
         (void)conf_.getProperty("collections." + mergedCollectionName + ".list.includeMissingItems", showMissing);
         ImportBasicList(info, mergedFile, includeFilterUnsorted);
         ImportBasicList(info, mergedFile, includeFilter);
@@ -300,7 +300,7 @@ bool CollectionInfoBuilder::ImportDirectory(CollectionInfo *info, std::string me
     if (emuarc)
         romHierarchy = true;
 
-    LOG_INFO("CollectionInfoBuilder", "Checking for \"" + includeFile + "\"");
+    Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Checking for \"" + includeFile + "\"");
     ImportBasicList(info, includeFile, includeFilterUnsorted);
     ImportBasicList(info, includeFile, includeFilter);
     ImportBasicList(info, excludeFile, excludeFilter);
@@ -570,12 +570,12 @@ void CollectionInfoBuilder::loadPlaylistItems(CollectionInfo* info, std::map<std
             {
                 // don't include if not in cyclePlaylist
                 if (cycleVector.size() && std::find(cycleVector.begin(), cycleVector.end(), basename) == cycleVector.end()) {
-                    LOG_INFO("RetroFE", "Don't Loading playlist: " + basename + ", Not in cyclePlaylist");
+                    Logger::write(Logger::ZONE_INFO, "RetroFE", "Don't Loading playlist: " + basename + ", Not in cyclePlaylist");
 
                     continue;
                 }
 
-                LOG_INFO("RetroFE", "Loading playlist: " + basename);
+                Logger::write(Logger::ZONE_INFO, "RetroFE", "Loading playlist: " + basename);
 
                 std::vector<Item*> playlistFilter;
                 std::string playlistFile = Utils::combinePath(path, file);
@@ -646,7 +646,7 @@ void CollectionInfoBuilder::updateLastPlayedPlaylist(CollectionInfo *info, Item 
         playlistCollectionName = "Favorites";
     }
     std::string path = Utils::combinePath(Configuration::absolutePath, "collections", playlistCollectionName, "playlists");
-    LOG_INFO("RetroFE", "Updating lastplayed playlist");
+    Logger::write(Logger::ZONE_INFO, "RetroFE", "Updating lastplayed playlist");
 
     std::vector<Item *> lastplayedList;
     std::string playlistFile = Utils::combinePath(Configuration::absolutePath, "collections", playlistCollectionName, "playlists", "lastplayed.txt");
@@ -701,7 +701,7 @@ void CollectionInfoBuilder::updateLastPlayedPlaylist(CollectionInfo *info, Item 
     // Write new lastplayed playlist
     std::string dir  = Utils::combinePath(Configuration::absolutePath, "collections", playlistCollectionName, "playlists");
     std::string file = Utils::combinePath(Configuration::absolutePath, "collections", playlistCollectionName, "playlists", "lastplayed.txt");
-    LOG_INFO("Collection", "Saving " + file);
+    Logger::write(Logger::ZONE_INFO, "Collection", "Saving " + file);
 
     std::ofstream filestream;
     try
@@ -715,7 +715,7 @@ void CollectionInfoBuilder::updateLastPlayedPlaylist(CollectionInfo *info, Item 
             {
                 if(ERROR_ALREADY_EXISTS != GetLastError())
                 {
-                    LOG_WARNING("Collection", "Could not create directory " + dir);
+                    Logger::write(Logger::ZONE_WARNING, "Collection", "Could not create directory " + dir);
                     return;
                 }
             }
@@ -726,14 +726,14 @@ void CollectionInfoBuilder::updateLastPlayedPlaylist(CollectionInfo *info, Item 
             if(mkdir(dir.c_str(), 0755) == -1)
 #endif        
             {
-                LOG_WARNING("Collection", "Could not create directory " + dir);
+                Logger::write(Logger::ZONE_WARNING, "Collection", "Could not create directory " + dir);
                 return;
             }
 #endif
         }
         else if ( !(infostat.st_mode & S_IFDIR) )
         {
-            LOG_WARNING("Collection", dir + " exists, but is not a directory.");
+            Logger::write(Logger::ZONE_WARNING, "Collection", dir + " exists, but is not a directory.");
             return;
         }
 
@@ -757,7 +757,7 @@ void CollectionInfoBuilder::updateLastPlayedPlaylist(CollectionInfo *info, Item 
     }
     catch(std::exception &)
     {
-        LOG_ERROR("Collection", "Save failed: " + file);
+        Logger::write(Logger::ZONE_ERROR, "Collection", "Save failed: " + file);
     }
 
     // sort last played by play time with empty values last
@@ -806,9 +806,9 @@ void CollectionInfoBuilder::AddToPlayCount(Item* item)
     // todo read to playcount
     std::map<std::string, Item*> curretPlayCountList = ImportPlayCount(file);    
     curretPlayCountList[getKey(item)] = item;
-    LOG_INFO("PlayCount", "Saving " + item->name + " " + std::to_string(item->playCount));
+    Logger::write(Logger::ZONE_INFO, "PlayCount", "Saving " + item->name + " " + std::to_string(item->playCount));
 
-    LOG_INFO("PlayCount", "Saving " + file);
+    Logger::write(Logger::ZONE_INFO, "PlayCount", "Saving " + file);
 
     std::ofstream filestream;
     try
@@ -822,7 +822,7 @@ void CollectionInfoBuilder::AddToPlayCount(Item* item)
             {
                 if (ERROR_ALREADY_EXISTS != GetLastError())
                 {
-                    LOG_WARNING("PlayCount", "Could not create directory " + dir);
+                    Logger::write(Logger::ZONE_WARNING, "PlayCount", "Could not create directory " + dir);
                     return;
                 }
             }
@@ -833,14 +833,14 @@ void CollectionInfoBuilder::AddToPlayCount(Item* item)
             if (mkdir(dir.c_str(), 0755) == -1)
 #endif        
             {
-                LOG_WARNING("PlayCount", "Could not create directory " + dir);
+                Logger::write(Logger::ZONE_WARNING, "PlayCount", "Could not create directory " + dir);
                 return;
             }
 #endif
         }
         else if (!(infostat.st_mode & S_IFDIR))
         {
-            LOG_WARNING("PlayCount", dir + " exists, but is not a directory.");
+            Logger::write(Logger::ZONE_WARNING, "PlayCount", dir + " exists, but is not a directory.");
             return;
         }
 
@@ -856,7 +856,7 @@ void CollectionInfoBuilder::AddToPlayCount(Item* item)
     }
     catch (std::exception&)
     {
-        LOG_ERROR("PlayCount", "Save failed: " + file);
+        Logger::write(Logger::ZONE_ERROR, "PlayCount", "Save failed: " + file);
     }
 }
 
@@ -913,10 +913,10 @@ void CollectionInfoBuilder::ImportRomDirectory(std::string path, CollectionInfo 
 
     dp = opendir(path.c_str());
 
-    LOG_INFO("CollectionInfoBuilder", "Scanning directory \"" + path + "\"");
+    Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Scanning directory \"" + path + "\"");
     if (dp == NULL)
     {
-        LOG_INFO("CollectionInfoBuilder", "Could not read directory \"" + path + "\". Ignore if this is a menu.");
+        Logger::write(Logger::ZONE_INFO, "CollectionInfoBuilder", "Could not read directory \"" + path + "\". Ignore if this is a menu.");
         return;
     }
 
