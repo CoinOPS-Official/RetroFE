@@ -20,7 +20,6 @@
 #include <algorithm>
 #include <sstream>
 #include <fstream>
-#include <dirent.h>
 #include <locale>
 #include <list>
 #include <filesystem>
