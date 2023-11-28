@@ -48,10 +48,7 @@ bool MenuParser::buildMenuItems(CollectionInfo *collection, bool sort)
     }
 
     return true;
-} 
-
-#include <filesystem>
-namespace fs = std::filesystem;
+}
 
 bool MenuParser::buildTextMenu(CollectionInfo* collection, bool sort)
 {
