@@ -34,12 +34,12 @@
 #include <gst/gst.h>
 #include "Video/VideoFactory.h"
 #include <algorithm>
-#include <dirent.h>
 #include <fstream>
 #include <sstream>
 #include <string>
 #include <tuple>
 #include <vector>
+#include <filesystem>
 #include <SDL2/SDL_ttf.h>
 
 #if defined(__linux) || defined(__APPLE__)
@@ -83,6 +83,8 @@ RetroFE::RetroFE( Configuration &c )
     attractModePlaylistCollectionNumber_ = 0;
     firstPlaylist_                       = "all"; // todo
 }
+
+namespace fs = std::filesystem;
 
 RetroFE::~RetroFE( )
 {
@@ -2638,41 +2640,35 @@ CollectionInfo *RetroFE::getCollection(const std::string& collectionName)
     collection->subsSplit = subsSplit;
     cib.injectMetadata( collection );
 
-    DIR *dp;
-    struct dirent const *dirp;
-
-    // check collection folder exists 
-    std::string path = Utils::combinePath( Configuration::absolutePath, "collections", collectionName );
-    dp = opendir( path.c_str( ) );
-    if (dp == nullptr) {
+    // Check collection folder exists 
+    fs::path path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName);
+    if (!fs::exists(path) || !fs::is_directory(path)) {
         LOG_ERROR("RetroFE", "Failed to load collection " + collectionName);
-
         return nullptr;
     }
 
     // Loading sub collection files
-    while ( (dirp = readdir( dp )) != nullptr )
-    {
-        std::string file = dirp->d_name;
+    for (const auto& entry : fs::directory_iterator(path)) {
+        if (fs::is_regular_file(entry)) {
+            std::string file = entry.path().filename().string();
 
-        size_t position = file.find_last_of( "." );
-        std::string basename = (std::string::npos == position)? file : file.substr( 0, position );
+            size_t position = file.find_last_of(".");
+            std::string basename = (std::string::npos == position) ? file : file.substr(0, position);
 
-        std::string comparator = ".sub";
-        size_t start = file.length() >= comparator.length() ? file.length() - comparator.length() : 0;
+            std::string comparator = ".sub";
+            size_t start = file.length() >= comparator.length() ? file.length() - comparator.length() : 0;
 
-        // No need to check if start >= 0, it's redundant because size_t is unsigned
-        if (file.compare(start, comparator.length(), comparator) == 0) {
-            LOG_INFO("RetroFE", "Loading subcollection into menu: " + basename);
+            if (file.compare(start, comparator.length(), comparator) == 0) {
+                LOG_INFO("RetroFE", "Loading subcollection into menu: " + basename);
 
-            CollectionInfo* subcollection = cib.buildCollection(basename, collectionName);
-            collection->addSubcollection(subcollection);
-            subcollection->subsSplit = subsSplit;
-            cib.injectMetadata(subcollection);
-            collection->hasSubs = true;
+                CollectionInfo* subcollection = cib.buildCollection(basename, collectionName);
+                collection->addSubcollection(subcollection);
+                subcollection->subsSplit = subsSplit;
+                cib.injectMetadata(subcollection);
+                collection->hasSubs = true;
+            }
         }
     }
-    if (dp) closedir(dp);
 
     // sort a collection's items
     bool menuSort = true;

@@ -24,10 +24,14 @@
 #include "SDL.h"
 #include <cstdlib>
 #include <fstream>
-#include <dirent.h>
 #include <time.h>
 #include <locale>
+#include <filesystem>
+#include <string>
+#include <fstream>
+#include <vector>
 
+namespace fs = std::filesystem;
 static bool ImportConfiguration(Configuration* c);
 
 int main(int argc, char** argv)
@@ -121,8 +125,6 @@ static bool ImportConfiguration(Configuration* c)
     std::string launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers.linux");
 #endif
     std::string collectionsPath = Utils::combinePath(Configuration::absolutePath, "collections");
-    DIR* dp;
-    struct dirent const* dirp;
 
     std::string settingsConfPath = Utils::combinePath(configPath, "settings");
     if (!c->import("", settingsConfPath + ".conf"))
@@ -147,75 +149,66 @@ static bool ImportConfiguration(Configuration* c)
 
     LOG_INFO("RetroFE", "Absolute path: " + Configuration::absolutePath);
 
-    dp = opendir(launchersPath.c_str());
-
-    if (dp == nullptr)
+    // Process launchers
+    if (!fs::exists(launchersPath) || !fs::is_directory(launchersPath))
     {
-        LOG_INFO("RetroFE", "Could not read directory \"" + launchersPath + "\"");
         launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers");
-        dp = opendir(launchersPath.c_str());
-        if (dp == nullptr)
+        if (!fs::exists(launchersPath) || !fs::is_directory(launchersPath))
         {
             LOG_NOTICE("RetroFE", "Could not read directory \"" + launchersPath + "\"");
             return false;
         }
     }
 
-    while ((dirp = readdir(dp)) != nullptr)
+    for (const auto& entry : fs::directory_iterator(launchersPath))
     {
-        if (dirp->d_type != DT_DIR && std::string(dirp->d_name) != "." && std::string(dirp->d_name) != "..")
+        if (fs::is_regular_file(entry))
         {
-            std::string basename = dirp->d_name;
-            std::string::size_type dot_position = basename.find_last_of(".");
+            std::string file = entry.path().filename().string();
+            size_t dot_position = file.find_last_of(".");
 
-            if (dot_position == std::string::npos)
+            if (dot_position != std::string::npos)
             {
-                LOG_NOTICE("RetroFE", "Extension missing on launcher file \"" + basename + "\"");
-                continue;
-            }
+                std::string extension = Utils::toLower(file.substr(dot_position));
+                std::string basename = file.substr(0, dot_position);
 
-            std::string extension = Utils::toLower(basename.substr(dot_position, basename.size() - 1));
-            basename = basename.substr(0, dot_position);
-
-            if (extension == ".conf")
-            {
-                std::string prefix = "launchers." + Utils::toLower(basename);
-
-                std::string importFile = Utils::combinePath(launchersPath, std::string(dirp->d_name));
-
-                if (!c->import(prefix, importFile))
+                if (extension == ".conf")
                 {
-                    LOG_ERROR("RetroFE", "Could not import \"" + importFile + "\"");
-                    if (dp) closedir(dp);
-                    return false;
+                    std::string prefix = "launchers." + Utils::toLower(basename);
+                    std::string importFile = entry.path().string();
+
+                    if (!c->import(prefix, importFile))
+                    {
+                        LOG_ERROR("RetroFE", "Could not import \"" + importFile + "\"");
+                        return false;
+                    }
                 }
             }
         }
     }
 
-    if (dp) closedir(dp);
 
-    dp = opendir(collectionsPath.c_str());
-
-    if (dp == nullptr)
+    // Process collections
+    if (!fs::exists(collectionsPath) || !fs::is_directory(collectionsPath))
     {
         LOG_ERROR("RetroFE", "Could not read directory \"" + collectionsPath + "\"");
         return false;
     }
 
-    bool settingsImported;
-    while ((dirp = readdir(dp)) != nullptr)
+    for (const auto& entry : fs::directory_iterator(collectionsPath))
     {
-        std::string collection = dirp->d_name;
-        if (dirp->d_type == DT_DIR && collection != "." && collection != ".." && collection.length() > 0 && collection[0] != '_')
+        std::string collection = entry.path().filename().string();
+        if (fs::is_directory(entry) && !collection.empty() && collection[0] != '_' && collection != "." && collection != "..")
         {
             std::string prefix = "collections." + collection;
-
-            settingsImported = false;
+            bool settingsImported = false;
             std::string settingsPath = Utils::combinePath(collectionsPath, collection, "settings");
+
             settingsImported |= c->import(collection, prefix, settingsPath + ".conf", false);
             for (int i = 1; i < 16; i++)
+            {
                 settingsImported |= c->import(collection, prefix, settingsPath + std::to_string(i) + ".conf", false);
+            }
 
             std::string infoFile = Utils::combinePath(collectionsPath, collection, "info.conf");
             c->import(collection, prefix, infoFile, false);
@@ -227,7 +220,6 @@ static bool ImportConfiguration(Configuration* c)
         }
     }
 
-    if (dp) closedir(dp);
 
     LOG_INFO("RetroFE", "Imported configuration");
 

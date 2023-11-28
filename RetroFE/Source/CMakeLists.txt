@@ -34,10 +34,6 @@ endif()
 
 	set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x64" CACHE STRING "location of where your gstreamer include and lib folders reside")
 	set(GLIB2_ROOT "${GSTREAMER_ROOT}")
-  
-if(MSVC)  
-	set(DIRENT_INCLUDE_DIR "${RETROFE_THIRD_PARTY_DIR}/dirent-1.23.2/include")
-endif()
 endif()
 
 if(WIN32)
@@ -76,10 +72,6 @@ set(RETROFE_INCLUDE_DIRS
 	"${SQLITE3_ROOT}"
 	"${RAPIDXML_ROOT}"
 )
-
-if(MSVC)
-LIST(APPEND RETROFE_INCLUDE_DIRS 	"${DIRENT_INCLUDE_DIR}")
-endif()
 
 set(RETROFE_LIBRARIES
 	${GLIB2_LIBRARIES}
