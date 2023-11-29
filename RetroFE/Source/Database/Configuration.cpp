@@ -278,18 +278,17 @@ bool Configuration::getProperty(const std::string& key, int& value)
         try {
             value = std::stoi(strValue);
         }
-        catch (const std::invalid_argument& e) {
-            // Handle the case where the string is not a valid integer
-            retVal = false;
+        catch (const std::invalid_argument&) {
+            LOG_WARNING("RetroFE", "Invalid integer format for key: " + key);
         }
-        catch (const std::out_of_range& e) {
-            // Handle the case where the integer is out of range
-            retVal = false;
+        catch (const std::out_of_range&) {
+            LOG_WARNING("RetroFE", "Integer out of range for key: " + key);
         }
     }
 
     return retVal;
 }
+
 
 bool Configuration::getProperty(const std::string& key, bool& value)
 {
