@@ -21,6 +21,8 @@
 #include <fstream>
 #include <sstream>
 #include <filesystem>
+#include <string_view>
+#include <set>
 
 #ifdef WIN32
 #include <windows.h>
@@ -226,73 +228,83 @@ std::string Configuration::trimEnds(std::string str)
     return str;
 }
 
-bool Configuration::getRawProperty(const std::string& key, std::string &value)
+bool Configuration::getRawProperty(const std::string& key, std::string& value)
 {
-    bool retVal = false;
-
-    if(properties_.find(key) != properties_.end())
+    auto it = properties_.find(key); // Use iterator to search for the key
+    if (it != properties_.end())
     {
-        value = properties_[key];
-
-        retVal = true;
+        value = it->second; // Directly access the value from the iterator
+        return true;
     }
 
-    return retVal;
+    return false;
 }
-bool Configuration::getProperty(const std::string& key, std::string &value)
+
+bool Configuration::getProperty(const std::string& key, std::string& value)
 {
     bool retVal = getRawProperty(key, value);
 
     std::string baseMediaPath = absolutePath;
-    std::string baseItemPath  = absolutePath;
+    std::string baseItemPath = absolutePath;
 
     baseMediaPath = Utils::combinePath(absolutePath, "collections");
-    baseItemPath  = Utils::combinePath(absolutePath, "collections");
+    baseItemPath = Utils::combinePath(absolutePath, "collections");
 
     getRawProperty("baseMediaPath", baseMediaPath);
     getRawProperty("baseItemPath", baseItemPath);
 
-    value = Utils::replace(value, "%BASE_MEDIA_PATH%", baseMediaPath);
-    value = Utils::replace(value, "%BASE_ITEM_PATH%", baseItemPath);
-    return retVal;
-}
+    std::string_view valueView(value);
 
-bool Configuration::getProperty(const std::string& key, int &value)
-{
-    std::string strValue;
-
-    bool retVal = getProperty(key, strValue);
-
-    if(retVal)
+    if (valueView.find("%BASE_MEDIA_PATH%") != std::string_view::npos)
     {
-        std::stringstream ss;
-        ss << strValue;
-        ss >> value;
+        value = Utils::replace(value, "%BASE_MEDIA_PATH%", baseMediaPath);
+    }
+    if (valueView.find("%BASE_ITEM_PATH%") != std::string_view::npos)
+    {
+        value = Utils::replace(value, "%BASE_ITEM_PATH%", baseItemPath);
     }
 
     return retVal;
 }
 
-bool Configuration::getProperty(const std::string& key, bool &value)
+
+bool Configuration::getProperty(const std::string& key, int& value)
 {
     std::string strValue;
-
     bool retVal = getProperty(key, strValue);
 
-    if(retVal)
+    if (retVal)
     {
-        if(!strValue.compare("yes") || !strValue.compare("true") || !strValue.compare("on"))
-        {
-            value = true;
+        try {
+            value = std::stoi(strValue);
         }
-        else
-        {
-            value = false;
+        catch (const std::invalid_argument& e) {
+            // Handle the case where the string is not a valid integer
+            retVal = false;
+        }
+        catch (const std::out_of_range& e) {
+            // Handle the case where the integer is out of range
+            retVal = false;
         }
     }
 
     return retVal;
 }
+
+bool Configuration::getProperty(const std::string& key, bool& value)
+{
+    std::string strValue;
+    bool retVal = getProperty(key, strValue);
+
+    if (retVal)
+    {
+        std::transform(strValue.begin(), strValue.end(), strValue.begin(), ::tolower);
+        value = (strValue == "yes" || strValue == "true" || strValue == "on");
+    }
+
+    return retVal;
+}
+
 
 void Configuration::setProperty(const std::string& key, const std::string& value)
 {
@@ -311,45 +323,41 @@ bool Configuration::propertyExists(const std::string& key)
 
 bool Configuration::propertyPrefixExists(const std::string& key)
 {
-    PropertiesType::iterator it;
+    std::string search = key + ".";
+    auto it = properties_.lower_bound(search);
 
-    for(it = properties_.begin(); it != properties_.end(); ++it)
+    if (it != properties_.end() && it->first.compare(0, search.length(), search) == 0)
     {
-        std::string search = key + ".";
-        if(it->first.compare(0, search.length(), search) == 0)
-        {
-            return true;
-        }
+        return true;
     }
 
     return false;
 }
 
-void Configuration::childKeyCrumbs(const std::string& parent, std::vector<std::string> &children)
+
+void Configuration::childKeyCrumbs(const std::string& parent, std::vector<std::string>& children)
 {
-    PropertiesType::iterator it;
+    std::string search = parent + ".";
+    auto it = properties_.lower_bound(search);
+    std::set<std::string> uniqueChildren;
 
-    for(it = properties_.begin(); it != properties_.end(); ++it)
+    while (it != properties_.end() && it->first.compare(0, search.length(), search) == 0)
     {
-        std::string search = parent + ".";
-        if(it->first.compare(0, search.length(), search) == 0)
+        std::string crumb = it->first.substr(search.length());
+        std::size_t end = crumb.find_first_of(".");
+
+        if (end != std::string::npos)
         {
-            std::string crumb = Utils::replace(it->first, search, "");
-
-            std::size_t end = crumb.find_first_of(".");
-
-            if(end != std::string::npos)
-            {
-                crumb = crumb.substr(0, end);
-            }
-
-            if(std::find(children.begin(), children.end(), crumb) == children.end())
-            {
-                children.push_back(crumb);
-            }
+            crumb = crumb.substr(0, end);
         }
+
+        uniqueChildren.insert(crumb);
+        ++it;
     }
+
+    children.assign(uniqueChildren.begin(), uniqueChildren.end());
 }
+
 
 std::string Configuration::convertToAbsolutePath(const std::string& prefix, const std::string& path)
 {

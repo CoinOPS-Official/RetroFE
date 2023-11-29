@@ -165,6 +165,9 @@ std::string Utils::replace(
     const std::string& search,
     const std::string& replace)
 {
+    if (search.empty())
+        return subject; // Early exit if search string is empty
+
     size_t pos = 0;
     while ((pos = subject.find(search, pos)) != std::string::npos)
     {
