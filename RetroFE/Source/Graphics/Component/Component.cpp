@@ -31,21 +31,60 @@ Component::Component(Page &p)
     id_                       = -1;
 }
 
-Component::Component(const Component &copy)
+Component::Component(const Component& copy)
     : page(copy.page)
 {
     tweens_ = nullptr;
-    freeGraphicsMemory();
+    //freeGraphicsMemory();
     backgroundTexture_ = nullptr;
 
-    if ( copy.tweens_ )
+    if (copy.tweens_)
     {
-        auto *tweens = new AnimationEvents(*copy.tweens_);
+        auto* tweens = new AnimationEvents(*copy.tweens_);
         setTweens(tweens);
     }
 
 
 }
+
+Component& Component::operator=(const Component& other) {
+    if (this != &other) {
+        // Free existing resources
+        if (tweens_) {
+            delete tweens_;
+        }
+        tweens_ = (other.tweens_) ? new AnimationEvents(*other.tweens_) : nullptr;
+
+        if (currentTweens_) {
+            delete currentTweens_;
+        }
+        currentTweens_ = (other.currentTweens_) ? new Animation(*other.currentTweens_) : nullptr;
+
+        if (backgroundTexture_) {
+            SDL_DestroyTexture(backgroundTexture_);
+        }
+
+        backgroundTexture_ = nullptr;
+
+        // Copy simple data types
+        pauseOnScroll_ = other.pauseOnScroll_;
+        currentTweenIndex_ = other.currentTweenIndex_;
+        currentTweenComplete_ = other.currentTweenComplete_;
+        elapsedTweenTime_ = other.elapsedTweenTime_;
+        animationRequested_ = other.animationRequested_;
+        menuScrollReload_ = other.menuScrollReload_;
+        animationDoneRemove_ = other.animationDoneRemove_;
+        menuIndex_ = other.menuIndex_;
+        id_ = other.id_;
+
+        // Copy complex data types
+        storeViewInfo_ = other.storeViewInfo_;
+        animationRequestedType_ = other.animationRequestedType_;
+        animationType_ = other.animationType_;
+    }
+    return *this;
+}
+
 
 Component::~Component()
 {
@@ -55,16 +94,16 @@ Component::~Component()
 void Component::freeGraphicsMemory()
 {
     animationRequestedType_ = "";
-    animationType_          = "";
-    animationRequested_     = false;
-    newItemSelected         = false;
-    newScrollItemSelected   = false;
-    menuIndex_              = -1;
+    animationType_ = "";
+    animationRequested_ = false;
+    newItemSelected = false;
+    newScrollItemSelected = false;
+    menuIndex_ = -1;
 
-    currentTweens_        = nullptr;
-    currentTweenIndex_    = 0;
+    currentTweens_ = nullptr;
+    currentTweenIndex_ = 0;
     currentTweenComplete_ = true;
-    elapsedTweenTime_     = 0;
+    elapsedTweenTime_ = 0;
     SDL_LockMutex(SDL::getMutex());
     if (backgroundTexture_ != nullptr)
     {
