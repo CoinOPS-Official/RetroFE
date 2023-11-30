@@ -39,7 +39,6 @@ private:
     Configuration           &config_;
     bool                     systemMode_;
     bool                     layoutMode_;
-    bool                     menuMode_;
     Font                    *fontInst_;
     std::string              type_;
     std::string              textFormat_;
@@ -58,7 +57,6 @@ private:
     float                    endTime_;
     float                    waitEndTime_;
     std::string              currentCollection_;
-    Page                    *page_;
     int                      displayOffset_;
     int                      textWidth_;
 };

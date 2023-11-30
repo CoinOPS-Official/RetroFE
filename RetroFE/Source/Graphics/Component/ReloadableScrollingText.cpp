@@ -33,7 +33,6 @@ ReloadableScrollingText::ReloadableScrollingText(Configuration &config, bool sys
     , config_(config)
     , systemMode_(systemMode)
     , layoutMode_(layoutMode)
-    , menuMode_(menuMode)
     , fontInst_(font)
     , type_(type)
     , textFormat_(textFormat)
@@ -51,7 +50,6 @@ ReloadableScrollingText::ReloadableScrollingText(Configuration &config, bool sys
     , endTime_(endTime)
     , waitEndTime_(0.0f)
     , currentCollection_("")
-    , page_(NULL)
     , displayOffset_(displayOffset)
     , textWidth_(0)
 {

@@ -52,5 +52,4 @@ private:
     bool hasPlayedOnce_{ false };
     int numLoops_;
     int monitor_;
-    VideoFactory factory_;
 };
