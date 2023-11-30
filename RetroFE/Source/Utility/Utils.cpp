@@ -30,8 +30,9 @@
     #include <Windows.h>
 #endif
 
-std::unordered_map<std::filesystem::path, std::unordered_set<std::string>> Utils::fileCache;
-std::unordered_set<std::filesystem::path> Utils::nonExistingDirectories;
+std::unordered_map<std::filesystem::path, std::unordered_set<std::string>, PathHash> Utils::fileCache;
+std::unordered_set<std::filesystem::path, PathHash> Utils::nonExistingDirectories;
+
 
 Utils::Utils() = default;
 

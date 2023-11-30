@@ -27,6 +27,13 @@
     #include <windows.h>
 #endif
 
+ // Define PathHash struct
+struct PathHash {
+    size_t operator()(const std::filesystem::path& path) const {
+        return std::hash<std::string>{}(path.string());
+    }
+};
+
 class Utils
 {
 public:
@@ -69,8 +76,8 @@ public:
 #endif
 
 private:
-    static std::unordered_map<std::filesystem::path, std::unordered_set<std::string>> fileCache;
-    static std::unordered_set<std::filesystem::path> nonExistingDirectories; // Cache for non-existing directories
+    static std::unordered_map<std::filesystem::path, std::unordered_set<std::string>, PathHash> fileCache;
+    static std::unordered_set<std::filesystem::path, PathHash> nonExistingDirectories; // Cache for non-existing directories
     static void populateCache(const std::filesystem::path& directory);
     static bool isFileInCache(const std::filesystem::path& directory, const std::string& filename);
     static bool isFileCachePopulated(const std::filesystem::path& directory);
