@@ -27,10 +27,18 @@
     #include <windows.h>
 #endif
 
- // Define PathHash struct
 struct PathHash {
     size_t operator()(const std::filesystem::path& path) const {
-        return std::hash<std::string>{}(path.string());
+        return customHash(path.string());
+    }
+
+private:
+    std::size_t customHash(const std::string& str) const {
+        std::size_t h = 0;
+        for (char c : str) {
+            h = h * 31 + c;
+        }
+        return h;
     }
 };
 
