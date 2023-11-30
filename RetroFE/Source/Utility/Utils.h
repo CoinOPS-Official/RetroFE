@@ -24,21 +24,12 @@
 
 #ifdef WIN32
     #define NOMINMAX
-    #include <windows.h>
+    #include <Windows.h>
 #endif
 
 struct PathHash {
-    size_t operator()(const std::filesystem::path& path) const {
-        return customHash(path.string());
-    }
-
-private:
-    std::size_t customHash(const std::string& str) const {
-        std::size_t h = 0;
-        for (char c : str) {
-            h = h * 31 + c;
-        }
-        return h;
+    auto operator()(const std::filesystem::path& p) const noexcept {
+        return std::filesystem::hash_value(p);
     }
 };
 
