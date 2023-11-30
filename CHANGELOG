@@ -32,6 +32,11 @@ v0.10.34.3
     - fixed clearing runtime playlist cycle cache upon collection change (monkofthefunk
     - fixed resuming on menu with less items then size of menu (monkofthefunk)
     - fixed global menu item removal menu update (monkofthefunk)
+	- implemented file cache (inigomontoya)
+	- log macros and reworking to make completely benign (inigomontoya)
+	- removed Video.cpp and Video.h, all videos use VideoBuilder (inigomontoya)
+	- early initialization of gstreamer on launch instead of when first video plays (inigomontoya)
+	- removed dependency on dirent.h (inigomontoya)
 
 v0.10.34.2
     - update version *.2 (monkofthefunk)
