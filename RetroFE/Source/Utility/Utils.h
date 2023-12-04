@@ -19,11 +19,28 @@
 #include <vector>
 #include <list>
 #include <filesystem>
+#include <unordered_map>
+#include <unordered_set>
 
 #ifdef WIN32
     #define NOMINMAX
     #include <windows.h>
 #endif
+
+struct PathHash {
+    size_t operator()(const std::filesystem::path& path) const {
+        return customHash(path.string());
+    }
+
+private:
+    std::size_t customHash(const std::string& str) const {
+        std::size_t h = 0;
+        for (char c : str) {
+            h = h * 31 + c;
+        }
+        return h;
+    }
+};
 
 class Utils
 {
@@ -49,6 +66,7 @@ public:
     static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter);
     static int gcd(int a, int b);
     static std::string trim(std::string& str);
+    static std::string removeAbsolutePath(const std::string& fullPath);
 
     template <typename... Paths>
     static std::string combinePath(Paths... paths) {
@@ -66,6 +84,12 @@ public:
 #endif
 
 private:
+    static std::unordered_map<std::filesystem::path, std::unordered_set<std::string>, PathHash> fileCache;
+    static std::unordered_set<std::filesystem::path, PathHash> nonExistingDirectories; // Cache for non-existing directories
+    static void populateCache(const std::filesystem::path& directory);
+    static bool isFileInCache(const std::filesystem::path& directory, const std::string& filename);
+    static bool isFileCachePopulated(const std::filesystem::path& directory);
+    
     Utils();
     virtual ~Utils();
 };

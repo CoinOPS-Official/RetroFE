@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <filesystem>
 
 class DB;
 class Configuration;
@@ -40,7 +41,7 @@ public:
 private:
     bool importDirectory();
     bool needsRefresh();
-    time_t timeDir(const std::string& path);
+    std::filesystem::file_time_type timeDir(const std::string& path);
     Configuration &config_;
     DB &db_;
 };

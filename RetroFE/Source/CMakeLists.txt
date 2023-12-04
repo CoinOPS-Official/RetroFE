@@ -36,9 +36,6 @@ endif()
 	set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x64" CACHE STRING "location of where your gstreamer include and lib folders reside")
 	set(GLIB2_ROOT "${GSTREAMER_ROOT}")
   
-if(MSVC)  
-	set(DIRENT_INCLUDE_DIR "${RETROFE_THIRD_PARTY_DIR}/dirent-1.23.2/include")
-endif()
 endif()
 
 if(WIN32)
@@ -84,10 +81,6 @@ set(RETROFE_INCLUDE_DIRS
 	"${RAPIDXML_ROOT}"
 	"/opt/homebrew/lib/glib-2.0/include"
 )
-
-if(MSVC)
-	LIST(APPEND RETROFE_INCLUDE_DIRS "${DIRENT_INCLUDE_DIR}")
-endif()
 
 set(RETROFE_LIBRARIES
 	${GLIB2_LIBRARIES}
@@ -137,7 +130,6 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Graphics/Component/Text.h"
 	"${RETROFE_DIR}/Source/Graphics/Component/VideoComponent.h"
 	"${RETROFE_DIR}/Source/Graphics/Component/VideoBuilder.h"
-	"${RETROFE_DIR}/Source/Graphics/Component/Video.h"
 	"${RETROFE_DIR}/Source/Graphics/Font.h"
 	"${RETROFE_DIR}/Source/Graphics/FontCache.h"
 	"${RETROFE_DIR}/Source/Graphics/PageBuilder.h"
@@ -194,7 +186,6 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Graphics/Component/ScrollingList.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Component/VideoBuilder.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Component/VideoComponent.cpp"
-	"${RETROFE_DIR}/Source/Graphics/Component/Video.cpp"
 	"${RETROFE_DIR}/Source/Menu/Menu.cpp"
 	"${RETROFE_DIR}/Source/Sound/Sound.cpp"
 	"${RETROFE_DIR}/Source/Utility/Log.cpp"

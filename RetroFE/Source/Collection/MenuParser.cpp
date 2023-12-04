@@ -26,8 +26,9 @@
 #include <rapidxml.hpp>
 #include <fstream>
 #include <sstream>
-#include <dirent.h>
+#include <filesystem>
 
+namespace fs = std::filesystem;
 
 bool VectorSort(const Item* d1, const Item* d2)
 {
@@ -47,37 +48,40 @@ bool MenuParser::buildMenuItems(CollectionInfo *collection, bool sort)
     }
 
     return true;
-} 
+}
 
-bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
+bool MenuParser::buildTextMenu(CollectionInfo* collection, bool sort)
 {
-    std::string file = Utils::combinePath(Configuration::absolutePath, "collections", collection->name, "menu.txt");
-    std::ifstream includeStream(file.c_str());
-    std::vector<Item *> menuItems;
+    std::string menuFile = Utils::combinePath(Configuration::absolutePath, "collections", collection->name, "menu.txt");
+    std::vector<Item*> menuItems;
 
-    if (!includeStream.good())
+    if (!fs::exists(menuFile))
     {
+        LOG_INFO("Menu", "File does not exist: \"" + menuFile + "\"; trying menu directory.");
 
-        Logger::write(Logger::ZONE_INFO, "Menu", "File does not exist: \"" + file + "\"; trying menu directory.");
-
-        DIR *dp;
-        struct dirent const *dirp;
         std::string path = Utils::combinePath(Configuration::absolutePath, "collections", collection->name, "menu");
-        dp = opendir(path.c_str());
 
-        while(dp && (dirp = readdir(dp)) != nullptr)
+        if (!fs::exists(path) || !fs::is_directory(path)) {
+            LOG_WARNING("Menu", "Menu directory does not exist: \"" + path + "\"");
+            return false;
+        }
+
+        for (const auto& entry : fs::directory_iterator(path))
         {
-            std::string file = dirp->d_name;
+            if (fs::is_regular_file(entry))
+            {
+                std::string file = entry.path().filename().string();
 
-            size_t position = file.find_last_of(".");
-            std::string basename = (std::string::npos == position)? file : file.substr(0, position);
+                size_t position = file.find_last_of(".");
+                std::string basename = (std::string::npos == position) ? file : file.substr(0, position);
 
-            std::string comparator = ".txt";
-            size_t start = file.length() >= comparator.length() ? file.length() - comparator.length() : 0;
-            if(file.compare(start, comparator.length(), comparator) == 0)
+                std::string comparator = ".txt";
+                size_t start = file.length() >= comparator.length() ? file.length() - comparator.length() : 0;
+
+                if (file.compare(start, comparator.length(), comparator) == 0)
                 {
                     std::string title = basename;
-                    auto *item = new Item();
+                    auto* item = new Item();
                     item->title = title;
                     item->fullTitle = title;
                     item->name = title;
@@ -86,27 +90,24 @@ bool MenuParser::buildTextMenu(CollectionInfo *collection, bool sort)
 
                     menuItems.push_back(item);
                 }
+            }
         }
 
-        if (dp) closedir(dp);
-        std::sort(menuItems.begin(), menuItems.end(), [](Item const *a, Item const *b) {return Utils::toLower(a->fullTitle) <= Utils::toLower(b->fullTitle);});
-
+        std::sort(menuItems.begin(), menuItems.end(), [](Item const* a, Item const* b) { return Utils::toLower(a->fullTitle) <= Utils::toLower(b->fullTitle); });
     }
     else
     {
-
-        Logger::write(Logger::ZONE_INFO, "Menu", "Found: \"" + file + "\"");
-
+        std::ifstream includeStream(menuFile.c_str());
         std::string line;
 
-        while(std::getline(includeStream, line))
+        while (std::getline(includeStream, line))
         {
             line = Utils::filterComments(line);
 
-            if(!line.empty())
+            if (!line.empty())
             {
                 std::string title = line;
-                auto *item = new Item();
+                auto* item = new Item();
                 item->title = title;
                 item->fullTitle = title;
                 item->name = title;
@@ -140,8 +141,8 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
         // gracefully exit if there is no menu file for the pa
         if(file.good())
         {
-            Logger::write(Logger::ZONE_INFO, "Menu", "Found: \"" + menuFilename + "\"");
-            Logger::write(Logger::ZONE_INFO, "Menu", "Using legacy menu.xml file. Consider using the new menu.txt format");
+            LOG_INFO("Menu", "Found: \"" + menuFilename + "\"");
+            LOG_INFO("Menu", "Using legacy menu.xml file. Consider using the new menu.txt format");
             std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
             buffer.push_back('\0');
@@ -157,7 +158,7 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
                 if(!collectionAttribute)
                 {
                     retVal = false;
-                    Logger::write(Logger::ZONE_ERROR, "Menu", "Menu item tag is missing collection attribute");
+                    LOG_ERROR("Menu", "Menu item tag is missing collection attribute");
                     break;
                 }
                 //todo, check for empty string
@@ -183,7 +184,7 @@ bool MenuParser::buildLegacyXmlMenu(CollectionInfo *collection, bool sort)
     {
         std::stringstream ss;
         ss << "Unable to open menu file \"" << menuFilename << "\": " << e.what();
-        Logger::write(Logger::ZONE_ERROR, "Menu", ss.str());
+        LOG_ERROR("Menu", ss.str());
     }
 
     return retVal;

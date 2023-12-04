@@ -67,13 +67,16 @@ bool GStreamerVideo::initialize()
         return true;
     }
 
-    std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
-    gst_init(nullptr, nullptr);
-
-#ifdef WIN32
-    GstRegistry *registry = gst_registry_get();
-    gst_registry_scan_path(registry, path.c_str());
-#endif
+    if (!gst_is_initialized())
+    {
+        LOG_DEBUG("GStreamer", "Initializing in instance");
+        gst_init(nullptr, nullptr);
+        std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
+    #ifdef WIN32
+        GstRegistry* registry = gst_registry_get();
+        gst_registry_scan_path(registry, path.c_str());
+    #endif
+    }
 
     initialized_ = true;
     paused_      = false;
@@ -102,7 +105,7 @@ bool GStreamerVideo::stop()
     // Disable handoffs for videoSink
     if (videoSink_) 
     {
-        g_object_set(G_OBJECT(videoSink_), "signal-handoffs", FALSE, NULL);
+        g_object_set(G_OBJECT(videoSink_), "signal-handoffs", FALSE, nullptr);
     }
 
     // Disconnect associated signals
@@ -122,14 +125,14 @@ bool GStreamerVideo::stop()
         GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_NULL);
         if (ret == GST_STATE_CHANGE_FAILURE) 
         {
-            Logger::write(Logger::ZONE_ERROR, "Video", "Failed to set playbin to NULL state");
+            LOG_ERROR("Video", "Failed to set playbin to NULL state");
             return false;
         }
 
         ret = gst_element_get_state(playbin_, nullptr, nullptr, GST_CLOCK_TIME_NONE);
         if (ret == GST_STATE_CHANGE_FAILURE) 
         {
-            Logger::write(Logger::ZONE_ERROR, "Video", "Failed to wait for playbin to reach NULL state");
+            LOG_ERROR("Video", "Failed to wait for playbin to reach NULL state");
             return false;
         }
     }
@@ -206,7 +209,7 @@ bool GStreamerVideo::play(const std::string& file)
     if (GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING); playState != GST_STATE_CHANGE_ASYNC)
     {
         isPlaying_ = false;
-        Logger::write(Logger::ZONE_ERROR, "Video", "Unable to set the pipeline to the playing state.");
+        LOG_ERROR("Video", "Unable to set the pipeline to the playing state.");
         stop();
         return false;
     }
@@ -235,11 +238,11 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
 
     // Set properties of playbin and videoSink
     const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002 | 0x00000010;
-    g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, NULL);
+    g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, nullptr);
     g_free(uriFile);
     elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
     videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-    g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, NULL);
+    g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, nullptr);
     handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
 
     return true;
@@ -252,21 +255,25 @@ bool GStreamerVideo::createAndLinkGstElements()
     videoSink_ = gst_element_factory_make("fakesink", "video_sink");
     videoConvert_ = gst_element_factory_make("videoconvert", "video_convert");
     capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
-    videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+    if(Configuration::HardwareVideoAccel && SDL::getRendererBackend(0) == "direct3d11")
+        videoConvertCaps_ = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+    else
+        videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+
 
     if(!playbin_ || !videoSink_ || !videoConvert_ || !capsFilter_ || !videoConvertCaps_)
     {
-        Logger::write(Logger::ZONE_DEBUG, "Video", "Could not create elements");
+        LOG_DEBUG("Video", "Could not create elements");
         return false;
     }
 
-    g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, NULL);
-    g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, NULL);
+    g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, nullptr);
+    g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, nullptr);
 
-    gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, NULL);
-    if (!gst_element_link_many(videoConvert_, capsFilter_, videoSink_, NULL))
+    gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, nullptr);
+    if (!gst_element_link_many(videoConvert_, capsFilter_, videoSink_, nullptr))
     {
-        Logger::write(Logger::ZONE_DEBUG, "Video", "Could not link video processing elements");
+        LOG_DEBUG("Video", "Could not link video processing elements");
         return false;
     }
 
@@ -300,7 +307,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
         if (!hardwareVideoAccel) {
         #endif
             // Modify the properties of the avdec_h265 element here
-            g_object_set(G_OBJECT(element), "thread-type", 2, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, NULL);
+            g_object_set(G_OBJECT(element), "thread-type", 2, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
         #ifdef WIN32
         }
         #endif
@@ -311,7 +318,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
 void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
     auto* video = static_cast<GStreamerVideo*>(userdata);
     if (!video || !video->isPlaying_) {
-        Logger::write(Logger::ZONE_ERROR, "Video", "Invalid video or not playing.");
+        LOG_ERROR("Video", "Invalid video or not playing.");
         return; // If video is null or not playing, exit early.
     }
 
@@ -321,13 +328,13 @@ void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffe
         if (video->width_ == 0 || video->height_ == 0) {
             GstCaps* caps = gst_pad_get_current_caps(new_pad);
             if (!caps) {
-                Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get current caps.");
+                LOG_ERROR("Video", "Failed to get current caps.");
                 return; // Exit if caps retrieval failed.
             }
 
             if (const GstStructure* s = gst_caps_get_structure(caps, 0);
                 !s || !gst_structure_get_int(s, "width", &video->width_) || !gst_structure_get_int(s, "height", &video->height_)) {
-                Logger::write(Logger::ZONE_ERROR, "Video", "Failed to get width and height from structure.");
+                LOG_ERROR("Video", "Failed to get width and height from structure.");
                 gst_caps_unref(caps);
                 return; // Exit if width or height retrieval failed.
             }
@@ -336,10 +343,10 @@ void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffe
 
         // If height and width are now set, and the video buffer hasn't been set yet, proceed.
         if (video->width_ > 0 && video->height_ > 0 && !video->videoBuffer_) {
-            if (SDL_LockMutex(SDL::getMutex()) == 0) { // Lock the mutex, check for success.
+           if (SDL_LockMutex(SDL::getMutex()) == 0) { // Lock the mutex, check for success.
                 video->videoBuffer_ = gst_buffer_ref(buf);
                 if (!video->videoBuffer_) {
-                    Logger::write(Logger::ZONE_ERROR, "Video", "Failed to ref buffer.");
+                    LOG_ERROR("Video", "Failed to ref buffer.");
                     SDL_UnlockMutex(SDL::getMutex());
                     return; // Exit if buffer ref failed.
                 }
@@ -347,7 +354,7 @@ void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffe
                 SDL_UnlockMutex(SDL::getMutex());
             }
             else {
-                Logger::write(Logger::ZONE_ERROR, "Video", "Failed to lock mutex.");
+                LOG_ERROR("Video", "Failed to lock mutex.");
                 return;
             }
         }
@@ -385,14 +392,13 @@ void GStreamerVideo::update(float /* dt */)
                 meta->stride[1] != expected_uv_stride || meta->offset[1] != expected_uv_offset)
             {
                 bufferLayout_ = NON_CONTIGUOUS;
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Buffer is Non-Contiguous");
+                LOG_DEBUG("Video", "Buffer is Non-Contiguous");
             }
             else 
             {
                 bufferLayout_ = CONTIGUOUS;
                 // Calculate total size of the contiguous Y + UV data
-                totalSize_ = width_ * height_ + (width_ * (height_ / 2)); // Y plane + UV plane
-                Logger::write(Logger::ZONE_DEBUG, "Video", "Buffer is Contiguous");
+                LOG_DEBUG("Video", "Buffer is Contiguous");
             }
         }
 
@@ -405,25 +411,41 @@ void GStreamerVideo::update(float /* dt */)
 
         switch (bufferLayout_)
         {
-        case CONTIGUOUS:
-        {
-            // Directly lock the texture for the entire area
-            Uint8* texture_pixels = nullptr;
-            int texture_pitch;
-            if (SDL_LockTexture(texture_, nullptr, (void**)&texture_pixels, &texture_pitch) < 0) {
-                Logger::write(Logger::ZONE_ERROR, "Video", "Unable to lock texture");
+            case CONTIGUOUS:
+            {
+                // Directly lock the texture for the entire area
+                Uint8* texture_pixels = nullptr;
+                int texture_pitch;
+                if (SDL_LockTexture(texture_, nullptr, (void**)&texture_pixels, &texture_pitch) < 0) {
+                    Logger::write(Logger::ZONE_ERROR, "Video", "Unable to lock texture");
+                    break;
+                }
+
+                // Pointers to Y and UV planes in the source buffer
+                const auto* src_y = (const Uint8*)bufInfo.data;
+                const Uint8* src_uv = src_y + GST_ROUND_UP_4(width_) * height_;
+
+                // Pointers to Y and UV planes in the texture
+                Uint8* dst_y = texture_pixels;
+                Uint8* dst_uv = dst_y + texture_pitch * height_;
+
+                // Y plane copying
+                for (int i = 0; i < height_; i++) {
+                    SDL_memcpy(dst_y, src_y, width_);
+                    src_y += GST_ROUND_UP_4(width_);
+                    dst_y += texture_pitch;
+                    // UV plane copying (NV12 specific)
+                    if (i % 2 == 0) {
+                        // This assumes the UV plane is exactly half the height of the Y plane.
+                        SDL_memcpy(dst_uv, src_uv, GST_ROUND_UP_4(width_));
+                        src_uv += GST_ROUND_UP_4(width_);
+                        dst_uv += texture_pitch;
+                    }
+                }
+
+                SDL_UnlockTexture(texture_);
                 break;
             }
-
-            // Assuming src_y points to a contiguous block of Y and UV data
-            const Uint8* src_y = (const Uint8*)bufInfo.data;
-
-            // Perform a single SDL_memcpy operation
-            SDL_memcpy(texture_pixels, src_y, totalSize_);
-
-            SDL_UnlockTexture(texture_);
-            break;
-        }
 
 
             case NON_CONTIGUOUS:

@@ -24,7 +24,7 @@
 #include "Component/ReloadableMedia.h"
 #include "Component/ReloadableScrollingText.h"
 #include "Component/ScrollingList.h"
-#include "Component/Video.h"
+#include "Component/VideoBuilder.h"
 #include "Animate/AnimationEvents.h"
 #include "Animate/TweenTypes.h"
 #include "../Sound/Sound.h"
@@ -39,6 +39,7 @@
 #include <stdexcept>
 #include <vector>
 #include <map>
+#include <filesystem>
 
 using namespace rapidxml;
 
@@ -493,53 +494,58 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         }
         else
         {
-            std::string videoPath;
-            videoPath = Utils::combinePath(Configuration::convertToAbsolutePath(layoutPath, videoPath), std::string(srcXml->value()));
+            VideoBuilder videoBuild{};
+            std::string videoPath = Utils::combinePath(Configuration::convertToAbsolutePath(layoutPath, ""), std::string(srcXml->value()));
 
-            // check if collection's assets are in a different theme
+            // Check if collection's assets are in a different theme
             std::string layoutName;
             config_.getProperty("collections." + collectionName + ".layout", layoutName);
-            if (layoutName == "") {
+            if (layoutName.empty()) {
                 config_.getProperty("layout", layoutName);
             }
-            std::string altVideoPath;
-            altVideoPath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, std::string(srcXml->value()));
+            std::string altVideoPath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, std::string(srcXml->value()));
             int numLoops = numLoopsXml ? Utils::convertInt(numLoopsXml->value()) : 1;
             cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor;
 
-            // don't add videos if display doesn't exist
+            // Don't add videos if display doesn't exist
             if (cMonitor + 1 <= SDL::getScreenCount()) {
-                auto* c = new Video(videoPath, altVideoPath, numLoops, *page, cMonitor);
-                c->allocateGraphicsMemory();
-                c->setId(id);
+                std::filesystem::path primaryPath(videoPath);
+                std::filesystem::path altPath(altVideoPath);
 
-                if (auto const* pauseOnScroll = componentXml->first_attribute("pauseOnScroll");
-                    pauseOnScroll &&
-                    (Utils::toLower(pauseOnScroll->value()) == "false" || Utils::toLower(pauseOnScroll->value()) == "no"))
-                {
-                    c->setPauseOnScroll(false);
+                VideoComponent* c = videoBuild.createVideo(primaryPath.parent_path().string(), *page, primaryPath.stem().string(), cMonitor, numLoops);
+
+                if (!c) {
+                    // Try alternative video path if the primary path did not yield a VideoComponent
+                    c = videoBuild.createVideo(altPath.parent_path().string(), *page, altPath.stem().string(), cMonitor, numLoops);
                 }
 
-                
-                if (xml_attribute<> const* menuScrollReload = componentXml->first_attribute("menuScrollReload"); menuScrollReload &&
-                    (Utils::toLower(menuScrollReload->value()) == "true" ||
-                        Utils::toLower(menuScrollReload->value()) == "yes"))
-                {
-                    c->setMenuScrollReload(true);
-                }
-                
-                if (xml_attribute<> const* animationDoneRemove = componentXml->first_attribute("animationDoneRemove"); animationDoneRemove &&
-                    (Utils::toLower(animationDoneRemove->value()) == "true" ||
-                        Utils::toLower(animationDoneRemove->value()) == "yes"))
-                {
-                    c->setAnimationDoneRemove(true);
-                }
+                if (c) {
+                    c->allocateGraphicsMemory();
+                    c->setId(id);
 
-                buildViewInfo(componentXml, c->baseViewInfo);
-                loadTweens(c, componentXml);
-                page->addComponent(c);
+                    // Additional settings and configurations
+                    if (auto const* pauseOnScroll = componentXml->first_attribute("pauseOnScroll");
+                        pauseOnScroll && (Utils::toLower(pauseOnScroll->value()) == "false" || Utils::toLower(pauseOnScroll->value()) == "no")) {
+                        c->setPauseOnScroll(false);
+                    }
+
+                    if (auto const* menuScrollReload = componentXml->first_attribute("menuScrollReload"); menuScrollReload &&
+                        (Utils::toLower(menuScrollReload->value()) == "true" || Utils::toLower(menuScrollReload->value()) == "yes")) {
+                        c->setMenuScrollReload(true);
+                    }
+
+                    if (auto const* animationDoneRemove = componentXml->first_attribute("animationDoneRemove"); animationDoneRemove &&
+                        (Utils::toLower(animationDoneRemove->value()) == "true" || Utils::toLower(animationDoneRemove->value()) == "yes")) {
+                        c->setAnimationDoneRemove(true);
+                    }
+
+                    buildViewInfo(componentXml, c->baseViewInfo);
+                    loadTweens(c, componentXml);
+                    page->addComponent(c);
+                }
             }
         }
+
     }
 
     for(xml_node<> *componentXml = layout->first_node("text"); componentXml; componentXml = componentXml->next_sibling("text"))

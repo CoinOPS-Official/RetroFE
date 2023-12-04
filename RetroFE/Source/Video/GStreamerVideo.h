@@ -28,6 +28,8 @@ class GStreamerVideo : public IVideo
 {
 public:
     explicit GStreamerVideo( int monitor );
+    GStreamerVideo(const GStreamerVideo&) = delete;
+    GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo();
     bool initialize();
     bool play(const std::string& file);

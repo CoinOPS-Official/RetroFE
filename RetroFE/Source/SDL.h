@@ -31,6 +31,7 @@ public:
     static bool initialize( Configuration &config );
     static bool deInitialize( );
     static SDL_Renderer *getRenderer( int index );
+    static std::string getRendererBackend(int index);
     static SDL_mutex *getMutex( );
     static SDL_Window *getWindow( int index );
     static bool renderCopy( SDL_Texture *texture, float alpha, SDL_Rect const *src, SDL_Rect const *dest, ViewInfo &viewInfo, int layoutWidth, int layoutHeight );
