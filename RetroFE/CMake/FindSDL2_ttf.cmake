@@ -34,8 +34,7 @@ pkg_check_modules(PC_SDL2_TTF QUIET SDL2_ttf)
 find_path(SDL2_TTF_INCLUDE_DIR
   NAMES SDL2/SDL_ttf.h
   HINTS
-    ${SDL2_TTF_ROOT}
-  PATH_SUFFIXES include
+    ${SDL2_TTF_ROOT}/include
 )
 
 find_library(SDL2_TTF_LIBRARY
