@@ -1,4 +1,4 @@
-cmake_minimum_required (VERSION 3.0)
+cmake_minimum_required(VERSION 3.10)
 
 project (retrofe)
 
@@ -45,6 +45,16 @@ if(WIN32)
 	find_package(SDL2_mixer REQUIRED)
 	find_package(SDL2_ttf REQUIRED)
 	find_package(ZLIB REQUIRED)
+
+elseif(APPLE)
+	find_package(Glib2 REQUIRED)
+	find_package(GStreamer REQUIRED)
+	find_package(SDL2 REQUIRED)
+	find_package(SDL2_image REQUIRED)
+	find_package(SDL2_mixer REQUIRED)
+	find_package(SDL2_ttf REQUIRED)
+	find_package(ZLIB REQUIRED)
+	
 else()
 	include(FindPkgConfig)
 	pkg_search_module(SDL2 REQUIRED sdl2)
@@ -55,14 +65,9 @@ else()
 	pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-app-1.0)
 	pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
 	find_package(Threads REQUIRED)
-
-if(APPLE)
-	find_package(SDL2 REQUIRED)
-endif()
 endif()
 
 set(RETROFE_INCLUDE_DIRS
-	"/usr/local/opt/gst-plugins-base/include/gstreamer-1.0"
 	"${GLIB2_INCLUDE_DIRS}"
 	"${GSTREAMER_INCLUDE_DIRS}"
 	"${SDL2_INCLUDE_DIRS}"
@@ -72,6 +77,7 @@ set(RETROFE_INCLUDE_DIRS
 	"${ZLIB_INCLUDE_DIRS}"
 	"${SQLITE3_ROOT}"
 	"${RAPIDXML_ROOT}"
+	"/opt/homebrew/lib/glib-2.0/include"
 )
 
 set(RETROFE_LIBRARIES
@@ -198,8 +204,47 @@ set(LIBRARY_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORC
 
 include_directories(${RETROFE_INCLUDE_DIRS})
 add_executable(retrofe  ${RETROFE_SOURCES} ${RETROFE_HEADERS})
-target_link_libraries(retrofe ${RETROFE_LIBRARIES})
-set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
+
+if(WIN32)
+	target_link_libraries(retrofe ${RETROFE_LIBRARIES})
+endif()
+
+if(APPLE)
+	# Get the current dir then go to package contents
+	get_filename_component(DIR_ABOVE ../../Package/Environment/Common ABSOLUTE)
+	# set as var
+	set(RETROFE_PACKAGE_DIR ${DIR_ABOVE})
+
+	# Set the output directory for the executable inside the app bundle
+	set_target_properties(retrofe PROPERTIES
+		MACOSX_BUNDLE TRUE
+		MACOSX_BUNDLE_BUNDLE_NAME "RetroFE"
+		MACOSX_BUNDLE_BUNDLE_VERSION "0.10.34.3"
+		MACOSX_BUNDLE_COPYRIGHT "CoinOPS Project 2023, ported to Apple Silicon by aidenjbass, Program originally by the RetroFE team"
+		MACOSX_BUNDLE_ICON_FILE "RetroFE.png"
+	)
+	# Copy necessary resources into the app bundle
+		# List of resource files to be copied into the bundle
+	set(APP_RESOURCES
+		${RETROFE_PACKAGE_DIR}/RetroFE.png
+	)
+	# Create folder
+	add_custom_command(TARGET retrofe POST_BUILD
+		COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:retrofe>/../Resources 
+	)
+	foreach(RESOURCE ${APP_RESOURCES})
+		message("COPYING RESOURCE ${RESOURCE} TO BUNDLE")
+		add_custom_command(TARGET retrofe POST_BUILD
+			COMMAND ${CMAKE_COMMAND} -E copy ${RESOURCE} $<TARGET_FILE_DIR:retrofe>/../Resources
+		)
+	endforeach()
+
+	target_link_libraries(retrofe ${RETROFE_LIBRARIES})
+
+else()
+	set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
+endif()
+
 if(MINGW)
   set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++ -lmingw32 -mwindows")
 endif()
