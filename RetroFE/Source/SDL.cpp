@@ -212,6 +212,8 @@ bool SDL::initialize( Configuration &config )
             {
 #ifdef WIN32
                 windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+#elif defined(__APPLE__)
+                windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
 #else
                 windowFlags |= SDL_WINDOW_FULLSCREEN;
 #endif
