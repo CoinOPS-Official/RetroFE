@@ -20,6 +20,7 @@
 #include <sstream>
 #include <streambuf>
 #include <iostream>
+#include <mutex>
 #include "../Database/Configuration.h"
 
 class Logger
@@ -44,6 +45,7 @@ private:
     static std::streambuf* coutStream_;
     static std::ofstream writeFileStream_;
     static Configuration* config_;
+    static std::mutex writeMutex_;
 };
 
 #define LOG_DEBUG(component, message) \
