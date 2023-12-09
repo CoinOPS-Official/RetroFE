@@ -23,6 +23,7 @@
 std::ofstream Logger::writeFileStream_;
 std::streambuf* Logger::cerrStream_ = NULL;
 std::streambuf* Logger::coutStream_ = NULL;
+std::mutex Logger::writeMutex_;
 Configuration* Logger::config_ = NULL;
 
 bool Logger::initialize(std::string file, Configuration* config)
@@ -60,6 +61,7 @@ void Logger::deInitialize()
 
 void Logger::write(Zone zone, const std::string& component, const std::string& message)
 {
+    std::lock_guard<std::mutex> guard(writeMutex_); // Locks the mutex here
     std::string zoneStr = zoneToString(zone);
 
     std::time_t rawtime = std::time(NULL);
