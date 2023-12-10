@@ -14,16 +14,14 @@
 	<string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
 	<key>CFBundleInfoDictionaryVersion</key>
 	<string>6.0</string>
-	<key>CFBundleLongVersionString</key>
-	<string></string>
 	<key>CFBundleName</key>
 	<string>RetroFE</string>
-	<key>CFBundleShortVersionString</key>
-	<string></string>
 	<key>CFBundleVersion</key>
 	<string>0.10.34.3</string>
 	<key>CSResourcesFileMapped</key>
 	<true/>
+	<key>LSUIPresentationMode</key>
+	<integer>3</integer>
 	<key>NSHumanReadableCopyright</key>
 	<string>CoinOPS Project 2023, ported to Apple Silicon by aidenjbass, Program originally by the RetroFE team</string>
 </dict>
