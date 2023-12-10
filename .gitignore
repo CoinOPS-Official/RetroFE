@@ -16,4 +16,4 @@ BP Files/RetroFE.cpp
 /RetroFE/Build2
 .DS_Store
 .vscode/settings.json
-RetroFE/ThirdPartyMac/GStreamer.framework/*
+RetroFE/ThirdPartyMac/*
