@@ -39,7 +39,11 @@
 #include <tuple>
 #include <vector>
 #include <filesystem>
-#include <SDL2/SDL_ttf.h>
+#if (__APPLE__)
+    #include <SDL2_ttf/SDL_ttf.h>
+#else
+    #include <SDL2/SDL_ttf.h>
+#endif
 
 #if defined(__linux) || defined(__APPLE__)
 #include <sys/stat.h>

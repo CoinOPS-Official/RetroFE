@@ -34,7 +34,11 @@
 #include "../../SDL.h"
 #include "../ViewInfo.h"
 #include <math.h>
-#include <SDL2/SDL_image.h>
+#if (__APPLE__)
+    #include <SDL2_image/SDL_image.h>
+#else
+    #include <SDL2/SDL_image.h>
+#endif
 #include <sstream>
 #include <cctype>
 #include <iomanip>

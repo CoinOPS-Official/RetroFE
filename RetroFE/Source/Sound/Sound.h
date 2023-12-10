@@ -16,7 +16,12 @@
 #pragma once
 
 #include <string>
-#include <SDL2/SDL_mixer.h>
+#if (__APPLE__)
+    #include <SDL2_mixer/SDL_mixer.h>
+#else
+    #include <SDL2/SDL_mixer.h>
+#endif
+
 class Sound
 {
 public:

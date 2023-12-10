@@ -17,7 +17,11 @@
 #include "../ViewInfo.h"
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
-#include <SDL2/SDL_image.h>
+#if (__APPLE__)
+    #include <SDL2_image/SDL_image.h>
+#else
+    #include <SDL2/SDL_image.h>
+#endif
 
 Image::Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive)
     : Component(p)

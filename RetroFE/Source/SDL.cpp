@@ -18,7 +18,11 @@
 #include "SDL.h"
 #include "Database/Configuration.h"
 #include "Utility/Log.h"
-#include <SDL2/SDL_mixer.h>
+#if (__APPLE__)
+    #include <SDL2_mixer/SDL_mixer.h>
+#else
+    #include <SDL2/SDL_mixer.h>
+#endif
 #include "Utility/Utils.h"
 
 std::vector<SDL_Window *>   SDL::window_;

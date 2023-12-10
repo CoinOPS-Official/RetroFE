@@ -19,8 +19,14 @@
 
 extern "C"
 {
-#include <gst/gst.h>
-#include <gst/app/gstappsink.h>
+#if (__APPLE__)
+    #include <GStreamer/gst/gst.h>
+    #include <GStreamer/gst/app/gstappsink.h>
+#else
+    #include <gst/gst.h>
+    #include <gst/app/gstappsink.h>
+#endif
+
 }
 
 
