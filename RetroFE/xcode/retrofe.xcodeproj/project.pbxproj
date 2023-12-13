@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 46;
+	objectVersion = 54;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -49,9 +49,9 @@
 		D13224E8035B4C24806BB1D2 /* JoyAxisHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = AFBFD8ED7A76485FB4AE6FE7 /* JoyAxisHandler.cpp */; };
 		DE4104C81A7D4148ADEBAFC8 /* Animation.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 265E7B256A954D8793198331 /* Animation.cpp */; };
 		DED5255F5B2A458586051B1C /* RetroFE.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 003330130E81476F9950FA59 /* RetroFE.cpp */; };
+		DF07B3E52B2A14CE00B732CF /* GStreamer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; };
+		DF07B3E62B2A14CE00B732CF /* GStreamer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DF87A17A2B152AAB00548E78 /* RetroFE.png in Resources */ = {isa = PBXBuildFile; fileRef = DF87A1792B152AA400548E78 /* RetroFE.png */; };
-		DFF91EAA2B26200900507957 /* GStreamer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DFF91E9D2B260B5B00507957 /* GStreamer.framework */; };
-		DFF91EAB2B26200900507957 /* GStreamer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFF91E9D2B260B5B00507957 /* GStreamer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DFF91EAD2B26200A00507957 /* SDL2_image.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DFF91E9F2B260B5B00507957 /* SDL2_image.framework */; };
 		DFF91EAE2B26200A00507957 /* SDL2_image.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFF91E9F2B260B5B00507957 /* SDL2_image.framework */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DFF91EAF2B26200B00507957 /* SDL2_mixer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DFF91E9B2B260B5B00507957 /* SDL2_mixer.framework */; };
@@ -78,7 +78,7 @@
 				DFF91EB42B26200D00507957 /* SDL2.framework in Embed Frameworks */,
 				DFF91EB22B26200C00507957 /* SDL2_ttf.framework in Embed Frameworks */,
 				DFF91EB02B26200B00507957 /* SDL2_mixer.framework in Embed Frameworks */,
-				DFF91EAB2B26200900507957 /* GStreamer.framework in Embed Frameworks */,
+				DF07B3E62B2A14CE00B732CF /* GStreamer.framework in Embed Frameworks */,
 				DFF91EAE2B26200A00507957 /* SDL2_image.framework in Embed Frameworks */,
 			);
 			name = "Embed Frameworks";
@@ -167,10 +167,11 @@
 		D331C2DFEBE34D7F810DE589 /* Tween.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Tween.cpp; path = Graphics/Animate/Tween.cpp; sourceTree = SOURCE_ROOT; };
 		D815DD8BD8F1405E9F3EE4D2 /* sqlite3.c */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.c; fileEncoding = 4; name = sqlite3.c; path = /Users/aiden/Documents/Github/RetroFE/RetroFE/ThirdParty/sqlite3/sqlite3.c; sourceTree = "<absolute>"; };
 		DB8250A9EDC247899F1AD712 /* Menu.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Menu.cpp; path = Menu/Menu.cpp; sourceTree = SOURCE_ROOT; };
+		DF07B3E42B2A14CE00B732CF /* GStreamer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GStreamer.framework; path = ../ThirdPartyMac/GStreamer.framework; sourceTree = "<group>"; };
+		DF07B3E72B2A153500B732CF /* retrofe.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = retrofe.entitlements; sourceTree = "<group>"; };
 		DF87A1792B152AA400548E78 /* RetroFE.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = RetroFE.png; path = ../../Package/Environment/Common/RetroFE.png; sourceTree = "<group>"; };
 		DFF91E9B2B260B5B00507957 /* SDL2_mixer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SDL2_mixer.framework; path = ../ThirdPartyMac/SDL2_mixer.framework; sourceTree = "<group>"; };
 		DFF91E9C2B260B5B00507957 /* SDL2.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SDL2.framework; path = ../ThirdPartyMac/SDL2.framework; sourceTree = "<group>"; };
-		DFF91E9D2B260B5B00507957 /* GStreamer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GStreamer.framework; path = ../ThirdPartyMac/GStreamer.framework; sourceTree = "<group>"; };
 		DFF91E9E2B260B5B00507957 /* SDL2_ttf.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SDL2_ttf.framework; path = ../ThirdPartyMac/SDL2_ttf.framework; sourceTree = "<group>"; };
 		DFF91E9F2B260B5B00507957 /* SDL2_image.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SDL2_image.framework; path = ../ThirdPartyMac/SDL2_image.framework; sourceTree = "<group>"; };
 		E068482BE58D4293AB7C541D /* MouseButtonHandler.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = MouseButtonHandler.h; path = Control/MouseButtonHandler.h; sourceTree = SOURCE_ROOT; };
@@ -201,8 +202,8 @@
 			files = (
 				DFF91EB32B26200D00507957 /* SDL2.framework in Frameworks */,
 				DFF91EAF2B26200B00507957 /* SDL2_mixer.framework in Frameworks */,
-				DFF91EAA2B26200900507957 /* GStreamer.framework in Frameworks */,
 				DFF91EAD2B26200A00507957 /* SDL2_image.framework in Frameworks */,
+				DF07B3E52B2A14CE00B732CF /* GStreamer.framework in Frameworks */,
 				DFF91EB12B26200C00507957 /* SDL2_ttf.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -286,6 +287,7 @@
 		A1D16326A0024131923E1EB7 /* retrofe */ = {
 			isa = PBXGroup;
 			children = (
+				DF07B3E72B2A153500B732CF /* retrofe.entitlements */,
 				F1EBF96675C5443E881F32F0 /* Source Files */,
 				4C418535FD0A487485FDF907 /* Header Files */,
 				42FFB63E16B947FA8CCC2784 /* Resources */,
@@ -297,7 +299,7 @@
 		D0A78259C0704D50B83B5260 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
-				DFF91E9D2B260B5B00507957 /* GStreamer.framework */,
+				DF07B3E42B2A14CE00B732CF /* GStreamer.framework */,
 				DFF91E9F2B260B5B00507957 /* SDL2_image.framework */,
 				DFF91E9B2B260B5B00507957 /* SDL2_mixer.framework */,
 				DFF91E9E2B260B5B00507957 /* SDL2_ttf.framework */,
@@ -396,7 +398,8 @@
 		21813F860C57421A9D50126D /* Project object */ = {
 			isa = PBXProject;
 			attributes = {
-				LastUpgradeCheck = 1500;
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1510;
 				TargetAttributes = {
 					28DEFA88B73A4CA1825D0DDC = {
 						ProvisioningStyle = Automatic;
@@ -493,7 +496,35 @@
 		18A6130A6E644AFDB2785EE1 /* MinSizeRel */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				SDKROOT = macosx14.0;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				SDKROOT = macosx14.2;
 				SYMROOT = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build;
 			};
 			name = MinSizeRel;
@@ -501,7 +532,35 @@
 		1A414ECE2EDE45D28F88B87F /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				SDKROOT = macosx14.0;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				SDKROOT = macosx14.2;
 				SYMROOT = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build;
 			};
 			name = Release;
@@ -511,12 +570,16 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = YES;
 				ARCHS = "$(ARCHS_STANDARD)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = retrofe.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CONFIGURATION_BUILD_DIR = /Users/aiden/Documents/Github/RetroFE/RetroFE/Build/Release;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
 				EXECUTABLE_PREFIX = "";
 				EXECUTABLE_SUFFIX = "";
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/../ThirdPartyMac/**";
@@ -539,11 +602,16 @@
 				);
 				INFOPLIST_FILE = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/CMakeFiles/retrofe.dir/Info.plist;
 				LD_DYLIB_INSTALL_NAME = "@rpath";
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks/GStreamer.framework/Libraries @executable_path/../Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/../Frameworks/GStreamer.framework/Libraries",
+					"@executable_path/../Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					../ThirdPartyMac/GStreamer.framework/Libraries,
 				);
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MARKETING_VERSION = 0.10.34.3;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_CFLAGS = (
 					"-ffast-math",
@@ -569,7 +637,7 @@
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = retrofe;
 				PRODUCT_NAME = retrofe;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				STRIP_INSTALLED_PRODUCT = NO;
+				SDKROOT = macosx;
 				TARGET_TEMP_DIR = "/Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build/retrofe.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
 				USE_HEADERMAP = NO;
 				WARNING_CFLAGS = "$(inherited)";
@@ -581,12 +649,16 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = YES;
 				ARCHS = "$(ARCHS_STANDARD)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = retrofe.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CONFIGURATION_BUILD_DIR = /Users/aiden/Documents/Github/RetroFE/RetroFE/Build/Debug;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
 				EXECUTABLE_PREFIX = "";
 				EXECUTABLE_SUFFIX = "";
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/../ThirdPartyMac/**";
@@ -609,11 +681,16 @@
 				);
 				INFOPLIST_FILE = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/CMakeFiles/retrofe.dir/Info.plist;
 				LD_DYLIB_INSTALL_NAME = "@rpath";
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks/GStreamer.framework/Libraries @executable_path/../Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/../Frameworks/GStreamer.framework/Libraries",
+					"@executable_path/../Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					../ThirdPartyMac/GStreamer.framework/Libraries,
 				);
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MARKETING_VERSION = 0.10.34.3;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_CFLAGS = (
 					"-ffast-math",
@@ -639,7 +716,7 @@
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = retrofe;
 				PRODUCT_NAME = retrofe;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				STRIP_INSTALLED_PRODUCT = NO;
+				SDKROOT = macosx;
 				TARGET_TEMP_DIR = "/Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build/retrofe.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
 				USE_HEADERMAP = NO;
 				WARNING_CFLAGS = "$(inherited)";
@@ -651,12 +728,16 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = YES;
 				ARCHS = "$(ARCHS_STANDARD)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = retrofe.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CONFIGURATION_BUILD_DIR = /Users/aiden/Documents/Github/RetroFE/RetroFE/Build/RelWithDebInfo;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
 				EXECUTABLE_PREFIX = "";
 				EXECUTABLE_SUFFIX = "";
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/../ThirdPartyMac/**";
@@ -679,11 +760,16 @@
 				);
 				INFOPLIST_FILE = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/CMakeFiles/retrofe.dir/Info.plist;
 				LD_DYLIB_INSTALL_NAME = "@rpath";
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks/GStreamer.framework/Libraries @executable_path/../Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/../Frameworks/GStreamer.framework/Libraries",
+					"@executable_path/../Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					../ThirdPartyMac/GStreamer.framework/Libraries,
 				);
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MARKETING_VERSION = 0.10.34.3;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_CFLAGS = (
 					"-march=native",
@@ -711,7 +797,7 @@
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = retrofe;
 				PRODUCT_NAME = retrofe;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				STRIP_INSTALLED_PRODUCT = NO;
+				SDKROOT = macosx;
 				TARGET_TEMP_DIR = "/Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build/retrofe.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
 				USE_HEADERMAP = NO;
 				WARNING_CFLAGS = "$(inherited)";
@@ -721,7 +807,35 @@
 		3E2CF4019F464E9DBC0601DF /* RelWithDebInfo */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				SDKROOT = macosx14.0;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				SDKROOT = macosx14.2;
 				SYMROOT = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build;
 			};
 			name = RelWithDebInfo;
@@ -731,12 +845,16 @@
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = YES;
 				ARCHS = "$(ARCHS_STANDARD)";
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CODE_SIGN_ENTITLEMENTS = retrofe.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				"CODE_SIGN_IDENTITY[sdk=macosx*]" = "-";
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CONFIGURATION_BUILD_DIR = /Users/aiden/Documents/Github/RetroFE/RetroFE/Build/MinSizeRel;
+				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
+				ENABLE_HARDENED_RUNTIME = NO;
 				EXECUTABLE_PREFIX = "";
 				EXECUTABLE_SUFFIX = "";
 				FRAMEWORK_SEARCH_PATHS = "$(PROJECT_DIR)/../ThirdPartyMac/**";
@@ -759,11 +877,16 @@
 				);
 				INFOPLIST_FILE = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/CMakeFiles/retrofe.dir/Info.plist;
 				LD_DYLIB_INSTALL_NAME = "@rpath";
-				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks/GStreamer.framework/Libraries @executable_path/../Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"@executable_path/../Frameworks/GStreamer.framework/Libraries",
+					"@executable_path/../Frameworks",
+				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					../ThirdPartyMac/GStreamer.framework/Libraries,
 				);
+				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MARKETING_VERSION = 0.10.34.3;
 				ONLY_ACTIVE_ARCH = NO;
 				OTHER_CFLAGS = (
 					"-march=native",
@@ -791,7 +914,7 @@
 				"PRODUCT_BUNDLE_IDENTIFIER[sdk=macosx*]" = retrofe;
 				PRODUCT_NAME = retrofe;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				STRIP_INSTALLED_PRODUCT = NO;
+				SDKROOT = macosx;
 				TARGET_TEMP_DIR = "/Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build/retrofe.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
 				USE_HEADERMAP = NO;
 				WARNING_CFLAGS = "$(inherited)";
@@ -801,7 +924,36 @@
 		99EC6DB07B854FBD88E113A6 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
-				SDKROOT = macosx14.0;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				DEAD_CODE_STRIPPING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				SDKROOT = macosx14.2;
 				SYMROOT = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build;
 			};
 			name = Debug;
