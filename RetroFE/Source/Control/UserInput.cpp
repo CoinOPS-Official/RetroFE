@@ -51,7 +51,7 @@ UserInput::~UserInput()
 
 bool UserInput::initialize()
 {
-
+    
     // Optional keys
     MapKey("playlistUp", KeyCodePlaylistUp, false );
     MapKey("playlistDown", KeyCodePlaylistDown, false );
@@ -93,9 +93,9 @@ bool UserInput::initialize()
     MapKey("toggleCollectionInfo", KeyCodeToggleCollectionInfo, false);
     MapKey("toggleBuildInfo", KeyCodeToggleBuildInfo, false);
     MapKey("settings", KeyCodeSettings, false);
-
+    
     bool retVal = true;
-
+    
     // At least have controls for either a vertical or horizontal menu
     if(!MapKey("up", KeyCodeUp))
     {
@@ -113,24 +113,26 @@ bool UserInput::initialize()
     {
         retVal = MapKey("down", KeyCodeRight ) && retVal;
     }
-
+    
     // These keys are mandatory
     retVal = MapKey("select", KeyCodeSelect) && retVal;
     retVal = MapKey("back",   KeyCodeBack) && retVal;
     retVal = MapKey("quit",   KeyCodeQuit) && retVal;
-
+    
     // set quit combo
     unsigned int button;
     int joyNum = -1;
-
+    
     std::map<KeyCode_E, std::string> quitCombo;
     //    MacOS uses keycode 4 for select, Windows uses keycode 6
-    if(__APPLE__) {
+    {
+    #ifdef __APPLE__
         quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo1, "joyButton6"));
         quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo2, "joyButton4"));
-    } else {
+    #else
         quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo1, "joyButton6"));
         quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo2, "joyButton7"));
+    #endif
     }
     
     for (auto qcI = quitCombo.begin(); qcI != quitCombo.end(); qcI++) {
