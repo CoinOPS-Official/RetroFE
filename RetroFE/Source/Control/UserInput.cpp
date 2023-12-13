@@ -124,7 +124,7 @@ bool UserInput::initialize()
     int joyNum = -1;
     
     std::map<KeyCode_E, std::string> quitCombo;
-    //    MacOS uses keycode 4 for select, Windows uses keycode 6
+    //    MacOS uses keycode 4 for select, Windows uses keycode 7
     {
     #ifdef __APPLE__
         quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo1, "joyButton6"));
