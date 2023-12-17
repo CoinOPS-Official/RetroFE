@@ -84,7 +84,7 @@ public:
         KeyCodeMax,
     };
 
-    UserInput(Configuration& c);
+    explicit UserInput(Configuration& c);
     virtual ~UserInput();
     bool initialize();
     void resetStates();
