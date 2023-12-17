@@ -99,6 +99,8 @@ public:
 private:
     bool MapKey(std::string keyDescription, KeyCode_E key);
     bool MapKey(std::string keyDescription, KeyCode_E key, bool required);
+    bool HandleInputMapping(const std::string& token, KeyCode_E key, const std::string& configKey, Configuration& config_);
+    bool MapKeyCombo(std::string keyDescription, KeyCode_E key1, KeyCode_E key2, bool required);
     Configuration& config_;
     bool updated_{ false };
     SDL_JoystickID joysticks_[cMaxJoy];

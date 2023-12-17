@@ -85,8 +85,6 @@ bool UserInput::initialize()
     MapKey("jbPause", KeyCodePause, false);
     MapKey("jbRestart", KeyCodeRestart, false);
     MapKey("kiosk", KeyCodeKisok, false);
-    MapKey("quitCombo1", KeyCodeQuitCombo1, false);
-    MapKey("quitCombo2", KeyCodeQuitCombo2, false);
     MapKey("cycleCollection", KeyCodeCycleCollection, false);
     MapKey("prevCycleCollection", KeyCodePrevCycleCollection, false);
     MapKey("toggleGameInfo", KeyCodeToggleGameInfo, false);
@@ -94,6 +92,8 @@ bool UserInput::initialize()
     MapKey("toggleBuildInfo", KeyCodeToggleBuildInfo, false);
     MapKey("settings", KeyCodeSettings, false);
     
+	MapKeyCombo("quitCombo", KeyCodeQuitCombo1, KeyCodeQuitCombo2, false);
+
     bool retVal = true;
     
     // At least have controls for either a vertical or horizontal menu
@@ -118,27 +118,7 @@ bool UserInput::initialize()
     retVal = MapKey("select", KeyCodeSelect) && retVal;
     retVal = MapKey("back",   KeyCodeBack) && retVal;
     retVal = MapKey("quit",   KeyCodeQuit) && retVal;
-    
-    // set quit combo
-    unsigned int button;
-    int joyNum = -1;
-    
-    std::map<KeyCode_E, std::string> quitCombo;
-    //    MacOS uses keycode 4 for select, Windows uses keycode 7
-    {
-    #ifdef __APPLE__
-        quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo1, "joyButton6"));
-        quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo2, "joyButton4"));
-    #else
-        quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo1, "joyButton6"));
-        quitCombo.insert(std::pair<KeyCode_E, std::string>(KeyCodeQuitCombo2, "joyButton7"));
-    #endif
-    }
-    
-    for (auto qcI = quitCombo.begin(); qcI != quitCombo.end(); qcI++) {
-        button = Utils::convertInt(Utils::replace(Utils::toLower(qcI->second), "joybutton", ""));
-        keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new JoyButtonHandler(joyNum, button), qcI->first));
-    }
+   
 
     return retVal;
 }
@@ -150,7 +130,6 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key)
 
 bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
 {
-    SDL_Scancode scanCode;
     std::string description;
 
     std::string configKey = "controls." + keyDescription;
@@ -167,145 +146,188 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
         }
         return false;
     }
-
     std::istringstream ss(description);
     std::string token;
-
     bool success = true;
 
-    while (std::getline(ss, token, ','))
-    {
+    while (std::getline(ss, token, ',')) {
         token = Configuration::trimEnds(token);
         if (token == "" && description != "") // Allow "," as input key
             token = ",";
-        scanCode = SDL_GetScancodeFromName(token.c_str());
 
-        bool found = false;
-
-        if (scanCode != SDL_SCANCODE_UNKNOWN)
-        {
-            LOG_INFO("Input", "Binding key " + configKey);
-            keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new KeyboardHandler(scanCode), key));
-            found = true;
+        if (!HandleInputMapping(token, key, configKey, config_)) {
+            success = false;
         }
-        else
+    }
+
+    return success;
+}
+
+bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, const std::string& configKey, Configuration& config_) {
+    SDL_Scancode scanCode = SDL_GetScancodeFromName(token.c_str());
+    bool found = false;
+
+    if (scanCode != SDL_SCANCODE_UNKNOWN) {
+        LOG_INFO("Input", "Binding key " + configKey);
+        keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new KeyboardHandler(scanCode), key));
+        found = true;
+    }
+    else
+    {
+        std::string tokenLowered = Utils::toLower(token);
+
+        if (tokenLowered.find("mouse") == 0)
         {
-            token = Utils::toLower(token);
-
-            if (token.find("mouse") == 0)
+            std::string mousedesc = Utils::replace(Utils::toLower(token), "mouse", "");
+            if (mousedesc.find("button") == 0)
             {
-                std::string mousedesc = Utils::replace(Utils::toLower(token), "mouse", "");
-                if (mousedesc.find("button") == 0)
-                {
-                    int button = 0;
-                    std::stringstream ss;
-                    mousedesc = Utils::replace(mousedesc, "button", "");
-                    if (mousedesc == "left") button = SDL_BUTTON_LEFT;
-                    else if (mousedesc == "middle") button = SDL_BUTTON_MIDDLE;
-                    else if (mousedesc == "right") button = SDL_BUTTON_RIGHT;
-                    else if (mousedesc == "x1") button = SDL_BUTTON_X1;
-                    else if (mousedesc == "x2") button = SDL_BUTTON_X2;
+                int button = 0;
+                std::stringstream ss;
+                mousedesc = Utils::replace(mousedesc, "button", "");
+                if (mousedesc == "left") button = SDL_BUTTON_LEFT;
+                else if (mousedesc == "middle") button = SDL_BUTTON_MIDDLE;
+                else if (mousedesc == "right") button = SDL_BUTTON_RIGHT;
+                else if (mousedesc == "x1") button = SDL_BUTTON_X1;
+                else if (mousedesc == "x2") button = SDL_BUTTON_X2;
 
-                    keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new MouseButtonHandler(button), key));
-                    LOG_INFO("Input", "Binding mouse button " + ss.str());
-                    found = true;
-                }
+                keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new MouseButtonHandler(button), key));
+                LOG_INFO("Input", "Binding mouse button " + ss.str());
+                found = true;
             }
-            else if (token.find("joy") == 0)
+        }
+        else if (tokenLowered.find("joy") == 0)
+        {
+            std::string joydesc = Utils::replace(Utils::toLower(token), "joy", "");
+            int joynum;
+            if (isdigit(joydesc.at(0)))
             {
-                std::string joydesc = Utils::replace(Utils::toLower(token), "joy", "");
-                int joynum;
-                if ( isdigit( joydesc.at( 0 ) ) )
-                {
-                    std::stringstream ssjoy;
-                    ssjoy << joydesc.at(0);
-                    ssjoy >> joynum;
-                    joydesc = joydesc.erase(0, 1);
-                }
-                else
-                {
-                    joynum = -1;
-                }
-
-                if (joydesc.find("button") == 0)
-                {
-                    unsigned int button;
-                    std::stringstream ss;
-                    ss << Utils::replace(joydesc, "button", "");
-                    ss >> button;
-                    keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new JoyButtonHandler(joynum, button), key));
-                    LOG_INFO("Input", "Binding joypad button " + ss.str());
-                    found = true;
-                }
-                else if (joydesc.find("hat") == 0)
-                {
-                    Uint8 hat = 0;
-
-                    joydesc = Utils::replace(joydesc, "hat", "");
-                    std::stringstream sshat;
-                    sshat << joydesc.at(0);
-                    int hatnum;
-                    sshat >> hatnum;
-                    joydesc = joydesc.erase(0, 1);
-
-                    if (joydesc == "leftup") hat = SDL_HAT_LEFTUP;
-                    else if (joydesc == "left") hat = SDL_HAT_LEFT;
-                    else if (joydesc == "leftdown") hat = SDL_HAT_LEFTDOWN;
-                    else if (joydesc == "up") hat = SDL_HAT_UP;
-                    //else if(joydesc == "centered") hat = SDL_HAT_CENTERED;
-                    else if (joydesc == "down") hat = SDL_HAT_DOWN;
-                    else if (joydesc == "rightup") hat = SDL_HAT_RIGHTUP;
-                    else if (joydesc == "right") hat = SDL_HAT_RIGHT;
-                    else if (joydesc == "rightdown") hat = SDL_HAT_RIGHTDOWN;
-
-                    keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new JoyHatHandler(joynum, hatnum, hat), key));
-                    LOG_INFO("Input", "Binding joypad hat " + joydesc);
-                    found = true;
-                }
-                else if (joydesc.find("axis") == 0)
-                {
-                    // string is now axis0+
-                    unsigned int axis;
-                    Sint16       min = 0;
-                    Sint16       max = 0;
-                    int          deadZone;
-
-                    joydesc = Utils::replace(joydesc, "axis", "");
-
-                    if (!config_.getProperty("controls.deadZone", deadZone))
-                    {
-                        deadZone = 3;
-                    }
-
-                    // string is now 0+
-                    if (joydesc.find("-") != std::string::npos)
-                    {
-                        min = -32768;
-                        max = -32768 / 100 * deadZone;
-                        joydesc = Utils::replace(joydesc, "-", "");
-                    }
-                    else if (joydesc.find("+") != std::string::npos)
-                    {
-                        min = 32767 / 100 * deadZone;
-                        max = 32767;
-                        joydesc = Utils::replace(joydesc, "+", "");
-                    }
-
-                    // string is now just the axis number
-                    std::stringstream ss;
-                    ss << joydesc;
-                    ss >> axis;
-                    LOG_INFO("Input", "Binding joypad axis " + ss.str());
-                    keyHandlers_.push_back(std::pair<InputHandler *, KeyCode_E>(new JoyAxisHandler(joynum, axis, min, max), key));
-                    found = true;
-                }
+                std::stringstream ssjoy;
+                ssjoy << joydesc.at(0);
+                ssjoy >> joynum;
+                joydesc = joydesc.erase(0, 1);
+            }
+            else
+            {
+                joynum = -1;
             }
 
-            if (!found)
+            if (joydesc.find("button") == 0)
             {
-                LOG_ERROR("Input", "Unsupported property value for " + configKey + "(" + token + "). See Documentation/Keycodes.txt for valid inputs");
+                unsigned int button;
+                std::stringstream ss;
+                ss << Utils::replace(joydesc, "button", "");
+                ss >> button;
+                keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new JoyButtonHandler(joynum, button), key));
+                LOG_INFO("Input", "Binding joypad button " + ss.str());
+                found = true;
+            }
+            else if (joydesc.find("hat") == 0)
+            {
+                Uint8 hat = 0;
+
+                joydesc = Utils::replace(joydesc, "hat", "");
+                std::stringstream sshat;
+                sshat << joydesc.at(0);
+                int hatnum;
+                sshat >> hatnum;
+                joydesc = joydesc.erase(0, 1);
+
+                if (joydesc == "leftup") hat = SDL_HAT_LEFTUP;
+                else if (joydesc == "left") hat = SDL_HAT_LEFT;
+                else if (joydesc == "leftdown") hat = SDL_HAT_LEFTDOWN;
+                else if (joydesc == "up") hat = SDL_HAT_UP;
+                //else if(joydesc == "centered") hat = SDL_HAT_CENTERED;
+                else if (joydesc == "down") hat = SDL_HAT_DOWN;
+                else if (joydesc == "rightup") hat = SDL_HAT_RIGHTUP;
+                else if (joydesc == "right") hat = SDL_HAT_RIGHT;
+                else if (joydesc == "rightdown") hat = SDL_HAT_RIGHTDOWN;
+
+                keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new JoyHatHandler(joynum, hatnum, hat), key));
+                LOG_INFO("Input", "Binding joypad hat " + joydesc);
+                found = true;
+            }
+            else if (joydesc.find("axis") == 0)
+            {
+                // string is now axis0+
+                unsigned int axis;
+                Sint16       min = 0;
+                Sint16       max = 0;
+                int          deadZone;
+
+                joydesc = Utils::replace(joydesc, "axis", "");
+
+                if (!config_.getProperty("controls.deadZone", deadZone))
+                {
+                    deadZone = 3;
+                }
+
+                // string is now 0+
+                if (joydesc.find("-") != std::string::npos)
+                {
+                    min = -32768;
+                    max = -32768 / 100 * deadZone;
+                    joydesc = Utils::replace(joydesc, "-", "");
+                }
+                else if (joydesc.find("+") != std::string::npos)
+                {
+                    min = 32767 / 100 * deadZone;
+                    max = 32767;
+                    joydesc = Utils::replace(joydesc, "+", "");
+                }
+
+                // string is now just the axis number
+                std::stringstream ss;
+                ss << joydesc;
+                ss >> axis;
+                LOG_INFO("Input", "Binding joypad axis " + ss.str());
+                keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new JoyAxisHandler(joynum, axis, min, max), key));
+                found = true;
+            }
+        }
+    }
+
+    if (!found) {
+        LOG_ERROR("Input", "Unsupported property value for " + configKey + "(" + token + "). See Documentation/Keycodes.txt for valid inputs");
+    }
+
+    return found;
+}
+
+bool UserInput::MapKeyCombo(std::string keyDescription, KeyCode_E key1, KeyCode_E key2, bool required) {
+    std::string description;
+
+    std::string configKey = "controls." + keyDescription;
+    if (!config_.getProperty(configKey, description)) {
+        if (required) {
+            LOG_ERROR("Input", "Missing required combo property: " + configKey);
+        }
+        else {
+            LOG_INFO("Input", "Missing optional combo property: " + configKey);
+        }
+        return false;
+    }
+
+    std::istringstream ss(description);
+    std::string token;
+    bool success = true;
+    bool firstKeyMapped = false;
+
+    while (std::getline(ss, token, ',')) {
+        token = Configuration::trimEnds(token);
+        if (token.empty() && !description.empty()) // Allow "," as input key
+            token = ",";
+
+        if (!firstKeyMapped) {
+            if (!HandleInputMapping(token, key1, configKey, config_)) {
                 success = false;
             }
+            firstKeyMapped = true;
+        }
+        else {
+            if (!HandleInputMapping(token, key2, configKey, config_)) {
+                success = false;
+            }
+            break; // Only two keys are expected for a combo
         }
     }
 
