@@ -123,12 +123,12 @@ bool UserInput::initialize()
     return retVal;
 }
 
-bool UserInput::MapKey(std::string keyDescription, KeyCode_E key)
+bool UserInput::MapKey(const std::string& keyDescription, KeyCode_E key)
 {
     return MapKey(keyDescription, key, true);
 }
 
-bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
+bool UserInput::MapKey(const std::string& keyDescription, KeyCode_E key, bool required)
 {
     std::string description;
 
@@ -155,7 +155,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
         if (token == "" && description != "") // Allow "," as input key
             token = ",";
 
-        if (!HandleInputMapping(token, key, configKey, config_)) {
+        if (!HandleInputMapping(token, key, configKey)) {
             success = false;
         }
     }
@@ -163,7 +163,7 @@ bool UserInput::MapKey(std::string keyDescription, KeyCode_E key, bool required)
     return success;
 }
 
-bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, const std::string& configKey, Configuration& config_) {
+bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, const std::string& configKey) {
     SDL_Scancode scanCode = SDL_GetScancodeFromName(token.c_str());
     bool found = false;
 
@@ -293,7 +293,7 @@ bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, cons
     return found;
 }
 
-bool UserInput::MapKeyCombo(std::string keyDescription, KeyCode_E key1, KeyCode_E key2, bool required) {
+bool UserInput::MapKeyCombo(const std::string& keyDescription, KeyCode_E key1, KeyCode_E key2, bool required) {
     std::string description;
 
     std::string configKey = "controls." + keyDescription;
@@ -318,13 +318,13 @@ bool UserInput::MapKeyCombo(std::string keyDescription, KeyCode_E key1, KeyCode_
             token = ",";
 
         if (!firstKeyMapped) {
-            if (!HandleInputMapping(token, key1, configKey, config_)) {
+            if (!HandleInputMapping(token, key1, configKey)) {
                 success = false;
             }
             firstKeyMapped = true;
         }
         else {
-            if (!HandleInputMapping(token, key2, configKey, config_)) {
+            if (!HandleInputMapping(token, key2, configKey)) {
                 success = false;
             }
             break; // Only two keys are expected for a combo
@@ -418,12 +418,12 @@ bool UserInput::update( SDL_Event &e )
 }
 
 
-bool UserInput::keystate(KeyCode_E code)
+bool UserInput::keystate(KeyCode_E code) const
 {
     return currentKeyState_[code];
 }
 
-bool UserInput::lastKeyPressed(KeyCode_E code)
+bool UserInput::lastKeyPressed(KeyCode_E code) const
 {
     if (lastKeyState_[code]) {
         return true;
@@ -431,7 +431,7 @@ bool UserInput::lastKeyPressed(KeyCode_E code)
     return false;
 }
 
-bool UserInput::newKeyPressed(KeyCode_E code)
+bool UserInput::newKeyPressed(KeyCode_E code) const
 {
     return currentKeyState_[code] && !lastKeyState_[code];
 }
