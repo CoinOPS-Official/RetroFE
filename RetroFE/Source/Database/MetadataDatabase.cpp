@@ -146,13 +146,12 @@ bool MetadataDatabase::importDirectory()
 
     return true;
 }
-void MetadataDatabase::injectMetadata(CollectionInfo *collection)
-{
-    sqlite3 *handle = db_.handle;
-    int rc;
-    sqlite3_stmt *stmt;
 
-    // items into a hash to make it easily searchable
+void MetadataDatabase::injectMetadata(CollectionInfo* collection)
+{
+    sqlite3* handle = db_.handle;
+    sqlite3_stmt* stmt;
+
     std::vector<Item*> const* items = &collection->items;
     std::map<std::string, Item*, std::less<>> itemMap;
 
@@ -160,54 +159,52 @@ void MetadataDatabase::injectMetadata(CollectionInfo *collection)
         itemMap.try_emplace(item->name, item);
     }
 
-    //todo: program crashes if this query fails
-    sqlite3_prepare_v2(handle,
-                       "SELECT DISTINCT Meta.name, Meta.title, Meta.year, Meta.manufacturer, Meta.developer, Meta.genre, Meta.players, Meta.ctrltype, Meta.buttons, Meta.joyways, Meta.cloneOf, Meta.rating, Meta.score "
-                       "FROM Meta WHERE collectionName=? ORDER BY title ASC;",
-                       -1, &stmt, nullptr);
+    // Prepare SQL query - ensure this query is optimized and uses appropriate indexing
+    const char* sql = "SELECT DISTINCT Meta.name, Meta.title, Meta.year, Meta.manufacturer, Meta.developer, Meta.genre, Meta.players, Meta.ctrltype, Meta.buttons, Meta.joyways, Meta.cloneOf, Meta.rating, Meta.score "
+        "FROM Meta WHERE collectionName=? ORDER BY title ASC;";
+
+    if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
+        std::stringstream ss;
+        ss << "Error in injectMetadata: Failed to prepare SQL statement. SQL Error: " << sqlite3_errmsg(handle);
+        LOG_ERROR("Metadata", ss.str());
+        return;
+    }
 
     sqlite3_bind_text(stmt, 1, collection->metadataType.c_str(), -1, SQLITE_TRANSIENT);
 
-    rc = sqlite3_step(stmt);
-
-    while(rc == SQLITE_ROW)
+    while (sqlite3_step(stmt) == SQLITE_ROW)
     {
-        std::string name = (const char *)sqlite3_column_text(stmt, 0);
-        std::string fullTitle = (const char *)sqlite3_column_text(stmt, 1);
-        std::string year = (const char *)sqlite3_column_text(stmt, 2);
-        std::string manufacturer = (const char *)sqlite3_column_text(stmt, 3);
-        std::string developer = (const char *)sqlite3_column_text(stmt, 4);
-        std::string genre = (const char *)sqlite3_column_text(stmt, 5);
-        std::string numberPlayers = (const char *)sqlite3_column_text(stmt, 6);
-        std::string ctrlType = (const char *)sqlite3_column_text(stmt, 7);
-        std::string numberButtons = (const char *)sqlite3_column_text(stmt, 8);
-        std::string joyWays = (const char *)sqlite3_column_text(stmt, 9);
-        std::string cloneOf = (const char *)sqlite3_column_text(stmt, 10);
-        std::string rating = (const char *)sqlite3_column_text(stmt, 11);
-        std::string score = (const char *)sqlite3_column_text(stmt, 12);
-        std::string launcher;
-        std::string title = fullTitle;
+        // Directly use the C-style strings for comparison and assignment to avoid unnecessary conversions
+        const char* name = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
 
-
-        if(std::map<std::string, Item *>::iterator it = itemMap.find(name); it != itemMap.end())
+        if (auto it = itemMap.find(name); it != itemMap.end())
         {
-            Item *item = it->second;
-            item->title = title;
-            item->fullTitle = fullTitle;
-            item->year = year;
-            item->manufacturer = manufacturer;
-            item->developer = developer;
-            item->genre = genre;
-            item->numberPlayers = numberPlayers;
-            item->numberButtons = numberButtons;
-            item->ctrlType = ctrlType;
-            item->joyWays = joyWays;
-            item->cloneof = cloneOf;
-            item->rating = rating;
-            item->score = score;
+            Item* item = it->second;
+
+            // Directly assign the C-style strings from the SQLite columns to the corresponding fields in the Item object.
+            // reinterpret_cast is used to convert the void pointer returned by sqlite3_column_text to a const char pointer.
+            item->title = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 1));
+            item->year = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 2));
+            item->manufacturer = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 3));
+            item->developer = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 4));
+            item->genre = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 5));
+            item->numberPlayers = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 6));
+            item->ctrlType = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 7));
+            item->numberButtons = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 8));
+            item->joyWays = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 9));
+            item->cloneof = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 10));
+            item->rating = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 11));
+            item->score = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 12));
         }
-        rc = sqlite3_step(stmt);
     }
+
+    // Check for errors in the while loop, log and handle appropriately
+    if (sqlite3_errcode(handle) != SQLITE_DONE) {
+        std::stringstream ss;
+        ss << "Error in injectMetadata: SQLite operation did not complete successfully. Error code: " << sqlite3_errcode(handle) << "; Error message: " << sqlite3_errmsg(handle);
+        LOG_ERROR("Metadata", ss.str());
+    }
+
     sqlite3_finalize(stmt);
 }
 
@@ -335,9 +332,9 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
 bool MetadataDatabase::importMamelist(const std::string& filename, const std::string& collectionName)
 {
     rapidxml::xml_document<> doc;
-    rapidxml::xml_node<> const * rootNode;
-    char *error = nullptr;
-    sqlite3 *handle = db_.handle;
+    rapidxml::xml_node<> const* rootNode;
+    char* error = nullptr;
+    sqlite3* handle = db_.handle;
 
     config_.setProperty("status", "Scraping data from \"" + filename + "\" (this will take a while)");
 
@@ -352,13 +349,13 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
 
     rootNode = doc.first_node("mame");
 
-    if(!rootNode)
+    if (!rootNode)
     {
         LOG_ERROR("Metadata", "Does not appear to be a MameList file (missing <mame> tag)");
         return false;
     }
 
-    if(sqlite3_exec(handle, "BEGIN IMMEDIATE TRANSACTION;", nullptr, nullptr, &error) != SQLITE_OK)
+    if (sqlite3_exec(handle, "BEGIN IMMEDIATE TRANSACTION;", nullptr, nullptr, &error) != SQLITE_OK)
     {
         std::string emsg = error;
         LOG_ERROR("Metadata", "SQL Error starting transaction: " + emsg);
@@ -367,23 +364,30 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
     std::string gameNodeName = "game";
 
     // support new mame formats
-    if(rootNode->first_node(gameNodeName.c_str()) == nullptr) {
+    if (rootNode->first_node(gameNodeName.c_str()) == nullptr) {
         gameNodeName = "machine";
     }
 
-    for (rapidxml::xml_node<> const * game = rootNode->first_node(gameNodeName.c_str()); game; game = game->next_sibling())
-    {
-        rapidxml::xml_attribute<> const *nameNode = game->first_attribute("name");
-        rapidxml::xml_attribute<> const *cloneOfXml = game->first_attribute("cloneof");
+    sqlite3_stmt* stmt;
 
-        if(nameNode != nullptr)
+    sqlite3_prepare_v2(handle,
+        "INSERT OR REPLACE INTO Meta (name, title, year, manufacturer, genre, players, buttons, cloneOf, collectionName) VALUES (?,?,?,?,?,?,?,?,?)",
+        -1, &stmt, nullptr);
+
+
+    for (rapidxml::xml_node<> const* game = rootNode->first_node(gameNodeName.c_str()); game; game = game->next_sibling())
+    {
+        rapidxml::xml_attribute<> const* nameNode = game->first_attribute("name");
+        rapidxml::xml_attribute<> const* cloneOfXml = game->first_attribute("cloneof");
+
+        if (nameNode != nullptr)
         {
             std::string name = nameNode->value();
-            rapidxml::xml_node<> const *descriptionNode = game->first_node("description");
-            rapidxml::xml_node<> const *yearNode = game->first_node("year");
-            rapidxml::xml_node<> const *manufacturerNode = game->first_node("manufacturer");
-            rapidxml::xml_node<> const *genreNode = game->first_node("genre");
-            rapidxml::xml_node<> const *inputNode = game->first_node("input");
+            rapidxml::xml_node<> const* descriptionNode = game->first_node("description");
+            rapidxml::xml_node<> const* yearNode = game->first_node("year");
+            rapidxml::xml_node<> const* manufacturerNode = game->first_node("manufacturer");
+            rapidxml::xml_node<> const* genreNode = game->first_node("genre");
+            rapidxml::xml_node<> const* inputNode = game->first_node("input");
 
             std::string description = (descriptionNode == nullptr) ? nameNode->value() : descriptionNode->value();
             std::string year = (yearNode == nullptr) ? "" : yearNode->value();
@@ -393,28 +397,23 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
             std::string players;
             std::string buttons;
 
-            if(inputNode != nullptr)
+            if (inputNode != nullptr)
             {
-                rapidxml::xml_attribute<> const *playersAttribute = inputNode->first_attribute("players");
-                rapidxml::xml_attribute<> const *buttonsAttribute = inputNode->first_attribute("buttons");
+                rapidxml::xml_attribute<> const* playersAttribute = inputNode->first_attribute("players");
+                rapidxml::xml_attribute<> const* buttonsAttribute = inputNode->first_attribute("buttons");
 
-                if(playersAttribute)
+                if (playersAttribute)
                 {
                     players = playersAttribute->value();
                 }
 
-                if(buttonsAttribute)
+                if (buttonsAttribute)
                 {
                     buttons = buttonsAttribute->value();
                 }
 
             }
 
-            sqlite3_stmt *stmt;
-
-            sqlite3_prepare_v2(handle,
-                               "INSERT OR REPLACE INTO Meta (name, title, year, manufacturer, genre, players, buttons, cloneOf, collectionName) VALUES (?,?,?,?,?,?,?,?,?)",
-                               -1, &stmt, nullptr);
 
 
             sqlite3_bind_text(stmt, 1, name.c_str(), -1, SQLITE_TRANSIENT);
@@ -435,9 +434,11 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
                 sqlite3_finalize(stmt);
                 break;
             };
-            sqlite3_finalize(stmt);
+            sqlite3_reset(stmt);
         }
     }
+
+    sqlite3_finalize(stmt);
 
     config_.setProperty("status", "Saving data from \"" + filename + "\" to database");
     if (sqlite3_exec(handle, "COMMIT TRANSACTION;", nullptr, nullptr, &error) != SQLITE_OK)
@@ -448,7 +449,6 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
 
     return true;
 }
-
 
 bool MetadataDatabase::importEmuArclist(const std::string& emuarclistFile)
 {
