@@ -44,6 +44,7 @@ v0.10.34.3
     - fixed toggling close the info upon going to settings; fixed toggling back to last from settings in different collection (monkofhefunk)
     - fixed random start playlist to exclude favorites and lastplayed (monkofthefunk)
     - added ability to have ..: blank playlist to allow for multiple playlists in global setting toggle, uses autoPlaylist and cyclePlaylist in setting collection (monkofthefunk)
+	- added configurable quitCombo in controls.conf, example quitCombo = joyButton6,joyButton7
 
 v0.10.34.2
     - update version *.2 (monkofthefunk)
