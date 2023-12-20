@@ -210,6 +210,11 @@ void MetadataDatabase::injectMetadata(CollectionInfo* collection)
 
 bool MetadataDatabase::needsRefresh()
 {
+    bool metaLock = false;
+    config_.getProperty("metaLock", metaLock);
+    if (metaLock)
+        return false;
+
     sqlite3* handle = db_.handle;
     sqlite3_stmt* stmt;
     bool result;
