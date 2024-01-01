@@ -135,13 +135,17 @@ int main(int argc, char** argv)
 static bool ImportConfiguration(Configuration* c)
 {
     std::string configPath = Configuration::absolutePath;
+
 #ifdef WIN32
-    std::string launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers.windows");
+    std::string osType = "windows";
 #elif __APPLE__
-    std::string launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers.apple");
+    std::string osType = "apple";
 #else
-    std::string launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers.linux");
+    std::string osType = "linux";
 #endif
+
+    std::string launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers." + osType);
+
     std::string collectionsPath = Utils::combinePath(Configuration::absolutePath, "collections");
 
     std::string settingsConfPath = Utils::combinePath(configPath, "settings");
@@ -168,41 +172,30 @@ static bool ImportConfiguration(Configuration* c)
     LOG_INFO("RetroFE", "Absolute path: " + Configuration::absolutePath);
 
     // Process launchers
-    if (!fs::exists(launchersPath) || !fs::is_directory(launchersPath))
+    if (fs::is_directory(launchersPath))
     {
-        launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers");
-        if (!fs::exists(launchersPath) || !fs::is_directory(launchersPath))
+        for (const auto& entry : fs::directory_iterator(launchersPath))
         {
-            LOG_NOTICE("RetroFE", "Could not read directory \"" + launchersPath + "\"");
-            return false;
-        }
-    }
-
-    for (const auto& entry : fs::directory_iterator(launchersPath))
-    {
-        if (fs::is_regular_file(entry))
-        {
-            std::string file = entry.path().filename().string();
-            size_t dot_position = file.find_last_of(".");
-
-            if (dot_position != std::string::npos)
+            if (entry.is_regular_file())
             {
-                std::string extension = Utils::toLower(file.substr(dot_position));
-                std::string basename = file.substr(0, dot_position);
-
-                if (extension == ".conf")
+                fs::path filePath = entry.path();
+                if (filePath.extension() == ".conf")
                 {
+                    std::string basename = filePath.stem().string();
                     std::string prefix = "launchers." + Utils::toLower(basename);
-                    std::string importFile = entry.path().string();
+                    std::string importFile = filePath.string();
 
                     if (!c->import(prefix, importFile))
                     {
                         LOG_ERROR("RetroFE", "Could not import \"" + importFile + "\"");
-                        return false;
                     }
                 }
             }
         }
+    }
+    else
+    {
+        LOG_NOTICE("RetroFE", "Launchers directory does not exist or is not a directory: " + launchersPath);
     }
 
 
@@ -216,7 +209,7 @@ static bool ImportConfiguration(Configuration* c)
     for (const auto& entry : fs::directory_iterator(collectionsPath))
     {
         std::string collection = entry.path().filename().string();
-        if (fs::is_directory(entry) && !collection.empty() && collection[0] != '_' && collection != "." && collection != "..")
+        if (fs::is_directory(entry))
         {
             std::string prefix = "collections." + collection;
             bool settingsImported = false;
@@ -238,7 +231,7 @@ static bool ImportConfiguration(Configuration* c)
 
             // record which collections have launcher files
             prefix = "launchers." + Utils::toLower(collection);
-            std::string importFile = Utils::combinePath(collectionsPath, collection, "launcher.conf");
+            std::string importFile = Utils::combinePath(collectionsPath, collection, "launcher." + osType + ".conf");
             bool launcherExists = c->propertyExists(prefix + ".executable");
             if (c->import(collection, prefix, importFile, false)) {
                 if (launcherExists) {
