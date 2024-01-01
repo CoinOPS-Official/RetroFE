@@ -209,7 +209,7 @@ static bool ImportConfiguration(Configuration* c)
     for (const auto& entry : fs::directory_iterator(collectionsPath))
     {
         std::string collection = entry.path().filename().string();
-        if (fs::is_directory(entry))
+        if (fs::is_directory(entry) && !collection.empty() && collection[0] != '_' && collection != "." && collection != "..")
         {
             std::string prefix = "collections." + collection;
             bool settingsImported = false;
@@ -229,21 +229,39 @@ static bool ImportConfiguration(Configuration* c)
                 LOG_ERROR("RetroFE", "Could not import any collection settings for " + collection);
             }
 
-            // record which collections have launcher files
+            // Record which collections have launcher files
             prefix = "launchers." + Utils::toLower(collection);
-            std::string importFile = Utils::combinePath(collectionsPath, collection, "launcher." + osType + ".conf");
-            bool launcherExists = c->propertyExists(prefix + ".executable");
-            if (c->import(collection, prefix, importFile, false)) {
-                if (launcherExists) {
-                    LOG_INFO("Launcher", "Override global launcher with collection launcher: " + prefix + " path: " + importFile);
+            
+            std::string osSpecificLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher." + osType + ".conf");
+            std::string defaultLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher.conf");
+            
+            std::string importFile;
+
+            if (fs::exists(osSpecificLauncherFile))
+                importFile = osSpecificLauncherFile;
+            else if (fs::exists(defaultLauncherFile))
+                 importFile = defaultLauncherFile;
+            else
+                 importFile = "";
+
+
+            if (!importFile.empty())
+            {
+                if (c->import(collection, prefix, importFile, false))
+                {
+                    if (c->propertyExists(prefix + ".executable"))
+                    {
+                        LOG_INFO("Launcher", "Override global launcher with collection launcher: " + prefix + " path: " + importFile);
+                    }
+                    std::string collectionLaunchers = "collectionLaunchers";
+                    std::string launchers = "";
+                    c->getProperty(collectionLaunchers, launchers);
+                    c->setProperty(collectionLaunchers, launchers + collection + ",");
                 }
-                std::string collectionLaunchers = "collectionLaunchers";
-                std::string launchers = "";
-                c->getProperty(collectionLaunchers, launchers);
-                c->setProperty(collectionLaunchers, launchers + collection + ",");
-            }
-            else {
-                LOG_INFO("Launcher", "Override of global luancher doesn't exist for collection: " + collection + " path: " + importFile);
+                else
+                {
+                    LOG_INFO("Launcher", "Launcher file not found or failed to import for collection: " + collection + " path: " + importFile);
+                }
             }
         }
     }
