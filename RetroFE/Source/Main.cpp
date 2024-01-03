@@ -154,9 +154,16 @@ static bool ImportConfiguration(Configuration* c)
         LOG_ERROR("RetroFE", "Could not import \"" + settingsConfPath + ".conf\"");
         return false;
     }
-    for (int i = 1; i < 16; i++)
-        c->import("", "", settingsConfPath + std::to_string(i) + ".conf", false);
-    c->import("", "", settingsConfPath + "_saved.conf", false);
+    for (int i = 1; i < 16; i++) {
+        std::string settingsFile = settingsConfPath + std::to_string(i) + ".conf";
+        if (fs::exists(settingsFile)) {
+            c->import("", "", settingsFile, false);
+        }
+    }
+    std::string savedSettingsFile = settingsConfPath + "_saved.conf";
+    if (fs::exists(savedSettingsFile)) {
+        c->import("", "", savedSettingsFile, false);
+    }
 
     // log version
     LOG_INFO("RetroFE", "Version " + Version::getString() + " starting");
@@ -210,14 +217,22 @@ static bool ImportConfiguration(Configuration* c)
         if (fs::is_directory(entry) && !collection.empty() && collection[0] != '_' && collection != "." && collection != "..") {
             std::string prefix = "collections." + collection;
             bool settingsImported = false;
-            std::string settingsPath = Utils::combinePath(collectionsPath, collection, "settings");
-
-            // Import collection settings
-            settingsImported |= c->import(collection, prefix, settingsPath + ".conf", false);
-            for (int i = 1; i < 16; i++) {
-                settingsImported |= c->import(collection, prefix, settingsPath + std::to_string(i) + ".conf", false);
+            std::string settingsFile = Utils::combinePath(collectionsPath, collection, "settings.conf");
+            if (fs::exists(settingsFile)) {
+                settingsImported |= c->import(collection, prefix, settingsFile, false);
             }
-            c->import(collection, prefix, Utils::combinePath(collectionsPath, collection, "info.conf"), false);
+
+            for (int i = 1; i < 16; i++) {
+                std::string numberedSettingsFile = Utils::combinePath(collectionsPath, collection, "settings" + std::to_string(i) + ".conf");
+                if (fs::exists(numberedSettingsFile)) {
+                    settingsImported |= c->import(collection, prefix, numberedSettingsFile, false);
+                }
+            }
+
+            std::string infoFile = Utils::combinePath(collectionsPath, collection, "info.conf");
+            if (fs::exists(infoFile)) {
+                c->import(collection, prefix, infoFile, false);
+            }
 
             // Check for a collection-specific launcher override
             std::string osSpecificLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher." + osType + ".conf");
