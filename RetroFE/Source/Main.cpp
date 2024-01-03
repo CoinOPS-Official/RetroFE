@@ -242,6 +242,14 @@ static bool ImportConfiguration(Configuration* c)
                 c->setProperty(launcherPropertyKey, collection);
             }
 
+            // Update collectionLaunchers property
+            std::string collectionLaunchers = "collectionLaunchers";
+            std::string launchers = "";
+            c->getProperty(collectionLaunchers, launchers);
+            if (!importFile.empty()) {
+                c->setProperty(collectionLaunchers, launchers + collection + ",");
+            }
+
             if (!settingsImported) {
                 LOG_ERROR("RetroFE", "Could not import any collection settings for " + collection);
             }
