@@ -40,7 +40,29 @@ Launcher::Launcher(Configuration &c)
 
 bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPage)
 {
+    // Initialize with the default launcher for the collection
     std::string launcherName = collectionItem->collectionInfo->launcher;
+
+    // Check if there's a per-item launcher override
+    std::string launcherFile = Utils::combinePath(Configuration::absolutePath, "collections", collectionItem->collectionInfo->name, "launchers", collectionItem->name + ".conf");
+    if (std::ifstream launcherStream(launcherFile); launcherStream.good()) {
+        std::string line;
+        if (std::getline(launcherStream, line)) {
+            launcherName = line; // Use the specific launcher for the item
+        }
+    }
+
+    // If no per-item launcher override, check for a collection-specific launcher
+    if (launcherName == collectionItem->collectionInfo->launcher) {
+        std::string collectionSpecificLauncherKey = "collectionLaunchers." + Utils::toLower(collectionItem->collectionInfo->name) + ".executable";
+        if (config_.propertyExists(collectionSpecificLauncherKey)) {
+            launcherName = collectionItem->collectionInfo->name; // Use the collection-specific launcher
+        }
+    }
+
+    // Convert launcherName to lowercase for consistency
+    launcherName = Utils::toLower(launcherName);
+
     std::string executablePath;
     std::string selectedItemsDirectory;
     std::string selectedItemsPath;
@@ -48,17 +70,6 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
     std::string matchedExtension;
     std::string args;
 
-    // check if launcher has overide for the particular rom
-    std::string launcherFile = Utils::combinePath( Configuration::absolutePath, "collections", collectionItem->collectionInfo->name, "launchers", collectionItem->name + ".conf" );
-    if (std::ifstream launcherStream( launcherFile.c_str( ) ); launcherStream.good( )) // Launcher file found
-    {
-        std::string line;
-        if (std::getline( launcherStream, line)) // Launcher found
-        {
-            launcherName = line;
-        }
-    }
-    launcherName = Utils::toLower(launcherName);
 
     if(!launcherExecutable(executablePath, launcherName))
     {
@@ -411,29 +422,45 @@ bool Launcher::launcherName(std::string &launcherName, std::string collection)
 
 
 
-bool Launcher::launcherExecutable(std::string &executable, std::string launcherName)
+bool Launcher::launcherExecutable(std::string& executable, std::string launcherName)
 {
-
-    if(std::string executableKey = "launchers." + launcherName + ".executable"; !config_.getProperty(executableKey, executable))
+    // First try with the "collectionLaunchers." prefix
+    std::string executableKey = "collectionLaunchers." + launcherName + ".executable";
+    if (!config_.getProperty(executableKey, executable))
     {
-        LOG_ERROR("Launcher", "No launcher found for: " + executableKey);
-        return false;
+        // If not found, try with the "launchers." prefix
+        executableKey = "launchers." + launcherName + ".executable";
+        if (!config_.getProperty(executableKey, executable))
+        {
+            // Log error if launcher executable is not found with either prefix
+            LOG_ERROR("Launcher", "No launcher found for: " + executableKey);
+            return false;
+        }
     }
 
     return true;
 }
 
-bool Launcher::launcherArgs(std::string &args, std::string launcherName)
+
+bool Launcher::launcherArgs(std::string& args, std::string launcherName)
 {
-
-    if(std::string argsKey = "launchers." + launcherName + ".arguments"; !config_.getProperty(argsKey, args))
+    // First try with the "collectionLaunchers." prefix
+    std::string argsKey = "collectionLaunchers." + launcherName + ".arguments";
+    if (!config_.getProperty(argsKey, args))
     {
-        LOG_ERROR("Launcher", "No arguments specified for: " + argsKey);
-
-        return false;
+        // If not found, try with the "launchers." prefix
+        argsKey = "launchers." + launcherName + ".arguments";
+        if (!config_.getProperty(argsKey, args))
+        {
+            // Log error if launcher arguments are not found with either prefix
+            LOG_ERROR("Launcher", "No arguments specified for: " + argsKey);
+            return false;
+        }
     }
+
     return true;
 }
+
 
 bool Launcher::extensions(std::string &extensions, std::string collection)
 {

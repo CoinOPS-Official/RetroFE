@@ -234,21 +234,19 @@ static bool ImportConfiguration(Configuration* c)
                 c->import(collection, prefix, infoFile, false);
             }
 
-            // Check for a collection-specific launcher override
+            // Process collection-specific launcher overrides
             std::string osSpecificLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher." + osType + ".conf");
             std::string defaultLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher.conf");
-            std::string launcherKey = "launchers." + Utils::toLower(collection);
-            std::string importFile = "";
-            if (fs::exists(osSpecificLauncherFile)) {
-                importFile = osSpecificLauncherFile;
-            }
-            else if (fs::exists(defaultLauncherFile)) {
-                importFile = defaultLauncherFile;
-            }
+            std::string launcherKey = "collectionLaunchers." + Utils::toLower(collection); // Unique key for collection-specific launchers
 
-            // Import the launcher file if it exists
+            std::string importFile = fs::exists(osSpecificLauncherFile) ? osSpecificLauncherFile
+                : fs::exists(defaultLauncherFile) ? defaultLauncherFile
+                : "";
+
+            // Import the launcher file if it exists under the unique key
             if (!importFile.empty()) {
                 c->import(collection, launcherKey, importFile, false);
+                LOG_INFO("RetroFE", "Imported collection-specific launcher for: " + collection);
             }
 
             // Set the launcher property if it's not already set in settings.conf
