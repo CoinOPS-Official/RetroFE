@@ -249,6 +249,27 @@ static bool ImportConfiguration(Configuration* c)
                 LOG_INFO("RetroFE", "Imported collection-specific launcher for: " + collection);
             }
 
+            std::string localLaunchersPath = Utils::combinePath(collectionsPath, collection, "launchers." + osType + ".local");
+            if (fs::is_directory(localLaunchersPath))
+            {
+                for (const auto& launcherEntry : fs::directory_iterator(localLaunchersPath)) {
+                    if (launcherEntry.is_regular_file()) {
+                        fs::path filePath = launcherEntry.path();
+                        if (filePath.extension() == ".conf") {
+                            std::string basename = filePath.stem().string();
+                            std::string prefix = "localLaunchers." + collection + "." + Utils::toLower(basename);
+                            std::string importFile = filePath.string();
+
+                            if (!c->import(collection, prefix, importFile)) {
+                                LOG_ERROR("RetroFE", "Could not import local launcher \"" + importFile + "\" for collection \"" + collection + "\"");
+                            }
+                            else {
+                                LOG_INFO("RetroFE", "Imported local launcher \"" + basename + "\" for collection \"" + collection + "\"");
+                            }
+                        }
+                    }
+                }
+            }
             // Set the launcher property if it's not already set in settings.conf
             std::string launcherPropertyKey = "collections." + collection + ".launcher";
             if (!c->propertyExists(launcherPropertyKey) && !importFile.empty()) {
@@ -262,6 +283,8 @@ static bool ImportConfiguration(Configuration* c)
             if (!importFile.empty()) {
                 c->setProperty(collectionLaunchers, launchers + collection + ",");
             }
+
+
 
             if (!settingsImported) {
                 LOG_ERROR("RetroFE", "Could not import any collection settings for " + collection);

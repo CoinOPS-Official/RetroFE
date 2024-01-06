@@ -28,10 +28,13 @@
 #include "../Graphics/Page.h"
 #include <thread>
 #include <atomic>
+#include <filesystem>
 #ifdef WIN32
 #include <windows.h>
 #include <cstring>
 #endif
+
+namespace fs = std::filesystem;
 
 Launcher::Launcher(Configuration &c)
     : config_(c)
@@ -43,12 +46,23 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
     // Initialize with the default launcher for the collection
     std::string launcherName = collectionItem->collectionInfo->launcher;
 
-    // Check if there's a per-item launcher override
-    std::string launcherFile = Utils::combinePath(Configuration::absolutePath, "collections", collectionItem->collectionInfo->name, "launchers", collectionItem->name + ".conf");
+    // Check for per-item launcher override
+    std::string launcherFile = Utils::combinePath(Configuration::absolutePath, "collections", collection, "launchers", collectionItem->name + ".conf");
+    LOG_INFO("LauncherDebug", "per-item path: " + launcherFile);
     if (std::ifstream launcherStream(launcherFile); launcherStream.good()) {
         std::string line;
         if (std::getline(launcherStream, line)) {
-            launcherName = line; // Use the specific launcher for the item
+            // Construct localLauncher key
+            std::string localLauncherKey = "localLaunchers." + collection + "." + Utils::toLower(line);
+            LOG_INFO("LauncherDebug", "localLauncherKey: " + localLauncherKey);
+            if (config_.propertyPrefixExists(localLauncherKey)) {
+                // Use localLauncher if exists
+                launcherName = collection + "." + Utils::toLower(line);
+            }
+            else {
+                // Use specified launcher from conf file
+                launcherName = Utils::toLower(line);
+            }
         }
     }
 
@@ -61,7 +75,7 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
     }
 
     // Convert launcherName to lowercase for consistency
-    launcherName = Utils::toLower(launcherName);
+    //launcherName = Utils::toLower(launcherName);
 
     std::string executablePath;
     std::string selectedItemsDirectory;
@@ -422,44 +436,45 @@ bool Launcher::launcherName(std::string &launcherName, std::string collection)
 
 
 
-bool Launcher::launcherExecutable(std::string& executable, std::string launcherName)
-{
-    // First try with the "collectionLaunchers." prefix
-    std::string executableKey = "collectionLaunchers." + launcherName + ".executable";
-    if (!config_.getProperty(executableKey, executable))
-    {
-        // If not found, try with the "launchers." prefix
-        executableKey = "launchers." + launcherName + ".executable";
-        if (!config_.getProperty(executableKey, executable))
-        {
-            // Log error if launcher executable is not found with either prefix
-            LOG_ERROR("Launcher", "No launcher found for: " + executableKey);
-            return false;
+bool Launcher::launcherExecutable(std::string& executable, std::string launcherName) {
+    // Try with the localLauncher prefix
+    LOG_INFO("LauncherDebug", "launcherExecutable launcherName: " + launcherName);
+    std::string executableKey = "localLaunchers." + launcherName + ".executable";
+    if (!config_.getProperty(executableKey, executable)) {
+        // Try with the collectionLauncher prefix
+        executableKey = "collectionLaunchers." + launcherName + ".executable";
+        if (!config_.getProperty(executableKey, executable)) {
+            // Finally, try with the global launcher prefix
+            executableKey = "launchers." + launcherName + ".executable";
+            if (!config_.getProperty(executableKey, executable)) {
+                LOG_ERROR("Launcher", "No launcher found for: " + executableKey);
+                return false;
+            }
         }
     }
-
     return true;
 }
 
 
-bool Launcher::launcherArgs(std::string& args, std::string launcherName)
-{
-    // First try with the "collectionLaunchers." prefix
-    std::string argsKey = "collectionLaunchers." + launcherName + ".arguments";
-    if (!config_.getProperty(argsKey, args))
-    {
-        // If not found, try with the "launchers." prefix
-        argsKey = "launchers." + launcherName + ".arguments";
-        if (!config_.getProperty(argsKey, args))
-        {
-            // Log error if launcher arguments are not found with either prefix
-            LOG_ERROR("Launcher", "No arguments specified for: " + argsKey);
-            return false;
+
+bool Launcher::launcherArgs(std::string& args, std::string launcherName) {
+    // Try with the localLauncher prefix
+    std::string argsKey = "localLaunchers." + launcherName + ".arguments";
+    if (!config_.getProperty(argsKey, args)) {
+        // Try with the collectionLauncher prefix
+        argsKey = "collectionLaunchers." + launcherName + ".arguments";
+        if (!config_.getProperty(argsKey, args)) {
+            // Finally, try with the global launcher prefix
+            argsKey = "launchers." + launcherName + ".arguments";
+            if (!config_.getProperty(argsKey, args)) {
+                LOG_ERROR("Launcher", "No arguments specified for: " + argsKey);
+                return false;
+            }
         }
     }
-
     return true;
 }
+
 
 
 bool Launcher::extensions(std::string &extensions, std::string collection)
