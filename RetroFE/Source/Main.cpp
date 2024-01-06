@@ -250,6 +250,15 @@ static bool ImportConfiguration(Configuration* c)
             }
 
             std::string localLaunchersPath = Utils::combinePath(collectionsPath, collection, "launchers." + osType + ".local");
+            std::string defaultLocalLaunchersPath = Utils::combinePath(collectionsPath, collection, "launchers.local");
+
+            // Check if OS-specific launchers directory exists, otherwise use the default launchers directory
+            if (!fs::is_directory(localLaunchersPath)) {
+                if (fs::is_directory(defaultLocalLaunchersPath)) {
+                    localLaunchersPath = defaultLocalLaunchersPath;
+                }
+            }
+
             if (fs::is_directory(localLaunchersPath))
             {
                 for (const auto& launcherEntry : fs::directory_iterator(localLaunchersPath)) {
