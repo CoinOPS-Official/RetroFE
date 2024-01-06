@@ -237,7 +237,7 @@ static bool ImportConfiguration(Configuration* c)
             // Process collection-specific launcher overrides
             std::string osSpecificLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher." + osType + ".conf");
             std::string defaultLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher.conf");
-            std::string launcherKey = "collectionLaunchers." + Utils::toLower(collection); // Unique key for collection-specific launchers
+            std::string launcherKey = "collectionLaunchers." + collection; // Unique key for collection-specific launchers
 
             std::string importFile = fs::exists(osSpecificLauncherFile) ? osSpecificLauncherFile
                 : fs::exists(defaultLauncherFile) ? defaultLauncherFile

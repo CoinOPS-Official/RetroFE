@@ -68,8 +68,8 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
 
     // If no per-item launcher override, check for a collection-specific launcher
     if (launcherName == collectionItem->collectionInfo->launcher) {
-        std::string collectionSpecificLauncherKey = "collectionLaunchers." + Utils::toLower(collectionItem->collectionInfo->name) + ".executable";
-        if (config_.propertyExists(collectionSpecificLauncherKey)) {
+        std::string collectionSpecificLauncherKey = "collectionLaunchers." + collection;
+        if (config_.propertyPrefixExists(collectionSpecificLauncherKey)) {
             launcherName = collectionItem->collectionInfo->name; // Use the collection-specific launcher
         }
     }
