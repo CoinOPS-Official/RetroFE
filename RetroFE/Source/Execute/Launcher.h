@@ -44,8 +44,8 @@ private:
     bool launcherArgs(std::string &args, std::string launcherName);
     bool extensions(std::string &extensions, std::string launcherName);
     bool collectionDirectory(std::string &directory, std::string collection);
+    bool findFile(std::string& foundFilePath, std::string& foundFilename, const std::string& directory, const std::string& filenameWithoutExtension, const std::string& extensions);
     bool execute(std::string executable, std::string arguments, std::string currentDirectory, bool wait = true, Page*currentPage = NULL);
-    bool findFile(std::string &foundFilePath, std::string &foundFilename, std::string directory, std::string filenameWithoutExtension, std::string extensions);
     std::string replaceVariables(std::string str,
                                  std::string itemFilePath,
                                  std::string itemName,

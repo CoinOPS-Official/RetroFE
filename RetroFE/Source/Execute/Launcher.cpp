@@ -28,11 +28,13 @@
 #include "../Graphics/Page.h"
 #include <thread>
 #include <atomic>
+#include <filesystem>
 #ifdef WIN32
 #include <Windows.h>
 #include <cstring>
 #endif
 
+namespace fs = std::filesystem;
 
 Launcher::Launcher(Configuration &c)
     : config_(c)
@@ -108,6 +110,15 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
     {
         selectedItemsDirectory = collectionItem->filepath;
     }
+    LOG_DEBUG("LauncherDebug", "selectedItemsPath pre-find file: " + selectedItemsPath);
+    LOG_DEBUG("LauncherDebug", "selectedItemsDirectory pre - find file : " + selectedItemsDirectory);
+    LOG_DEBUG("LauncherDebug", "matchedExtension pre - find file : " + matchedExtension);
+    LOG_DEBUG("LauncherDebug", "extensionstr pre - find file : " + extensionstr);
+    LOG_DEBUG("LauncherDebug", "collectionItem->name pre - find file: " + collectionItem->name);
+    LOG_DEBUG("LauncherDebug", "collectionItem->file pre - find file: " + collectionItem->file);
+
+
+
 
     // It is ok to continue if the file could not be found. We could be launching a merged romset
     if (collectionItem->file == "")
@@ -115,12 +126,18 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
     else
         findFile(selectedItemsPath, matchedExtension, selectedItemsDirectory, collectionItem->file, extensionstr);
 
+    LOG_DEBUG("LauncherDebug", "args: " + args);
+    LOG_DEBUG("LauncherDebug", "selectedItemsPath: " + selectedItemsPath);
+
+
     args = replaceVariables(args,
                             selectedItemsPath,
                             collectionItem->name,
                             Utils::getFileName(selectedItemsPath),
                             selectedItemsDirectory,
                             collection);
+    
+    LOG_DEBUG("LauncherDebug", "executablePath: " + executablePath);
 
     executablePath = replaceVariables(executablePath,
                                       selectedItemsPath,
@@ -499,57 +516,29 @@ bool Launcher::collectionDirectory(std::string &directory, std::string collectio
     return true;
 }
 
-bool Launcher::findFile(std::string &foundFilePath, std::string &foundFilename, std::string directory, std::string filenameWithoutExtension, std::string extensions)
-{
-    std::string extension;
+bool Launcher::findFile(std::string& foundFilePath, std::string& foundFilename, const std::string& directory, const std::string& filenameWithoutExtension, const std::string& extensions) {
     bool fileFound = false;
-    std::stringstream ss;
-    ss << extensions;
+    std::stringstream ss(extensions);
+    std::string extension;
 
-    while(!fileFound && std::getline(ss, extension, ',') )
-    {
-        std::string selectedItemsPath = directory + filenameWithoutExtension + "." + extension;
-        std::ifstream f(selectedItemsPath.c_str());
+    while (!fileFound && std::getline(ss, extension, ',')) {
+        fs::path filePath = fs::path(directory) / (filenameWithoutExtension + "." + extension);
 
-        if (f.good())
-        {
-            std::stringstream ss;
-
-            ss        <<"Checking to see if \""
-                      << selectedItemsPath << "\" exists  [Yes]";
-
-            fileFound = true;
-
-            LOG_INFO("Launcher", ss.str());
-
-            foundFilePath = selectedItemsPath;
+        if (fs::exists(filePath)) {
+            foundFilePath = filePath.string();
             foundFilename = extension;
+            fileFound = true;
+            LOG_INFO("Launcher", "File found: " + foundFilePath);
         }
-        else
-        {
-
-            ss        << "Checking to see if \""
-                      << selectedItemsPath << "\" exists  [No]";
-
-            LOG_WARNING("Launcher", ss.str());
+        else {
+            LOG_WARNING("Launcher", "File not found: " + filePath.string());
         }
-
-        f.close();
     }
 
-    // get the launchers executable
-
-    if(!fileFound)
-    {
-        ss        <<"Could not find any files with the name \""
-                  << filenameWithoutExtension << "\" in folder \""
-                  << directory;
-
-        LOG_WARNING("Launcher", ss.str());
-
+    if (!fileFound) {
+        LOG_WARNING("Launcher", "Could not find any files with the name \"" + filenameWithoutExtension + "\" in folder \"" + directory + "\"");
     }
 
     return fileFound;
 }
-
 
