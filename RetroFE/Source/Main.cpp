@@ -144,9 +144,9 @@ static bool ImportConfiguration(Configuration* c)
     std::string osType = "linux";
 #endif
 
-    std::string launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers." + osType);
+    fs::path launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers." + osType);
 
-    std::string collectionsPath = Utils::combinePath(Configuration::absolutePath, "collections");
+    fs::path collectionsPath = Utils::combinePath(Configuration::absolutePath, "collections");
 
     std::string settingsConfPath = Utils::combinePath(configPath, "settings");
     if (!c->import("", settingsConfPath + ".conf"))
@@ -202,13 +202,13 @@ static bool ImportConfiguration(Configuration* c)
     }
     else
     {
-        LOG_NOTICE("RetroFE", "Launchers directory does not exist or is not a directory: " + launchersPath);
+        LOG_NOTICE("RetroFE", "Launchers directory does not exist or is not a directory: " + launchersPath.string());
     }
 
 
     // Process collections
     if (!fs::exists(collectionsPath) || !fs::is_directory(collectionsPath)) {
-        LOG_ERROR("RetroFE", "Could not read directory \"" + collectionsPath + "\"");
+        LOG_ERROR("RetroFE", "Could not read directory \"" + collectionsPath.string() + "\"");
         return false;
     }
 
@@ -249,14 +249,12 @@ static bool ImportConfiguration(Configuration* c)
                 LOG_INFO("RetroFE", "Imported collection-specific launcher for: " + collection);
             }
 
-            std::string localLaunchersPath = Utils::combinePath(collectionsPath, collection, "launchers." + osType + ".local");
-            std::string defaultLocalLaunchersPath = Utils::combinePath(collectionsPath, collection, "launchers.local");
+            fs::path localLaunchersPath = Utils::combinePath(collectionsPath, collection, "launchers." + osType + ".local");
+            fs::path defaultLocalLaunchersPath = Utils::combinePath(collectionsPath, collection, "launchers.local");
 
             // Check if OS-specific launchers directory exists, otherwise use the default launchers directory
-            if (!fs::is_directory(localLaunchersPath)) {
-                if (fs::is_directory(defaultLocalLaunchersPath)) {
-                    localLaunchersPath = defaultLocalLaunchersPath;
-                }
+            if (!fs::is_directory(localLaunchersPath) && fs::is_directory(defaultLocalLaunchersPath)) {
+                localLaunchersPath = defaultLocalLaunchersPath;
             }
 
             if (fs::is_directory(localLaunchersPath))

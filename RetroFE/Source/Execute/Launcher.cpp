@@ -28,13 +28,11 @@
 #include "../Graphics/Page.h"
 #include <thread>
 #include <atomic>
-#include <filesystem>
 #ifdef WIN32
-#include <windows.h>
+#include <Windows.h>
 #include <cstring>
 #endif
 
-namespace fs = std::filesystem;
 
 Launcher::Launcher(Configuration &c)
     : config_(c)
@@ -48,13 +46,11 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
 
     // Check for per-item launcher override
     std::string launcherFile = Utils::combinePath(Configuration::absolutePath, "collections", collection, "launchers", collectionItem->name + ".conf");
-    LOG_INFO("LauncherDebug", "per-item path: " + launcherFile);
     if (std::ifstream launcherStream(launcherFile); launcherStream.good()) {
         std::string line;
         if (std::getline(launcherStream, line)) {
             // Construct localLauncher key
             std::string localLauncherKey = "localLaunchers." + collection + "." + Utils::toLower(line);
-            LOG_INFO("LauncherDebug", "localLauncherKey: " + localLauncherKey);
             if (config_.propertyPrefixExists(localLauncherKey)) {
                 // Use localLauncher if exists
                 launcherName = collection + "." + Utils::toLower(line);
@@ -438,7 +434,6 @@ bool Launcher::launcherName(std::string &launcherName, std::string collection)
 
 bool Launcher::launcherExecutable(std::string& executable, std::string launcherName) {
     // Try with the localLauncher prefix
-    LOG_INFO("LauncherDebug", "launcherExecutable launcherName: " + launcherName);
     std::string executableKey = "localLaunchers." + launcherName + ".executable";
     if (!config_.getProperty(executableKey, executable)) {
         // Try with the collectionLauncher prefix
@@ -532,7 +527,6 @@ bool Launcher::findFile(std::string &foundFilePath, std::string &foundFilename, 
         }
         else
         {
-            std::stringstream ss;
 
             ss        << "Checking to see if \""
                       << selectedItemsPath << "\" exists  [No]";
@@ -547,7 +541,6 @@ bool Launcher::findFile(std::string &foundFilePath, std::string &foundFilename, 
 
     if(!fileFound)
     {
-        std::stringstream ss;
         ss        <<"Could not find any files with the name \""
                   << filenameWithoutExtension << "\" in folder \""
                   << directory;
