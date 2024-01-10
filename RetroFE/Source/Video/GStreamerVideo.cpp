@@ -287,10 +287,10 @@ bool GStreamerVideo::createAndLinkGstElements()
 
 
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video) {
-    #ifdef WIN32
+//    #ifdef WIN32
     bool hardwareVideoAccel = Configuration::HardwareVideoAccel;
     if (!hardwareVideoAccel) {
-        std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec"};
+        std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec", "vtdec", "vtdec_hw"};
         for (const auto& pluginName : decoderPluginNames) {
             GstElementFactory *factory = gst_element_factory_find(pluginName.c_str());
             if (factory) {
@@ -299,7 +299,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
             }
         }
     }
-    #endif
+//    #endif
 
     gchar *elementName = gst_element_get_name(element);
     if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265")) {
@@ -383,6 +383,7 @@ void GStreamerVideo::update(float /* dt */)
         if (!gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
         {
             SDL_UnlockMutex(SDL::getMutex());
+            LOG_ERROR("Video", "Failed to map buffer");
             return; // Early exit if unable to map the buffer
         }
         
@@ -444,13 +445,13 @@ void GStreamerVideo::update(float /* dt */)
             if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
                 meta->stride[1] != expected_uv_stride || meta->offset[1] != expected_uv_offset)
             {
-                bufferLayout_ = NON_CONTIGUOUS;
+                bufferLayout_ = CONTIGUOUS;
                 LOG_DEBUG("Video", "Buffer is Non-Contiguous");
                 handleNonContiguous();
             }
             else 
             {
-                bufferLayout_ = CONTIGUOUS;
+                bufferLayout_ = NON_CONTIGUOUS;
                 LOG_DEBUG("Video", "Buffer is Contiguous");
                 handleContiguous();
             }

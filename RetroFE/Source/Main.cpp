@@ -75,21 +75,6 @@ int main(int argc, char** argv)
     Configuration config;
 
     gst_init(nullptr, nullptr);
-    // Check if GStreamer initialization was successful
-    if (gst_is_initialized())
-    {
-#ifdef WIN32
-        std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
-        GstRegistry* registry = gst_registry_get();
-        gst_registry_scan_path(registry, path.c_str());
-#endif
-        LOG_INFO("RetroFE", "GStreamer successfully initialized");
-    }
-    else
-    {
-        LOG_ERROR("RetroFE", "Failed to initialize GStreamer");
-        return -1;
-    }
 
     // check to see if createcollection was requested
     if (argc == 3)
@@ -164,6 +149,22 @@ static bool ImportConfiguration(Configuration* c)
 #else
     LOG_INFO("RetroFE", "OS: Linux");
 #endif
+    
+    // Check if GStreamer initialization was successful
+    if (gst_is_initialized())
+    {
+#ifdef WIN32
+        std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
+        GstRegistry* registry = gst_registry_get();
+        gst_registry_scan_path(registry, path.c_str());
+#endif
+        LOG_INFO("RetroFE", "GStreamer successfully initialized");
+    }
+    else
+    {
+        LOG_ERROR("RetroFE", "Failed to initialize GStreamer");
+        return -1;
+    }
 
     LOG_INFO("RetroFE", "Absolute path: " + Configuration::absolutePath);
 

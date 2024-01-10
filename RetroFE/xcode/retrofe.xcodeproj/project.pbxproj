@@ -583,7 +583,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../ThirdPartyMac/GStreamer.framework/Libraries",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
 				MARKETING_VERSION = 0.10.34.3;
 				PRODUCT_BUNDLE_IDENTIFIER = RetroFE;
 				PRODUCT_NAME = RetroFE;
@@ -634,7 +634,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../ThirdPartyMac/GStreamer.framework/Libraries",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
 				MARKETING_VERSION = 0.10.34.3;
 				PRODUCT_BUNDLE_IDENTIFIER = RetroFE;
 				PRODUCT_NAME = RetroFE;
@@ -685,7 +685,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../ThirdPartyMac/GStreamer.framework/Libraries",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
 				MARKETING_VERSION = 0.10.34.3;
 				PRODUCT_BUNDLE_IDENTIFIER = RetroFE;
 				PRODUCT_NAME = RetroFE;
@@ -761,7 +761,7 @@
 					"$(inherited)",
 					"$(PROJECT_DIR)/../ThirdPartyMac/GStreamer.framework/Libraries",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 11.0;
+				MACOSX_DEPLOYMENT_TARGET = 10.15;
 				MARKETING_VERSION = 0.10.34.3;
 				PRODUCT_BUNDLE_IDENTIFIER = RetroFE;
 				PRODUCT_NAME = RetroFE;
