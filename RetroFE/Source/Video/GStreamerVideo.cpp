@@ -445,13 +445,13 @@ void GStreamerVideo::update(float /* dt */)
             if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
                 meta->stride[1] != expected_uv_stride || meta->offset[1] != expected_uv_offset)
             {
-                bufferLayout_ = CONTIGUOUS;
+                bufferLayout_ = NON_CONTIGUOUS;
                 LOG_DEBUG("Video", "Buffer is Non-Contiguous");
                 handleNonContiguous();
             }
             else 
             {
-                bufferLayout_ = NON_CONTIGUOUS;
+                bufferLayout_ = CONTIGUOUS;
                 LOG_DEBUG("Video", "Buffer is Contiguous");
                 handleContiguous();
             }
