@@ -163,7 +163,7 @@ static bool ImportConfiguration(Configuration* c)
     else
     {
         LOG_ERROR("RetroFE", "Failed to initialize GStreamer");
-        return -1;
+        return false;
     }
 
     LOG_INFO("RetroFE", "Absolute path: " + Configuration::absolutePath);
