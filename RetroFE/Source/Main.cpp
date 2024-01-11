@@ -287,7 +287,7 @@ static bool ImportConfiguration(Configuration* c)
             std::string collectionLaunchers = "collectionLaunchers";
             std::string launchers = "";
             c->getProperty(collectionLaunchers, launchers);
-            if (!importFile.empty()) {
+            if (!importFile.empty() && (collection.size() < 3 || collection.substr(collection.size() - 3) != "SUB")) {
                 c->setProperty(collectionLaunchers, launchers + collection + ",");
             }
 
