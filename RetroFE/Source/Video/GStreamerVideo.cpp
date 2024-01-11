@@ -287,7 +287,6 @@ bool GStreamerVideo::createAndLinkGstElements()
 
 
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video) {
-//    #ifdef WIN32
     bool hardwareVideoAccel = Configuration::HardwareVideoAccel;
     if (!hardwareVideoAccel) {
         std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec", "vtdec", "vtdec_hw"};
@@ -299,7 +298,6 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
             }
         }
     }
-//    #endif
 
     gchar *elementName = gst_element_get_name(element);
     if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265")) {
