@@ -238,7 +238,7 @@ static bool ImportConfiguration(Configuration* c)
             // Process collection-specific launcher overrides
             std::string osSpecificLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher." + osType + ".conf");
             std::string defaultLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher.conf");
-            std::string launcherKey = "collectionLaunchers." + collection; // Unique key for collection-specific launchers
+            std::string launcherKey = "collectionLaunchers." + Utils::toLower(collection); // Unique key for collection-specific launchers
 
             std::string importFile = fs::exists(osSpecificLauncherFile) ? osSpecificLauncherFile
                 : fs::exists(defaultLauncherFile) ? defaultLauncherFile
@@ -265,7 +265,7 @@ static bool ImportConfiguration(Configuration* c)
                         fs::path filePath = launcherEntry.path();
                         if (filePath.extension() == ".conf") {
                             std::string basename = filePath.stem().string();
-                            std::string prefix = "localLaunchers." + collection + "." + Utils::toLower(basename);
+                            std::string prefix = "localLaunchers." + collection + "." + basename;
                             std::string importFile = filePath.string();
 
                             if (!c->import(collection, prefix, importFile)) {
@@ -279,7 +279,7 @@ static bool ImportConfiguration(Configuration* c)
                 }
             }
             // Set the launcher property if it's not already set in settings.conf
-            std::string launcherPropertyKey = "collections." + collection + ".launcher";
+            std::string launcherPropertyKey = "collections." + Utils::toLower(collection) + ".launcher";
             if (!c->propertyExists(launcherPropertyKey) && !importFile.empty()) {
                 c->setProperty(launcherPropertyKey, collection);
             }

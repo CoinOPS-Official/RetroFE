@@ -73,7 +73,7 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
     }
 
     // Convert launcherName to lowercase for consistency
-    //launcherName = Utils::toLower(launcherName);
+    launcherName = Utils::toLower(launcherName);
 
     std::string executablePath;
     std::string selectedItemsDirectory;
