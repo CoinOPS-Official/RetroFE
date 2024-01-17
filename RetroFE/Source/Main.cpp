@@ -312,6 +312,6 @@ static bool ImportConfiguration(Configuration* c)
     }
 
     LOG_INFO("RetroFE", "Imported configuration");
-    c->dumpPropertiesToFile(Utils::combinePath(Configuration::absolutePath, "properties.txt"));
+    //c->dumpPropertiesToFile(Utils::combinePath(Configuration::absolutePath, "properties.txt"));
     return true;
 }
