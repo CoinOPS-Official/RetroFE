@@ -52,14 +52,14 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
         std::string line;
         if (std::getline(launcherStream, line)) {
             // Construct localLauncher key
-            std::string localLauncherKey = "localLaunchers." + collection + "." + Utils::toLower(line);
+            std::string localLauncherKey = "localLaunchers." + collection + "." + line;
             if (config_.propertyPrefixExists(localLauncherKey)) {
                 // Use localLauncher if exists
-                launcherName = collection + "." + Utils::toLower(line);
+                launcherName = collection + "." + line;
             }
             else {
                 // Use specified launcher from conf file
-                launcherName = Utils::toLower(line);
+                launcherName = line;
             }
         }
     }
@@ -73,7 +73,7 @@ bool Launcher::run(std::string collection, Item *collectionItem, Page *currentPa
     }
 
     // Convert launcherName to lowercase for consistency
-    launcherName = Utils::toLower(launcherName);
+   //launcherName = Utils::toLower(launcherName);
 
     std::string executablePath;
     std::string selectedItemsDirectory;

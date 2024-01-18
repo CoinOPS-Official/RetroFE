@@ -190,7 +190,7 @@ static bool ImportConfiguration(Configuration* c)
                 if (filePath.extension() == ".conf")
                 {
                     std::string basename = filePath.stem().string();
-                    std::string prefix = "launchers." + Utils::toLower(basename);
+                    std::string prefix = "launchers." + basename;
                     std::string importFile = filePath.string();
 
                     if (!c->import(prefix, importFile))
@@ -238,7 +238,7 @@ static bool ImportConfiguration(Configuration* c)
             // Process collection-specific launcher overrides
             std::string osSpecificLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher." + osType + ".conf");
             std::string defaultLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher.conf");
-            std::string launcherKey = "collectionLaunchers." + Utils::toLower(collection); // Unique key for collection-specific launchers
+            std::string launcherKey = "collectionLaunchers." + collection; // Unique key for collection-specific launchers
 
             std::string importFile = fs::exists(osSpecificLauncherFile) ? osSpecificLauncherFile
                 : fs::exists(defaultLauncherFile) ? defaultLauncherFile
@@ -283,7 +283,7 @@ static bool ImportConfiguration(Configuration* c)
                 }
             }
             // Set the launcher property if it's not already set in settings.conf
-            std::string launcherPropertyKey = "collections." + Utils::toLower(collection) + ".launcher";
+            std::string launcherPropertyKey = "collections." + collection + ".launcher";
             if (!c->propertyExists(launcherPropertyKey) && !importFile.empty()) {
                 c->setProperty(launcherPropertyKey, collection);
             }
@@ -312,6 +312,10 @@ static bool ImportConfiguration(Configuration* c)
     }
 
     LOG_INFO("RetroFE", "Imported configuration");
-    //c->dumpPropertiesToFile(Utils::combinePath(Configuration::absolutePath, "properties.txt"));
+    bool dumpProperties = false;
+    c->getProperty("dumpProperties", dumpProperties);
+    if (dumpProperties) {
+            c->dumpPropertiesToFile(Utils::combinePath(Configuration::absolutePath, "properties.txt"));
+    }
     return true;
 }
