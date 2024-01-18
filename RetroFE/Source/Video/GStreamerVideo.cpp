@@ -444,13 +444,13 @@ void GStreamerVideo::update(float /* dt */)
                 meta->stride[1] != expected_uv_stride || meta->offset[1] != expected_uv_offset)
             {
                 bufferLayout_ = NON_CONTIGUOUS;
-                LOG_DEBUG("Video", "Buffer is Non-Contiguous");
+                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non - Contiguous");
                 handleNonContiguous();
             }
             else 
             {
                 bufferLayout_ = CONTIGUOUS;
-                LOG_DEBUG("Video", "Buffer is Contiguous");
+                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
                 handleContiguous();
             }
         }
@@ -669,13 +669,17 @@ void GStreamerVideo::skipBackwardp( )
 }
 
 
-void GStreamerVideo::pause( )
-{
+void GStreamerVideo::pause()
+{    
+    if (!Configuration::HardwareVideoAccel) 
+        g_object_set(G_OBJECT(videoSink_), "sync", FALSE, nullptr);
     paused_ = !paused_;
     if (paused_)
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
     else
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
+    if (!Configuration::HardwareVideoAccel)
+        g_object_set(G_OBJECT(videoSink_), "sync", TRUE, nullptr);
 }
 
 
