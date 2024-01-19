@@ -287,9 +287,14 @@ bool GStreamerVideo::createAndLinkGstElements()
 
 
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video) {
+#if defined(WIN32) || defined(__APPLE__)
     bool hardwareVideoAccel = Configuration::HardwareVideoAccel;
     if (!hardwareVideoAccel) {
-        std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec", "vtdec", "vtdec_hw"};
+#ifdef WIN32
+        std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec"};
+#elif __APPLE__
+        std::vector<std::string> decoderPluginNames = { "vtdec", "vtdec_hw" };
+#endif
         for (const auto& pluginName : decoderPluginNames) {
             GstElementFactory *factory = gst_element_factory_find(pluginName.c_str());
             if (factory) {
@@ -298,6 +303,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
             }
         }
     }
+#endif
 
     gchar *elementName = gst_element_get_name(element);
     if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265")) {
