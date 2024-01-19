@@ -119,7 +119,7 @@ bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::s
 
         namespace fs = std::filesystem;
 
-        fs::path absolutePath = Configuration::convertToAbsolutePath(Configuration::absolutePath, prefix);
+        fs::path absolutePath = Utils::combinePath(Configuration::absolutePath, prefix);
         fs::path baseDir = absolutePath.parent_path();
 
         // Check if the directory is known to not exist
