@@ -60,11 +60,11 @@ public:
     static std::string removeAbsolutePath(const std::string& fullPath);
 
     template <typename... Paths>
-    static std::string combinePath(Paths... paths) {
+    static std::string combinePath(Paths&&... paths) {
         std::filesystem::path combinedPath;
-        // Use fold expression to append paths
-        (combinedPath /= ... /= std::filesystem::path(paths));
-        return combinedPath.make_preferred().string(); // Convert to the preferred path format for the platform
+        // Use fold expression with perfect forwarding and direct construction
+        ((combinedPath /= std::filesystem::path(std::forward<Paths>(paths))), ...);
+        return combinedPath.make_preferred().string();
     }
 
    
