@@ -67,28 +67,6 @@ ScrollingList::ScrollingList( Configuration &c,
  {
 }
 
-ScrollingList::ScrollingList( const ScrollingList &copy )
-    : Component( copy )
-    , horizontalScroll( copy.horizontalScroll )
-    , layoutMode_( copy.layoutMode_ )
-    , commonMode_( copy.commonMode_ )
-    , playlistType_(copy.playlistType_)
-    , selectedImage_(copy.selectedImage_)
-    , selectedOffsetIndex_( copy.selectedOffsetIndex_ )
-    , scrollAcceleration_( copy.scrollAcceleration_ )
-    , startScrollTime_( copy.startScrollTime_ )
-    , minScrollTime_( copy.minScrollTime_ )
-    , scrollPeriod_( copy.startScrollTime_ )
-    , config_( copy.config_ )
-    , fontInst_( copy.fontInst_ )
-    , layoutKey_( copy.layoutKey_ )
-    , imageType_( copy.imageType_ )
-{
-    scrollPoints_ = nullptr;
-    tweenPoints_ = nullptr;
-    setPoints( copy.scrollPoints_, copy.tweenPoints_ );
-
-}
 
 ScrollingList::~ScrollingList()
 {

@@ -44,7 +44,6 @@ public:
         const std::string& imageType,
         const std::string& videoType);
 
-    ScrollingList(const ScrollingList& copy);
     ~ScrollingList() override;
     const std::vector<Item*>& getItems() const;
     void triggerEnterEvent();

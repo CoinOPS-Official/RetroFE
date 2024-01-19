@@ -27,8 +27,6 @@ class Component
 {
 public:
     explicit Component(Page &p);
-    Component(const Component &copy);
-    Component& operator=(const Component& other);
     virtual ~Component();
     virtual void freeGraphicsMemory();
     virtual void allocateGraphicsMemory();
