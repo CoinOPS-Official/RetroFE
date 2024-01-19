@@ -93,17 +93,30 @@ void Page::deInitialize()
     LayerComponents.clear();
 
     // Delete sound chunks and reset pointers
-    delete loadSoundChunk_;
-    loadSoundChunk_ = nullptr;
+    if (loadSoundChunk_)
+    {
+        delete loadSoundChunk_;
+        loadSoundChunk_ = nullptr;
+    }
 
-    delete unloadSoundChunk_;
-    unloadSoundChunk_ = nullptr;
+    if (unloadSoundChunk_)
+    {
+        delete unloadSoundChunk_;
+        unloadSoundChunk_ = nullptr;
+    }
 
-    delete highlightSoundChunk_;
-    highlightSoundChunk_ = nullptr;
 
-    delete selectSoundChunk_;
-    selectSoundChunk_ = nullptr;
+    if (highlightSoundChunk_)
+    {
+        delete highlightSoundChunk_;
+        highlightSoundChunk_ = nullptr;
+    }
+
+    if (selectSoundChunk_)
+    {
+        delete selectSoundChunk_;
+        selectSoundChunk_ = nullptr;
+    }
 
     // Deinitialize and clear collections_
     for (auto& collectionEntry : collections_)

@@ -44,7 +44,7 @@ ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool la
     , jukebox_(jukebox)
     , jukeboxNumLoops_(jukeboxNumLoops)
 {
-
+    allocateGraphicsMemory();
 }
 
 ReloadableMedia::~ReloadableMedia()

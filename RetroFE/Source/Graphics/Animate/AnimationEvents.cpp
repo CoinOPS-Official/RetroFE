@@ -44,17 +44,13 @@ Animation *AnimationEvents::getAnimation(const std::string& tween)
     return getAnimation(tween, -1);
 }
 
-Animation *AnimationEvents::getAnimation(const std::string& tween, int index)
+Animation* AnimationEvents::getAnimation(const std::string& tween, int index)
 {
-    if(animationMap_[tween].find(-1) == animationMap_[tween].end())
-    {
+    if (animationMap_.find(tween) == animationMap_.end())
         animationMap_[tween][-1] = new Animation();
-    }
 
-    if(animationMap_[tween].find(index) == animationMap_[tween].end())
-    {
+    if (animationMap_[tween].find(index) == animationMap_[tween].end())
         index = -1;
-    }
 
     return animationMap_[tween][index];
 }

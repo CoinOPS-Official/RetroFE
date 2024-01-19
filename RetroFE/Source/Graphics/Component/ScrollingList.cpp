@@ -84,6 +84,8 @@ ScrollingList::ScrollingList( const ScrollingList &copy )
     , layoutKey_( copy.layoutKey_ )
     , imageType_( copy.imageType_ )
 {
+    scrollPoints_ = nullptr;
+    tweenPoints_ = nullptr;
     setPoints( copy.scrollPoints_, copy.tweenPoints_ );
 
 }
@@ -229,8 +231,8 @@ void ScrollingList::destroyItems()
         {
             component->freeGraphicsMemory();
             delete component;
-            components_[i] = NULL;
         }
+        components_[i] = NULL;
     }
 }
 
@@ -1160,7 +1162,7 @@ void ScrollingList::scroll(bool forward)
     }
     else
     {
-        std::rotate(components_.begin(), components_.end() - 1, components_.end());
+        std::rotate(components_.begin(), components_.begin() + (scrollPointsSize - 1), components_.begin() + scrollPointsSize);
     }
 
     return;
