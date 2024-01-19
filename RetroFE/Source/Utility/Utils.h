@@ -48,7 +48,7 @@ public:
     static std::string getDirectory(const std::string& filePath);
     static std::string getParentDirectory(std::string filePath);
     static std::string getEnvVar(std::string const& key);
-    static std::string getFileName(std::string filePath);
+    static std::string getFileName(const std::string& filePath);
     static bool findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file);
     static std::string toLower(const std::string& inputStr);
     static std::string uppercaseFirst(std::string str);
