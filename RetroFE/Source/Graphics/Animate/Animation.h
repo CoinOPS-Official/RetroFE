@@ -24,7 +24,8 @@ class Animation
 {
 public:
     Animation();
-    Animation(Animation &copy);
+    Animation(Animation& copy);
+    Animation& operator=(const Animation& other);
     ~Animation();
     void Push(TweenSet *set);
     void Clear();

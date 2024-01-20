@@ -25,7 +25,6 @@ class AnimationEvents
 {
 public:
     AnimationEvents();
-    AnimationEvents(AnimationEvents &copy);
     ~AnimationEvents();
 
     Animation *getAnimation(const std::string& tween);

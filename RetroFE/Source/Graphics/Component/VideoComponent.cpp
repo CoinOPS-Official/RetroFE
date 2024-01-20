@@ -46,7 +46,7 @@ bool VideoComponent::update(float dt)
         isPlaying_ = ((GStreamerVideo*)(videoInst_))->isPlaying();
     }
 
-    if (isPlaying_)
+    if (videoInst_ && isPlaying_)
     {
         videoInst_->setVolume(baseViewInfo.Volume);
         videoInst_->update(dt);

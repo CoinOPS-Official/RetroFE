@@ -26,7 +26,7 @@ class RetroFE;
 class Launcher
 {
 public:
-    Launcher(Configuration &c);
+    explicit Launcher(Configuration &c);
     bool run(std::string collection, Item *collectionItem, Page *currentPage = NULL);
     void startScript();
     void exitScript();

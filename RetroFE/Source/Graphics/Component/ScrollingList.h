@@ -93,8 +93,8 @@ public:
     void cfwLetterSubUp();
     void cfwLetterSubDown();
     void random();
-    bool isIdle();
-    bool isAttractIdle();
+    bool isScrollingListIdle();
+    bool isScrollingListAttractIdle();
     unsigned int getScrollOffsetIndex() const;
     void setScrollOffsetIndex(unsigned int index);
     void setSelectedIndex(int selectedIndex);

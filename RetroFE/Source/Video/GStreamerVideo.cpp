@@ -267,7 +267,7 @@ bool GStreamerVideo::createAndLinkGstElements()
         return false;
     }
 
-    g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, nullptr);
+    g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, "enable-last-sample", FALSE, nullptr);
     g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, nullptr);
 
     gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, nullptr);
@@ -678,14 +678,14 @@ void GStreamerVideo::skipBackwardp( )
 void GStreamerVideo::pause()
 {    
     if (!Configuration::HardwareVideoAccel) 
-        g_object_set(G_OBJECT(videoSink_), "sync", FALSE, nullptr);
+        g_object_set(G_OBJECT(videoSink_), "sync", FALSE, "async", FALSE, nullptr);
     paused_ = !paused_;
     if (paused_)
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
     else
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
     if (!Configuration::HardwareVideoAccel)
-        g_object_set(G_OBJECT(videoSink_), "sync", TRUE, nullptr);
+        g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "async", TRUE, nullptr);
 }
 
 

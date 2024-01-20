@@ -32,8 +32,8 @@ public:
     virtual void allocateGraphicsMemory();
     virtual void deInitializeFonts();
     virtual void initializeFonts();
-    void triggerEvent(const std::string& event, int menuIndex = -1);
-    void setPlaylist(const std::string& name );
+    void triggerEvent(const std::string_view& event, int menuIndex = -1);
+    void setPlaylist(const std::string_view& name );
     void setNewItemSelected();
     void setNewScrollItemSelected();
     bool isIdle() const;
@@ -66,8 +66,8 @@ public:
     bool getAnimationDoneRemove() const;
     void setPauseOnScroll(bool value);
     bool getPauseOnScroll() const;
-    virtual void setText(std::string text, int id = -1) {};
-    virtual void setImage(std::string filePath, int id = -1) {};
+    virtual void setText(const std::string& text, int id = -1) {};
+    virtual void setImage(const std::string& filePath, int id = -1) {};
     int getId( ) const;
     std::string playlistName;
     

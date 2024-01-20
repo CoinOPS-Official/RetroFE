@@ -27,6 +27,19 @@ Animation::Animation(Animation& copy)
     }
 }
 
+Animation& Animation::operator=(const Animation& other) {
+    if (this != &other) { // Check for self-assignment
+        Clear(); // Clear existing resources
+
+        // Deep copy
+        for (auto* tweenSet : other.animationVector_) {
+            TweenSet* newTweenSet = new TweenSet(*tweenSet); // Deep copy of TweenSet
+            Push(newTweenSet);
+        }
+    }
+    return *this; // Return *this
+}
+
 Animation::~Animation()
 {
     Clear();

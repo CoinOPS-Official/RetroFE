@@ -21,19 +21,6 @@
 
 AnimationEvents::AnimationEvents() = default;
 
-AnimationEvents::AnimationEvents(AnimationEvents& copy)
-{
-    for (const auto& [outerKey, outerValue] : copy.animationMap_)
-    {
-        auto& innerMap = animationMap_[outerKey];
-        for (const auto& [innerKey, innerValue] : outerValue)
-        {
-            innerMap[innerKey] = new Animation(*innerValue);
-        }
-    }
-}
-
-
 AnimationEvents::~AnimationEvents()
 {
     clear();

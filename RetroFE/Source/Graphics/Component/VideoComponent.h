@@ -28,21 +28,21 @@ class VideoComponent : public Component
 public:
     VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
     virtual ~VideoComponent();
-    bool update(float dt);
-    void draw();
-    void freeGraphicsMemory();
-    void allocateGraphicsMemory();
-    virtual bool isPlaying();
-    virtual void skipForward( );
-    virtual void skipBackward( );
-    virtual void skipForwardp( );
-    virtual void skipBackwardp( );
-    virtual void pause( );
-    virtual void restart( );
-    virtual unsigned long long getCurrent( );
-    virtual unsigned long long getDuration( );
-    virtual bool isPaused( );
-    std::string filePath();
+    bool update(float dt) override;
+    void draw() override;
+    void freeGraphicsMemory() override;
+    void allocateGraphicsMemory() override;
+    bool isPlaying() override;
+    void skipForward( ) override;
+    void skipBackward( ) override;
+    void skipForwardp( ) override;
+    void skipBackwardp( ) override;
+    void pause( ) override;
+    void restart( ) override;
+    unsigned long long getCurrent( ) override;
+    unsigned long long getDuration( ) override;
+    bool isPaused( ) override;
+    std::string filePath() override;
 
 private:
     std::string videoFile_;

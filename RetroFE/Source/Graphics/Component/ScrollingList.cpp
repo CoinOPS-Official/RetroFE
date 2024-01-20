@@ -204,8 +204,7 @@ void ScrollingList::destroyItems()
 
     for (unsigned int i = 0; i < componentSize; ++i)
     {
-        Component* component = components_[i];
-        if (component)
+        if (Component* component = components_[i])
         {
             component->freeGraphicsMemory();
             delete component;
@@ -1034,7 +1033,7 @@ void ScrollingList::draw(unsigned int layer)
     }
 }
 
-bool ScrollingList::isIdle(  )
+bool ScrollingList::isScrollingListIdle(  )
 {
     size_t componentSize = components_.size();
     if ( !Component::isIdle(  ) ) return false;
@@ -1048,7 +1047,7 @@ bool ScrollingList::isIdle(  )
     return true;
 }
 
-bool ScrollingList::isAttractIdle(  )
+bool ScrollingList::isScrollingListAttractIdle(  )
 {
     size_t componentSize = components_.size();
     if ( !Component::isAttractIdle(  ) ) return false;

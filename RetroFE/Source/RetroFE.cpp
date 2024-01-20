@@ -448,8 +448,7 @@ bool RetroFE::run( )
     std::string settingsPlaylist = "settings";
     std::string settingsCollectionPlaylist;
     config_.getProperty("settingsCollectionPlaylist", settingsCollectionPlaylist);
-    size_t position = settingsCollectionPlaylist.find(":");
-    if (position != std::string::npos) {
+    if (size_t position = settingsCollectionPlaylist.find(":"); position != std::string::npos) {
         settingsCollection = settingsCollectionPlaylist.substr(0, position);
         settingsPlaylist = settingsCollectionPlaylist.erase(0, position + 1);
         config_.setProperty("settingsPlaylist", settingsPlaylist);

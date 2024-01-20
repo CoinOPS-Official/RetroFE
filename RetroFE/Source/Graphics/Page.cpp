@@ -126,7 +126,7 @@ void Page::deInitialize()
     collections_.clear();
 }
 
-bool Page::isMenusFull()
+bool Page::isMenusFull() const
 {
   return (menuDepth_ > menus_.size());
 }
@@ -188,9 +188,9 @@ void Page::onNewItemSelected()
 {
     if(!getAnActiveMenu()) return;
 
-    for(MenuVector_T::iterator it = menus_.begin(); it != menus_.end(); ++it)
+    for(auto it = menus_.begin(); it != menus_.end(); ++it)
     {
-        for(std::vector<ScrollingList *>::iterator it2 = it->begin(); it2 != it->end(); ++it2)
+        for(auto it2 = it->begin(); it2 != it->end(); ++it2)
         {
             ScrollingList *menu = *it2;
             if(menu)
@@ -198,7 +198,7 @@ void Page::onNewItemSelected()
         }
     }
 
-    for(std::vector<Component *>::iterator it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
+    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
     {
         (*it)->setNewItemSelected();
     }
@@ -209,8 +209,7 @@ void Page::returnToRememberSelectedItem()
 {
     if (!getAnActiveMenu()) return;
 
-    std::string name = getPlaylistName();
-    if (name != "" && lastPlaylistOffsets_[name]) {
+    if (std::string name = getPlaylistName(); name != "" && lastPlaylistOffsets_[name]) {
         setScrollOffsetIndex(lastPlaylistOffsets_[name]);
     }
     onNewItemSelected();
@@ -218,7 +217,7 @@ void Page::returnToRememberSelectedItem()
 
 void Page::rememberSelectedItem()
 {
-    ScrollingList* amenu = getAnActiveMenu();
+    ScrollingList const* amenu = getAnActiveMenu();
     if (!amenu || !amenu->getItems().size()) return;
 
     std::string name = getPlaylistName();
@@ -227,7 +226,7 @@ void Page::rememberSelectedItem()
     }
 }
 
-std::map<std::string, unsigned int> Page::getLastPlaylistOffsets()
+std::map<std::string, unsigned int> Page::getLastPlaylistOffsets() const
 {
     return lastPlaylistOffsets_;
 }
@@ -236,7 +235,7 @@ void Page::onNewScrollItemSelected()
 {
     if(!getAnActiveMenu()) return;
 
-    for(std::vector<Component *>::iterator it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
+    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
     {
         (*it)->setNewScrollItemSelected();
     }
@@ -251,7 +250,7 @@ void Page::highlightLoadArt()
     // loading new items art
     setSelectedItem();
 
-    for(std::vector<Component *>::iterator it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
+    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
     {
         (*it)->setNewItemSelected();
     }
@@ -278,7 +277,7 @@ void Page::pushMenu(ScrollingList *s, int index)
 }
 
 
-unsigned int Page::getMenuDepth()
+unsigned int Page::getMenuDepth() const
 {
     return menuDepth_;
 }
@@ -312,13 +311,13 @@ bool Page::addComponent(Component *c)
 
 bool Page::isMenuIdle()
 {
-    for(MenuVector_T::iterator it = menus_.begin(); it != menus_.end(); ++it)
+    for(auto it = menus_.begin(); it != menus_.end(); ++it)
     {
-        for(std::vector<ScrollingList *>::iterator it2 = it->begin(); it2 != it->end(); ++it2)
+        for(auto it2 = it->begin(); it2 != it->end(); ++it2)
         {
             ScrollingList *menu = *it2;
 
-            if(!menu->isIdle())
+            if(!menu->isScrollingListIdle())
             {
                 return false;
             }
@@ -332,7 +331,7 @@ bool Page::isIdle()
 {
     bool idle = isMenuIdle();
 
-    for(std::vector<Component *>::iterator it = LayerComponents.begin(); it != LayerComponents.end() && idle; ++it)
+    for(auto it = LayerComponents.begin(); it != LayerComponents.end() && idle; ++it)
     {
         idle = (*it)->isIdle();
     }
@@ -343,11 +342,11 @@ bool Page::isIdle()
 
 bool Page::isAttractIdle()
 {
-    for(MenuVector_T::iterator it = menus_.begin(); it != menus_.end(); ++it)
+    for(auto it = menus_.begin(); it != menus_.end(); ++it)
     {
         for(auto it2 = it->begin(); it2 != it->end(); ++it2)
         {
-            ScrollingList *menu = *it2;
+            ScrollingList const *menu = *it2;
 
             if(!menu->isAttractIdle())
             {
@@ -503,12 +502,12 @@ void Page::setMinShowTime(float value)
 }
 
 
-float Page::getMinShowTime()
+float Page::getMinShowTime() const
 {
     return minShowTime_;
 }
 
-std::string Page::controlsType()
+std::string Page::controlsType() const
 {
     return controlsType_;
 }
@@ -1321,7 +1320,7 @@ void Page::draw()
         }
 
         // Drawing Menus
-        for(MenuVector_T::iterator it = menus_.begin(); it != menus_.end(); ++it)
+        for(auto it = menus_.begin(); it != menus_.end(); ++it)
         {
             for(auto it2 = it->begin(); it2 != it->end(); ++it2)
             {
@@ -1342,12 +1341,11 @@ void Page::removePlaylist()
     CollectionInfo *collection = info.collection;
 
     std::vector<Item *> *items = collection->playlists["favorites"];
-    auto it = std::find(items->begin(), items->end(), selectedItem_);
 
-    if (it != items->end())
+    if (auto it = std::find(items->begin(), items->end(), selectedItem_); it != items->end())
     {
         unsigned int index = 0;  // Initialize with 0 instead of NULL
-        ScrollingList* amenu = nullptr;  // Use nullptr for pointer types
+        ScrollingList const* amenu = nullptr;  // Use nullptr for pointer types
         // get the deleted item's position
         if (getPlaylistName() == "favorites")
         {
@@ -1390,8 +1388,7 @@ void Page::addPlaylist()
     MenuInfo_S &info = collections_.back();
     CollectionInfo *collection = info.collection;
 
-    std::vector<Item *> *items = collection->playlists["favorites"];
-    if(getPlaylistName() != "favorites" && std::find(items->begin(), items->end(), selectedItem_) == items->end())
+    if(std::vector<Item *> *items = collection->playlists["favorites"]; getPlaylistName() != "favorites" && std::find(items->begin(), items->end(), selectedItem_) == items->end())
     {
         items->push_back(selectedItem_);
         selectedItem_->isFavorite = true;

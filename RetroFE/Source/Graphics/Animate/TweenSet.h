@@ -23,12 +23,13 @@ class TweenSet
 public:
     TweenSet();
     TweenSet(TweenSet &copy);
+    TweenSet& operator=(const TweenSet& other);
     ~TweenSet();
     void push(Tween * tween);
     void clear();
     std::vector<Tween *> *tweens();
     Tween *getTween(unsigned int index);
-    size_t size();
+    size_t size() const;
 
 private:
     std::vector<Tween *> set_;

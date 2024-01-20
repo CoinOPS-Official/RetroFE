@@ -47,7 +47,7 @@ public:
     virtual void onNewScrollItemSelected();
     void returnToRememberSelectedItem();
     void rememberSelectedItem();
-    std::map<std::string, unsigned int> getLastPlaylistOffsets();
+    std::map<std::string, unsigned int> getLastPlaylistOffsets() const;
     void highlightLoadArt();
     bool pushCollection(CollectionInfo *collection);
     bool popCollection();
@@ -64,7 +64,7 @@ public:
     void prevCyclePlaylist(std::vector<std::string> list);
     void pushMenu(ScrollingList *s, int index = -1);
     void updatePlaylistMenuPosition();
-    bool isMenusFull();
+    bool isMenusFull() const;
     void setLoadSound(Sound *chunk);
     void setUnloadSound(Sound *chunk);
     void setHighlightSound(Sound *chunk);
@@ -90,7 +90,7 @@ public:
     void setLayoutHeightByMonitor(int monitor, int height);
     void setScrolling(ScrollDirection direction);
     bool isHorizontalScroll();
-    unsigned int getMenuDepth();
+    unsigned int getMenuDepth() const;
     Item *getSelectedItem();
     Item *getSelectedItem(int offset);
     void removeSelectedItem();
@@ -114,8 +114,8 @@ public:
     std::string getCollectionName();
     CollectionInfo *getCollection();
     void  setMinShowTime(float value);
-    float getMinShowTime();
-    std::string controlsType();
+    float getMinShowTime() const;
+    std::string controlsType() const;
     void setControlsType(const std::string& type);
     void  menuScroll();
     void  highlightEnter();

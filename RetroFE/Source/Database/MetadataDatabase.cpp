@@ -275,7 +275,7 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
     rapidxml::xml_document<> doc;
     try {
         doc.parse<0>(buffer.data());
-        rapidxml::xml_node<>* root = doc.first_node("menu");
+        rapidxml::xml_node<> const* root = doc.first_node("menu");
         if (!root) {
             LOG_ERROR("Metadata", "Does not appear to be a HyperList file (missing <menu> tag)");
             return false;
@@ -291,7 +291,7 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
             return false;
         }
 
-        for (auto* game = root->first_node("game"); game; game = game->next_sibling("game")) {
+        for (auto const* game = root->first_node("game"); game; game = game->next_sibling("game")) {
             const char* name = game->first_attribute("name") ? game->first_attribute("name")->value() : "";
             if (name[0] == '\0') continue;  
             

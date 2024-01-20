@@ -29,14 +29,12 @@ class Text : public Component
 {
 
 public:
-    Text( std::string text, Page &p, Font *font, int monitor );
-    virtual ~Text( );
-    void     setText( std::string text, int id = -1 );
-    void     allocateGraphicsMemory( );
-    void     freeGraphicsMemory( );
-    void     deInitializeFonts( );
-    void     initializeFonts( );
-    void     draw( );
+    Text( const std::string& text, Page &p, Font *font, int monitor );
+    ~Text( ) override;
+    void     setText( const std::string& text, int id = -1 ) override;
+    void     deInitializeFonts( ) override;
+    void     initializeFonts( ) override;
+    void     draw( ) override;
 
 private:
     std::string textData_;

@@ -57,7 +57,7 @@ CollectionInfo::CollectionInfo(
 
 CollectionInfo::~CollectionInfo()
 {
-    Playlists_T::iterator pit = playlists.begin();
+    auto pit = playlists.begin();
 
     while(pit != playlists.end())
     {
@@ -69,7 +69,7 @@ CollectionInfo::~CollectionInfo()
         pit = playlists.begin();
     }
 
-	std::vector<Item *>::iterator it = items.begin();
+	auto it = items.begin();
     while(it != items.end())
     {
         delete *it;
@@ -127,7 +127,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
                 return false;
             }
             std::vector<Item*> saveitems;
-            std::vector<Item*>::iterator it = playlists["favorites"]->begin();
+            auto it = playlists["favorites"]->begin();
             while (it != playlists["favorites"]->end())
             {
                 saveitems.push_back(*it);
@@ -151,7 +151,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
                         }
                     }
                     filestream.open(file.c_str());
-                    std::vector<std::string>::iterator it = remaining.begin();
+                    auto it = remaining.begin();
                     while (it != remaining.end())
                     {
                         filestream << (*it) << std::endl;
@@ -183,7 +183,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
                         existing[collectionName][itemName] = itemName;
                     }
                 }
-                std::vector<Item*>::iterator it = saveitems.begin();
+                auto it = saveitems.begin();
                 while (it != saveitems.end())
                 {
                     if (existing.find((*it)->collectionInfo->name) != existing.end() &&
@@ -202,7 +202,7 @@ bool CollectionInfo::saveFavorites(Item* removed)
                 filestream.open(file.c_str());
             }
             
-            for(std::vector<Item *>::iterator it = saveitems.begin(); it != saveitems.end(); it++)
+            for(auto it = saveitems.begin(); it != saveitems.end(); it++)
             {
                 if ((*it)->collectionInfo->name == (*it)->name)
                 {
@@ -259,7 +259,7 @@ void CollectionInfo::addSubcollection(CollectionInfo *newinfo)
 
 auto CollectionInfo::itemIsLess(const std::string& sortTypeParam, bool currentCollectionMenusort) const
 {
-    return [sortTypeParam, currentCollectionMenusort](Item* lhs, Item* rhs) {
+    return [sortTypeParam, currentCollectionMenusort](Item const* lhs, Item const* rhs) {
 
         if (lhs->leaf && !rhs->leaf) return true;
         if (!lhs->leaf && rhs->leaf) return false;
@@ -301,10 +301,10 @@ void CollectionInfo::sortItems()
 
 void CollectionInfo::sortPlaylists()
 {
-    std::vector<Item *> *allItems = &items;
+    std::vector<Item *> const *allItems = &items;
     std::vector<Item *> toSortItems;
 
-    for ( Playlists_T::iterator itP = playlists.begin( ); itP != playlists.end( ); itP++ )
+    for ( auto itP = playlists.begin( ); itP != playlists.end( ); itP++ )
     {
         if ( itP->second != allItems )
         {

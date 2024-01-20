@@ -26,15 +26,24 @@ Component::Component(Page &p)
     tweens_                   = nullptr;
     menuScrollReload_         = false;
     animationDoneRemove_      = false;
-    backgroundTexture_ = nullptr;
-    freeGraphicsMemory();
     id_                       = -1;
+    backgroundTexture_ = nullptr;
+    animationRequestedType_ = "";
+    animationType_ = "";
+    animationRequested_ = false;
+    newItemSelected = false;
+    newScrollItemSelected = false;
+    menuIndex_ = -1;
+
+    currentTweens_ = nullptr;
+    currentTweenIndex_ = 0;
+    currentTweenComplete_ = true;
+    elapsedTweenTime_ = 0;
+
+
 }
 
-Component::~Component()
-{
-    freeGraphicsMemory();
-}
+Component::~Component() = default;
 
 void Component::freeGraphicsMemory()
 {
@@ -69,7 +78,7 @@ void Component::allocateGraphicsMemory()
         // make a 4x4 pixel wide surface to be stretched during rendering, make it a white background so we can use
         // color  later
         SDL_Surface* surface = SDL_CreateRGBSurface(0, 4, 4, 32, 0, 0, 0, 0);
-        SDL_FillRect(surface, NULL, SDL_MapRGB(surface->format, 255, 255, 255));
+        SDL_FillRect(surface, nullptr, SDL_MapRGB(surface->format, 255, 255, 255));
 
         SDL_LockMutex(SDL::getMutex());
         backgroundTexture_ = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), surface);
@@ -91,14 +100,14 @@ void Component::initializeFonts()
 }
 
 
-void Component::triggerEvent(const std::string& event, int menuIndex)
+void Component::triggerEvent(const std::string_view& event, int menuIndex)
 {
     animationRequestedType_ = event;
     animationRequested_     = true;
     menuIndex_              = (menuIndex > 0 ? menuIndex : 0);
 }
 
-void Component::setPlaylist(const std::string& name)
+void Component::setPlaylist(const std::string_view& name)
 {
     this->playlistName = name;
 }
@@ -208,7 +217,7 @@ void Component::draw()
 {
     if (backgroundTexture_)
     {
-        SDL_Rect rect;
+        SDL_Rect rect = { 0,0,0,0 };
         rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
         rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
         rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
@@ -220,7 +229,7 @@ void Component::draw()
             static_cast<char>(baseViewInfo.BackgroundGreen * 255),
             static_cast<char>(baseViewInfo.BackgroundBlue * 255));
 
-        SDL::renderCopy(backgroundTexture_, baseViewInfo.BackgroundAlpha, NULL, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        SDL::renderCopy(backgroundTexture_, baseViewInfo.BackgroundAlpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
     }
 }
 

@@ -22,30 +22,16 @@
 #include <sstream>
 
 
-Text::Text( std::string text, Page &p, Font *font, int monitor )
+Text::Text( const std::string& text, Page &p, Font *font, int monitor )
     : Component(p)
     , textData_(text)
     , fontInst_(font)
 {
-    allocateGraphicsMemory( );
     baseViewInfo.Monitor = monitor;
     baseViewInfo.Layout = page.getCurrentLayout();
 }
 
-Text::~Text( )
-{
-    freeGraphicsMemory( );
-}
-
-void Text::freeGraphicsMemory( )
-{
-    Component::freeGraphicsMemory( );
-}
-
-void Text::allocateGraphicsMemory( )
-{
-    Component::allocateGraphicsMemory( );
-}
+Text::~Text() = default;
 
 void Text::deInitializeFonts( )
 {
@@ -57,7 +43,7 @@ void Text::initializeFonts( )
     fontInst_->initialize( );
 }
 
-void Text::setText( std::string text, int id )
+void Text::setText( const std::string& text, int id )
 {
     if ( getId( ) == id )
         textData_ = text;
@@ -88,7 +74,7 @@ void Text::draw( )
     }
 
     imageHeight = (float)font->getHeight( );
-    float scale = (float)baseViewInfo.FontSize / (float)imageHeight;
+    float scale = baseViewInfo.FontSize / imageHeight;
 
     unsigned int textIndexMax = 0;
 
@@ -143,8 +129,8 @@ void Text::draw( )
         if ( font->getRect(textData_[i], glyph) && glyph.rect.h > 0 )
         {
             SDL_Rect charRect = glyph.rect;
-            float h = static_cast<float>( charRect.h * scale );
-            float w = static_cast<float>( charRect.w * scale );
+            auto h = charRect.h * scale ;
+            float w = charRect.w * scale ;
             rect.h = static_cast<int>( h );
             rect.w = static_cast<int>( w );
             rect.y = static_cast<int>( yOrigin );
