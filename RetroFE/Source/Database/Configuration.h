@@ -47,7 +47,8 @@ public:
     void dumpPropertiesToFile(const std::string& filename);
     static std::string absolutePath;
 	static int AvdecMaxThreads;
-	static bool HardwareVideoAccel; // Declare HardwareVideoAccel as a static member variable
+    static int AvdecThreadType;
+    static bool HardwareVideoAccel; // Declare HardwareVideoAccel as a static member variable
 	static bool MuteVideo;
 
 private:

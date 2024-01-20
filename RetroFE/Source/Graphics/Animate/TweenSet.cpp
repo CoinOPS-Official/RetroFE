@@ -31,8 +31,8 @@ TweenSet& TweenSet::operator=(const TweenSet& other) {
         clear(); // Clear existing resources
 
         // Deep copy
-        for (auto* tween : other.set_) {
-            Tween* newTween = new Tween(*tween); // Assuming Tween has a suitable copy constructor
+        for (auto const* tween : other.set_) {
+            auto* newTween = new Tween(*tween); // Assuming Tween has a suitable copy constructor
             push(newTween);
         }
     }

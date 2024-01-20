@@ -27,20 +27,14 @@
     #include <Windows.h>
 #endif
 
-struct PathHash {
-    auto operator()(const std::filesystem::path& p) const noexcept {
-        return std::filesystem::hash_value(p);
-    }
-};
-
 class Utils
 {
 public:
     static std::string replace(std::string subject, const std::string& search,
         const std::string& replace);
 
-    static float convertFloat(std::string content);
-    static int convertInt(std::string content);
+    static float convertFloat(const std::string& content);
+    static int convertInt(const std::string& content);
     static void replaceSlashesWithUnderscores(std::string& content);
 #ifdef WIN32    
     static void postMessage(LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam);
@@ -75,8 +69,13 @@ public:
 #endif
 
 private:
+#ifdef __APPLE__
     static std::unordered_map<std::filesystem::path, std::unordered_set<std::string>, PathHash> fileCache;
-    static std::unordered_set<std::filesystem::path, PathHash> nonExistingDirectories; // Cache for non-existing directories
+    static std::unordered_set<std::filesystem::path, PathHash> nonExistingDirectories;
+#else
+    static std::unordered_map<std::filesystem::path, std::unordered_set<std::string>> fileCache;
+    static std::unordered_set<std::filesystem::path> nonExistingDirectories;
+#endif
     static void populateCache(const std::filesystem::path& directory);
     static bool isFileInCache(const std::filesystem::path& directory, const std::string& filename);
     static bool isFileCachePopulated(const std::filesystem::path& directory);

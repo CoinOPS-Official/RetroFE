@@ -25,14 +25,28 @@
 #include <filesystem>
 #include <unordered_set>
 #include <unordered_map>
+#include <charconv>
 
 #ifdef WIN32
     #include <Windows.h>
 #endif
 
+#ifdef __APPLE__
+struct PathHash {
+    auto operator()(const std::filesystem::path& p) const noexcept {
+        return std::filesystem::hash_value(p);
+    }
+};
+#endif
+
+// Initialize the static member variables
+#ifdef __APPLE__
 std::unordered_map<std::filesystem::path, std::unordered_set<std::string>, PathHash> Utils::fileCache;
 std::unordered_set<std::filesystem::path, PathHash> Utils::nonExistingDirectories;
-
+#else
+std::unordered_map<std::filesystem::path, std::unordered_set<std::string>> Utils::fileCache;
+std::unordered_set<std::filesystem::path> Utils::nonExistingDirectories;
+#endif
 
 Utils::Utils() = default;
 
@@ -179,23 +193,23 @@ std::string Utils::replace(
 }
 
 
-float Utils::convertFloat(std::string content)
-{
+float Utils::convertFloat(const std::string& content) {
     float retVal = 0;
-    std::stringstream ss;
-    ss << content;
-    ss >> retVal;
-
+    std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal);
+    if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
+        // Handle error or set default value
+        retVal = 0.0f;
+    }
     return retVal;
 }
 
-int Utils::convertInt(std::string content)
-{
+int Utils::convertInt(const std::string& content) {
     int retVal = 0;
-    std::stringstream ss;
-    ss << content;
-    ss >> retVal;
-
+    std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal);
+    if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
+        // Handle error or set default value
+        retVal = 0;
+    }
     return retVal;
 }
 

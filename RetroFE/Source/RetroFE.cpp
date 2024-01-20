@@ -572,7 +572,7 @@ bool RetroFE::run( )
                 delete currentPage_;
 
                 // find first collection
-                std::string firstCollection = "Main";
+                firstCollection = "Main";
                 config_.getProperty("firstCollection", firstCollection);
                 currentPage_ = loadPage(firstCollection);
                 splashMode = false;

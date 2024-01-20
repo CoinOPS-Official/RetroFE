@@ -35,7 +35,15 @@ Image::Image(const std::string& file, const std::string& altFile, Page &p, int m
 
 Image::~Image()
 {
-    freeGraphicsMemory();
+    Component::freeGraphicsMemory();
+
+    SDL_LockMutex(SDL::getMutex());
+    if (texture_ != nullptr)
+    {
+        SDL_DestroyTexture(texture_);
+        texture_ = nullptr;
+    }
+    SDL_UnlockMutex(SDL::getMutex());
 }
 
 void Image::freeGraphicsMemory()

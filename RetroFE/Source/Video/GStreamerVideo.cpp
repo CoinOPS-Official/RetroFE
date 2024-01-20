@@ -64,6 +64,8 @@ bool GStreamerVideo::initialize()
 {
     if(initialized_)
     {
+        initialized_ = true;
+        paused_ = false;
         return true;
     }
 
@@ -311,7 +313,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
         if (!hardwareVideoAccel) {
         #endif
             // Modify the properties of the avdec_h265 element here
-            g_object_set(G_OBJECT(element), "thread-type", 2, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
+            g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
         #ifdef WIN32
         }
         #endif

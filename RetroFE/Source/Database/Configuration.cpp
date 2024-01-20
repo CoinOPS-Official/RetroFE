@@ -38,6 +38,7 @@
 std::string Configuration::absolutePath;
 bool Configuration::HardwareVideoAccel = false;
 int Configuration::AvdecMaxThreads = 2;
+int Configuration::AvdecThreadType = 2;
 bool Configuration::MuteVideo = false;
 
 Configuration::Configuration() = default;
