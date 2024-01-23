@@ -387,9 +387,8 @@ float PageBuilder::getVerticalAlignment(const xml_attribute<> *attribute, float 
 bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::string& collectionName)
 
 {
-    int monitor;
     xml_attribute<> const* layoutMonitorXml = layout->first_attribute("monitor");
-    int layoutMonitor = layoutMonitorXml ? Utils::convertInt(layoutMonitorXml->value()) : monitor;
+    int layoutMonitor = layoutMonitorXml ? Utils::convertInt(layoutMonitorXml->value()) : monitor_;
     // Check if the specified monitor exists (for this "layout")
     if (layoutMonitor + 1 > SDL::getScreenCount()) {
         LOG_WARNING("Layout", "Skipping layout due to non-existent monitor index: " + std::to_string(layoutMonitor));
@@ -400,7 +399,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
     {
         // Extract "monitor" attribute specifically for this "menu" node
         xml_attribute<> const* menuMonitorXml = componentXml->first_attribute("monitor");
-        int menuMonitor = menuMonitorXml ? Utils::convertInt(menuMonitorXml->value()) : monitor;
+        int menuMonitor = menuMonitorXml ? Utils::convertInt(menuMonitorXml->value()) : monitor_;
         // Check if the specified monitor exists (for this "menu")
         if (menuMonitor + 1 > SDL::getScreenCount()) {
             LOG_WARNING("Layout", "Skipping menu due to non-existent monitor index: " + std::to_string(menuMonitor));
@@ -451,7 +450,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
             id = Utils::convertInt(idXml->value());
         }
 
-         int imageMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor; // Use layout's monitor if not specified at the menu level
+         int imageMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_; // Use layout's monitor if not specified at the menu level
 
         // Check if the specified monitor exists (for this "image")
         if (imageMonitor + 1 > SDL::getScreenCount()) {
@@ -531,7 +530,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
             int numLoops = numLoopsXml ? Utils::convertInt(numLoopsXml->value()) : 1;
             
 
-            int videoMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor; // Use layout's monitor if not specified at the menu level
+            int videoMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_; // Use layout's monitor if not specified at the menu level
 
             // Check if the specified monitor exists (for this "image")
             if (videoMonitor + 1 > SDL::getScreenCount()) {
@@ -598,7 +597,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         }
         else
         {
-            cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor;
+            cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_;
             Font *font = addFont(componentXml, NULL, cMonitor);
 
             auto *c = new Text(value->value(), *page, font, cMonitor);
@@ -619,7 +618,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
     for(xml_node<> *componentXml = layout->first_node("statusText"); componentXml; componentXml = componentXml->next_sibling("statusText"))
     {
         xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
-        cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor;
+        cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_;
         Font* font = addFont(componentXml, NULL, cMonitor);
 
         auto* c = new Text("", *page, font, cMonitor);
