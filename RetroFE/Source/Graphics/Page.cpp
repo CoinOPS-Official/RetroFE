@@ -54,7 +54,7 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
         layoutWidth_.push_back(layoutWidth);
         layoutHeight_.push_back(layoutHeight);
     }
-    for (int i = 0; i < SDL::getNumScreens(); i++)
+    for (int i = 0; i < SDL::getScreenCount(); i++)
     {
         layoutWidthByMonitor_.push_back(layoutWidth);
         layoutHeightByMonitor_.push_back(layoutHeight);
@@ -1629,7 +1629,7 @@ int Page::getCurrentLayout() const
 
 int Page::getLayoutWidthByMonitor(int monitor)
 {
-    if (monitor < SDL::getNumScreens())
+    if (monitor < SDL::getScreenCount())
         return layoutWidthByMonitor_[monitor];
     else
         return 0;
@@ -1638,7 +1638,7 @@ int Page::getLayoutWidthByMonitor(int monitor)
 
 int Page::getLayoutHeightByMonitor(int monitor)
 {
-    if (monitor < SDL::getNumScreens())
+    if (monitor < SDL::getScreenCount())
         return layoutHeightByMonitor_[monitor];
     else
         return 0;
@@ -1647,14 +1647,14 @@ int Page::getLayoutHeightByMonitor(int monitor)
 
 void Page::setLayoutWidthByMonitor(int monitor, int width)
 {
-    if (monitor < SDL::getNumScreens())
+    if (monitor < SDL::getScreenCount())
         layoutWidthByMonitor_[monitor] = width;
 }
 
 
 void Page::setLayoutHeightByMonitor(int monitor, int height)
 {
-    if (monitor < SDL::getNumScreens())
+    if (monitor < SDL::getScreenCount())
         layoutHeightByMonitor_[monitor] = height;
 }
 
