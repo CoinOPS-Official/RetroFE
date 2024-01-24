@@ -399,7 +399,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
     {
         // Extract "monitor" attribute specifically for this "menu" node
         xml_attribute<> const* menuMonitorXml = componentXml->first_attribute("monitor");
-        int menuMonitor = menuMonitorXml ? Utils::convertInt(menuMonitorXml->value()) : monitor_;
+        int menuMonitor = menuMonitorXml ? Utils::convertInt(menuMonitorXml->value()) : layoutMonitor;
         // Check if the specified monitor exists (for this "menu")
         if (menuMonitor + 1 > SDL::getScreenCount()) {
             LOG_WARNING("Layout", "Skipping menu due to non-existent monitor index: " + std::to_string(menuMonitor));
@@ -428,15 +428,13 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
                     c->setMenuScrollReload(true);
         }
         xml_attribute<> const* monitorXml = componentXml->first_attribute("monitor");
-        c->baseViewInfo.Monitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_;
+        c->baseViewInfo.Monitor = monitorXml ? Utils::convertInt(monitorXml->value()) : layoutMonitor;
         c->baseViewInfo.Layout = page->getCurrentLayout();
 
         buildViewInfo(componentXml, c->baseViewInfo);
         loadTweens(c, componentXml);
         page->addComponent(c);
     }
-
-    int cMonitor;
     for(xml_node<> *componentXml = layout->first_node("image"); componentXml; componentXml = componentXml->next_sibling("image"))
     {
         xml_attribute<> const *src        = componentXml->first_attribute("src");
@@ -450,7 +448,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
             id = Utils::convertInt(idXml->value());
         }
 
-         int imageMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_; // Use layout's monitor if not specified at the menu level
+         int imageMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : layoutMonitor; // Use layout's monitor if not specified at the menu level
 
         // Check if the specified monitor exists (for this "image")
         if (imageMonitor + 1 > SDL::getScreenCount()) {
@@ -530,7 +528,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
             int numLoops = numLoopsXml ? Utils::convertInt(numLoopsXml->value()) : 1;
             
 
-            int videoMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_; // Use layout's monitor if not specified at the menu level
+            int videoMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : layoutMonitor; // Use layout's monitor if not specified at the menu level
 
             // Check if the specified monitor exists (for this "image")
             if (videoMonitor + 1 > SDL::getScreenCount()) {
@@ -597,10 +595,10 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         }
         else
         {
-            cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_;
-            Font *font = addFont(componentXml, NULL, cMonitor);
+            int textMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : layoutMonitor;
+            Font *font = addFont(componentXml, NULL, textMonitor);
 
-            auto *c = new Text(value->value(), *page, font, cMonitor);
+            auto *c = new Text(value->value(), *page, font, textMonitor);
             c->setId( id );
             if (xml_attribute<> const *menuScrollReload = componentXml->first_attribute("menuScrollReload"); menuScrollReload &&
                 (Utils::toLower(menuScrollReload->value()) == "true" ||
@@ -618,10 +616,10 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
     for(xml_node<> *componentXml = layout->first_node("statusText"); componentXml; componentXml = componentXml->next_sibling("statusText"))
     {
         xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
-        cMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : monitor_;
-        Font* font = addFont(componentXml, NULL, cMonitor);
+        int statusTextMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : layoutMonitor;
+        Font* font = addFont(componentXml, NULL, statusTextMonitor);
 
-        auto* c = new Text("", *page, font, cMonitor);
+        auto* c = new Text("", *page, font, statusTextMonitor);
         if (auto const* menuScrollReload = componentXml->first_attribute("menuScrollReload");
             menuScrollReload && (Utils::toLower(menuScrollReload->value()) == "true" ||
                 Utils::toLower(menuScrollReload->value()) == "yes")) 
