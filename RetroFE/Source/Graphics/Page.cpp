@@ -1223,53 +1223,57 @@ bool Page::playlistExists(const std::string& playlist)
 }
 
 
-void Page::update(float dt)
-{
-    std::string playlistName = getPlaylistName();
+void Page::update(float dt) {
+    std::string currentPlaylistName = getPlaylistName();
 
-    for(auto it = menus_.begin(); it != menus_.end(); ++it)
-    {
-        for(auto it2 = it->begin(); it2 != it->end(); ++it2)
-        {
-            ScrollingList* menu = *it2;
-            menu->playlistName = playlistName;
-            menu->update(dt);
+    // Future for asynchronous update of ScrollingLists within menus_
+    auto menuUpdateFuture = pool_.enqueue([this, dt, currentPlaylistName]() {
+        for (auto& menuList : menus_) {
+            for (auto* menu : menuList) {
+                // Assuming playlistName setting and update are thread-safe
+                menu->playlistName = currentPlaylistName;
+                menu->update(dt);
+            }
         }
-    }
+        });
 
-    if(textStatusComponent_)
-    {
-        std::string status;
+    // Future for asynchronous update of LayerComponents
+    auto layerUpdateFuture = pool_.enqueue([this, dt, currentPlaylistName]() {
+        std::vector<Component*> toBeDeleted;
+        for (auto it = LayerComponents.begin(); it != LayerComponents.end();) {
+            if (*it) {
+                (*it)->playlistName = currentPlaylistName;
+                if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
+                    // Queue components for deletion
+                    toBeDeleted.push_back(*it);
+                    it = LayerComponents.erase(it);
+                }
+                else {
+                    ++it;
+                }
+            }
+            else {
+                ++it;
+            }
+        }
+        // Perform deletion of components after updating to avoid modifying the container during iteration
+        for (auto* comp : toBeDeleted) {
+            comp->freeGraphicsMemory();
+            delete comp;
+        }
+        });
+
+    // Update textStatusComponent_ if it exists (synchronously)
+    if (textStatusComponent_) {
+        std::string status; // Populate 'status' as needed
         config_.setProperty("status", status);
         textStatusComponent_->setText(status);
     }
 
-    for (auto it = LayerComponents.begin(); it != LayerComponents.end();)
-    {
-        if (*it)
-        {
-            (*it)->playlistName = playlistName;
-            if ((*it)->update(dt) && (*it)->getAnimationDoneRemove())
-            {
-                // Free resources if needed
-                (*it)->freeGraphicsMemory();
-                delete* it;  // Delete the object (if dynamically allocated)
+    menuUpdateFuture.get();
+    layerUpdateFuture.get();
 
-                // Erase the element from the container and get the next iterator
-                it = LayerComponents.erase(it);
-            }
-            else
-            {
-                ++it;  // Only increment if the element was not erased
-            }
-        }
-        else
-        {
-            ++it;  // Increment iterator if the element is null
-        }
-    }
-}
-
+ }
 
 void Page::updateReloadables(float dt)
 {

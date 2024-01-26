@@ -16,6 +16,7 @@
 #pragma once
 
 #include "../Collection/CollectionInfo.h"
+#include "ThreadPool.h"
 
 #include <map>
 #include <string>
@@ -31,8 +32,11 @@ class Sound;
 
 class Page
 {
+
 public:
-    enum ScrollDirection
+
+    ThreadPool pool_{ 2 };
+    ;    enum ScrollDirection
     {
         ScrollDirectionForward,
         ScrollDirectionBack,
