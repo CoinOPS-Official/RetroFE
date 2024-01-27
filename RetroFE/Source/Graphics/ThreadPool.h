@@ -14,13 +14,13 @@
 
 class ThreadPool {
 public:
-    ThreadPool(size_t threads);
+    explicit ThreadPool(size_t threads);
     ~ThreadPool();
 
     // Enqueue tasks to the thread pool
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args)
-        -> std::future<typename std::invoke_result<F, Args...>::type>;
+        -> std::future<typename std::invoke_result_t<F, Args...>>;
 
 private:
     // Worker threads
@@ -37,7 +37,7 @@ private:
 // Implementation of the enqueue method needs to be visible to all translation units that use it, hence defined in the header
 template<class F, class... Args>
 auto ThreadPool::enqueue(F&& f, Args&&... args)
--> std::future<typename std::invoke_result<F, Args...>::type> {
+-> std::future<typename std::invoke_result_t<F, Args...>> {
     using return_type = typename std::invoke_result<F, Args...>::type;
 
     auto task = std::make_shared<std::packaged_task<return_type()>>(
