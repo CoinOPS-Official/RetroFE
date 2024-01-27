@@ -64,9 +64,7 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
 }
 
 
-Page::~Page()
-{
-}
+Page::~Page() = default;
 
 
 void Page::deInitialize()
@@ -1224,28 +1222,71 @@ bool Page::playlistExists(const std::string& playlist)
 
 
 void Page::update(float dt) {
-    std::string currentPlaylistName = getPlaylistName();
+    // Static local variable to store the renderer backend
+    static std::string rendererBackend;
 
-    // Future for asynchronous update of ScrollingLists within menus_
-    auto menuUpdateFuture = pool_.enqueue([this, dt, currentPlaylistName]() {
-        for (auto& menuList : menus_) {
-            for (auto* menu : menuList) {
-                // Assuming playlistName setting and update are thread-safe
-                menu->playlistName = currentPlaylistName;
+    // Initialize the renderer backend name if it hasn't been done yet
+    if (rendererBackend.empty()) {
+        rendererBackend = SDL::getRendererBackend(0); // Assuming 0 is the correct index
+    }
+
+    std::string playlistName = getPlaylistName();
+
+    if (rendererBackend != "opengl") {
+        // Asynchronous (threaded) version for non-OpenGL backends
+
+        // Future for asynchronous update of ScrollingLists within menus_
+        auto menuUpdateFuture = pool_.enqueue([this, dt, playlistName]() {
+            for (auto it = menus_.begin(); it != menus_.end(); ++it) {
+                for (auto it2 = it->begin(); it2 != it->end(); ++it2) {
+                    ScrollingList* menu = *it2;
+                    menu->playlistName = playlistName;
+                    menu->update(dt);
+                }
+            }
+            });
+
+        // Future for asynchronous update of LayerComponents
+        auto layerUpdateFuture = pool_.enqueue([this, dt, playlistName]() {
+            for (auto it = LayerComponents.begin(); it != LayerComponents.end();) {
+                if (*it) {
+                    (*it)->playlistName = playlistName;
+                    if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
+                        (*it)->freeGraphicsMemory();
+                        delete* it;
+                        it = LayerComponents.erase(it);
+                    }
+                    else {
+                        ++it;
+                    }
+                }
+                else {
+                    ++it;
+                }
+            }
+            });
+
+        menuUpdateFuture.get();
+        layerUpdateFuture.get();
+
+    }
+    else {
+        // Synchronous (non-threaded) version for OpenGL backend
+
+        for (auto it = menus_.begin(); it != menus_.end(); ++it) {
+            for (auto it2 = it->begin(); it2 != it->end(); ++it2) {
+                ScrollingList* menu = *it2;
+                menu->playlistName = playlistName;
                 menu->update(dt);
             }
         }
-        });
 
-    // Future for asynchronous update of LayerComponents
-    auto layerUpdateFuture = pool_.enqueue([this, dt, currentPlaylistName]() {
-        std::vector<Component*> toBeDeleted;
         for (auto it = LayerComponents.begin(); it != LayerComponents.end();) {
             if (*it) {
-                (*it)->playlistName = currentPlaylistName;
+                (*it)->playlistName = playlistName;
                 if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
-                    // Queue components for deletion
-                    toBeDeleted.push_back(*it);
+                    (*it)->freeGraphicsMemory();
+                    delete* it;
                     it = LayerComponents.erase(it);
                 }
                 else {
@@ -1255,25 +1296,17 @@ void Page::update(float dt) {
             else {
                 ++it;
             }
-        }
-        // Perform deletion of components after updating to avoid modifying the container during iteration
-        for (auto* comp : toBeDeleted) {
-            comp->freeGraphicsMemory();
-            delete comp;
-        }
-        });
+            }
+            }
 
-    // Update textStatusComponent_ if it exists (synchronously)
+    // Common update code for textStatusComponent_
     if (textStatusComponent_) {
-        std::string status; // Populate 'status' as needed
+        std::string status;
         config_.setProperty("status", status);
         textStatusComponent_->setText(status);
     }
+    }
 
-    menuUpdateFuture.get();
-    layerUpdateFuture.get();
-
- }
 
 void Page::updateReloadables(float dt)
 {
