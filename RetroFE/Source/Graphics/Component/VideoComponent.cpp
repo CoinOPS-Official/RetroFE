@@ -41,7 +41,7 @@ VideoComponent::~VideoComponent()
 
 bool VideoComponent::update(float dt)
 {
-    if (videoInst_ && !isPlaying_)
+    if (videoInst_)
     {
         isPlaying_ = ((GStreamerVideo*)(videoInst_))->isPlaying();
     }
@@ -109,7 +109,7 @@ void VideoComponent::allocateGraphicsMemory()
 
 void VideoComponent::freeGraphicsMemory()
 {
-    //videoInst_->stop()
+    //videoInst_->stop();
         
     Component::freeGraphicsMemory();
     LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
