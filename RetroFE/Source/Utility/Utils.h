@@ -27,6 +27,14 @@
     #include <Windows.h>
 #endif
 
+#ifdef __APPLE__
+struct PathHash {
+    auto operator()(const std::filesystem::path& p) const noexcept {
+        return std::filesystem::hash_value(p);
+    }
+};
+#endif
+
 class Utils
 {
 public:
