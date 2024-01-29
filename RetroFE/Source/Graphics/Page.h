@@ -35,7 +35,7 @@ class Page
 
 public:
 
-    ThreadPool pool_{ 2 };
+    ThreadPool pool_{ 4 };
     ;    enum ScrollDirection
     {
         ScrollDirectionForward,
@@ -229,5 +229,6 @@ private:
     std::vector<int> layoutWidthByMonitor_;
     std::vector<int> layoutHeightByMonitor_;
     bool jukebox_;
+    bool useThreading_;
 
 };

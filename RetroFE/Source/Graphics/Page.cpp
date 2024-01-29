@@ -47,6 +47,7 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , selectSoundChunk_(NULL)
     , minShowTime_(0)
     , jukebox_(false)
+    , useThreading_(SDL::getRendererBackend(0) != "opengl")
 {
 
     for (int i = 0; i < MAX_LAYOUTS; i++)
@@ -704,12 +705,6 @@ void Page::setScrolling(ScrollDirection direction)
     switch(direction)
     {
     case ScrollDirectionForward:
-        if(!scrollActive_)
-        {
-            menuScroll();
-        }
-        scrollActive_ = true;
-        break;
     case ScrollDirectionBack:
         if(!scrollActive_)
         {
@@ -1222,24 +1217,15 @@ bool Page::playlistExists(const std::string& playlist)
 
 
 void Page::update(float dt) {
-    // Static local variable to store the renderer backend
-    static std::string rendererBackend;
-
-    // Initialize the renderer backend name if it hasn't been done yet
-    if (rendererBackend.empty()) {
-        rendererBackend = SDL::getRendererBackend(0); // Assuming 0 is the correct index
-    }
-
     std::string playlistName = getPlaylistName();
 
-    if (rendererBackend != "opengl") {
+    if (useThreading_) {
         // Asynchronous (threaded) version for non-OpenGL backends
 
         // Future for asynchronous update of ScrollingLists within menus_
         auto menuUpdateFuture = pool_.enqueue([this, dt, playlistName]() {
-            for (auto it = menus_.begin(); it != menus_.end(); ++it) {
-                for (auto it2 = it->begin(); it2 != it->end(); ++it2) {
-                    ScrollingList* menu = *it2;
+            for (auto& menuList : menus_) {
+                for (auto* menu : menuList) {
                     menu->playlistName = playlistName;
                     menu->update(dt);
                 }
@@ -1266,16 +1252,15 @@ void Page::update(float dt) {
             }
             });
 
+        // Wait for asynchronous operations to complete
         menuUpdateFuture.get();
         layerUpdateFuture.get();
-
     }
     else {
         // Synchronous (non-threaded) version for OpenGL backend
 
-        for (auto it = menus_.begin(); it != menus_.end(); ++it) {
-            for (auto it2 = it->begin(); it2 != it->end(); ++it2) {
-                ScrollingList* menu = *it2;
+        for (auto& menuList : menus_) {
+            for (auto* menu : menuList) {
                 menu->playlistName = playlistName;
                 menu->update(dt);
             }
@@ -1296,16 +1281,16 @@ void Page::update(float dt) {
             else {
                 ++it;
             }
-            }
-            }
+        }
+    }
 
     // Common update code for textStatusComponent_
     if (textStatusComponent_) {
-        std::string status;
+        std::string status; // Populate 'status' as needed
         config_.setProperty("status", status);
         textStatusComponent_->setText(status);
     }
-    }
+}
 
 
 void Page::updateReloadables(float dt)
@@ -1631,21 +1616,39 @@ void Page::updateScrollPeriod() const
 }
 
 
-void Page::scroll(bool forward)
-{
-    for(auto& menu : activeMenu_)
-    {
-        if(menu && !menu->isPlaylist())
-        {
-            menu->scroll(forward);
+void Page::scroll(bool forward) {
+    if (useThreading_) {
+        // Asynchronous version
+        auto scrollFuture = pool_.enqueue([this, forward]() {
+            for (auto& menu : activeMenu_) {
+                if (menu && !menu->isPlaylist()) {
+                    menu->scroll(forward);
+                }
+            }
+            });
+
+        // Wait for the scroll operation to complete
+        scrollFuture.get();
+        onNewScrollItemSelected();
+        if (highlightSoundChunk_) {
+            highlightSoundChunk_->play();
+        }
+    
+    }
+    else {
+        // Synchronous version
+        for (auto& menu : activeMenu_) {
+            if (menu && !menu->isPlaylist()) {
+                menu->scroll(forward);
+            }
+        }
+        onNewScrollItemSelected();
+        if (highlightSoundChunk_) {
+            highlightSoundChunk_->play();
         }
     }
-    onNewScrollItemSelected();
-    if(highlightSoundChunk_)
-    {
-        highlightSoundChunk_->play();
-    }
 }
+
 
 
 bool Page::hasSubs()
