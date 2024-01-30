@@ -38,11 +38,11 @@ struct PathHash {
 class Utils
 {
 public:
-    static std::string replace(std::string subject, const std::string& search,
-        const std::string& replace);
+    static std::string replace(std::string subject, const std::string_view& search,
+        const std::string_view& replace);
 
-    static float convertFloat(const std::string& content);
-    static int convertInt(const std::string& content);
+    static float convertFloat(const std::string_view& content);
+    static int convertInt(const std::string_view& content);
     static void replaceSlashesWithUnderscores(std::string& content);
 #ifdef WIN32    
     static void postMessage(LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam);

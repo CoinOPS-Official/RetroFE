@@ -170,8 +170,8 @@ bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::s
 
 std::string Utils::replace(
     std::string subject,
-    const std::string& search,
-    const std::string& replace)
+    const std::string_view& search,
+    const std::string_view& replace)
 {
     if (search.empty())
         return subject; // Early exit if search string is empty
@@ -186,17 +186,16 @@ std::string Utils::replace(
 }
 
 
-float Utils::convertFloat(const std::string& content) {
+float Utils::convertFloat(const std::string_view& content) {
     float retVal = 0;
-    std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal);
+    std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal, std::chars_format::general);
     if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
-        // Handle error or set default value
-        retVal = 0.0f;
+        retVal = 0.0f; // Handle error or set default value
     }
     return retVal;
 }
 
-int Utils::convertInt(const std::string& content) {
+int Utils::convertInt(const std::string_view& content) {
     int retVal = 0;
     std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal);
     if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
