@@ -41,6 +41,9 @@ VideoComponent::~VideoComponent()
 
 bool VideoComponent::update(float dt)
 {
+    // Create a snapshot of baseViewInfo for read operations
+    updateViewInfoSnapshot = baseViewInfo.createSnapshot();
+
     if (videoInst_)
     {
         isPlaying_ = ((GStreamerVideo*)(videoInst_))->isPlaying();
@@ -48,23 +51,24 @@ bool VideoComponent::update(float dt)
 
     if (videoInst_ && isPlaying_)
     {
-        videoInst_->setVolume(baseViewInfo.Volume);
+        videoInst_->setVolume(updateViewInfoSnapshot.Volume);
         videoInst_->update(dt);
 
         // video needs to run a frame to start getting size info
-        if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
+        if (updateViewInfoSnapshot.ImageHeight == 0 && updateViewInfoSnapshot.ImageWidth == 0) // Read operation uses snapshot
         {
+            // Write operations still use baseViewInfo
             baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
             baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
         }
 
-        bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0;
+        bool isCurrentlyVisible = updateViewInfoSnapshot.Alpha > 0.0; // Read operation uses snapshot
 
         if (isCurrentlyVisible)
             hasBeenOnScreen_ = true;
 
         // Handle Pause/Resume based on visibility and PauseOnScroll setting
-        if (baseViewInfo.PauseOnScroll)
+        if (updateViewInfoSnapshot.PauseOnScroll) // Read operation uses snapshot
         {
             if (!isCurrentlyVisible && !isPaused())
             {
@@ -79,10 +83,11 @@ bool VideoComponent::update(float dt)
         }
 
         // Handle Restart
-        if (baseViewInfo.Restart && hasBeenOnScreen_)
+        if (updateViewInfoSnapshot.Restart && hasBeenOnScreen_) // Read operation uses snapshot
         {
             videoInst_->restart();
             LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
+            // Write operation still uses baseViewInfo
             baseViewInfo.Restart = false;
         }
     }
@@ -127,19 +132,22 @@ void VideoComponent::freeGraphicsMemory()
 
 void VideoComponent::draw()
 {
+    // Create a snapshot of baseViewInfo for read operations
+    drawViewInfoSnapshot = baseViewInfo.createSnapshot();
+
     SDL_Rect rect = { 0, 0, 0, 0 };
 
-    rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-    rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-    rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-    rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
+    rect.x = static_cast<int>(drawViewInfoSnapshot.XRelativeToOrigin());
+    rect.y = static_cast<int>(drawViewInfoSnapshot.YRelativeToOrigin());
+    rect.h = static_cast<int>(drawViewInfoSnapshot.ScaledHeight());
+    rect.w = static_cast<int>(drawViewInfoSnapshot.ScaledWidth());
 
     videoInst_->draw();
-    SDL_Texture *texture = videoInst_->getTexture();
+    SDL_Texture* texture = videoInst_->getTexture();
 
-    if(texture)
+    if (texture)
     {
-        SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        SDL::renderCopy(texture, drawViewInfoSnapshot.Alpha, nullptr, &rect, drawViewInfoSnapshot, page.getLayoutWidthByMonitor(drawViewInfoSnapshot.Monitor), page.getLayoutHeightByMonitor(drawViewInfoSnapshot.Monitor));
     }
 }
 
