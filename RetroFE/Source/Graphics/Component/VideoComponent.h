@@ -45,8 +45,6 @@ public:
     std::string filePath() override;
 
 private:
-    ViewInfo updateViewInfoSnapshot;
-    ViewInfo drawViewInfoSnapshot;
     std::string videoFile_;
     std::string name_;
     IVideo* videoInst_{ nullptr };
