@@ -190,7 +190,16 @@ std::string Utils::replace(
 
 float Utils::convertFloat(const std::string_view& content) {
     float retVal = 0;
+#ifdef __APPLE__
+    std::stringstream ss;
+    ss << content;
+    ss >> retVal;
+#else
     std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal, std::chars_format::general);
+    if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
+        retVal = 0.0f; // Handle error or set default value
+    }
+#endif
     if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
         retVal = 0.0f; // Handle error or set default value
     }
