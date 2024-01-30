@@ -29,6 +29,10 @@ public:
     ViewInfo();
     virtual ~ViewInfo();
 
+    ViewInfo createSnapshot() const {
+        return *this;  // Return a copy of the current ViewInfo
+    }
+
     float XRelativeToOrigin() const;
     float YRelativeToOrigin() const;
 
