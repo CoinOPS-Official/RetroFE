@@ -25,7 +25,9 @@
 #include <filesystem>
 #include <unordered_set>
 #include <unordered_map>
-#include <charconv>
+#ifndef __APPLE__
+    #include <charconv>
+#endif
 
 #ifdef WIN32
     #include <Windows.h>
