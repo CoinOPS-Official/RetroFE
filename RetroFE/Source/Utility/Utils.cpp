@@ -208,7 +208,17 @@ float Utils::convertFloat(const std::string_view& content) {
 
 int Utils::convertInt(const std::string_view& content) {
     int retVal = 0;
+#ifdef __APPLE__
+    std::stringstream ss;
+    ss << content;
+    ss >> retVal;
+#else
     std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal);
+    if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
+        // Handle error or set default value
+        retVal = 0;
+    }
+#endif
     if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
         // Handle error or set default value
         retVal = 0;
