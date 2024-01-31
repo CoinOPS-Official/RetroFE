@@ -25,7 +25,9 @@
 #include <filesystem>
 #include <unordered_set>
 #include <unordered_map>
-#include <charconv>
+#ifndef __APPLE__
+    #include <charconv>
+#endif
 
 #ifdef WIN32
     #include <Windows.h>
@@ -188,7 +190,16 @@ std::string Utils::replace(
 
 float Utils::convertFloat(const std::string_view& content) {
     float retVal = 0;
+#ifdef __APPLE__
+    std::stringstream ss;
+    ss << content;
+    ss >> retVal;
+#else
     std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal, std::chars_format::general);
+    if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
+        retVal = 0.0f; // Handle error or set default value
+    }
+#endif
     if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
         retVal = 0.0f; // Handle error or set default value
     }
@@ -197,7 +208,17 @@ float Utils::convertFloat(const std::string_view& content) {
 
 int Utils::convertInt(const std::string_view& content) {
     int retVal = 0;
+#ifdef __APPLE__
+    std::stringstream ss;
+    ss << content;
+    ss >> retVal;
+#else
     std::from_chars_result result = std::from_chars(content.data(), content.data() + content.size(), retVal);
+    if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
+        // Handle error or set default value
+        retVal = 0;
+    }
+#endif
     if (result.ec == std::errc::invalid_argument || result.ec == std::errc::result_out_of_range) {
         // Handle error or set default value
         retVal = 0;
