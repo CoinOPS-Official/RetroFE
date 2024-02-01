@@ -579,7 +579,8 @@ void ReloadableMedia::draw()
     	baseViewInfo.ImageHeight = loadedComponent_->baseViewInfo.ImageHeight;
     	baseViewInfo.ImageWidth = loadedComponent_->baseViewInfo.ImageWidth;
         loadedComponent_->baseViewInfo = baseViewInfo;
-        loadedComponent_->draw();
+        if(baseViewInfo.Alpha > 0.0f)
+            loadedComponent_->draw();
     }
 }
 

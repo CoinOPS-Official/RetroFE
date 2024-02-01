@@ -369,7 +369,7 @@ void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffe
 
 void GStreamerVideo::update(float /* dt */)
 {
-	if(!playbin_ || frameReady_)
+	if(!playbin_ || frameReady_ || paused_)
 	{
 		return;
 	}

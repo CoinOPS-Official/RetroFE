@@ -1337,7 +1337,7 @@ void Page::draw()
         // Drawing Components based on their layer
         for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
         {
-            if(*it && (*it)->baseViewInfo.Layer == i) 
+            if(*it && (*it)->baseViewInfo.Layer == i && (*it)->baseViewInfo.Alpha > 0.0f) 
                 (*it)->draw();
         }
 
@@ -1347,7 +1347,8 @@ void Page::draw()
             for(auto it2 = it->begin(); it2 != it->end(); ++it2)
             {
                 ScrollingList *menu = *it2;
-                menu->draw(i);
+                if(*it2 && (*it2)->baseViewInfo.Alpha > 0.0f)
+                    menu->draw(i);
             }
         }
     }

@@ -127,19 +127,22 @@ void VideoComponent::freeGraphicsMemory()
 
 void VideoComponent::draw()
 {
-    SDL_Rect rect = { 0, 0, 0, 0 };
-
-    rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-    rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-    rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-    rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
-
-    videoInst_->draw();
-    SDL_Texture *texture = videoInst_->getTexture();
-
-    if(texture)
+    if (baseViewInfo.Alpha > 0.0f)
     {
-        SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        SDL_Rect rect = { 0, 0, 0, 0 };
+
+        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
+        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
+        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
+        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
+
+        videoInst_->draw();
+        SDL_Texture* texture = videoInst_->getTexture();
+
+        if (texture)
+        {
+            SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        }
     }
 }
 

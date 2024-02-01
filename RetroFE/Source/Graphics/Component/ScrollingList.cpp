@@ -1029,7 +1029,7 @@ void ScrollingList::draw(unsigned int layer)
     for (unsigned int i = 0; i < componentSize; ++i)
     {
         Component *c = components_[i];
-        if (c && c->baseViewInfo.Layer == layer) c->draw();
+        if (c && c->baseViewInfo.Layer == layer && baseViewInfo.Alpha > 0.0f) c->draw();
     }
 }
 

@@ -103,7 +103,7 @@ void Image::draw()
 {
     Component::draw();
 
-    if(texture_)
+    if(texture_ && baseViewInfo.Alpha > 0.0f)
     {
         SDL_Rect rect = { 0, 0, 0, 0 };
 
