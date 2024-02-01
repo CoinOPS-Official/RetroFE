@@ -297,12 +297,12 @@ void ScrollingList::random( )
 
 void ScrollingList::letterUp( )
 {
-    letterChange( true );
+    letterChange( false );
 }
 
 void ScrollingList::letterDown( )
 {
-    letterChange( false );
+    letterChange( true );
 }
 
 void ScrollingList::letterChange(bool increment)
@@ -1135,11 +1135,13 @@ void ScrollingList::scroll(bool forward)
     // Reorder the components using std::rotate
     if (forward)
     {
-        std::rotate(components_.begin(), components_.begin() + 1, components_.begin() + scrollPointsSize);
+        // For forward scroll, rotate left (move the first element to the end)
+        std::rotate(components_.begin(), components_.begin() + 1, components_.end());
     }
     else
     {
-        std::rotate(components_.begin(), components_.begin() + (scrollPointsSize - 1), components_.begin() + scrollPointsSize);
+        // For backward scroll, rotate right (move the last element to the beginning)
+        std::rotate(components_.rbegin(), components_.rbegin() + 1, components_.rend());
     }
 
     return;
