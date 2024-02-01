@@ -51,7 +51,7 @@ public:
     virtual void onNewScrollItemSelected();
     void returnToRememberSelectedItem();
     void rememberSelectedItem();
-    std::map<std::string, unsigned int> getLastPlaylistOffsets() const;
+    std::map<std::string, size_t> getLastPlaylistOffsets() const;
     void highlightLoadArt();
     bool pushCollection(CollectionInfo *collection);
     bool popCollection();
@@ -81,7 +81,7 @@ public:
     void metaScroll(ScrollDirection direction, std::string attribute);
     void cfwLetterSubScroll(ScrollDirection direction);
     size_t getCollectionSize();
-    unsigned int getSelectedIndex();
+    size_t getSelectedIndex();
     void selectRandom();
     void selectRandomPlaylist(CollectionInfo* collection, std::vector<std::string> cycleVector);
     void start();
@@ -98,8 +98,8 @@ public:
     Item *getSelectedItem();
     Item *getSelectedItem(int offset);
     void removeSelectedItem();
-    void setScrollOffsetIndex(unsigned int i);
-    unsigned int getScrollOffsetIndex();
+    void setScrollOffsetIndex(size_t i);
+    size_t getScrollOffsetIndex();
     bool isIdle();
     bool isAttractIdle();
     bool isGraphicsIdle();
@@ -212,7 +212,7 @@ private:
     std::vector<Component *> LayerComponents;
     std::list<ScrollingList *> deleteMenuList_;
     std::list<CollectionInfo *> deleteCollectionList_;
-    std::map<std::string, unsigned int> lastPlaylistOffsets_;
+    std::map<std::string, size_t> lastPlaylistOffsets_;
 
     bool scrollActive_;
 

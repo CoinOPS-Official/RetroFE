@@ -225,7 +225,7 @@ void Page::rememberSelectedItem()
     }
 }
 
-std::map<std::string, unsigned int> Page::getLastPlaylistOffsets() const
+std::map<std::string, size_t> Page::getLastPlaylistOffsets() const
 {
     return lastPlaylistOffsets_;
 }
@@ -474,7 +474,7 @@ void Page::removeSelectedItem()
 }
 
 
-void Page::setScrollOffsetIndex(unsigned int i)
+void Page::setScrollOffsetIndex(size_t i)
 {
     if (!getAnActiveMenu()) return;
 
@@ -486,7 +486,7 @@ void Page::setScrollOffsetIndex(unsigned int i)
 }
 
 
-unsigned int Page::getScrollOffsetIndex()
+size_t Page::getScrollOffsetIndex()
 {
     ScrollingList const* amenu = getAnActiveMenu();
     if (!amenu) return -1;
@@ -743,7 +743,7 @@ void Page::pageScroll(ScrollDirection direction)
         amenu->pageUp();
     }
 
-    unsigned int index = amenu->getScrollOffsetIndex();
+    size_t index = amenu->getScrollOffsetIndex();
     for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
     {
         ScrollingList *menu = *it;
@@ -758,7 +758,7 @@ void Page::selectRandom()
     if (!amenu) return;
 
     amenu->random();
-    unsigned int index = amenu->getScrollOffsetIndex();
+    size_t index = amenu->getScrollOffsetIndex();
     for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
     {
         ScrollingList *menu = *it;
@@ -866,7 +866,7 @@ size_t Page::getCollectionSize()
 }
 
 
-unsigned int Page::getSelectedIndex()
+size_t Page::getSelectedIndex()
 {
     ScrollingList const* amenu = getAnActiveMenu();
     if (!amenu) return 0;
@@ -1367,7 +1367,7 @@ void Page::removePlaylist()
 
     if (auto it = std::find(items->begin(), items->end(), selectedItem_); it != items->end())
     {
-        unsigned int index = 0;  // Initialize with 0 instead of NULL
+        size_t index = 0;  // Initialize with 0 instead of NULL
         ScrollingList const* amenu = nullptr;  // Use nullptr for pointer types
         // get the deleted item's position
         if (getPlaylistName() == "favorites")

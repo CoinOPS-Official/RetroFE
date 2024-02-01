@@ -189,7 +189,7 @@ private:
     bool playlistCycledOnce_;
 	std::string        firstPlaylist_;
     std::map<std::string, bool> lkupAttractModeSkipPlaylist_;
-    std::map<std::string, unsigned int> lastMenuOffsets_;
+    std::map<std::string, size_t> lastMenuOffsets_;
     std::map<std::string, std::string>  lastMenuPlaylists_;
     std::vector<std::string> cycleVector_;
 };

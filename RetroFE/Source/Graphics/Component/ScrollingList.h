@@ -70,15 +70,15 @@ public:
     void triggerJukeboxJumpEvent(int menuIndex = -1);
     void triggerEventOnAll(const std::string& event, int menuIndex);;
 
-    bool allocateTexture(unsigned int index, const Item* i);
+    bool allocateTexture(size_t index, const Item* i);
     void buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType);
-    void deallocateTexture(unsigned int index);
+    void deallocateTexture(size_t index);
     void setItems(std::vector<Item*>* items);
     void selectItemByName(std::string_view name);
     std::string getSelectedItemName();
     void destroyItems();
     void setPoints(std::vector<ViewInfo*>* scrollPoints, std::vector<AnimationEvents*>* tweenPoints);
-    unsigned int getSelectedIndex() const;
+    size_t getSelectedIndex() const;
     void setSelectedIndex(unsigned int index);
     size_t getSize() const;
     void pageUp();
@@ -95,10 +95,10 @@ public:
     void random();
     bool isScrollingListIdle();
     bool isScrollingListAttractIdle();
-    unsigned int getScrollOffsetIndex() const;
-    void setScrollOffsetIndex(unsigned int index);
+    size_t getScrollOffsetIndex() const;
+    void setScrollOffsetIndex(size_t index);
     void setSelectedIndex(int selectedIndex);
-    Item* getItemByOffset(int offset);
+    Item* getItemByOffset(size_t offset);
     Item* getSelectedItem();
     unsigned int getSelectedItemPosition();
     void allocateGraphicsMemory() override;
@@ -120,8 +120,8 @@ public:
 private:
 
     void resetTweens(Component* c, AnimationEvents* sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const;
-    inline unsigned int loopIncrement(size_t offset, size_t index, size_t size) const;
-    inline unsigned int loopDecrement(size_t offset, size_t index, size_t size) const;
+    inline size_t loopIncrement(size_t offset, size_t index, size_t size) const;
+    inline size_t loopDecrement(size_t offset, size_t index, size_t size) const;
 
     bool layoutMode_;
     bool commonMode_;
@@ -133,8 +133,8 @@ private:
     std::vector<ViewInfo*>* scrollPoints_{ nullptr };
     std::vector<AnimationEvents*>* tweenPoints_{ nullptr };
 
-    unsigned int itemIndex_{ 0 };
-    unsigned int selectedOffsetIndex_{ 0 };
+    size_t itemIndex_{ 0 };
+    size_t selectedOffsetIndex_{ 0 };
 
     float scrollAcceleration_{ 0 };
     float startScrollTime_{ 0.500 };
