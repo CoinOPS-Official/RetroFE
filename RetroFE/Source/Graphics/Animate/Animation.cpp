@@ -37,7 +37,7 @@ Animation& Animation::operator=(const Animation& other) {
             Push(newTweenSet);
         }
     }
-    return *this; // Return *this
+    return *this;
 }
 
 Animation::~Animation()

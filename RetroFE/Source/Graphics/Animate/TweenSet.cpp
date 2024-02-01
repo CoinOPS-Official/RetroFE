@@ -36,7 +36,7 @@ TweenSet& TweenSet::operator=(const TweenSet& other) {
             push(newTween);
         }
     }
-    return *this; // Return *this
+    return *this;
 }
 
 

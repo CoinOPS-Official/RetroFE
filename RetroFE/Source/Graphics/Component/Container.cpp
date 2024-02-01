@@ -21,7 +21,7 @@
 Container::Container(Page &p)
 : Component(p)
 {
-    //allocateGraphicsMemory();
+    allocateGraphicsMemory();
 }
 
 Container::~Container() = default;
