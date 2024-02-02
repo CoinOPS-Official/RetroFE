@@ -98,7 +98,7 @@ public:
     size_t getScrollOffsetIndex() const;
     void setScrollOffsetIndex(size_t index);
     void setSelectedIndex(int selectedIndex);
-    Item* getItemByOffset(size_t offset);
+    Item* getItemByOffset(int offset);
     Item* getSelectedItem();
     unsigned int getSelectedItemPosition();
     void allocateGraphicsMemory() override;
