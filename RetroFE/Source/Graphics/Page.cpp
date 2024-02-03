@@ -47,11 +47,7 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , selectSoundChunk_(NULL)
     , minShowTime_(0)
     , jukebox_(false)
-#ifdef WIN32
-    , useThreading_(SDL::getRendererBackend(0) != "opengl" || Configuration::HardwareVideoAccel)
-#else
-    , useThreading_(false)
-#endif
+    , useThreading_(SDL::getRendererBackend(0) != "opengl" && !Configuration::HardwareVideoAccel)
 {
 
     for (int i = 0; i < MAX_LAYOUTS; i++)
