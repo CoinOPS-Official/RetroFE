@@ -248,7 +248,7 @@ void ScrollingList::setSelectedIndex( int selectedIndex )
     selectedOffsetIndex_ = selectedIndex;
 }
 
-Item *ScrollingList::getItemByOffset(size_t offset)
+Item *ScrollingList::getItemByOffset(int offset)
 {
     size_t itemSize = items_->size();
     if (!items_ || itemSize == 0) return nullptr;
