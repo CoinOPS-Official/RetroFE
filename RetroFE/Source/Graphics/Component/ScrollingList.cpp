@@ -1020,6 +1020,9 @@ void ScrollingList::deallocateTexture( size_t index )
 
     if ( s )
         s->freeGraphicsMemory(  );
+    delete s;
+    components_[index] = nullptr;
+
 }
 
 void ScrollingList::draw(  )
