@@ -261,7 +261,7 @@ Item *ScrollingList::getItemByOffset(int offset)
     }
     else
     {
-        index = loopDecrement(index, offset * -1, itemSize);
+        index = loopDecrement(index, -offset, itemSize);
     }
     
     return (*items_)[index];
@@ -1041,18 +1041,11 @@ void ScrollingList::draw(unsigned int layer)
     }
 }
 
-bool ScrollingList::isScrollingListIdle(  )
-{
-    size_t componentSize = components_.size();
-    if ( !Component::isIdle(  ) ) return false;
-
-    for ( unsigned int i = 0; i < componentSize; ++i )
-    {
-        Component const *c = components_[i];
-        if ( c && !c->isIdle(  ) ) return false;
-    }
-
-    return true;
+bool ScrollingList::isScrollingListIdle() const {
+    return std::all_of(components_.begin(), components_.end(),
+        [](const Component* c) {
+            return c != nullptr && c->isIdle();
+        });
 }
 
 bool ScrollingList::isScrollingListAttractIdle(  )

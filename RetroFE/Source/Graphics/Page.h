@@ -17,6 +17,8 @@
 
 #include "../Collection/CollectionInfo.h"
 #include "ThreadPool.h"
+#include "../SDL.h"
+#include "../Database/Configuration.h"
 
 #include <map>
 #include <string>
@@ -35,7 +37,6 @@ class Page
 
 public:
 
-    ThreadPool pool_{ 4 };
     ;    enum ScrollDirection
     {
         ScrollDirectionForward,
@@ -177,23 +178,24 @@ public:
     void setPlaylistMenu(ScrollingList*);
     bool playlistExists(const std::string&);
     void setSelectedItem();
-    bool fromPreviousPlaylist = false;
-    bool fromPlaylistNav = false;
+    bool fromPreviousPlaylist{ false };
+    bool fromPlaylistNav{ false };
     static const int MAX_LAYOUTS = 6;
 
 private:
+    ThreadPool pool_{ 8 };
     void playlistChange();
     std::string collectionName_;
     Configuration &config_;
-    std::string controlsType_;
-    bool locked_;
+    std::string controlsType_{ "" };
+    bool locked_{ false };
     int currentLayout_;
 
     struct MenuInfo_S
     {
-        CollectionInfo* collection;
+        CollectionInfo* collection{ nullptr };
         CollectionInfo::Playlists_T::iterator playlist;
-        bool queueDelete;
+        bool queueDelete{ false };
     };
     using CollectionVector_T = std::list<MenuInfo_S>;
     
@@ -201,9 +203,9 @@ private:
     void setActiveMenuItemsFromPlaylist(MenuInfo_S info, ScrollingList* menu);
 
     std::vector<ScrollingList *> activeMenu_;
-    ScrollingList* anActiveMenu_;
-    ScrollingList* playlistMenu_;
-    unsigned int menuDepth_;
+    ScrollingList* anActiveMenu_{ nullptr };
+    ScrollingList* playlistMenu_{ nullptr };
+    unsigned int menuDepth_{ 0 };
     MenuVector_T menus_;
     CollectionVector_T collections_;
     CollectionVector_T deleteCollections_;
@@ -214,21 +216,21 @@ private:
     std::list<CollectionInfo *> deleteCollectionList_;
     std::map<std::string, size_t> lastPlaylistOffsets_;
 
-    bool scrollActive_;
+    bool scrollActive_{ false };
 
-    Item *selectedItem_;
-    Text *textStatusComponent_;
-    Sound *loadSoundChunk_;
-    Sound *unloadSoundChunk_;
-    Sound *highlightSoundChunk_;
-    Sound *selectSoundChunk_;
-    float minShowTime_;
+    Item* selectedItem_{ nullptr };
+    Text* textStatusComponent_{ nullptr };
+    Sound* loadSoundChunk_{ nullptr };
+    Sound* unloadSoundChunk_{ nullptr };
+    Sound* highlightSoundChunk_{ nullptr };
+    Sound* selectSoundChunk_{ nullptr };
+    float minShowTime_{ 0.0f };
     CollectionInfo::Playlists_T::iterator playlist_;
     std::vector<int> layoutWidth_;
     std::vector<int> layoutHeight_;
     std::vector<int> layoutWidthByMonitor_;
     std::vector<int> layoutHeightByMonitor_;
-    bool jukebox_;
-    bool useThreading_;
+    bool jukebox_{ false };
+    bool useThreading_{ SDL::getRendererBackend(0) != "opengl" && !Configuration::HardwareVideoAccel };
 
 };

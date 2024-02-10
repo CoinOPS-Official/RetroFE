@@ -30,24 +30,7 @@
 
 
 Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
-    : fromPreviousPlaylist (false)
-    , fromPlaylistNav(false)
-    , config_(config)
-    , controlsType_("")
-    , locked_(false)
-    , anActiveMenu_(NULL)
-    , playlistMenu_(NULL)
-    , menuDepth_(0)
-    , scrollActive_(false)
-    , selectedItem_(NULL)
-    , textStatusComponent_(NULL)
-    , loadSoundChunk_(NULL)
-    , unloadSoundChunk_(NULL)
-    , highlightSoundChunk_(NULL)
-    , selectSoundChunk_(NULL)
-    , minShowTime_(0)
-    , jukebox_(false)
-    , useThreading_(SDL::getRendererBackend(0) != "opengl" && !Configuration::HardwareVideoAccel)
+    : config_(config)
 {
 
     for (int i = 0; i < MAX_LAYOUTS; i++)
@@ -183,24 +166,23 @@ void Page::setActiveMenuItemsFromPlaylist(MenuInfo_S info, ScrollingList* menu)
 }
 
 
-void Page::onNewItemSelected()
-{
-    if(!getAnActiveMenu()) return;
+void Page::onNewItemSelected() {
+    if (!getAnActiveMenu()) return;
 
-    for(auto it = menus_.begin(); it != menus_.end(); ++it)
-    {
-        for(auto it2 = it->begin(); it2 != it->end(); ++it2)
-        {
-            ScrollingList *menu = *it2;
-            if(menu)
-                menu->setNewItemSelected();
-        }
-    }
+    // Iterate through each menu list and then each menu
+    std::for_each(menus_.begin(), menus_.end(),
+        [](auto& menuList) {
+            std::for_each(menuList.begin(), menuList.end(),
+            [](ScrollingList* menu) {
+                    if (menu) menu->setNewItemSelected();
+                });
+        });
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->setNewItemSelected();
-    }
+    // Iterate through each layer component
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [](Component* component) {
+            component->setNewItemSelected();
+        });
 }
 
 
@@ -230,30 +212,32 @@ std::map<std::string, size_t> Page::getLastPlaylistOffsets() const
     return lastPlaylistOffsets_;
 }
 
-void Page::onNewScrollItemSelected()
-{
-    if(!getAnActiveMenu()) return;
+void Page::onNewScrollItemSelected() {
+    if (!getAnActiveMenu()) return;
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->setNewScrollItemSelected();
-    }
-
+    // Use std::for_each to iterate over LayerComponents
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [](Component* component) {
+            if (component) { // Ensure the component is not null
+                component->setNewScrollItemSelected();
+            }
+        });
 }
 
 
-void Page::highlightLoadArt()
-{
-    if(!getAnActiveMenu()) return;
+void Page::highlightLoadArt() {
+    if (!getAnActiveMenu()) return;
 
-    // loading new items art
+    // Loading new items art
     setSelectedItem();
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->setNewItemSelected();
-    }
-
+    // Use std::for_each to iterate over LayerComponents
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [](Component* component) {
+            if (component) { // Check to ensure the component is not null
+                component->setNewItemSelected();
+            }
+        });
 }
 
 
@@ -308,123 +292,116 @@ bool Page::addComponent(Component *c)
 }
 
 
-bool Page::isMenuIdle()
-{
-    for(auto it = menus_.begin(); it != menus_.end(); ++it)
-    {
-        for(auto it2 = it->begin(); it2 != it->end(); ++it2)
-        {
-            ScrollingList *menu = *it2;
-
-            if(!menu->isScrollingListIdle())
-            {
-                return false;
-            }
-        }
-    }
-    return true;
+bool Page::isMenuIdle() {
+    // Check if all menu lists are idle
+    return std::all_of(menus_.begin(), menus_.end(),
+        [](const auto& menuList) {
+            // Within each menu list, check if all menus are idle
+            return std::all_of(menuList.begin(), menuList.end(),
+            [](const ScrollingList* menu) {
+                    return menu->isScrollingListIdle();
+                });
+        });
 }
 
 
-bool Page::isIdle()
-{
-    bool idle = isMenuIdle();
-
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end() && idle; ++it)
-    {
-        idle = (*it)->isIdle();
+bool Page::isIdle() {
+    // If the menu is not idle, the page cannot be idle.
+    if (!isMenuIdle()) {
+        return false;
     }
 
-    return idle;
+    // Check if all components are idle using std::all_of
+    return std::all_of(LayerComponents.begin(), LayerComponents.end(),
+        [](const Component* component) {
+            return component && component->isIdle();
+        });
 }
 
 
-bool Page::isAttractIdle()
-{
-    for(auto it = menus_.begin(); it != menus_.end(); ++it)
-    {
-        for(auto it2 = it->begin(); it2 != it->end(); ++it2)
-        {
-            ScrollingList const *menu = *it2;
+bool Page::isAttractIdle() {
+    // Check if all menus are attract idle
+    bool menusIdle = std::all_of(menus_.begin(), menus_.end(),
+        [](const auto& menuList) {
+            return std::all_of(menuList.begin(), menuList.end(),
+            [](const ScrollingList* menu) {
+                    return menu->isAttractIdle();
+                });
+        });
 
-            if(!menu->isAttractIdle())
-            {
-                return false;
-            }
-        }
+    if (!menusIdle) {
+        return false;
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        if (!(*it)->isAttractIdle())
-        {
-            return false;
-        }
-    }
-
-    return true;
+    // Check if all layer components are attract idle
+    return std::all_of(LayerComponents.begin(), LayerComponents.end(),
+        [](const Component* component) {
+            return component->isAttractIdle();
+        });
 }
 
 
-bool Page::isGraphicsIdle()
-{
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        if (!(*it)->isIdle())
-        {
-            return false;
-        }
-    }
-
-    return true;
+bool Page::isGraphicsIdle() {
+    return std::all_of(LayerComponents.begin(), LayerComponents.end(),
+        [](const Component* component) {
+            return component->isIdle();
+        });
 }
 
 
-void Page::start()
-{
-    for(auto it = menus_.begin(); it != menus_.end(); ++it)
-    {
-        for(auto it2 = it->begin(); it2 != it->end(); ++it2)
-        {
-            ScrollingList *menu = *it2;
-            menu->triggerEvent( "enter" );
-            menu->triggerEnterEvent();
-        }
-    }
+void Page::start() {
+    // Trigger events for menus
+    std::for_each(menus_.begin(), menus_.end(),
+        [](auto& menuList) {
+            std::for_each(menuList.begin(), menuList.end(),
+            [](ScrollingList* menu) {
+                    if (menu) { // Ensure menu is not null
+                        menu->triggerEvent("enter");
+                        menu->triggerEnterEvent();
+                    }
+                });
+        });
 
-    if(loadSoundChunk_)
-    {
+    // Play load sound if available
+    if (loadSoundChunk_) {
         loadSoundChunk_->play();
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->triggerEvent( "enter" );
-    }
+    // Trigger enter event for layer components
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [](Component* component) {
+            if (component) { // Check to ensure the component is not null
+                component->triggerEvent("enter");
+            }
+        });
 }
 
 
-void Page::stop()
-{
-    for(auto it = menus_.begin(); it != menus_.end(); ++it)
-    {
-        for(auto it2 = it->begin(); it2 != it->end(); ++it2)
-        {
-            ScrollingList *menu = *it2;
-            menu->triggerEvent( "exit" );
-            menu->triggerExitEvent();
-        }
-    }
+void Page::stop() {
+    // Trigger exit events for menus
+    std::for_each(menus_.begin(), menus_.end(),
+        [](auto& menuList) {
+            std::for_each(menuList.begin(), menuList.end(),
+            [](ScrollingList* menu) {
+                    if (menu) { // Ensure menu is not null
+                        menu->triggerEvent("exit");
+                        menu->triggerExitEvent();
+                    }
+                });
+        });
 
-    if(unloadSoundChunk_)
-    {
+    // Play unload sound if available
+    if (unloadSoundChunk_) {
         unloadSoundChunk_->play();
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->triggerEvent( "exit" );
-    }
+    // Trigger exit event for layer components
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [](Component* component) {
+            if (component) { // Check to ensure the component is not null
+                component->triggerEvent("exit");
+            }
+        });
 }
 
 
@@ -474,15 +451,15 @@ void Page::removeSelectedItem()
 }
 
 
-void Page::setScrollOffsetIndex(size_t i)
-{
+void Page::setScrollOffsetIndex(size_t i) {
     if (!getAnActiveMenu()) return;
 
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); ++it)
-    {
-        if ((*it) && !(*it)->isPlaylist())
-            (*it)->setScrollOffsetIndex(i);
-    }
+    std::for_each(activeMenu_.begin(), activeMenu_.end(),
+        [i](ScrollingList* menu) {
+            if (menu && !menu->isPlaylist()) {
+                menu->setScrollOffsetIndex(i);
+            }
+        });
 }
 
 
@@ -516,33 +493,39 @@ void Page::setControlsType(const std::string& type)
     controlsType_ = type;
 }
 
-void Page::playlistChange()
-{
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-    {
-        ScrollingList *menu = *it;
-        if(menu)
-            menu->setPlaylist(getPlaylistName());
-    }
+void Page::playlistChange() {
+    std::string playlistName = getPlaylistName(); // Call once and use the result
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->setPlaylist(getPlaylistName());
-    }
+    // Set playlist for active menus
+    std::for_each(activeMenu_.begin(), activeMenu_.end(),
+        [&playlistName](ScrollingList* menu) {
+            if (menu) {
+                menu->setPlaylist(playlistName);
+            }
+        });
+
+    // Set playlist for layer components
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [&playlistName](Component* component) {
+            if (component) { // Check to ensure the component is not null
+                component->setPlaylist(playlistName);
+            }
+        });
 
     updatePlaylistMenuPosition();
 }
 
 
-void Page::menuScroll()
-{
-    if (Item const* item = selectedItem_; !item)
-        return;
+void Page::menuScroll() {
+    if (!selectedItem_) return; // Early return if selectedItem_ is null
 
-    for (auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->triggerEvent("menuScroll", menuDepth_ - 1);
-    }
+    // Trigger "menuScroll" event for each layer component
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [this](Component* component) { // Capture 'this' to access menuDepth_
+            if (component) { // Ensure the component is not null
+                component->triggerEvent("menuScroll", menuDepth_ - 1);
+            }
+        });
 }
 
 void Page::highlightEnter()
@@ -682,21 +665,21 @@ void Page::triggerEventOnAllMenus(const std::string& event)
 
 
 
-void Page::triggerEvent( const std::string& action )
-{
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->triggerEvent( action );
-    }
+void Page::triggerEvent(const std::string& action) {
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [&action](Component* component) {
+            if (component) { // Ensure the component is not null
+                component->triggerEvent(action);
+            }
+        });
 }
 
 
-void Page::setText( const std::string& text, int id )
-{
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->setText( text, id );
-    }
+void Page::setText(const std::string& text, int id) {
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [&text, id](Component* component) {
+            component->setText(text, id);
+        });
 }
 
 
@@ -730,26 +713,28 @@ bool Page::isHorizontalScroll()
 }
 
 
-void Page::pageScroll(ScrollDirection direction)
-{
+void Page::pageScroll(ScrollDirection direction) {
     ScrollingList* amenu = getAnActiveMenu();
-    if (!amenu) return;
+    if (!amenu) return; // Early return if there's no active menu
 
-    if(direction == ScrollDirectionForward)
-    {
+    // Determine scroll direction and perform the action
+    if (direction == ScrollDirectionForward) {
         amenu->pageDown();
-    } else if(direction == ScrollDirectionBack)
-    {
+    }
+    else if (direction == ScrollDirectionBack) {
         amenu->pageUp();
     }
 
+    // Get the updated scroll offset index from the active menu
     size_t index = amenu->getScrollOffsetIndex();
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-    {
-        ScrollingList *menu = *it;
-        if (menu)
-            menu->setScrollOffsetIndex(index);
-    }
+
+    // Set the scroll offset index for all menus
+    std::for_each(activeMenu_.begin(), activeMenu_.end(),
+        [index](ScrollingList* menu) {
+            if (menu) { // Ensure the menu is not null
+                menu->setScrollOffsetIndex(index);
+            }
+        });
 }
 
 void Page::selectRandom()
@@ -939,22 +924,21 @@ bool Page::pushCollection(CollectionInfo *collection)
 }
 
 
-bool Page::popCollection()
-{
+bool Page::popCollection() {
     if (!getAnActiveMenu()) return false;
-    if(menuDepth_ <= 1) return false;
-    if(collections_.size() <= 1) return false;
+    if (menuDepth_ <= 1) return false;
+    if (collections_.size() <= 1) return false;
 
-    // queue the collection for deletion
-    MenuInfo_S *info = &collections_.back();
+    // Queue the collection for deletion
+    MenuInfo_S* info = &collections_.back();
     info->queueDelete = true;
     deleteCollections_.push_back(*info);
 
-    // get the next collection off of the stack
+    // Get the next collection off of the stack
     collections_.pop_back();
     info = &collections_.back();
 
-    // build playlist menu
+    // Build playlist menu
     if (playlistMenu_ && info->collection->playlistItems.size()) {
         playlistMenu_->setItems(&info->collection->playlistItems);
     }
@@ -966,13 +950,16 @@ bool Page::popCollection()
     activeMenu_ = menus_[menuDepth_ - 1];
     anActiveMenu_ = nullptr;
     selectedItem_ = nullptr;
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->collectionName = info->collection->name;
-    }
+
+    // Use std::for_each to set collectionName for each component
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [info](Component* component) {
+            component->collectionName = info->collection->name;
+        });
 
     return true;
 }
+
 
 void Page::enterMenu()
 {
@@ -1017,61 +1004,55 @@ void Page::favPlaylist()
     return;
 }
 
-void Page::nextPlaylist()
-{
-    MenuInfo_S &info = collections_.back();
-    size_t numlists = info.collection->playlists.size();
-    // save last playlist selected item
-    rememberSelectedItem();
+void Page::nextPlaylist() {
+    MenuInfo_S& info = collections_.back();
+    rememberSelectedItem(); // Save last playlist selected item
 
-    for(size_t i = 0; i <= numlists; ++i)
-    {
-        playlist_++;
-        // wrap
-        if(playlist_ == info.collection->playlists.end()) 
-            playlist_ = info.collection->playlists.begin();
+    auto& playlists = info.collection->playlists;
+    auto next = std::next(playlist_); // Move to next or wrap to begin
+    next = (next == playlists.end()) ? playlists.begin() : next;
 
-        // find the first playlist
-        if(!playlist_->second->empty()) 
+    // Loop until a non-empty playlist is found or we've checked all playlists
+    for (size_t i = 0; i < playlists.size(); ++i, next = std::next(next == playlists.end() ? playlists.begin() : next)) {
+        if (!next->second->empty()) {
+            playlist_ = next; // Update current playlist
             break;
-    }
-
-    playlistNextEnter();
-
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-    {
-        setActiveMenuItemsFromPlaylist(info, *it);
-    }
-    playlistChange();
-}
-
-void Page::prevPlaylist()
-{
-    MenuInfo_S &info = collections_.back();
-    size_t numlists = info.collection->playlists.size();
-    // save last playlist selected item
-    rememberSelectedItem();
-
-    for(size_t i = 0; i <= numlists; ++i)
-    {
-        // wrap
-        if(playlist_ == info.collection->playlists.begin())
-        {
-            playlist_ = info.collection->playlists.end();
         }
-        playlist_--;
-
-        // find the first playlist
-        if(!playlist_->second->empty()) 
-            break;
     }
 
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-    {
-        setActiveMenuItemsFromPlaylist(info, *it);
+    playlistNextEnter(); // Perform actions for entering the next playlist
+
+    // Update active menu items
+    for (ScrollingList* menu : activeMenu_) {
+        setActiveMenuItemsFromPlaylist(info, menu);
     }
-    playlistChange();
+    playlistChange(); // Notify about the playlist change
 }
+
+
+void Page::prevPlaylist() {
+    MenuInfo_S& info = collections_.back();
+    rememberSelectedItem(); // Save last playlist selected item
+
+    auto& playlists = info.collection->playlists;
+    auto prev = (playlist_ == playlists.begin()) ? playlists.end() : playlist_; // Wrap to end if at begin
+    prev = prev == playlists.begin() ? playlists.end() : std::prev(prev); // Move to prev or wrap to end
+
+    // Loop until a non-empty playlist is found or we've checked all playlists
+    for (size_t i = 0; i < playlists.size(); ++i, prev = (prev == playlists.begin() ? playlists.end() : std::prev(prev))) {
+        if (!prev->second->empty()) {
+            playlist_ = prev; // Update current playlist
+            break;
+        }
+    }
+
+    // Update active menu items
+    for (ScrollingList* menu : activeMenu_) {
+        setActiveMenuItemsFromPlaylist(info, menu);
+    }
+    playlistChange(); // Notify about the playlist change
+}
+
 
 
 void Page::selectPlaylist(const std::string& playlist)
@@ -1118,93 +1099,87 @@ void Page::updatePlaylistMenuPosition()
     }
 }
 
-void Page::nextCyclePlaylist(std::vector<std::string> list)
-{
-    // Empty list
-    if (list.empty())
-        return;
-    
-    std::string settingsPlaylist = "";
-    config_.getProperty("settingsPlaylist", settingsPlaylist);
+void Page::nextCyclePlaylist(std::vector<std::string> list) {
+    if (list.empty()) return;
 
-    // Find the current playlist in the list
-    auto it = list.begin();
-    while (it != list.end() && *it != getPlaylistName())
-        ++it;
-    
+    std::string settingsPlaylist;
+    config_.getProperty("settingsPlaylist", settingsPlaylist);
+    std::string currentPlaylist = getPlaylistName();
+
     playlistNextEnter();
 
-    // If current playlist not found, switch to the first found cycle playlist in the playlist list
-    if (it == list.end())
-    {
-        for (auto it2 = list.begin(); it2 != list.end(); ++it2)
-        {
-            if (*it2 != settingsPlaylist && playlistExists(*it2)) {
-                selectPlaylist(*it2);
-                break;
-            }
-        }
-    }
-    // Current playlist found; switch to the next found playlist in the list
-    else
-    {
-        for(;;)
-        {
-            ++it;
-            if (it == list.end()) 
-                it = list.begin(); // wrap
+    auto cycle = [&](const std::string& playlist) {
+        return playlist != settingsPlaylist && playlistExists(playlist);
+        };
 
-            if (*it != settingsPlaylist && playlistExists(*it)) {
-                selectPlaylist(*it);
-                break;
-            }
+    auto it = std::find(list.begin(), list.end(), currentPlaylist);
+    if (it == list.end()) {
+        // If current playlist not found, switch to the first valid playlist
+        auto foundIt = std::find_if(list.begin(), list.end(), cycle);
+        if (foundIt != list.end()) { // Check if a valid playlist was found
+            selectPlaylist(*foundIt);
         }
     }
-    
+    else {
+        // Start searching from the next item. Wrap around if at the end.
+        auto startIt = it;
+        do {
+            if (++it == list.end()) it = list.begin(); // wrap
+            if (it == startIt) break; // Prevent infinite loop if no valid playlist is found
+        } while (!cycle(*it) || it == startIt); // Added check to prevent re-selection of the start item if it's the only valid playlist
+
+        // Make sure to select the playlist if a valid one is found
+        if (cycle(*it) && it != startIt) {
+            selectPlaylist(*it);
+        }
+    }
 }
 
 
-void Page::prevCyclePlaylist(std::vector<std::string> list)
-{
-    // Empty list
-    if (list.empty())
-        return;
+void Page::prevCyclePlaylist(std::vector<std::string> list) {
+    if (list.empty()) return;
 
-    std::string settingsPlaylist = "";
+    std::string settingsPlaylist;
     config_.getProperty("settingsPlaylist", settingsPlaylist);
+    std::string currentPlaylist = getPlaylistName();
 
-    // Find the current playlist in the list
-    auto it = list.begin();
-    while (it != list.end() && *it != getPlaylistName())
-        ++it;
+    // Define a lambda to check for a valid playlist
+    auto isValidPlaylist = [&](const std::string& playlist) {
+        return playlist != settingsPlaylist && playlistExists(playlist);
+        };
 
-    // If current playlist not found, switch to the first found cycle playlist in the playlist list
-    if (it == list.end())
-    {
-        for (auto it2 = list.begin(); it2 != list.end(); ++it2)
-        {
-            if (*it2 != settingsPlaylist && playlistExists(*it2)) {
-                selectPlaylist(*it2);
-                break;
-            }
+    // Attempt to find the current playlist in the list
+    auto currentIt = std::find(list.begin(), list.end(), currentPlaylist);
+
+    if (currentIt == list.end()) {
+        // If current playlist not found, switch to the first valid playlist from the end
+        auto foundIt = std::find_if(list.rbegin(), list.rend(), isValidPlaylist).base();
+        if (foundIt != list.begin()) { // Adjust because base() moves past the found element
+            selectPlaylist(*--foundIt);
         }
     }
-    // Current playlist found; switch to the previous found playlist in the list
-    else
-    {
-        for(;;)
-        {
-            if (it == list.begin()) 
-                it = list.end(); // wrap
-            --it;
-            if (*it != settingsPlaylist && playlistExists(*it)) {
-                selectPlaylist(*it);
+    else {
+        // Current playlist found; switch to the previous found playlist in the list
+        auto startIt = currentIt; // Remember the start position to detect full cycles
+        do {
+            // Wrap to the end if we're at the beginning
+            if (currentIt == list.begin()) currentIt = list.end();
+            --currentIt; // Move to the previous item
+
+            // Check if the playlist is valid or if we've cycled through all options
+            if (isValidPlaylist(*currentIt) || currentIt == startIt) {
+                selectPlaylist(*currentIt);
                 break;
             }
-        }
+
+            // If we've wrapped around without finding a valid playlist, stop the loop
+            if (currentIt == list.begin()) {
+                break;
+            }
+        } while (true);
     }
-    
 }
+
 
 bool Page::playlistExists(const std::string& playlist)
 {
@@ -1293,14 +1268,13 @@ void Page::update(float dt) {
 }
 
 
-void Page::updateReloadables(float dt)
-{
-    for (auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        if (*it) {
-            (*it)->update(dt);
-        }
-    }
+void Page::updateReloadables(float dt) {
+    std::for_each(LayerComponents.begin(), LayerComponents.end(),
+        [dt](Component* component) {
+            if (component) {
+                component->update(dt);
+            }
+        });
 }
 
 void Page::cleanup()
@@ -1332,27 +1306,26 @@ void Page::cleanup()
 
 void Page::draw()
 {
-    for(unsigned int i = 0; i < NUM_LAYERS; ++i)
+    for (unsigned int i = 0; i < NUM_LAYERS; ++i)
     {
         // Drawing Components based on their layer
-        for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
+        for (auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
         {
-            if(*it && (*it)->baseViewInfo.Layer == i) 
+            if (*it && (*it)->baseViewInfo.Layer == i)
                 (*it)->draw();
         }
 
         // Drawing Menus
-        for(auto it = menus_.begin(); it != menus_.end(); ++it)
+        for (auto it = menus_.begin(); it != menus_.end(); ++it)
         {
-            for(auto it2 = it->begin(); it2 != it->end(); ++it2)
+            for (auto it2 = it->begin(); it2 != it->end(); ++it2)
             {
-                ScrollingList *menu = *it2;
+                ScrollingList* menu = *it2;
                 menu->draw(i);
             }
         }
     }
 }
-
 
 void Page::removePlaylist()
 {
@@ -1625,11 +1598,12 @@ void Page::scroll(bool forward) {
                     menu->scroll(forward);
                 }
             }
+            onNewScrollItemSelected();
             });
+
 
         // Wait for the scroll operation to complete
         scrollFuture.get();
-        onNewScrollItemSelected();
         if (highlightSoundChunk_) {
             highlightSoundChunk_->play();
         }
