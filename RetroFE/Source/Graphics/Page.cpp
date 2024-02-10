@@ -15,14 +15,12 @@
  */
 
 #include "Page.h"
-#include "ComponentItemBinding.h"
 #include "Component/Component.h"
 #include "../Collection/CollectionInfo.h"
 #include "Component/Text.h"
 #include "../Utility/Log.h"
 #include "Component/ScrollingList.h"
 #include "../Sound/Sound.h"
-#include "ComponentItemBindingBuilder.h"
 #include "PageBuilder.h"
 #include <algorithm>
 #include <sstream>
