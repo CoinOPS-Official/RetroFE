@@ -152,7 +152,7 @@ void Item::loadInfo(const std::string& path)
         else
         {
             std::stringstream ss;
-            ss << "Missing an assignment operator (=) on line " << lineCount;
+            ss << "Missing an assignment operator (=) on line " << lineCount << " " << path;
             LOG_ERROR("Item", ss.str());
         }
     }

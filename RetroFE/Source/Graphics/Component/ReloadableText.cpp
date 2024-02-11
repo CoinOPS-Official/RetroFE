@@ -296,14 +296,13 @@ void ReloadableText::ReloadTexture()
 				text    = "--:--:--";
         }
 
-        if (!selectedItem->leaf || systemMode_) // item is not a leaf
+        if (text == "" && (!selectedItem->leaf || systemMode_)) // item is not a leaf
         {
             (void)config_.getProperty("collections." + selectedItem->name + "." + type_, text );
         }
 
-        if (systemMode_) // Get the system information in stead
+        if (text == "" && systemMode_) // Get the system information in stead
         {
-            text = "";
             (void)config_.getProperty("collections." + page.getCollectionName() + "." + type_, text );
         }
 
