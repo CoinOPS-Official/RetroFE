@@ -17,20 +17,21 @@
 
 #include "Tween.h"
 #include <vector>
+#include <memory>
 
 class TweenSet
 {
 public:
     TweenSet();
-    TweenSet(TweenSet &copy);
+    TweenSet(const TweenSet& copy);
     TweenSet& operator=(const TweenSet& other);
     ~TweenSet();
-    void push(Tween * tween);
+    void push(std::unique_ptr<Tween> tween);
     void clear();
-    std::vector<Tween *> *tweens();
-    Tween *getTween(unsigned int index);
+    Tween* getTween(unsigned int index) const;
+
     size_t size() const;
 
 private:
-    std::vector<Tween *> set_;
+    std::vector<std::unique_ptr<Tween>> set_;
 };

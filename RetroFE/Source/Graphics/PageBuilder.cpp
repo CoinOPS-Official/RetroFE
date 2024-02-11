@@ -40,6 +40,7 @@
 #include <vector>
 #include <map>
 #include <filesystem>
+#include <memory>
 
 using namespace rapidxml;
 
@@ -1707,10 +1708,9 @@ void PageBuilder::getAnimationEvents(const xml_node<> *node, TweenSet &tweens)
 
                     // if in layout action has playlist="<current playlist name>" then perform action
                     std::string playlistFilter = playlist && playlist->value() ? playlist->value() : "";
-                    auto *t = new Tween(property, algorithm, fromValue, toValue, durationValue, playlistFilter);
-                    if (!fromDefined)
+                    auto t = std::make_unique<Tween>(property, algorithm, fromValue, toValue, Utils::convertFloat(durationXml->value()), playlistFilter);                    if (!fromDefined)
                       t->startDefined = false;
-                    tweens.push(t);
+                    tweens.push(std::move(t));
                 }
                 else
                 {

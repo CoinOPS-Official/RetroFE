@@ -17,23 +17,19 @@
 
 TweenSet::TweenSet() = default;
 
-TweenSet::TweenSet(TweenSet &copy)
-{
-    for(auto it = copy.set_.begin(); it != copy.set_.end(); it++)
-    {
-        auto *t = new Tween(**it);
-        set_.push_back(t);
+TweenSet::TweenSet(const TweenSet& copy) {
+    set_.reserve(copy.set_.size());
+    for (const auto& tween : copy.set_) {
+        set_.push_back(std::make_unique<Tween>(*tween));
     }
 }
 
 TweenSet& TweenSet::operator=(const TweenSet& other) {
-    if (this != &other) { // Check for self-assignment
-        clear(); // Clear existing resources
-
-        // Deep copy
-        for (auto const* tween : other.set_) {
-            auto* newTween = new Tween(*tween); // Assuming Tween has a suitable copy constructor
-            push(newTween);
+    if (this != &other) {
+        set_.clear(); // Clear existing tweens
+        set_.reserve(other.set_.size());
+        for (const auto& tween : other.set_) {
+            set_.push_back(std::make_unique<Tween>(*tween));
         }
     }
     return *this;
@@ -45,28 +41,19 @@ TweenSet::~TweenSet()
     clear();
 }
 
-void TweenSet::push(Tween *tween)
-{
-    set_.push_back(tween);
+void TweenSet::push(std::unique_ptr<Tween> tween) {
+    set_.push_back(std::move(tween));
 }
 
-void TweenSet::clear()
-{
-    for(Tween* tween : set_)
-    {
-        delete tween;
-    }
+void TweenSet::clear() {
     set_.clear();
 }
 
-std::vector<Tween *> *TweenSet::tweens()
-{
-    return &set_;
-}
-
-Tween *TweenSet::getTween(unsigned int index)
-{
-    return set_[index];
+Tween* TweenSet::getTween(unsigned int index) const {
+    if (index < set_.size()) {
+        return set_[index].get();
+    }
+    return nullptr;
 }
 
 
