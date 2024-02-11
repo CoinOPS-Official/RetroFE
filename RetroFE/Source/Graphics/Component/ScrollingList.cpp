@@ -672,26 +672,26 @@ size_t ScrollingList::getSize() const
     return items_->size();
 }
 
-void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *currentViewInfo, ViewInfo *nextViewInfo, double scrollTime ) const
-{
-    if ( !c ) return;
-    if ( !sets ) return;
-    if ( !currentViewInfo ) return;
-    if ( !nextViewInfo ) return;
+void ScrollingList::resetTweens(Component* c, AnimationEvents* sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const {
+    if (!c) return;
+    if (!sets) return;
+    if (!currentViewInfo) return;
+    if (!nextViewInfo) return;
 
-    currentViewInfo->ImageHeight  = c->baseViewInfo.ImageHeight;
-    currentViewInfo->ImageWidth   = c->baseViewInfo.ImageWidth;
-    nextViewInfo->ImageHeight     = c->baseViewInfo.ImageHeight;
-    nextViewInfo->ImageWidth      = c->baseViewInfo.ImageWidth;
+    currentViewInfo->ImageHeight = c->baseViewInfo.ImageHeight;
+    currentViewInfo->ImageWidth = c->baseViewInfo.ImageWidth;
+    nextViewInfo->ImageHeight = c->baseViewInfo.ImageHeight;
+    nextViewInfo->ImageWidth = c->baseViewInfo.ImageWidth;
     nextViewInfo->BackgroundAlpha = c->baseViewInfo.BackgroundAlpha;
 
-    c->setTweens(sets );
+    c->setTweens(sets);
 
-    Animation *scrollTween = sets->getAnimation("menuScroll" );
-    scrollTween->Clear( );
+    Animation* scrollTween = sets->getAnimation("menuScroll");
+    scrollTween->Clear();
     c->baseViewInfo = *currentViewInfo;
 
-    auto *set = new TweenSet( );
+    // Use std::make_unique to create a unique_ptr for the TweenSet
+    auto set = std::make_unique<TweenSet>();
     // don't trigger video restart if scrolling fast 
     if (currentViewInfo->Restart && scrollPeriod_ > minScrollTime_)
         set->push(new Tween(TWEEN_PROPERTY_RESTART, LINEAR, currentViewInfo->Restart, nextViewInfo->Restart, 0));
@@ -714,7 +714,7 @@ void ScrollingList::resetTweens( Component *c, AnimationEvents *sets, ViewInfo *
     set->push(new Tween(TWEEN_PROPERTY_VOLUME, LINEAR, currentViewInfo->Volume, nextViewInfo->Volume, scrollTime ) );
     set->push(new Tween(TWEEN_PROPERTY_MONITOR, LINEAR, currentViewInfo->Monitor, nextViewInfo->Monitor, scrollTime ) );
 
-    scrollTween->Push( set );
+    scrollTween->Push(std::move(set));
 }
 
 bool ScrollingList::allocateTexture( size_t index, const Item *item )

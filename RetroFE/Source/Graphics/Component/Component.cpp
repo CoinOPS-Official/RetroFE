@@ -233,47 +233,40 @@ void Component::draw()
     }
 }
 
-bool Component::animate()
-{
+bool Component::animate() {
     bool completeDone = false;
-    if ( !currentTweens_ || currentTweenIndex_ >= currentTweens_->size() )
-    {
+    if (!currentTweens_ || currentTweenIndex_ >= currentTweens_->size()) {
         completeDone = true;
     }
-    else if ( currentTweens_ )
-    {
+    else {
         bool currentDone = true;
-        TweenSet *tweens = currentTweens_->tweenSet(currentTweenIndex_);
+        TweenSet* tweens = currentTweens_->tweenSet(currentTweenIndex_);
+        if (!tweens) return true; // Additional check for safety
+
         std::string playlist;
         bool foundFiltered;
-        for(unsigned int i = 0; i < tweens->size(); i++)
-        {
-            Tween const *tween = tweens->tweens()->at(i);
+
+        for (unsigned int i = 0; i < tweens->size(); i++) {
+            Tween const* tween = tweens->getTween(i);
+
             // only animate if filter matches current playlist or in playlist1,playlist2,playlist3
-            if (tween->playlistFilter != "" && playlistName != "") {
+            if (!tween->playlistFilter.empty() && !playlistName.empty()) {
                 foundFiltered = false;
                 std::stringstream ss(tween->playlistFilter);
-                playlist = "";
-                while (ss.good())
-                {
-                    getline(ss, playlist, ',');
+                while (getline(ss, playlist, ',')) {
                     if (playlistName == playlist) {
                         foundFiltered = true;
                         break;
                     }
                 }
-                // didn't find match, skip
-                if (!foundFiltered) {
-                    continue;
-                }
+                if (!foundFiltered) continue; // didn't find match, skip
             }
-            double elapsedTime = elapsedTweenTime_;
 
-            //todo: too many levels of nesting
-            if ( elapsedTime < tween->duration )
+            double elapsedTime = elapsedTweenTime_;
+            if (elapsedTime < tween->duration)
                 currentDone = false;
             else
-                elapsedTime = static_cast<float>(tween->duration);
+                elapsedTime = tween->duration;
 
             switch (tween->property)
             {
@@ -432,16 +425,14 @@ bool Component::animate()
             }
         }
 
-        if ( currentDone )
-        {
+        if (currentDone) {
             currentTweenIndex_++;
             elapsedTweenTime_ = 0;
-            storeViewInfo_    = baseViewInfo;
+            storeViewInfo_ = baseViewInfo;
         }
     }
 
-    if ( !currentTweens_ || currentTweenIndex_ >= currentTweens_->tweenSets()->size() )
-    {
+    if (!currentTweens_ || currentTweenIndex_ >= currentTweens_->size()) {
         completeDone = true;
     }
 

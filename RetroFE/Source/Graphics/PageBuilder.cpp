@@ -991,7 +991,7 @@ void PageBuilder::loadTweens(Component *c, xml_node<> *componentXml)
     c->setTweens(createTweenInstance(componentXml));
 }
 
-AnimationEvents *PageBuilder::createTweenInstance(xml_node<> *componentXml)
+AnimationEvents *PageBuilder::createTweenInstance(rapidxml::xml_node<> *componentXml)
 {
     auto *tweens = new AnimationEvents();
 
@@ -1560,15 +1560,15 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
     }
 }
 
-void PageBuilder::getTweenSet(const xml_node<> *node, Animation *animation)
-{
-    if(node)
-    {
-        for(xml_node<> *set = node->first_node("set"); set; set = set->next_sibling("set"))
-        {
-            auto *ts = new TweenSet();
+void PageBuilder::getTweenSet(const xml_node<>* node, Animation* animation) {
+    if (node) {
+        for (xml_node<>* set = node->first_node("set"); set; set = set->next_sibling("set")) {
+            // Create a unique_ptr to manage the TweenSet instance.
+            auto ts = std::make_unique<TweenSet>();
             getAnimationEvents(set, *ts);
-            animation->Push(ts);
+
+            // Use std::move to transfer ownership of the unique_ptr to the Animation instance.
+            animation->Push(std::move(ts));
         }
     }
 }

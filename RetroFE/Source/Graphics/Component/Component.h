@@ -23,6 +23,8 @@
 #include "../Animate/Tween.h"
 #include "../Animate/AnimationEvents.h"
 #include "../../Collection/Item.h"
+#include <memory>
+
 class Component
 {
 public:

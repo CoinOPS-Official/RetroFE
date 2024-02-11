@@ -16,25 +16,25 @@
 
 #include "Animation.h"
 #include <string>
+#include <memory>
 
 Animation::Animation() = default;
 
-Animation::Animation(Animation& copy)
-{
-    for (auto* tweenSet : copy.animationVector_)
-    {
-        Push(new TweenSet(*tweenSet));
+Animation::Animation(const Animation& copy) {
+    for (const auto& tweenSet : copy.animationVector_) {
+        // Make a deep copy of each TweenSet and store it in a std::unique_ptr
+        animationVector_.push_back(std::make_unique<TweenSet>(*tweenSet));
     }
 }
 
 Animation& Animation::operator=(const Animation& other) {
-    if (this != &other) { // Check for self-assignment
-        Clear(); // Clear existing resources
+    if (this != &other) { // Protection against self-assignment
+        // Clear existing resources
+        Clear();
 
-        // Deep copy
-        for (auto* tweenSet : other.animationVector_) {
-            TweenSet* newTweenSet = new TweenSet(*tweenSet); // Deep copy of TweenSet
-            Push(newTweenSet);
+        // Deep copy each TweenSet
+        for (const auto& tweenSet : other.animationVector_) {
+            animationVector_.push_back(std::make_unique<TweenSet>(*tweenSet));
         }
     }
     return *this;
@@ -45,28 +45,24 @@ Animation::~Animation()
     Clear();
 }
 
-void Animation::Push(TweenSet *set)
-{
-    animationVector_.push_back(set);
+void Animation::Push(std::unique_ptr<TweenSet> set) {
+    animationVector_.push_back(std::move(set));
 }
 
-void Animation::Clear()
-{
-    for (TweenSet* set : animationVector_) {
-        delete set;
-    }
+void Animation::Clear() {
     animationVector_.clear();
 }
 
 
-std::vector<TweenSet *> *Animation::tweenSets()
-{
-    return &animationVector_;
-}
 
-TweenSet *Animation::tweenSet(unsigned int index)
-{
-    return animationVector_[index];
+TweenSet* Animation::tweenSet(unsigned int index) {
+    if (index < animationVector_.size()) {
+        return animationVector_[index].get(); // Use get() to obtain the raw pointer
+    }
+    else {
+        // Handle the error or return nullptr if the index is out of bounds
+        return nullptr;
+    }
 }
 
 
