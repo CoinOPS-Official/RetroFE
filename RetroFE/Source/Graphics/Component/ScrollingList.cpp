@@ -160,8 +160,7 @@ void ScrollingList::deallocateSpritePoints( )
     }
 }
 
-void ScrollingList::allocateSpritePoints()
-{
+void ScrollingList::allocateSpritePoints() {
     if (!items_ || items_->empty()) return;
     if (!scrollPoints_ || scrollPoints_->empty()) return;
     if (components_.empty()) return;
@@ -169,28 +168,26 @@ void ScrollingList::allocateSpritePoints()
     size_t itemsSize = items_->size();
     size_t scrollPointsSize = scrollPoints_->size();
 
-    for (size_t i = 0; i < scrollPointsSize; ++i)
-    {
+    for (size_t i = 0; i < scrollPointsSize; ++i) {
         size_t index = loopIncrement(itemIndex_, i, itemsSize);
-        Item const* item = (*items_)[index];  // using [] instead of at()
+        Item const* item = (*items_)[index];  // Direct access, consider bounds checking if uncertain
 
-        Component* old = components_[i];  // using [] instead of at()
+        Component* oldComponent = components_[i];  // Capture the old component before potentially reallocating
 
-        allocateTexture(i, item);
+        allocateTexture(i, item);  // This might reallocate or modify components_[i]
 
-        Component* c = components_[i];  // using [] instead of at()
-        if (c)
-        {
-            c->allocateGraphicsMemory();
+        // After allocateTexture, directly work with the (potentially new) component
+        Component* newComponent = components_[i];
+        if (newComponent) {
+            newComponent->allocateGraphicsMemory();
 
-            ViewInfo* view = (*scrollPoints_)[i];  // using [] instead of at()
+            ViewInfo* view = (*scrollPoints_)[i];  // Direct access, same consideration as above
 
-            resetTweens(c, (*tweenPoints_)[i], view, view, 0);  // using [] instead of at()
+            resetTweens(newComponent, (*tweenPoints_)[i], view, view, 0);
 
-            if (old && !newItemSelected)
-            {
-                c->baseViewInfo = old->baseViewInfo;
-                delete old;
+            if (oldComponent && !newItemSelected) {
+                newComponent->baseViewInfo = oldComponent->baseViewInfo;
+                delete oldComponent;  // Deleting old component after ensuring it's no longer needed
             }
         }
     }
@@ -1028,16 +1025,11 @@ void ScrollingList::deallocateTexture( size_t index )
     }
 }
 
-void ScrollingList::draw(unsigned int layer)
-{
-    size_t componentSize = components_.size();
-    
-    if (componentSize == 0) return;
-
-    for (unsigned int i = 0; i < componentSize; ++i)
-    {
-        Component *c = components_[i];
-        if (c && c->baseViewInfo.Layer == layer) c->draw();
+void ScrollingList::draw(unsigned int layer) {
+    for (auto* c : components_) {
+        if (c && c->baseViewInfo.Layer == layer) {
+            c->draw();
+        }
     }
 }
 
@@ -1048,18 +1040,15 @@ bool ScrollingList::isScrollingListIdle() const {
         });
 }
 
-bool ScrollingList::isScrollingListAttractIdle(  )
-{
-    size_t componentSize = components_.size();
-    if ( !Component::isAttractIdle(  ) ) return false;
+bool ScrollingList::isScrollingListAttractIdle() {
+    // Check the global attract idle state first
+    if (!Component::isAttractIdle()) return false;
 
-    for ( unsigned int i = 0; i < componentSize; ++i )
-    {
-        Component const *c = components_[i];
-        if ( c && !c->isAttractIdle(  ) ) return false;
-    }
-
-    return true;
+    // Now check each component in the list
+    return std::all_of(components_.begin(), components_.end(),
+        [](Component const* c) {
+            return c ? c->isAttractIdle() : true;
+        });
 }
 
 void ScrollingList::resetScrollPeriod(  )

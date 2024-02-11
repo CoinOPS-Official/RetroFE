@@ -64,7 +64,7 @@ public:
     void favPlaylist();
     void nextPlaylist();
     void prevPlaylist();
-    void selectPlaylist(const std::string& playlist);
+    void selectPlaylist(const std::string_view& playlist);
     void nextCyclePlaylist(std::vector<std::string> list);
     void prevCyclePlaylist(std::vector<std::string> list);
     void pushMenu(ScrollingList *s, int index = -1);
@@ -121,7 +121,7 @@ public:
     void  setMinShowTime(float value);
     float getMinShowTime() const;
     std::string controlsType() const;
-    void setControlsType(const std::string& type);
+    void setControlsType(const std::string_view& type);
     void  menuScroll();
     void  highlightEnter();
     void  highlightExit();

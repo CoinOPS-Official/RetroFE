@@ -486,7 +486,7 @@ std::string Page::controlsType() const
     return controlsType_;
 }
 
-void Page::setControlsType(const std::string& type)
+void Page::setControlsType(const std::string_view& type)
 {
     controlsType_ = type;
 }
@@ -735,20 +735,20 @@ void Page::pageScroll(ScrollDirection direction) {
         });
 }
 
-void Page::selectRandom()
-{
+void Page::selectRandom() {
     ScrollingList* amenu = getAnActiveMenu();
     if (!amenu) return;
 
     amenu->random();
     size_t index = amenu->getScrollOffsetIndex();
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-    {
-        ScrollingList *menu = *it;
-        if (menu && !menu->isPlaylist())
+
+    for (ScrollingList* menu : activeMenu_) {
+        if (menu && !menu->isPlaylist()) {
             menu->setScrollOffsetIndex(index);
+        }
     }
 }
+
 
 void Page::selectRandomPlaylist(CollectionInfo* collection, std::vector<std::string> cycleVector)
 {
@@ -778,67 +778,66 @@ void Page::selectRandomPlaylist(CollectionInfo* collection, std::vector<std::str
         selectPlaylist(playlistName);
 }
 
-void Page::letterScroll(ScrollDirection direction)
-{
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-    {
-        ScrollingList *menu = *it;
-        if(menu && !menu->isPlaylist())
-        {
-            if(direction == ScrollDirectionForward)
-            {
+void Page::letterScroll(ScrollDirection direction) {
+    std::for_each(activeMenu_.begin(), activeMenu_.end(), [direction](ScrollingList* menu) {
+        if (menu && !menu->isPlaylist()) {
+            switch (direction) {
+            case ScrollDirectionForward:
                 menu->letterDown();
-            }
-            if(direction == ScrollDirectionBack)
-            {
+                break;
+            case ScrollDirectionBack:
                 menu->letterUp();
+                break;
+            default:
+                // Handle unexpected direction if necessary
+                break;
             }
         }
-    }
+        });
 }
 
 // if playlist is same name as metadata to sort upon, then jump by unique sorted metadata
-void Page::metaScroll(ScrollDirection direction, std::string attribute)
-{
-    std::transform(attribute.begin(), attribute.end(), attribute.begin(), ::tolower);
+void Page::metaScroll(ScrollDirection direction, std::string attribute) {
+    // Convert attribute to lower case
+    std::transform(attribute.begin(), attribute.end(), attribute.begin(),
+        [](unsigned char c) { return std::tolower(c); });
 
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-    {
-        ScrollingList *menu = *it;
-        if(menu && !menu->isPlaylist())
-        {
-            if(direction == ScrollDirectionForward)
-            {
+    // Use std::for_each to iterate over activeMenu_ and apply the scroll operation
+    std::for_each(activeMenu_.begin(), activeMenu_.end(), [&](ScrollingList* menu) {
+        if (menu && !menu->isPlaylist()) {
+            switch (direction) {
+            case ScrollDirectionForward:
                 menu->metaDown(attribute);
-            }
-            if(direction == ScrollDirectionBack)
-            {
+                break;
+            case ScrollDirectionBack:
                 menu->metaUp(attribute);
+                break;
+            default:
+                // Optionally handle unexpected direction
+                break;
             }
         }
-    }
+        });
 }
 
 
-void Page::cfwLetterSubScroll(ScrollDirection direction)
-{
-    for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-    {
-        ScrollingList *menu = *it;
-        if(menu && !menu->isPlaylist())
-        {
-            if(direction == ScrollDirectionForward)
-            {
+void Page::cfwLetterSubScroll(ScrollDirection direction) {
+    std::for_each(activeMenu_.begin(), activeMenu_.end(), [direction](ScrollingList* menu) {
+        if (menu && !menu->isPlaylist()) {
+            switch (direction) {
+            case ScrollDirectionForward:
                 menu->cfwLetterSubDown();
-            }
-            if(direction == ScrollDirectionBack)
-            {
+                break;
+            case ScrollDirectionBack:
                 menu->cfwLetterSubUp();
+                break;
+            default:
+                // Optionally handle unexpected direction
+                break;
             }
         }
-    }
+        });
 }
-
 
 size_t Page::getCollectionSize()
 {
@@ -858,35 +857,28 @@ size_t Page::getSelectedIndex()
 }
 
 
-bool Page::pushCollection(CollectionInfo *collection)
-{
-    if (!collection) {
-        return false;
-    }
+bool Page::pushCollection(CollectionInfo* collection) {
+    if (!collection) return false;
 
-    // grow the menu as needed
-    if(menus_.size() <= menuDepth_ && getAnActiveMenu())
-    {
-        for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-        {
-            ScrollingList const *menu    = *it;
-            auto *newMenu = new ScrollingList(*menu);
+    // Grow the menu as needed
+    if (menus_.size() <= menuDepth_ && getAnActiveMenu()) {
+        for (const auto* menu : activeMenu_) {
+            auto* newMenu = new ScrollingList(*menu);
             if (newMenu->isPlaylist()) {
                 playlistMenu_ = newMenu;
             }
             pushMenu(newMenu, menuDepth_);
         }
     }
-    if (menus_.size()) {
+
+    if (!menus_.empty()) {
         activeMenu_ = menus_[menuDepth_];
         anActiveMenu_ = nullptr;
         selectedItem_ = nullptr;
-        for (auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-        {
-            ScrollingList* menu = *it;
+        for (auto* menu : activeMenu_) {
+            if (!menu) continue;
             menu->collectionName = collection->name;
-            // add playlist menu items
-            if (menu->isPlaylist() && collection->playlistItems.size()) {
+            if (menu->isPlaylist() && !collection->playlistItems.empty()) {
                 menu->setItems(&collection->playlistItems);
             }
             else {
@@ -899,7 +891,7 @@ bool Page::pushCollection(CollectionInfo *collection)
         LOG_WARNING("RetroFE", "layout.xml doesn't have any menus");
     }
 
-    // build the collection info instance
+    // Build the collection info instance
     MenuInfo_S info;
     info.collection = collection;
     info.playlist = collection->playlists.begin();
@@ -908,14 +900,12 @@ bool Page::pushCollection(CollectionInfo *collection)
 
     playlist_ = info.playlist;
     playlistChange();
-    if(menuDepth_ < menus_.size())
-    {
+    if (menuDepth_ < menus_.size()) {
         menuDepth_++;
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->collectionName = collection->name;
+    for (auto* component : LayerComponents) {
+        if (component) component->collectionName = collection->name;
     }
 
     return true;
@@ -1053,7 +1043,7 @@ void Page::prevPlaylist() {
 
 
 
-void Page::selectPlaylist(const std::string& playlist)
+void Page::selectPlaylist(const std::string_view& playlist)
 {
     MenuInfo_S &info = collections_.back();
     //info.collection->saveFavorites();
@@ -1197,7 +1187,7 @@ void Page::update(float dt) {
 
         // Future for asynchronous update of ScrollingLists within menus_
         auto menuUpdateFuture = pool_.enqueue([this, dt, playlistName]() {
-            for (auto& menuList : menus_) {
+            for (auto const& menuList : menus_) {
                 for (auto* menu : menuList) {
                     menu->playlistName = playlistName;
                     menu->update(dt);
@@ -1232,7 +1222,7 @@ void Page::update(float dt) {
     else {
         // Synchronous (non-threaded) version for OpenGL backend
 
-        for (auto& menuList : menus_) {
+        for (auto const& menuList : menus_) {
             for (auto* menu : menuList) {
                 menu->playlistName = playlistName;
                 menu->update(dt);
@@ -1306,24 +1296,29 @@ void Page::draw()
 {
     for (unsigned int i = 0; i < NUM_LAYERS; ++i)
     {
-        // Drawing Components based on their layer
-        for (auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
+        // Drawing Components based on their layer with range-based for-loop
+        for (auto* component : LayerComponents)
         {
-            if (*it && (*it)->baseViewInfo.Layer == i)
-                (*it)->draw();
+            if (component && component->baseViewInfo.Layer == i)
+            {
+                component->draw();
+            }
         }
 
-        // Drawing Menus
-        for (auto it = menus_.begin(); it != menus_.end(); ++it)
+        // Drawing Menus with range-based for-loop
+        for (const auto& menuList : menus_)
         {
-            for (auto it2 = it->begin(); it2 != it->end(); ++it2)
+            for (ScrollingList* menu : menuList)
             {
-                ScrollingList* menu = *it2;
-                menu->draw(i);
+                if (menu) // Checking for nullptr just in case
+                {
+                    menu->draw(i);
+                }
             }
         }
     }
 }
+
 
 void Page::removePlaylist()
 {
