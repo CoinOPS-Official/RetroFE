@@ -74,7 +74,7 @@ public:
     void triggerEventOnAll(const std::string& event, int menuIndex);;
 
     bool allocateTexture(size_t index, const Item* i);
-    void buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType);
+    void buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) const;
     void deallocateTexture(size_t index);
     void setItems(std::vector<Item*>* items);
     void selectItemByName(std::string_view name);
@@ -107,7 +107,7 @@ public:
     void allocateGraphicsMemory() override;
     void freeGraphicsMemory() override;
     bool update(float dt) override;
-    void draw(unsigned int layer);
+    void draw(unsigned int layer) const;
     void setScrollAcceleration(float value);
     void setStartScrollTime(float value);
     void setMinScrollTime(float value);
