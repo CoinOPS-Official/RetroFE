@@ -1026,29 +1026,25 @@ void ScrollingList::draw(unsigned int layer) const {
 	}
 }
 
-bool ScrollingList::isScrollingListIdle() const
-{
-	size_t componentSize = components_.size();
+bool ScrollingList::isScrollingListIdle() const {
+	// Check the ScrollingList's own idle state first
 	if (!Component::isIdle()) return false;
 
-	for (unsigned int i = 0; i < componentSize; ++i)
-	{
-		Component const* c = components_[i];
-		if (c && !c->isIdle()) return false;
+	// Now check each component in the list
+	for (const auto& c : components_) {
+		if (c != nullptr && !c->isIdle()) return false;
 	}
 
 	return true;
 }
 
-bool ScrollingList::isScrollingListAttractIdle()
-{
-	size_t componentSize = components_.size();
+bool ScrollingList::isScrollingListAttractIdle() const {
+	// Check the global attract idle state first
 	if (!Component::isAttractIdle()) return false;
 
-	for (unsigned int i = 0; i < componentSize; ++i)
-	{
-		Component const* c = components_[i];
-		if (c && !c->isAttractIdle()) return false;
+	// Now check each component in the list
+	for (const auto& c : components_) {
+		if (c != nullptr && !c->isAttractIdle()) return false;
 	}
 
 	return true;
