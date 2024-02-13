@@ -1026,22 +1026,32 @@ void ScrollingList::draw(unsigned int layer) const {
 	}
 }
 
-bool ScrollingList::isScrollingListIdle() const {
-	return std::all_of(components_.begin(), components_.end(),
-		[](const Component* c) {
-			return c != nullptr && c->isIdle();
-		});
+bool ScrollingList::isScrollingListIdle() const
+{
+	size_t componentSize = components_.size();
+	if (!Component::isIdle()) return false;
+
+	for (unsigned int i = 0; i < componentSize; ++i)
+	{
+		Component const* c = components_[i];
+		if (c && !c->isIdle()) return false;
+	}
+
+	return true;
 }
 
-bool ScrollingList::isScrollingListAttractIdle() {
-	// Check the global attract idle state first
+bool ScrollingList::isScrollingListAttractIdle()
+{
+	size_t componentSize = components_.size();
 	if (!Component::isAttractIdle()) return false;
 
-	// Now check each component in the list
-	return std::all_of(components_.begin(), components_.end(),
-		[](Component const* c) {
-			return c ? c->isAttractIdle() : true;
-		});
+	for (unsigned int i = 0; i < componentSize; ++i)
+	{
+		Component const* c = components_[i];
+		if (c && !c->isAttractIdle()) return false;
+	}
+
+	return true;
 }
 
 void ScrollingList::resetScrollPeriod()
