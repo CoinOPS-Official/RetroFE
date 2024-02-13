@@ -291,58 +291,60 @@ bool Page::addComponent(Component *c)
 
 
 bool Page::isMenuIdle() {
-    // Check if all menu lists are idle
-    return std::all_of(menus_.begin(), menus_.end(),
+    // Check if any menu list is not idle
+    return !std::any_of(menus_.begin(), menus_.end(),
         [](const auto& menuList) {
-            // Within each menu list, check if all menus are idle
-            return std::all_of(menuList.begin(), menuList.end(),
+            // Check if any menu within each menu list is not idle
+            return std::any_of(menuList.begin(), menuList.end(),
             [](const ScrollingList* menu) {
-                    return menu->isScrollingListIdle();
+                    return !menu->isScrollingListIdle();
                 });
         });
 }
 
 
+
 bool Page::isIdle() {
-    // If the menu is not idle, the page cannot be idle.
+    // Check if the menu is not idle, indicating the page is not idle.
     if (!isMenuIdle()) {
         return false;
     }
 
-    // Check if all components are idle using std::all_of
-    return std::all_of(LayerComponents.begin(), LayerComponents.end(),
+    // Check if any component is not idle
+    return !std::any_of(LayerComponents.begin(), LayerComponents.end(),
         [](const Component* component) {
-            return component && component->isIdle();
+            return component && !component->isIdle();
         });
 }
+
 
 
 bool Page::isAttractIdle() {
-    // Check if all menus are attract idle
-    bool menusIdle = std::all_of(menus_.begin(), menus_.end(),
+    // Check if any menus are not attract idle
+    if (std::any_of(menus_.begin(), menus_.end(),
         [](const auto& menuList) {
-            return std::all_of(menuList.begin(), menuList.end(),
+            return std::any_of(menuList.begin(), menuList.end(),
             [](const ScrollingList* menu) {
-                    return menu->isAttractIdle();
+                    return !menu->isAttractIdle();
                 });
-        });
-
-    if (!menusIdle) {
+        })) {
         return false;
     }
 
-    // Check if all layer components are attract idle
-    return std::all_of(LayerComponents.begin(), LayerComponents.end(),
+    // Check if any layer components are not attract idle
+    return !std::any_of(LayerComponents.begin(), LayerComponents.end(),
         [](const Component* component) {
-            return component->isAttractIdle();
+            return !component->isAttractIdle();
         });
 }
 
 
+
 bool Page::isGraphicsIdle() {
-    return std::all_of(LayerComponents.begin(), LayerComponents.end(),
+    // Check if any graphics component is not idle
+    return !std::any_of(LayerComponents.begin(), LayerComponents.end(),
         [](const Component* component) {
-            return component->isIdle();
+            return !component->isIdle();
         });
 }
 

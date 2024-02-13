@@ -1031,11 +1031,8 @@ bool ScrollingList::isScrollingListIdle() const {
 	if (!Component::isIdle()) return false;
 
 	// Now check each component in the list
-	for (const auto& c : components_) {
-		if (c != nullptr && !c->isIdle()) return false;
-	}
-
-	return true;
+	return !std::any_of(components_.begin(), components_.end(),
+		[](const auto& c) { return c != nullptr && !c->isIdle(); });
 }
 
 bool ScrollingList::isScrollingListAttractIdle() const {
@@ -1043,11 +1040,8 @@ bool ScrollingList::isScrollingListAttractIdle() const {
 	if (!Component::isAttractIdle()) return false;
 
 	// Now check each component in the list
-	for (const auto& c : components_) {
-		if (c != nullptr && !c->isAttractIdle()) return false;
-	}
-
-	return true;
+	return !std::any_of(components_.begin(), components_.end(),
+		[](const auto& c) { return c != nullptr && !c->isAttractIdle(); });
 }
 
 void ScrollingList::resetScrollPeriod()
