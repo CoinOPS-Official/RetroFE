@@ -171,34 +171,23 @@ void GStreamerVideo::freeElements()
     if(videoBus_)
     {
         gst_object_unref(videoBus_);
-        videoBus_ = nullptr;
     }
 
     // Unref the playbin
     if(playbin_)
     {
         gst_object_unref(playbin_);
-        playbin_ = nullptr;
+
     }
 
-    // Unref caps associated with video conversion
-    if(videoConvertCaps_)
-    {
-        gst_caps_unref(videoConvertCaps_);
-        videoConvertCaps_ = nullptr;
-    }
-
-    // Unref the capsFilter
-    if (capsFilter_)
-    {
-        gst_object_unref(capsFilter_);
-        capsFilter_ = nullptr;
-    }
-
-    // Nullify video elements
-    videoSink_    = nullptr;
+    
+    videoBus_ = nullptr;
+    playbin_ = nullptr;
+    videoBin_ = nullptr;
     videoConvert_ = nullptr;
-    videoBin_     = nullptr;
+    videoConvertCaps_ = nullptr;
+    capsFilter_ = nullptr;
+    videoSink_ = nullptr;
 }
 
 
@@ -251,6 +240,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
     g_free(uriFile);
     elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
     videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+    gst_object_unref(videoBus_);
     g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, nullptr);
     handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
 
@@ -278,7 +268,7 @@ bool GStreamerVideo::createAndLinkGstElements()
 
     g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, "enable-last-sample", FALSE, nullptr);
     g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, nullptr);
-
+    gst_caps_unref(videoConvertCaps_);
     gst_bin_add_many(GST_BIN(videoBin_), videoConvert_, capsFilter_, videoSink_, nullptr);
     if (!gst_element_link_many(videoConvert_, capsFilter_, videoSink_, nullptr))
     {
