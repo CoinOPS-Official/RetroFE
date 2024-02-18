@@ -167,7 +167,7 @@ bool GStreamerVideo::stop()
 
 void GStreamerVideo::freeElements()
 {
-    //Unref the video bus
+    // Unref the video bus
     if(videoBus_)
     {
         gst_object_unref(videoBus_);
@@ -240,7 +240,6 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
     g_free(uriFile);
     elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
     videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-    //gst_object_unref(videoBus_);
     g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, nullptr);
     handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
 
