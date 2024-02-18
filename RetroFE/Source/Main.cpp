@@ -63,6 +63,50 @@ bool initializeMetadataDatabase(MetadataDatabase*& metadb, DB* db, Configuration
     return true;
 }
 
+
+static void attachToConsoleIfAvailable() {
+#ifdef _WIN32
+    if (!AttachConsole(ATTACH_PARENT_PROCESS)) {
+        // Attaching to the console failed, indicating there is no console to attach to.
+        return;
+    }
+
+    // Redirect standard input, output, and error streams to the attached console.
+    freopen("CONIN$", "r", stdin);
+    freopen("CONOUT$", "w", stdout);
+    freopen("CONOUT$", "w", stderr);
+
+    // Clear any error states for the C++ standard streams.
+    std::cin.clear();
+    std::cout.clear();
+    std::cerr.clear();
+
+    std::wcin.clear();
+    std::wcout.clear();
+    std::wcerr.clear();
+#endif
+}
+
+static void sendEnterKey() {
+#ifdef _WIN32
+    INPUT ip;
+    // Set up a generic keyboard event.
+    ip.type = INPUT_KEYBOARD;
+    ip.ki.wScan = 0; // hardware scan code for key
+    ip.ki.time = 0;
+    ip.ki.dwExtraInfo = 0;
+
+    // Send the "Enter" key
+    ip.ki.wVk = 0x0D; // virtual-key code for the "Enter" key
+    ip.ki.dwFlags = 0; // 0 for key press
+    SendInput(1, &ip, sizeof(INPUT));
+
+    // Release the "Enter" key
+    ip.ki.dwFlags = KEYEVENTF_KEYUP; // KEYEVENTF_KEYUP for key release
+    SendInput(1, &ip, sizeof(INPUT));
+#endif
+}
+
 //
 // Main starts here
 //
@@ -76,6 +120,8 @@ int main(int argc, char** argv)
     // Check to see if an argument was passed
     if (argc > 1)
     {
+        attachToConsoleIfAvailable();
+        
         std::string program = argv[0];
         std::string param = argv[1];
         
@@ -98,7 +144,7 @@ int main(int argc, char** argv)
             }
             else
             {
-                std::cout << "Expected at least 1 argument for -createcollection, got " << argc - 2 << std::endl;
+                std::cout << std::endl << "Expected at least 1 argument for -createcollection, got " << argc - 2 << std::endl;
                 return 0;
             }
         }
@@ -106,7 +152,8 @@ int main(int argc, char** argv)
             param == "--version" ||
             param == "-v")
         {
-            std::cout << "RetroFE version " << Version::getString() << std::endl << std::flush;
+            std::cout << std::endl << "RetroFE version " << Version::getString() << std::endl << std::flush;
+            sendEnterKey();
             return 0;
         }
         else if (param == "-showusage" ||
@@ -114,7 +161,10 @@ int main(int argc, char** argv)
             param == "-su")
         {
             // List all available global settings and there use
+            std::cout << std::endl;
             showUsage(global_options::s_option_entries);
+            std::cout.flush();
+            sendEnterKey();
             return 0;
         }
         else if (param == "-rebuilddatabase" ||
@@ -144,7 +194,10 @@ int main(int argc, char** argv)
         {
             // Prints all settingsX.conf to terminal
             ImportConfiguration(&config);
+            fprintf(stdout, "\n");
             config.printProperties();
+            fflush(stdout);
+            sendEnterKey();
             return 0;
         }
         else if (param == "-dumpproperties" ||
@@ -154,16 +207,20 @@ int main(int argc, char** argv)
             // Equivalent to doing dumpProperties=true in settings.conf, we just don't do a full init
             if (argc == 2)
             {
+                gst_debug_set_default_threshold(GST_LEVEL_ERROR);
                 gst_init(nullptr, nullptr);
                 ImportConfiguration(&config);
                 config.dumpPropertiesToFile(Utils::combinePath(Configuration::absolutePath, "properties.txt"));
-                fprintf(stdout, "Dumping to: %s/%s\n", Configuration::absolutePath.c_str(), Utils::combinePath(Configuration::absolutePath, "properties.txt").c_str());
+                
+                fprintf(stdout, "\nDumping to: %s%cproperties.txt\n", Configuration::absolutePath.c_str(), Utils::pathSeparator);
+                sendEnterKey();
                 return 0;
             }
             else
             {
-                std::cout << "Expected 1 argument for -dump, got " << argc - 2 << std::endl;
+                std::cout << std::endl << "Expected 1 argument for -dump, got " << argc - 2 << std::endl;
                 std::cout << "Usage [-dump]" << std::endl;
+                sendEnterKey();
                 return 0;
             }
         }
@@ -174,6 +231,7 @@ int main(int argc, char** argv)
             // Generate a default settings.conf and readme
             makeSettings(global_options::s_option_entries);
             makeSettingsReadme(global_options::s_option_entries);
+            sendEnterKey();
             return 0;
         }
         else if ((argc % 2 != 0 || argc % 2 == 0) && param != "-help" && param != "-h")
@@ -188,17 +246,19 @@ int main(int argc, char** argv)
                         param == "--createcollection" ||
                         param == "-cc")
                     {
-                        std::cout << "Usage [-createcollection] [collectionName] {local}" << std::endl;
+                        std::cout << std::endl << "Usage [-createcollection] [collectionName] {local}" << std::endl;
+                        sendEnterKey();
                     }
                     else
                     {
-                        std::cout << "Expected 1 argument for " << argv[i] << " got " << 0 << std::endl;
+                        std::cout << std::endl << "Expected 1 argument for " << argv[i] << " got " << 0 << std::endl;
+                        sendEnterKey();
                     }
                     return 0;
                 }
                 std::string CLIkey = argv[i];
                 std::string CLIvalue = argv[i+1];
-                if (Utils::startsWithAndStrip(CLIkey, "-") and ! Utils::startsWith(CLIvalue,"-"))
+                if (Utils::startsWithAndStrip(CLIkey, "-") && ! Utils::startsWith(CLIvalue,"-"))
                 {
                     if (CLIkey == OPTION_LOG)
                     {
@@ -209,12 +269,14 @@ int main(int argc, char** argv)
                 }
                 else if(Utils::startsWith(CLIvalue,"-"))
                 {
-                    std::cout << "Expected 1 argument for -" << CLIkey << " got " << 0 << std::endl;
+                    std::cout << std::endl << "Expected 1 argument for -" << CLIkey << " got " << 0 << std::endl;
+                    sendEnterKey();
                     return 0;
                 }
                 else
                 {
-                    std::cout << "To pass settings via CLI pairs use [-key] [value] format" << std::endl;
+                    std::cout << std::endl << "To pass settings via CLI pairs use [-key] [value] format" << std::endl;
+                    sendEnterKey();
                     return 0;
                 }
             }
@@ -247,6 +309,7 @@ int main(int argc, char** argv)
             std::cout << "For more information, visit" << std::endl;
             std::cout << "https://github.com/CoinOPS-Official/RetroFE/" << std::endl;
             std::cout << "http://retrofe.nl/" << std::endl;
+            sendEnterKey();
             return 0;
         }
     }
@@ -256,6 +319,8 @@ int main(int argc, char** argv)
 
     // Initialize random seed
     srand(static_cast<unsigned int>(time(nullptr)));
+
+    gst_debug_set_default_threshold(GST_LEVEL_ERROR);
 
     gst_init(nullptr, nullptr);
 
@@ -270,6 +335,7 @@ int main(int argc, char** argv)
                 if(Utils::isOutputATerminal())
                 {
                     fprintf(stderr, "RetroFE has failed to start due to a configuration error\nCheck the log for details: %s\n", logFile.c_str());
+                    sendEnterKey();
                 }
                 else
                 {
@@ -303,10 +369,11 @@ static bool ImportConfiguration(Configuration* c)
     
     if(!fs::exists(Utils::combinePath(Configuration::absolutePath, "settings.conf")))
     {
-        std::string logFile = "\nCheck the log for details: \n" + Utils::combinePath(Configuration::absolutePath, "log.txt");
+        std::string logFile = "\nCheck the log for details: " + Utils::combinePath(Configuration::absolutePath, "log.txt");
         if(Utils::isOutputATerminal())
         {
-            std::cout << "RetroFE failed to find a valid settings.conf in the current directory" + logFile << std::endl;
+            std::cout << std::endl << "RetroFE failed to find a valid settings.conf in the current directory" + logFile << std::endl;
+            sendEnterKey();
         }
         else
         {
