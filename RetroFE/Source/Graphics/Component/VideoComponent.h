@@ -23,11 +23,11 @@
 #include <SDL2/SDL.h>
 #include <string>
 
-class VideoComponent : public Component
+class VideoComponent final: public Component
 {
 public:
     VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
-    virtual ~VideoComponent();
+    ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
     void freeGraphicsMemory() override;

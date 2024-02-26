@@ -242,11 +242,11 @@ bool GStreamerVideo::createAndLinkGstElements()
     // Only create videoConvert and videoConvertCaps if not using DirectX11
     if (Configuration::HardwareVideoAccel && SDL::getRendererBackend(0) == "direct3d11") {
         // Omitting the videoConvert element entirely in DirectX11 case
-        videoConvertCaps_ = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+        videoConvertCaps_ = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
     }
     else {
         videoConvert_ = gst_element_factory_make("videoconvert", "video_convert");
-        videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+        videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
         if (!videoConvert_) {
             LOG_DEBUG("Video", "Could not create video convert element");
             return false;
@@ -386,115 +386,82 @@ void GStreamerVideo::update(float /* dt */)
 
     if (!texture_ && width_ != 0) 
     {
-        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
+        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_IYUV,
                                     SDL_TEXTUREACCESS_STREAMING, width_, height_);
         SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
     }
 
-    if (videoBuffer_) 
+    if (videoBuffer_)
     {
-        GstMapInfo bufInfo;
-        if (!gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
+        GstVideoMeta* meta;
+        meta = gst_buffer_get_video_meta(videoBuffer_);
+
+        // Presence of meta indicates non-contiguous data in the buffer
+        if (!meta)
         {
-            SDL_UnlockMutex(SDL::getMutex());
-            LOG_ERROR("Video", "Failed to map buffer");
-            return; // Early exit if unable to map the buffer
-        }
-        
-        // Lambda functions for handling each case
-        auto handleContiguous = [&]() {
-            // Directly lock the texture for the entire area
-            Uint8* texture_pixels = nullptr;
-            int texture_pitch;
-            if (SDL_LockTexture(texture_, nullptr, (void**)&texture_pixels, &texture_pitch) < 0) {
-                Logger::write(Logger::ZONE_ERROR, "Video", "Unable to lock texture");
-                return;
-            }
+            void* pixels;
+            int pitch;
+            unsigned int vbytes = width_ * height_;
+            vbytes += (vbytes / 2);
+            gsize bufSize = gst_buffer_get_size(videoBuffer_);
 
-            // Pointers to Y and UV planes in the source buffer
-            const auto* src_y = (const Uint8*)bufInfo.data;
-            const Uint8* src_uv = src_y + GST_ROUND_UP_4(width_) * height_;
-
-            // Pointers to Y and UV planes in the texture
-            Uint8* dst_y = texture_pixels;
-            Uint8* dst_uv = dst_y + texture_pitch * height_;
-
-            // Y plane copying
-            for (int i = 0; i < height_; i++) {
-                SDL_memcpy(dst_y, src_y, width_);
-                src_y += GST_ROUND_UP_4(width_);
-                dst_y += texture_pitch;
-                // UV plane copying (NV12 specific)
-                if (i % 2 == 0) {
-                    // This assumes the UV plane is exactly half the height of the Y plane.
-                    SDL_memcpy(dst_uv, src_uv, GST_ROUND_UP_4(width_));
-                    src_uv += GST_ROUND_UP_4(width_);
-                    dst_uv += texture_pitch;
-                }
-            }
-
-            SDL_UnlockTexture(texture_);
-            return;
-        };
-
-        auto handleNonContiguous = [&]() {
-            GstVideoMeta const* meta = gst_buffer_get_video_meta(videoBuffer_);
-            void const* y_plane = bufInfo.data + (meta ? meta->offset[0] : 0);
-            void const* uv_plane = bufInfo.data + (meta ? meta->offset[1] : static_cast<size_t>(width_) * static_cast<size_t>(height_));
-            int y_stride = meta ? meta->stride[0] : GST_ROUND_UP_4(width_);
-            int uv_stride = meta ? meta->stride[1] : GST_ROUND_UP_4(y_stride);
-            SDL_UpdateNVTexture(texture_, nullptr, (const Uint8*)y_plane, y_stride, (const Uint8*)uv_plane, uv_stride);
-            return;
-            };
-        
-        // Check buffer layout only once
-        if (bufferLayout_ == UNKNOWN)
-        {
-            GstVideoMeta const *meta = gst_buffer_get_video_meta(videoBuffer_);
-            gint expected_y_stride = width_;
-            gint expected_uv_stride = expected_y_stride;
-            gsize expected_uv_offset = height_ * static_cast<gsize>(expected_y_stride);
-
-            // Assume CONTIGUOUS is more likely.
-            if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
-                meta->stride[1] != expected_uv_stride || meta->offset[1] != expected_uv_offset)
+            if (bufSize == vbytes)
             {
-                bufferLayout_ = NON_CONTIGUOUS;
-                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non - Contiguous");
-                handleNonContiguous();
+                SDL_LockTexture(texture_, NULL, &pixels, &pitch);
+                gst_buffer_extract(videoBuffer_, 0, pixels, vbytes);
+                SDL_UnlockTexture(texture_);
             }
-            else 
+            else
             {
-                bufferLayout_ = CONTIGUOUS;
-                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
-                handleContiguous();
+                GstMapInfo bufInfo;
+                unsigned int y_stride, u_stride, v_stride;
+                const Uint8* y_plane, * u_plane, * v_plane;
+
+                y_stride = GST_ROUND_UP_4(width_);
+                u_stride = v_stride = GST_ROUND_UP_4(y_stride / 2);
+
+                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+                y_plane = bufInfo.data;
+                u_plane = y_plane + (height_ * y_stride);
+                v_plane = u_plane + ((height_ / 2) * u_stride);
+                SDL_UpdateYUVTexture(texture_, NULL,
+                    (const Uint8*)y_plane, y_stride,
+                    (const Uint8*)u_plane, u_stride,
+                    (const Uint8*)v_plane, v_stride);
+                gst_buffer_unmap(videoBuffer_, &bufInfo);
             }
         }
-
-        switch (bufferLayout_)
+        else
         {
-            case CONTIGUOUS:
-            {
-                handleContiguous();
-                break;
-            }
+            GstMapInfo bufInfo;
+            void* y_plane, * u_plane, * v_plane;
+            int y_stride, u_stride, v_stride;
 
+            // Map the buffer only once
+            gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
 
-            case NON_CONTIGUOUS:
-            {
-                handleNonContiguous();
-                break;
-            }
-            
-            default:
-                // Should not reach here.
-                break;
+            // Map Y, U, and V planes using offsets and strides from meta
+            y_stride = meta->stride[0];
+            u_stride = meta->stride[1];
+            v_stride = meta->stride[2];
+
+            y_plane = bufInfo.data + meta->offset[0];
+            u_plane = bufInfo.data + meta->offset[1];
+            v_plane = bufInfo.data + meta->offset[2];
+
+            SDL_UpdateYUVTexture(texture_, NULL,
+                (const Uint8*)y_plane, y_stride,
+                (const Uint8*)u_plane, u_stride,
+                (const Uint8*)v_plane, v_stride);
+
+            // Unmap the buffer only once
+            gst_buffer_unmap(videoBuffer_, &bufInfo);
         }
-
-        gst_buffer_unmap(videoBuffer_, &bufInfo);
         gst_buffer_unref(videoBuffer_);
-        videoBuffer_ = nullptr;
+        videoBuffer_ = NULL;
     }
+
+
     SDL_UnlockMutex(SDL::getMutex());
     volumeUpdate();
     loopHandler();
