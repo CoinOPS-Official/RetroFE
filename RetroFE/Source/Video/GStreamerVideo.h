@@ -21,10 +21,11 @@ extern "C"
 {
 #if (__APPLE__)
     #include <GStreamer/gst/gst.h>
-    #include <GStreamer/gst/app/gstappsink.h>
+    #include <GStreamer/gst/video/gstvideometa.h>
 #else
     #include <gst/gst.h>
-    #include <gst/app/gstappsink.h>
+    #include <gst/video/gstvideometa.h>
+
 #endif
 
 }
@@ -85,6 +86,7 @@ private:
     gint height_{ 0 };
     gint width_{ 0 };
     GstBuffer* videoBuffer_{ nullptr };
+    const GstVideoMeta* videoMeta_{ nullptr };
     bool frameReady_{ false };
     bool isPlaying_{ false };
     static bool initialized_;

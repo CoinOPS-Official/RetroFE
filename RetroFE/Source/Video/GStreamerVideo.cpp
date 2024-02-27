@@ -159,6 +159,7 @@ bool GStreamerVideo::stop()
 
     }
 
+    videoMeta_ = nullptr;
     videoBus_ = nullptr;
     playbin_ = nullptr;
     videoBin_ = nullptr;
@@ -431,47 +432,48 @@ void GStreamerVideo::update(float /* dt */)
 
 			};
 
-		auto handleNonContiguous = [&]() {
-			GstVideoMeta const* meta;
-			meta = gst_buffer_get_video_meta(videoBuffer_);
-			GstMapInfo bufInfo;
-			void* y_plane, * u_plane, * v_plane;
-			int y_stride, u_stride, v_stride;
+        auto handleNonContiguous = [&]() {
+            if (!videoMeta_) return; // Early return if meta is not available
 
-			gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+            GstMapInfo bufInfo;
+            void* y_plane, * u_plane, * v_plane;
+            int y_stride, u_stride, v_stride;
 
-			// Map Y, U, and V planes using offsets and strides from meta
-			y_stride = meta->stride[0];
-			u_stride = meta->stride[1];
-			v_stride = meta->stride[2];
+            gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
 
-			y_plane = bufInfo.data + meta->offset[0];
-			u_plane = bufInfo.data + meta->offset[1];
-			v_plane = bufInfo.data + meta->offset[2];
+            // Use videoMeta_ directly
+            y_stride = videoMeta_->stride[0];
+            u_stride = videoMeta_->stride[1];
+            v_stride = videoMeta_->stride[2];
 
-			SDL_UpdateYUVTexture(texture_, NULL,
-				(const Uint8*)y_plane, y_stride,
-				(const Uint8*)u_plane, u_stride,
-				(const Uint8*)v_plane, v_stride);
+            y_plane = bufInfo.data + videoMeta_->offset[0];
+            u_plane = bufInfo.data + videoMeta_->offset[1];
+            v_plane = bufInfo.data + videoMeta_->offset[2];
 
-			gst_buffer_unmap(videoBuffer_, &bufInfo);
-			};
+            SDL_UpdateYUVTexture(texture_, nullptr,
+                (const Uint8*)y_plane, y_stride,
+                (const Uint8*)u_plane, u_stride,
+                (const Uint8*)v_plane, v_stride);
 
-		if (bufferLayout_ == UNKNOWN)
-		{
-			GstVideoMeta const* meta;
-			meta = gst_buffer_get_video_meta(videoBuffer_);
-			if (!meta)
-			{
-				bufferLayout_ = CONTIGUOUS;
-				LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
-			}
-			else
-			{
-				bufferLayout_ = NON_CONTIGUOUS;
-				LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non - Contiguous");
-			}
-		}
+            gst_buffer_unmap(videoBuffer_, &bufInfo);
+            };
+
+        if (bufferLayout_ == UNKNOWN)
+        {
+            GstVideoMeta const* meta;
+            meta = gst_buffer_get_video_meta(videoBuffer_);
+            if (!meta)
+            {
+                bufferLayout_ = CONTIGUOUS;
+                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
+            }
+            else
+            {
+                bufferLayout_ = NON_CONTIGUOUS;
+                videoMeta_ = meta; // Store meta for future use
+                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non-Contiguous");
+            }
+        }
 
 		switch (bufferLayout_)
 		{
