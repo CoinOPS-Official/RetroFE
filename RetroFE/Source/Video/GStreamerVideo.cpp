@@ -464,19 +464,38 @@ void GStreamerVideo::update(float /* dt */)
 
         auto handleNonContiguousD3d = [&]() {
             videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
-            GstMapInfo bufInfo;
-            gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+            if (!videoMeta_) {
+                // Handle error: Video meta not found.
+                return;
+            }
 
-            // Directly use videoMeta_ as we now assume it's always valid
-            unsigned int y_stride, uv_stride;
-            const Uint8* y_plane, * uv_plane;
-            y_plane = bufInfo.data + videoMeta_->offset[0];
-            uv_plane = bufInfo.data + videoMeta_->offset[1];
-            y_stride = videoMeta_->stride[0];
-            uv_stride = videoMeta_->stride[1];
-            SDL_UpdateNVTexture(texture_, nullptr, y_plane, y_stride, uv_plane, uv_stride);
-            gst_buffer_unmap(videoBuffer_, &bufInfo);
-        };
+            // Lock the SDL texture to get a direct pointer to its pixel data.
+            void* pixels;
+            int pitch;
+            // Calculate the sizes of the Y and UV planes based on video dimensions and meta info.
+            gsize y_plane_size = videoMeta_->stride[0] * height_; // Assuming stride[0] is the Y plane stride.
+            gsize uv_plane_size = videoMeta_->stride[1] * (height_ / 2); // Assuming stride[1] is the UV plane stride, and height is halved for UV plane in NV12.
+            // Calculate the starting point for the UV plane in the texture's pixel buffer.
+
+            
+            if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) != 0) {
+                // Handle error: Unable to lock texture.
+                return;
+            }
+
+
+            // Extract Y plane data.
+            gst_buffer_extract(videoBuffer_, videoMeta_->offset[0], pixels, y_plane_size);
+            guint8* uv_plane_pixels = static_cast<guint8*>(pixels) + pitch * height_;
+
+
+            // Extract UV plane data.
+            gst_buffer_extract(videoBuffer_, videoMeta_->offset[1], uv_plane_pixels, uv_plane_size);
+
+            // Unlock the SDL texture now that we've copied the Y and UV data into it.
+            SDL_UnlockTexture(texture_);
+            };
+
 
 
         if (bufferLayout_ == UNKNOWN)
