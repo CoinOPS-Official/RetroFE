@@ -241,9 +241,9 @@ bool GStreamerVideo::createAndLinkGstElements()
     capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
 
     // Only create videoConvert and videoConvertCaps if not using DirectX11
-    if (Configuration::HardwareVideoAccel && SDL::getRendererBackend(0) == "direct3d11") {
+    if (useD3dHardware_) {
         // Omitting the videoConvert element entirely in DirectX11 case
-        videoConvertCaps_ = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
+        videoConvertCaps_ = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
     }
     else {
         videoConvert_ = gst_element_factory_make("videoconvert", "video_convert");
@@ -387,8 +387,16 @@ void GStreamerVideo::update(float /* dt */)
 
     if (!texture_ && width_ != 0) 
     {
-        texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_IYUV,
-                                    SDL_TEXTUREACCESS_STREAMING, width_, height_);
+        if(useD3dHardware_)
+        {
+            texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
+                SDL_TEXTUREACCESS_STREAMING, width_, height_);
+        }
+        else
+        {
+            texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_IYUV,
+                SDL_TEXTUREACCESS_STREAMING, width_, height_);
+        }
         SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
     }
 
@@ -423,21 +431,19 @@ void GStreamerVideo::update(float /* dt */)
 					y_plane = bufInfo.data;
 					u_plane = y_plane + (height_ * y_stride);
 					v_plane = u_plane + ((height_ / 2) * u_stride);
-					SDL_UpdateYUVTexture(texture_, nullptr,
-						y_plane, y_stride,
-						u_plane, u_stride,
-						v_plane, v_stride);
-					gst_buffer_unmap(videoBuffer_, &bufInfo);
+                    SDL_UpdateYUVTexture(texture_, nullptr,
+                            y_plane, y_stride,
+                            u_plane, u_stride,
+                            v_plane, v_stride);
+                    gst_buffer_unmap(videoBuffer_, &bufInfo);
 				}
 
 			};
 
         auto handleNonContiguous = [&]() {
-            if (!videoMeta_) return; // Early return if meta is not available
-
             GstMapInfo bufInfo;
-            void* y_plane, * u_plane, * v_plane;
-            int y_stride, u_stride, v_stride;
+            const Uint8* y_plane, * u_plane, * v_plane;
+            unsigned int y_stride, u_stride, v_stride;
 
             gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
 
@@ -449,14 +455,29 @@ void GStreamerVideo::update(float /* dt */)
             y_plane = bufInfo.data + videoMeta_->offset[0];
             u_plane = bufInfo.data + videoMeta_->offset[1];
             v_plane = bufInfo.data + videoMeta_->offset[2];
-
             SDL_UpdateYUVTexture(texture_, nullptr,
-                (const Uint8*)y_plane, y_stride,
-                (const Uint8*)u_plane, u_stride,
-                (const Uint8*)v_plane, v_stride);
-
+                    y_plane, y_stride,
+                    u_plane, u_stride,
+                    v_plane, v_stride);
             gst_buffer_unmap(videoBuffer_, &bufInfo);
-            };
+        };
+
+        auto handleNonContiguousD3d = [&]() {
+            videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
+            GstMapInfo bufInfo;
+            gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+
+            // Directly use videoMeta_ as we now assume it's always valid
+            unsigned int y_stride, uv_stride;
+            const Uint8* y_plane, * uv_plane;
+            y_plane = bufInfo.data + videoMeta_->offset[0];
+            uv_plane = bufInfo.data + videoMeta_->offset[1];
+            y_stride = videoMeta_->stride[0];
+            uv_stride = videoMeta_->stride[1];
+            SDL_UpdateNVTexture(texture_, nullptr, y_plane, y_stride, uv_plane, uv_stride);
+            gst_buffer_unmap(videoBuffer_, &bufInfo);
+        };
+
 
         if (bufferLayout_ == UNKNOWN)
         {
@@ -469,7 +490,14 @@ void GStreamerVideo::update(float /* dt */)
             }
             else
             {
-                bufferLayout_ = NON_CONTIGUOUS;
+                if (useD3dHardware_)
+                {
+                    bufferLayout_ = NON_CONTIGUOUS_D3D;
+                }
+                else
+                {
+                    bufferLayout_ = NON_CONTIGUOUS;
+                }
                 videoMeta_ = meta; // Store meta for future use
                 LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non-Contiguous");
             }
@@ -490,7 +518,13 @@ void GStreamerVideo::update(float /* dt */)
 			break;
 		}
 
-		default:
+        case NON_CONTIGUOUS_D3D:
+        {
+            handleNonContiguousD3d();
+            break;
+        }
+		
+        default:
 			// Should not reach here.
 			break;
 		}

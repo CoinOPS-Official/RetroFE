@@ -250,7 +250,7 @@ bool SDL::initialize( Configuration &config )
             }
 			
 #ifdef WIN32
-			std::string SDLRenderDriver = "direct3d";
+			std::string SDLRenderDriver = "direct3d11";
 			config.getProperty(OPTION_SDLRENDERDRIVER, SDLRenderDriver);
 			if ( SDL_SetHint(SDL_HINT_RENDER_DRIVER, SDLRenderDriver.c_str()) != SDL_TRUE )
 			{
