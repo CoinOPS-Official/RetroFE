@@ -463,12 +463,13 @@ void GStreamerVideo::update(float /* dt */)
         };
 
         auto handleNonContiguousD3d = [&]() {
-            videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
             if (!videoMeta_) {
-                // Handle error: Video meta not found.
-                return;
+                videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
+                if (!videoMeta_) {
+                    // Handle error: Video meta not found.
+                    return;
+                }
             }
-
             GstMapInfo mapInfo;
             if (!gst_buffer_map(videoBuffer_, &mapInfo, GST_MAP_READ)) {
                 // Handle error: Unable to map buffer.
@@ -478,8 +479,6 @@ void GStreamerVideo::update(float /* dt */)
             // Pre-compute source pointer locations and lengths for Y and UV planes.
             std::vector<const guint8*> src_y_pointers(height_);
             std::vector<const guint8*> src_uv_pointers(height_ / 2);
-            size_t y_copy_length = width_;  // Assuming width is the actual width to copy for Y plane.
-            size_t uv_copy_length = width_; // Adjust based on NV12 format characteristics for UV plane.
 
             for (int i = 0; i < height_; ++i) {
                 src_y_pointers[i] = mapInfo.data + videoMeta_->offset[0] + i * videoMeta_->stride[0];
@@ -500,20 +499,21 @@ void GStreamerVideo::update(float /* dt */)
             // Perform copy operations within the locked section.
             for (int i = 0; i < height_; ++i) {
                 guint8* dst_y = static_cast<guint8*>(pixels) + i * pitch;
-                SDL_memcpy(dst_y, src_y_pointers[i], y_copy_length);
+                SDL_memcpy(dst_y, src_y_pointers[i], width_);
             }
 
             guint8* uv_plane_pixels = static_cast<guint8*>(pixels) + pitch * height_;
             for (int i = 0; i < height_ / 2; ++i) {
                 guint8* dst_uv = uv_plane_pixels + i * pitch;
-                SDL_memcpy(dst_uv, src_uv_pointers[i], uv_copy_length);
+                SDL_memcpy(dst_uv, src_uv_pointers[i], width_);
             }
 
             // Unlock the SDL texture after copying.
             SDL_UnlockTexture(texture_);
-
+            videoMeta_ = nullptr;
             // Unmap the GstBuffer.
             gst_buffer_unmap(videoBuffer_, &mapInfo);
+          
         };
 
 
