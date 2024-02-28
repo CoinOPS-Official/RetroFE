@@ -472,30 +472,46 @@ void GStreamerVideo::update(float /* dt */)
             // Lock the SDL texture to get a direct pointer to its pixel data.
             void* pixels;
             int pitch;
-            // Calculate the sizes of the Y and UV planes based on video dimensions and meta info.
-            gsize y_plane_size = videoMeta_->stride[0] * height_; // Assuming stride[0] is the Y plane stride.
-            gsize uv_plane_size = videoMeta_->stride[1] * (height_ / 2); // Assuming stride[1] is the UV plane stride, and height is halved for UV plane in NV12.
-            // Calculate the starting point for the UV plane in the texture's pixel buffer.
-
-            
             if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) != 0) {
                 // Handle error: Unable to lock texture.
                 return;
             }
 
+            GstMapInfo mapInfo;
+            if (!gst_buffer_map(videoBuffer_, &mapInfo, GST_MAP_READ)) {
+                // Handle error: Unable to map buffer.
+                SDL_UnlockTexture(texture_);
+                return;
+            }
 
-            // Extract Y plane data.
-            gst_buffer_extract(videoBuffer_, videoMeta_->offset[0], pixels, y_plane_size);
+            // Efficiently copy the Y plane considering stride and pitch.
+            for (int i = 0; i < height_; ++i) {
+                // Calculate the source pointer for the current row in the Y plane.
+                guint8 const* src_y = mapInfo.data + videoMeta_->offset[0] + i * videoMeta_->stride[0];
+                // Calculate the destination pointer for the current row in the SDL texture.
+                guint8* dst_y = static_cast<guint8*>(pixels) + i * pitch;
+                // Copy the current row from the source to the destination using SDL_memcpy.
+                SDL_memcpy(dst_y, src_y, videoMeta_->stride[0]); // Assuming stride covers the width of the frame.
+            }
+
+            // Efficiently copy the UV plane considering stride and pitch.
+            // Assuming UV plane has half the height of Y plane in NV12 format.
             guint8* uv_plane_pixels = static_cast<guint8*>(pixels) + pitch * height_;
+            for (int i = 0; i < height_ / 2; ++i) {
+                // Calculate the source pointer for the current row in the UV plane.
+                guint8 const* src_uv = mapInfo.data + videoMeta_->offset[1] + i * videoMeta_->stride[1];
+                // Calculate the destination pointer for the current row in the SDL texture.
+                guint8* dst_uv = uv_plane_pixels + i * pitch;
+                // Copy the current row from the source to the destination using SDL_memcpy.
+                SDL_memcpy(dst_uv, src_uv, videoMeta_->stride[1]); // Assuming stride covers the width of the UV frame.
+            }
 
-
-            // Extract UV plane data.
-            gst_buffer_extract(videoBuffer_, videoMeta_->offset[1], uv_plane_pixels, uv_plane_size);
+            // Unmap the GstBuffer now that we've accessed the data.
+            gst_buffer_unmap(videoBuffer_, &mapInfo);
 
             // Unlock the SDL texture now that we've copied the Y and UV data into it.
             SDL_UnlockTexture(texture_);
             };
-
 
 
         if (bufferLayout_ == UNKNOWN)
