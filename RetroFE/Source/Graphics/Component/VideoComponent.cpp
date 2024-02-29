@@ -29,6 +29,7 @@ VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monito
     , videoFile_(videoFile)
     , numLoops_(numLoops)
     , monitor_(monitor)
+    , currentPage_(&p)
 {
 
 }
@@ -43,12 +44,13 @@ bool VideoComponent::update(float dt)
 {
     if (videoInst_)
     {
-        isPlaying_ = ((GStreamerVideo*)(videoInst_))->isPlaying();
+        isPlaying_ = videoInst_->isPlaying();
     }
 
     if (videoInst_ && isPlaying_)
     {
-        videoInst_->setVolume(baseViewInfo.Volume);
+        if(!currentPage_->isMenuScrolling())
+            videoInst_->setVolume(baseViewInfo.Volume);
         videoInst_->update(dt);
 
         // video needs to run a frame to start getting size info
