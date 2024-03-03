@@ -70,6 +70,7 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_UNLOADSDL,                "false",    global_options::option_type::BOOLEAN,  "Close SDL when launching a game, MUST be true for RPI" },
     { OPTION_MINIMIZEONFOCUSLOSS,      "false",    global_options::option_type::BOOLEAN,  "Minimize RetroFE when focus is lost" },
     { OPTION_AVDECTHREADTYPE,          "2",        global_options::option_type::INTEGER,  "Type of threading in the case of software decoding (1=frame, 2=slice)" },
+    { OPTION_GLSWAPINTERVAL,           "1",        global_options::option_type::INTEGER,  "OpenGL Swap Interval (0=immediate updates, 1=synchronized vsync, -1=adaptive vsync" },
 
     { nullptr,                         nullptr,    global_options::option_type::HEADER,   "CUSTOMIZATION OPTIONS" },
     { OPTION_LAYOUT,                   "Arcades",  global_options::option_type::STRING,   "Theme to be used in RetroFE, a folder name in /layouts" },

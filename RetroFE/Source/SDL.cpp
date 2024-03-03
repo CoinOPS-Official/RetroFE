@@ -321,7 +321,9 @@ bool SDL::initialize( Configuration &config )
                         LOG_INFO("SDL", logMessage);
                         if (strcmp(info.name, "opengl") == 0)
                         {
-                            if (SDL_GL_SetSwapInterval(1) < 0)
+                            int GlSwapInterval = 1;
+                            config.getProperty(OPTION_GLSWAPINTERVAL, GlSwapInterval);
+                            if (SDL_GL_SetSwapInterval(GlSwapInterval) < 0)
                             {
                                 LOG_ERROR("SDL", "Unable to set OpenGL swap interval: " + std::string(SDL_GetError()));
                             }

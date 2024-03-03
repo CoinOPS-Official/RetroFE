@@ -64,6 +64,7 @@
 #define OPTION_UNLOADSDL             "unloadSDL"
 #define OPTION_MINIMIZEONFOCUSLOSS   "minimizeOnFocusLoss"
 #define OPTION_AVDECTHREADTYPE       "AvdecThreadType"
+#define OPTION_GLSWAPINTERVAL        "GlSwapInterval"
 
 // CUSTOMIZATION OPTIONS
 #define OPTION_LAYOUT                "layout"
@@ -198,6 +199,7 @@ public:
     bool unloadsdl() const { return bool_value(OPTION_UNLOADSDL); }
     bool minimizeonfocusloss() const { return bool_value(OPTION_MINIMIZEONFOCUSLOSS); }
     int avdecthreadtype() const {return int_value(OPTION_AVDECTHREADTYPE); }
+    int glswapinterval() const { return int_value(OPTION_GLSWAPINTERVAL); }
     
     const char *layout() const { return value(OPTION_LAYOUT); }
     const char *randomlayout() const { return value(OPTION_RANDOMLAYOUT); }
