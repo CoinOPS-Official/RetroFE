@@ -313,14 +313,20 @@ bool SDL::initialize( Configuration &config )
 				else 
 				{
 					SDL_RendererInfo info;
-					if (SDL_GetRendererInfo(renderer_[screenNum], &info) == 0) 
-					{
-						std::string logMessage = "Current rendering backend for renderer " + screenIndex + ": ";
-						logMessage += info.name;
-						LOG_INFO("SDL", logMessage);
-                        if (info.name == "opengl")
-                            SDL_GL_SetSwapInterval(1);
-                    }		 
+                    if (SDL_GetRendererInfo(renderer_[screenNum], &info) == 0)
+                    {
+                        std::string screenIndexStr = std::to_string(screenNum);
+                        std::string logMessage = "Current rendering backend for renderer " + screenIndexStr + ": ";
+                        logMessage += info.name;
+                        LOG_INFO("SDL", logMessage);
+                        if (strcmp(info.name, "opengl") == 0)
+                        {
+                            if (SDL_GL_SetSwapInterval(1) < 0)
+                            {
+                                LOG_ERROR("SDL", "Unable to set OpenGL swap interval: " + std::string(SDL_GetError()));
+                            }
+                        }
+                    }
 					else 
 					{
 						LOG_ERROR("SDL", "Could not retrieve renderer info for renderer " + screenIndex + " Error: " + SDL_GetError());
