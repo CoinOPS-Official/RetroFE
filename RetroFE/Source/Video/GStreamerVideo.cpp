@@ -190,9 +190,6 @@ bool GStreamerVideo::play(const std::string& file)
     if(!initializeGstElements(file))
         return false;
 
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "playbin");
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL, "videobin");
-
     // Start playing
     if (GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING); playState != GST_STATE_CHANGE_ASYNC)
     {
@@ -201,6 +198,9 @@ bool GStreamerVideo::play(const std::string& file)
         stop();
         return false;
     }
+
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "playbin");
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL, "videobin");
 
     isPlaying_ = true;
 
