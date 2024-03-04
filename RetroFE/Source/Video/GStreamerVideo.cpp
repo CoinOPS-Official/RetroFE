@@ -199,16 +199,14 @@ bool GStreamerVideo::play(const std::string& file)
         return false;
     }
 
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "playbin");
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL, "videobin");
-
     isPlaying_ = true;
-
-
 
     // Set the volume to zero and mute the video
     gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
     gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), true);
+
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "playbin");
+    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL, "videobin");
 
     return true;
 }
