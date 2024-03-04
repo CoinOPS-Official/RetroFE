@@ -49,8 +49,7 @@ bool VideoComponent::update(float dt)
 
     if (videoInst_ && isPlaying_)
     {
-        if(!currentPage_->isMenuScrolling())
-            videoInst_->setVolume(baseViewInfo.Volume);
+        videoInst_->setVolume(baseViewInfo.Volume);
         videoInst_->update(dt);
         videoInst_->loopHandler();
         videoInst_->volumeUpdate();
