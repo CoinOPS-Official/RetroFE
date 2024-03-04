@@ -53,6 +53,7 @@ bool VideoComponent::update(float dt)
             videoInst_->setVolume(baseViewInfo.Volume);
         videoInst_->update(dt);
         videoInst_->loopHandler();
+        videoInst_->volumeUpdate();
 
         // video needs to run a frame to start getting size info
         if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)

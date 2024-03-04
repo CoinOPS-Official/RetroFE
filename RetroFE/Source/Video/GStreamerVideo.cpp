@@ -567,7 +567,6 @@ void GStreamerVideo::update(float /* dt */)
 
 
     SDL_UnlockMutex(SDL::getMutex());
-    volumeUpdate();
 }
 
 void GStreamerVideo::loopHandler()
