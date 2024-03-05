@@ -42,6 +42,7 @@ bool Configuration::HardwareVideoAccel = false;
 int Configuration::AvdecMaxThreads = 2;
 int Configuration::AvdecThreadType = 2;
 bool Configuration::MuteVideo = false;
+bool Configuration::debugDotEnabled = false;
 
 Configuration::Configuration() = default;
 
@@ -51,6 +52,8 @@ void Configuration::initialize()
 {
     const char *environment = std::getenv("RETROFE_PATH");
     std::string sPath; // Declare sPath here
+    std::string debugDotDir = Utils::getEnvVar("GST_DEBUG_DUMP_DOT_DIR");
+    debugDotEnabled = !debugDotDir.empty();
 
 #if defined(__linux) || defined(__APPLE__)
     std::string home_load = std::getenv("HOME") + std::string("/.retrofe");

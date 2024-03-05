@@ -205,7 +205,7 @@ bool GStreamerVideo::play(const std::string& file)
     gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
     gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), true);
 
-    if (std::string debugDotDir = Utils::getEnvVar("GST_DEBUG_DUMP_DOT_DIR"); !debugDotDir.empty()) {
+    if (Configuration::debugDotEnabled) {
         // Environment variable is set, proceed with dot file generation
 
         GstState state;
