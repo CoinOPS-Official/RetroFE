@@ -112,4 +112,5 @@ private:
         && Utils::getOSType() == "linux" };
 
     BufferLayout bufferLayout_{ UNKNOWN };
+    std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath);
 };

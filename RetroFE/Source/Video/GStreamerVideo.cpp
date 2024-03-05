@@ -205,8 +205,27 @@ bool GStreamerVideo::play(const std::string& file)
     gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
     gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), true);
 
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "playbin");
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL, "videobin");
+    if (std::string debugDotDir = Utils::getEnvVar("GST_DEBUG_DUMP_DOT_DIR"); !debugDotDir.empty()) {
+        // Environment variable is set, proceed with dot file generation
+
+        GstState state;
+        GstState pending;
+        // Wait up to 5 seconds for the state change to complete
+        GstClockTime timeout = 5 * GST_SECOND; // Define your timeout
+        GstStateChangeReturn ret = gst_element_get_state(GST_ELEMENT(playbin_), &state, &pending, timeout);
+
+        if (ret == GST_STATE_CHANGE_SUCCESS && state == GST_STATE_PLAYING) {
+            // The pipeline is in the playing state, proceed with dot file generation
+
+            // Generate dot file for playbin_
+            std::string playbinDotFileName = generateDotFileName("playbin", currentFile_);
+            GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, playbinDotFileName.c_str());
+
+            // Generate dot file for videoBin_
+            std::string videoBinDotFileName = generateDotFileName("videobin", currentFile_);
+            GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL, videoBinDotFileName.c_str());
+        }
+    }
 
     return true;
 }
@@ -812,4 +831,21 @@ unsigned long long GStreamerVideo::getDuration( )
 bool GStreamerVideo::isPaused( )
 {
     return paused_;
+}
+
+std::string GStreamerVideo::generateDotFileName(const std::string& prefix, const std::string& videoFilePath) {
+    std::string videoFileName = Utils::getFileName(videoFilePath);
+
+    auto now = std::chrono::system_clock::now();
+    auto now_c = std::chrono::system_clock::to_time_t(now);
+    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()) % 1000000;
+
+    std::stringstream ss;
+    ss    << prefix << "_"
+        << videoFileName << "_"
+        << std::put_time(std::localtime(&now_c), "%Y%m%d_%H%M%S_")
+        << std::setfill('0') << std::setw(6) << microseconds.count();
+
+    return ss.str();
 }
