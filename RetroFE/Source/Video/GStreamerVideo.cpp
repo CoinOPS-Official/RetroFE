@@ -245,7 +245,7 @@ bool GStreamerVideo::createAndLinkGstElements()
     capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
 
     // Only create videoConvert and videoConvertCaps if not using DirectX11
-    if (useD3dHardware_) {
+    if (useD3dHardware_ || useVaHardware_) {
         // Omitting the videoConvert element entirely in DirectX11 case
         videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
     }
@@ -302,37 +302,49 @@ bool GStreamerVideo::createAndLinkGstElements()
 
 
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video) {
-#if defined(WIN32) || defined(__APPLE__)
     bool hardwareVideoAccel = Configuration::HardwareVideoAccel;
-    if (!hardwareVideoAccel) {
+
+    // Handle decoder plugin rank adjustments based on the platform and hardware acceleration availability
+    if (hardwareVideoAccel) {
+        // For Linux, when hardware acceleration is enabled, adjust the ranks of specific decoders
+#if !defined(WIN32) && !defined(__APPLE__)
+        std::vector<std::string> decoderPluginNames = { "vah264dec", "vah265dec" };
+        for (const auto& pluginName : decoderPluginNames) {
+            GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
+            if (factory) {
+                gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_PRIMARY + 1);
+                g_object_unref(factory);
+            }
+    }
+#endif
+}
+    else {
+        // For Windows and Apple, or for all platforms when hardware acceleration is not enabled
+        std::vector<std::string> decoderPluginNames;
 #ifdef WIN32
-        std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec"};
-#elif __APPLE__
-        std::vector<std::string> decoderPluginNames = { "vtdec", "vtdec_hw" };
+        decoderPluginNames = { "d3d11h264dec", "d3d11h265dec" };
+#elif defined(__APPLE__)
+        decoderPluginNames = { "vtdec", "vtdec_hw" };
+#else
+        // Add any Linux-specific non-accelerated decoder adjustments here if needed
 #endif
         for (const auto& pluginName : decoderPluginNames) {
-            GstElementFactory *factory = gst_element_factory_find(pluginName.c_str());
+            GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
             if (factory) {
                 gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_NONE);
                 g_object_unref(factory);
-            }
-        }
     }
-#endif
+        }
 
-    gchar *elementName = gst_element_get_name(element);
-    if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265")) {
-        #ifdef WIN32
-        if (!hardwareVideoAccel) {
-        #endif
-            // Modify the properties of the avdec_h265 element here
+        // Modify properties of certain elements if hardware video acceleration is not enabled
+        gchar* elementName = gst_element_get_name(element);
+        if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265")) {
             g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
-        #ifdef WIN32
         }
-        #endif
+        g_free(elementName);
     }
-    g_free(elementName);
 }
+
 
 void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
     auto* video = static_cast<GStreamerVideo*>(userdata);
@@ -391,7 +403,7 @@ void GStreamerVideo::update(float /* dt */)
 
     if (!texture_ && width_ != 0) 
     {
-        if(useD3dHardware_)
+        if(useD3dHardware_ || useVaHardware_)
         {
             texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), SDL_PIXELFORMAT_NV12,
                 SDL_TEXTUREACCESS_STREAMING, width_, height_);
@@ -469,7 +481,7 @@ void GStreamerVideo::update(float /* dt */)
             videoMeta_ = nullptr;
         };
 
-        auto handleNonContiguousD3d = [&]() {
+        auto handleNonContiguousHardwareDecode = [&]() {
             if (!videoMeta_)
                 videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
             GstMapInfo bufInfo;
@@ -521,9 +533,9 @@ void GStreamerVideo::update(float /* dt */)
             }
             else
             {
-                if (useD3dHardware_)
+                if (useD3dHardware_ || useVaHardware_)
                 {
-                    bufferLayout_ = NON_CONTIGUOUS_D3D;
+                    bufferLayout_ = NON_CONTIGUOUS_HARDWARE_DECODE;
                 }
                 else
                 {
@@ -549,9 +561,9 @@ void GStreamerVideo::update(float /* dt */)
 			break;
 		}
 
-        case NON_CONTIGUOUS_D3D:
+        case NON_CONTIGUOUS_HARDWARE_DECODE:
         {
-            handleNonContiguousD3d();
+            handleNonContiguousHardwareDecode();
             break;
         }
 		
@@ -564,7 +576,6 @@ void GStreamerVideo::update(float /* dt */)
 		gst_buffer_unref(videoBuffer_);
 		videoBuffer_ = nullptr;
 	}
-
 
     SDL_UnlockMutex(SDL::getMutex());
 }

@@ -18,6 +18,7 @@
 #include "IVideo.h"
 #include "../SDL.h"
 #include "../Database/Configuration.h"
+#include "../Utility/Utils.h"
 extern "C"
 {
 #if (__APPLE__)
@@ -47,6 +48,8 @@ public:
     bool deInitialize() override;
     SDL_Texture *getTexture() const override;
     void update(float dt) override;
+    void loopHandler() override;
+    void volumeUpdate() override;
     void draw() override;
     void setNumLoops(int n);
     int getHeight() override;
@@ -68,15 +71,13 @@ private:
         UNKNOWN,        // Initial state
         CONTIGUOUS,     // Contiguous buffer layout
         NON_CONTIGUOUS,  // Non-contiguous buffer layout
-        NON_CONTIGUOUS_D3D
+        NON_CONTIGUOUS_HARDWARE_DECODE // Non-contiguous hardware decode for windows/linux
     };
     
     static void processNewBuffer (GstElement const *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
     static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
     bool initializeGstElements(const std::string& file);
     bool createAndLinkGstElements();
-    void loopHandler();
-    void volumeUpdate();
     GstElement* playbin_{ nullptr };
     GstElement* videoBin_{ nullptr };
     GstElement* videoSink_{ nullptr };
@@ -103,6 +104,12 @@ private:
     bool paused_{ false };
     double lastSetVolume_{ 0.0 };
     bool lastSetMuteState_{ false };
-    bool useD3dHardware_{ Configuration::HardwareVideoAccel && SDL::getRendererBackend(0) == "direct3d11" };
+    
+    bool useD3dHardware_{ Configuration::HardwareVideoAccel 
+        && SDL::getRendererBackend(0) == "direct3d11" };
+    bool useVaHardware_{ Configuration::HardwareVideoAccel
+        && SDL::getRendererBackend(0) == "opengl"
+        && Utils::getOSType() == "linux" };
+
     BufferLayout bufferLayout_{ UNKNOWN };
 };
