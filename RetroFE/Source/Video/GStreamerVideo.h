@@ -81,7 +81,6 @@ private:
     GstElement* playbin_{ nullptr };
     GstElement* videoBin_{ nullptr };
     GstElement* videoSink_{ nullptr };
-    GstElement* videoConvert_{ nullptr };
     GstElement* capsFilter_{ nullptr };
     GstCaps* videoConvertCaps_{ nullptr };
     GstBus* videoBus_{ nullptr };
