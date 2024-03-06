@@ -35,10 +35,10 @@ extern "C"
 }
 
 
-class GStreamerVideo final: public IVideo
+class GStreamerVideo final : public IVideo
 {
 public:
-    explicit GStreamerVideo( int monitor );
+    explicit GStreamerVideo(int monitor);
     GStreamerVideo(const GStreamerVideo&) = delete;
     GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo() override;
@@ -46,7 +46,7 @@ public:
     bool play(const std::string& file) override;
     bool stop() override;
     bool deInitialize() override;
-    SDL_Texture *getTexture() const override;
+    SDL_Texture* getTexture() const override;
     void update(float dt) override;
     void loopHandler() override;
     void volumeUpdate() override;
@@ -56,15 +56,18 @@ public:
     int getWidth() override;
     bool isPlaying() override;
     void setVolume(float volume) override;
-    void skipForward( ) override;
-    void skipBackward( ) override;
-    void skipForwardp( ) override;
-    void skipBackwardp( ) override;
-    void pause( ) override;
-    void restart( ) override;
-    unsigned long long getCurrent( ) override;
-    unsigned long long getDuration( ) override;
-    bool isPaused( ) override;
+    void skipForward() override;
+    void skipBackward() override;
+    void skipForwardp() override;
+    void skipBackwardp() override;
+    void pause() override;
+    void restart() override;
+    unsigned long long getCurrent() override;
+    unsigned long long getDuration() override;
+    bool isPaused() override;
+    // Helper functions...
+    static void enablePlugin(const std::string& pluginName);
+    static void disablePlugin(const std::string& pluginName);
 
 private:
     enum BufferLayout {
@@ -73,8 +76,8 @@ private:
         NON_CONTIGUOUS,  // Non-contiguous buffer layout
         NON_CONTIGUOUS_HARDWARE_DECODE // Non-contiguous hardware decode for windows/linux
     };
-    
-    static void processNewBuffer (GstElement const *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
+
+    static void processNewBuffer(GstElement const* fakesink, GstBuffer* buf, GstPad* pad, gpointer data);
     static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
     bool initializeGstElements(const std::string& file);
     bool createAndLinkGstElements();
@@ -103,8 +106,8 @@ private:
     bool paused_{ false };
     double lastSetVolume_{ 0.0 };
     bool lastSetMuteState_{ false };
-    
-    bool useD3dHardware_{ Configuration::HardwareVideoAccel 
+
+    bool useD3dHardware_{ Configuration::HardwareVideoAccel
         && SDL::getRendererBackend(0) == "direct3d11" };
     bool useVaHardware_{ Configuration::HardwareVideoAccel
         && SDL::getRendererBackend(0) == "opengl"
@@ -112,4 +115,5 @@ private:
 
     BufferLayout bufferLayout_{ UNKNOWN };
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath);
+
 };

@@ -184,6 +184,24 @@ bool GStreamerVideo::play(const std::string& file)
     if(!initialized_)
         return false;
 
+#if defined(WIN32)
+    if (!Configuration::HardwareVideoAccel) {
+        disablePlugin("d3d11h264dec");
+        disablePlugin("d3d11h265dec");
+    }
+#elif defined(__APPLE__)
+    if (Configuration::HardwareVideoAccel) {
+        enablePlugin("vah264dec");
+        enablePlugin("vah265dec");
+}
+#else
+    if (ConfigurationH::HardwareVideoAccel) {
+        enablePlugin("vah264dec");
+        enablePlugin("vah265dec");
+}
+#endif
+
+
     currentFile_ = file;
 
     if(!initializeGstElements(file))
@@ -297,48 +315,18 @@ bool GStreamerVideo::createAndLinkGstElements()
 
 
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video) {
-    bool hardwareVideoAccel = Configuration::HardwareVideoAccel;
-
-    // Handle decoder plugin rank adjustments based on the platform and hardware acceleration availability
-    if (hardwareVideoAccel) {
-        // For Linux, when hardware acceleration is enabled, adjust the ranks of specific decoders
-#if !defined(WIN32) && !defined(__APPLE__)
-        std::vector<std::string> decoderPluginNames = { "vah264dec", "vah265dec" };
-        for (const auto& pluginName : decoderPluginNames) {
-            GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
-            if (factory) {
-                gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_PRIMARY + 1);
-                g_object_unref(factory);
-            }
-    }
-#endif
+	if (!Configuration::HardwareVideoAccel)
+	{
+		gchar* elementName = gst_element_get_name(element);
+		if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265"))
+		{
+			// Modify the properties of the avdec_h265 element here
+			g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
+		}
+		g_free(elementName);
+	}
 }
-    else {
-        // For Windows and Apple, or for all platforms when hardware acceleration is not enabled
-        std::vector<std::string> decoderPluginNames;
-#ifdef WIN32
-        decoderPluginNames = { "d3d11h264dec", "d3d11h265dec" };
-#elif defined(__APPLE__)
-        decoderPluginNames = { "vtdec", "vtdec_hw" };
-#else
-        // Add any Linux-specific non-accelerated decoder adjustments here if needed
-#endif
-        for (const auto& pluginName : decoderPluginNames) {
-            GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
-            if (factory) {
-                gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_NONE);
-                g_object_unref(factory);
-    }
-        }
 
-        // Modify properties of certain elements if hardware video acceleration is not enabled
-        gchar* elementName = gst_element_get_name(element);
-        if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265")) {
-            g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
-        }
-        g_free(elementName);
-    }
-}
 
 
 void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
@@ -824,4 +812,22 @@ std::string GStreamerVideo::generateDotFileName(const std::string& prefix, const
         << std::setfill('0') << std::setw(6) << microseconds.count();
 
     return ss.str();
+}
+
+void GStreamerVideo::enablePlugin(const std::string& pluginName) {
+    GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
+    if (factory) {
+        // Sets the plugin rank to PRIMARY + 1 to prioritize its use
+        gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_PRIMARY + 1);
+        gst_object_unref(factory);
+    }
+}
+
+void GStreamerVideo::disablePlugin(const std::string& pluginName) {
+    GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
+    if (factory) {
+        // Sets the plugin rank to GST_RANK_NONE to disable its use
+        gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_NONE);
+        gst_object_unref(factory);
+    }
 }
