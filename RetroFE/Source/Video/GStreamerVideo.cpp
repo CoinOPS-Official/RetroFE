@@ -195,7 +195,7 @@ bool GStreamerVideo::play(const std::string& file)
         enablePlugin("vah265dec");
 }
 #else
-    if (ConfigurationH::HardwareVideoAccel) {
+    if (Configuration::HardwareVideoAccel) {
         enablePlugin("vah264dec");
         enablePlugin("vah265dec");
 }
