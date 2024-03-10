@@ -295,6 +295,7 @@ bool GStreamerVideo::createAndLinkGstElements()
     g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, "enable-last-sample", FALSE, nullptr);
     g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, nullptr);
     gst_caps_unref(videoConvertCaps_);
+    videoConvertCaps_ = nullptr;
     gst_bin_add_many(GST_BIN(videoBin_), capsFilter_, videoSink_, nullptr);
 
     // Directly link capsFilter to videoSink
@@ -403,41 +404,17 @@ void GStreamerVideo::update(float /* dt */)
 	{
 
 		// Lambda functions for handling each case
-		auto handleContiguous = [&]()
-			{
-				void* pixels;
-				int pitch;
-				unsigned int vbytes = width_ * height_;
-				vbytes += (vbytes / 2);
-				gsize bufSize = gst_buffer_get_size(videoBuffer_);
+        auto handleContiguous = [&]()
+            {
+                void* pixels = nullptr;
+                int pitch = 0;
+                gsize vbytes = width_ * height_;
+                vbytes += (vbytes / 2);
 
-				if (bufSize == vbytes)
-				{
-					SDL_LockTexture(texture_, nullptr, &pixels, &pitch);
-					gst_buffer_extract(videoBuffer_, 0, pixels, vbytes);
-					SDL_UnlockTexture(texture_);
-				}
-				else
-				{
-					GstMapInfo bufInfo;
-					int y_stride, u_stride, v_stride;
-					const Uint8* y_plane, * u_plane, * v_plane;
-
-					y_stride = GST_ROUND_UP_4(width_);
-					u_stride = v_stride = GST_ROUND_UP_4(y_stride / 2);
-
-					gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
-					y_plane = bufInfo.data;
-					u_plane = y_plane + (height_ * y_stride);
-					v_plane = u_plane + ((height_ / 2) * u_stride);
-                    SDL_UpdateYUVTexture(texture_, nullptr,
-                            y_plane, y_stride,
-                            u_plane, u_stride,
-                            v_plane, v_stride);
-                    gst_buffer_unmap(videoBuffer_, &bufInfo);
-				}
-
-			};
+                SDL_LockTexture(texture_, nullptr, &pixels, &pitch);
+                gst_buffer_extract(videoBuffer_, 0, pixels, vbytes);
+                SDL_UnlockTexture(texture_);
+            };
 
         auto handleNonContiguous = [&]() {
             if (!videoMeta_)
@@ -464,47 +441,6 @@ void GStreamerVideo::update(float /* dt */)
             videoMeta_ = nullptr;
         };
 
-        auto handleNonContiguousHardwareDecode = [&]() {
-            if (!videoMeta_)
-                videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
-            GstMapInfo bufInfo;
-            if (!gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
-                return; // Early return if mapping fails
-
-            void* pixels;
-            int pitch;
-            if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) != 0) {
-                gst_buffer_unmap(videoBuffer_, &bufInfo); // Unmap before returning
-                return; // Early return if locking fails
-            }
-
-            // Directly access the Y plane data
-            const Uint8* y_plane = bufInfo.data + videoMeta_->offset[0];
-            // Copy the Y plane data row by row
-            for (int row = 0; row < height_; ++row) {
-                Uint8* dst = static_cast<Uint8*>(pixels) + row * pitch; // Destination row in the texture
-                const Uint8* src = y_plane + row * videoMeta_->stride[0]; // Source row in the Y plane
-                SDL_memcpy(dst, src, width_); // Assuming width is the actual visible width to copy
-            }
-
-            // Directly access the UV plane data
-            const Uint8* uv_plane = bufInfo.data + videoMeta_->offset[1];
-            // Calculate the starting point for the UV plane in the texture's pixel buffer
-            Uint8* uv_plane_pixels = static_cast<Uint8*>(pixels) + pitch * height_;
-            // Copy the UV plane data row by row
-            for (int row = 0; row < height_ / 2; ++row) {
-                Uint8* dst = uv_plane_pixels + row * pitch; // Destination row in the texture for UV data
-                const Uint8* src = uv_plane + row * videoMeta_->stride[1]; // Source row in the UV plane
-                SDL_memcpy(dst, src, width_); // Copy the UV data, adjusting for NV12 format
-            }
-
-            SDL_UnlockTexture(texture_); // Unlock after copying
-            gst_buffer_unmap(videoBuffer_, &bufInfo); // Unmap the GstBuffer
-            videoMeta_ = nullptr; // Reset videoMeta_ for the next frame
-        };
-
-
-
         if (bufferLayout_ == UNKNOWN)
         {
             GstVideoMeta const* meta;
@@ -518,7 +454,8 @@ void GStreamerVideo::update(float /* dt */)
             {
                 if (useD3dHardware_ || useVaHardware_)
                 {
-                    bufferLayout_ = NON_CONTIGUOUS_HARDWARE_DECODE;
+                    bufferLayout_ = CONTIGUOUS;
+                    LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
                 }
                 else
                 {
@@ -544,12 +481,7 @@ void GStreamerVideo::update(float /* dt */)
 			break;
 		}
 
-        case NON_CONTIGUOUS_HARDWARE_DECODE:
-        {
-            handleNonContiguousHardwareDecode();
-            break;
-        }
-		
+
         default:
 			// Should not reach here.
 			break;
