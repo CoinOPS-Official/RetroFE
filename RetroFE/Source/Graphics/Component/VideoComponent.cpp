@@ -73,12 +73,14 @@ bool VideoComponent::update(float dt)
             if (!isCurrentlyVisible && !isPaused())
             {
                 videoInst_->pause();
-                LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+                if(Logger::isLevelEnabled("DEBUG"))
+                    LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
             }
             else if (isCurrentlyVisible && isPaused())
             {
                 videoInst_->pause(); // This resumes the video
-                LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+                if (Logger::isLevelEnabled("DEBUG"))
+                    LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
             }
         }
 
@@ -86,7 +88,8 @@ bool VideoComponent::update(float dt)
         if (baseViewInfo.Restart && hasBeenOnScreen_)
         {
             videoInst_->restart();
-            LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
+            if (Logger::isLevelEnabled("DEBUG"))
+                LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
             baseViewInfo.Restart = false;
         }
     }
@@ -116,13 +119,15 @@ void VideoComponent::freeGraphicsMemory()
     //videoInst_->stop();
         
     Component::freeGraphicsMemory();
-    LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
+    if (Logger::isLevelEnabled("DEBUG"))
+        LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
     
     if (videoInst_) 
     {
         delete videoInst_;
         isPlaying_ = false;
-        LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
+        if (Logger::isLevelEnabled("DEBUG"))
+            LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
         videoInst_ = nullptr;
         
     }
