@@ -185,20 +185,30 @@ bool GStreamerVideo::play(const std::string& file)
         return false;
 
 #if defined(WIN32)
-    if (!Configuration::HardwareVideoAccel) {
+    if (!Configuration::HardwareVideoAccel) 
+    {
         disablePlugin("d3d11h264dec");
         disablePlugin("d3d11h265dec");
     }
 #elif defined(__APPLE__)
-    if (Configuration::HardwareVideoAccel) {
+    if (Configuration::HardwareVideoAccel) 
+    {
         enablePlugin("vah264dec");
         enablePlugin("vah265dec");
-}
+    }
 #else
-    if (Configuration::HardwareVideoAccel) {
+    if (Configuration::HardwareVideoAccel) 
+    {
         enablePlugin("vah264dec");
         enablePlugin("vah265dec");
-}
+    }
+    if (!Configuration::HardwareVideoAccel) 
+    {
+        disablePlugin("vah264dec")
+        disablePlugin("vah265dec")
+        enablePlugin("avdec_h264")
+        enablePlugin("avdec_h265")
+    }
 #endif
 
 
@@ -261,7 +271,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
     }
 
     // Set properties of playbin and videoSink
-    const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002 | 0x00000010;
+    const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002;
     g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, nullptr);
     g_free(uriFile);
     elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
@@ -448,21 +458,24 @@ void GStreamerVideo::update(float /* dt */)
             if (!meta)
             {
                 bufferLayout_ = CONTIGUOUS;
-                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
+                if(Logger::isLevelEnabled("DEBUG"))
+                    LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
             }
             else
             {
                 if (useD3dHardware_ || useVaHardware_)
                 {
                     bufferLayout_ = CONTIGUOUS;
-                    LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
+                    if (Logger::isLevelEnabled("DEBUG"))
+                        LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
                 }
                 else
                 {
                     bufferLayout_ = NON_CONTIGUOUS;
                 }
                 videoMeta_ = meta; // Store meta for future use
-                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non-Contiguous");
+                if (Logger::isLevelEnabled("DEBUG"))
+                    LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non-Contiguous");
             }
         }
 
