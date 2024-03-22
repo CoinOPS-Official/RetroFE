@@ -335,7 +335,13 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
 			// Modify the properties of the avdec_h265 element here
 			g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
 		}
-		g_free(elementName);
+#ifdef WIN32
+        if (g_str_has_prefix(elementName, "Wasapi2")) 
+        {
+            g_object_set(G_OBJECT(element), "low-latency", TRUE, nullptr);
+        }
+#endif
+        g_free(elementName);
 	}
 }
 
@@ -524,20 +530,22 @@ void GStreamerVideo::update(float /* dt */)
             if (!meta)
             {
                 bufferLayout_ = CONTIGUOUS;
-                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
+                if(Logger::isLevelEnabled("DEBUG"))
+                    LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
             }
             else
             {
                 if (useD3dHardware_ || useVaHardware_)
                 {
-                    bufferLayout_ = NON_CONTIGUOUS_HARDWARE_DECODE;
+                    bufferLayout_ = CONTIGUOUS;
                 }
                 else
                 {
                     bufferLayout_ = NON_CONTIGUOUS;
                 }
                 videoMeta_ = meta; // Store meta for future use
-                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non-Contiguous");
+                if (Logger::isLevelEnabled("DEBUG"))
+                    LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non-Contiguous");
             }
         }
 
