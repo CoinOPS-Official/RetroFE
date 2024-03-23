@@ -185,7 +185,7 @@ bool GStreamerVideo::play(const std::string& file)
         return false;
 
 #if defined(WIN32)
-    enablePlugin("directsoundsink");
+    //enablePlugin("directsoundsink");
     if (!Configuration::HardwareVideoAccel) 
     {
         disablePlugin("d3d11h264dec");
@@ -423,28 +423,20 @@ void GStreamerVideo::update(float /* dt */)
         // Lambda functions for handling each case
         auto handleContiguous = [&]()
             {
-                void* pixels;
-                int pitch;
-                unsigned int vbytes = width_ * height_;
-                vbytes += (vbytes / 2);
-                gsize bufSize = gst_buffer_get_size(videoBuffer_);
-
-                if (bufSize == vbytes)
+                GstMapInfo bufInfo;
+                gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
+                if (bufInfo.size == expectedBufSize_)
                 {
-                    SDL_LockTexture(texture_, nullptr, &pixels, &pitch);
-                    gst_buffer_extract(videoBuffer_, 0, pixels, vbytes);
-                    SDL_UnlockTexture(texture_);
+                    SDL_UpdateTexture(texture_, nullptr, bufInfo.data, width_);
                 }
                 else
                 {
-                    GstMapInfo bufInfo;
                     int y_stride, u_stride, v_stride;
                     const Uint8* y_plane, * u_plane, * v_plane;
 
                     y_stride = GST_ROUND_UP_4(width_);
                     u_stride = v_stride = GST_ROUND_UP_4(y_stride / 2);
 
-                    gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);
                     y_plane = bufInfo.data;
                     u_plane = y_plane + (height_ * y_stride);
                     v_plane = u_plane + ((height_ / 2) * u_stride);
@@ -452,9 +444,8 @@ void GStreamerVideo::update(float /* dt */)
                         y_plane, y_stride,
                         u_plane, u_stride,
                         v_plane, v_stride);
-                    gst_buffer_unmap(videoBuffer_, &bufInfo);
                 }
-
+                gst_buffer_unmap(videoBuffer_, &bufInfo); // Unmap the buffer after use
             };
 
         auto handleNonContiguous = [&]() {

@@ -77,7 +77,7 @@ private:
         NON_CONTIGUOUS_HARDWARE_DECODE // Non-contiguous hardware decode for windows/linux
     };
 
-    static void processNewBuffer(GstElement const* fakesink, GstBuffer* buf, GstPad* pad, gpointer data);
+    static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
     bool initializeGstElements(const std::string& file);
     bool createAndLinkGstElements();
@@ -106,6 +106,7 @@ private:
     bool paused_{ false };
     double lastSetVolume_{ 0.0 };
     bool lastSetMuteState_{ false };
+    unsigned int expectedBufSize_{ 0 };
 
     bool useD3dHardware_{ Configuration::HardwareVideoAccel
         && SDL::getRendererBackend(0) == "direct3d11" };
