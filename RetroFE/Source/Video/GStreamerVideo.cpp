@@ -370,7 +370,6 @@ void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffe
                 gst_caps_unref(caps);
                 return; // Exit if width or height retrieval failed.
             }
-            video->expectedBufSize_ = video->width_ * video->height_ + (video->width_ * video->height_ / 2);
             gst_caps_unref(caps); // Always unref caps after use.
         }
 
@@ -383,6 +382,7 @@ void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffe
                     SDL_UnlockMutex(SDL::getMutex());
                     return; // Exit if buffer ref failed.
                 }
+                video->expectedBufSize_ = video->width_ * video->height_ + (video->width_ * video->height_ / 2);
                 video->frameReady_ = true; // Set frame ready if all operations are successful.
                 SDL_UnlockMutex(SDL::getMutex());
             }
