@@ -370,6 +370,7 @@ void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffe
                 gst_caps_unref(caps);
                 return; // Exit if width or height retrieval failed.
             }
+            video->expectedBufSize_ = video->width_ * video->height_ + (video->width_ * video->height_ / 2);
             gst_caps_unref(caps); // Always unref caps after use.
         }
 
