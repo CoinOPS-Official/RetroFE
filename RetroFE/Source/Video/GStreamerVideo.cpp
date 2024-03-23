@@ -568,8 +568,7 @@ void GStreamerVideo::update(float /* dt */)
         }
 
 
-        gst_buffer_unref(videoBuffer_);
-        videoBuffer_ = nullptr;
+        gst_clear_buffer(&videoBuffer_);
     }
 
     SDL_UnlockMutex(SDL::getMutex());
