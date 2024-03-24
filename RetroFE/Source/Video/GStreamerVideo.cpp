@@ -350,10 +350,9 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
     SDL_LockMutex(SDL::getMutex());
     auto* video = static_cast<GStreamerVideo*>(userdata);
-
+    gst_buffer_ref(buf);
     if (!video || !video->isPlaying_) {
         LOG_ERROR("Video", "Invalid video or not playing.");
-        gst_buffer_ref(buf);
         gst_clear_buffer(&buf);
         SDL_UnlockMutex(SDL::getMutex());
         return; // If video is null or not playing, exit early.
@@ -383,20 +382,18 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 
         // If height and width are now set, and the video buffer hasn't been set yet, proceed.
         if (video->width_ > 0 && video->height_ > 0 && !video->videoBuffer_) {
-            video->videoBuffer_ = gst_buffer_ref(buf);
+            video->videoBuffer_ = buf;
             if (!video->expectedBufSize_)
                 video->expectedBufSize_ = video->width_ * video->height_ + (video->width_ * video->height_ / 2);
             video->frameReady_ = true; // Set frame ready if all operations are successful.
         }
     else 
         {
-            gst_buffer_ref(buf);
             gst_clear_buffer(&buf);
         }
     }
     else
     {
-        gst_buffer_ref(buf);
         gst_clear_buffer(&buf);
     }
     SDL_UnlockMutex(SDL::getMutex());
