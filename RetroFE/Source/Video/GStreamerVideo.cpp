@@ -149,8 +149,7 @@ bool GStreamerVideo::stop()
     // Unref the video buffer
     if(videoBuffer_)
     {
-        gst_buffer_unref(videoBuffer_);
-        videoBuffer_ = nullptr;
+        gst_clear_buffer(&videoBuffer_);
     }
 
     // Free GStreamer elements and related resources
@@ -372,10 +371,9 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
     SDL_LockMutex(SDL::getMutex());
     auto* video = static_cast<GStreamerVideo*>(userdata);
-
+    gst_buffer_ref(buf);
     if (!video || !video->isPlaying_) {
         LOG_ERROR("Video", "Invalid video or not playing.");
-        gst_buffer_ref(buf);
         gst_clear_buffer(&buf);
         SDL_UnlockMutex(SDL::getMutex());
         return; // If video is null or not playing, exit early.
@@ -389,7 +387,6 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
             GstCaps* caps = gst_pad_get_current_caps(new_pad);
             if (!caps) {
                 LOG_ERROR("Video", "Failed to get current caps.");
-                gst_buffer_ref(buf);
                 gst_clear_buffer(&buf);
                 SDL_UnlockMutex(SDL::getMutex());
                 return;
@@ -399,7 +396,6 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
             if (!s || !gst_structure_get_int(s, "width", &video->width_) || !gst_structure_get_int(s, "height", &video->height_)) {
                 LOG_ERROR("Video", "Failed to get width and height from structure.");
                 gst_caps_unref(caps);
-                gst_buffer_ref(buf);
                 gst_clear_buffer(&buf);
                 SDL_UnlockMutex(SDL::getMutex());
                 return;
@@ -409,20 +405,18 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 
         // If height and width are now set, and the video buffer hasn't been set yet, proceed.
         if (video->width_ > 0 && video->height_ > 0 && !video->videoBuffer_) {
-            video->videoBuffer_ = gst_buffer_ref(buf);
+            video->videoBuffer_ = buf;
             if (!video->expectedBufSize_)
                 video->expectedBufSize_ = video->width_ * video->height_ + (video->width_ * video->height_ / 2);
             video->frameReady_ = true; // Set frame ready if all operations are successful.
         }
         else
         {
-            gst_buffer_ref(buf);
             gst_clear_buffer(&buf);
         }
     }
     else
     {
-        gst_buffer_ref(buf);
         gst_clear_buffer(&buf);
     }
     SDL_UnlockMutex(SDL::getMutex());
