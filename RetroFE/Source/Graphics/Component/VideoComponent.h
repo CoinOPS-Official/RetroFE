@@ -23,25 +23,25 @@
 #include <SDL2/SDL.h>
 #include <string>
 
-class VideoComponent : public Component
+class VideoComponent final : public Component
 {
 public:
-    VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
-    virtual ~VideoComponent();
+    VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops);
+    ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
     void freeGraphicsMemory() override;
     void allocateGraphicsMemory() override;
     bool isPlaying() override;
-    void skipForward( ) override;
-    void skipBackward( ) override;
-    void skipForwardp( ) override;
-    void skipBackwardp( ) override;
-    void pause( ) override;
-    void restart( ) override;
-    unsigned long long getCurrent( ) override;
-    unsigned long long getDuration( ) override;
-    bool isPaused( ) override;
+    void skipForward() override;
+    void skipBackward() override;
+    void skipForwardp() override;
+    void skipBackwardp() override;
+    void pause() override;
+    void restart() override;
+    unsigned long long getCurrent() override;
+    unsigned long long getDuration() override;
+    bool isPaused() override;
     std::string_view filePath() override;
 
 private:
@@ -52,4 +52,5 @@ private:
     bool hasBeenOnScreen_{ false };
     int numLoops_;
     int monitor_;
+    Page* currentPage_{ nullptr };
 };

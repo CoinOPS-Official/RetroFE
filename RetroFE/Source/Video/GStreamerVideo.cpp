@@ -181,16 +181,42 @@ bool GStreamerVideo::play(const std::string& file)
 {
     playCount_ = 0;
 
-    if(!initialized_)
+    if (!initialized_)
         return false;
+
+#if defined(WIN32)
+    //enablePlugin("directsoundsink");
+    if (!Configuration::HardwareVideoAccel)
+    {
+        disablePlugin("d3d11h264dec");
+        disablePlugin("d3d11h265dec");
+    }
+#elif defined(__APPLE__)
+    if (Configuration::HardwareVideoAccel)
+    {
+        enablePlugin("vah264dec");
+        enablePlugin("vah265dec");
+    }
+#else
+    if (Configuration::HardwareVideoAccel)
+    {
+        enablePlugin("vah264dec");
+        enablePlugin("vah265dec");
+    }
+    if (!Configuration::HardwareVideoAccel)
+    {
+        disablePlugin("vah264dec");
+        disablePlugin("vah265dec");
+        enablePlugin("avdec_h264");
+        enablePlugin("avdec_h265");
+    }
+#endif
+
 
     currentFile_ = file;
 
-    if(!initializeGstElements(file))
+    if (!initializeGstElements(file))
         return false;
-
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, "playbin");
-    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL, "videobin");
 
     // Start playing
     if (GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING); playState != GST_STATE_CHANGE_ASYNC)
@@ -203,15 +229,34 @@ bool GStreamerVideo::play(const std::string& file)
 
     isPlaying_ = true;
 
-
-
     // Set the volume to zero and mute the video
     gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
     gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), true);
 
+    if (Configuration::debugDotEnabled) {
+        // Environment variable is set, proceed with dot file generation
+
+        GstState state;
+        GstState pending;
+        // Wait up to 5 seconds for the state change to complete
+        GstClockTime timeout = 5 * GST_SECOND; // Define your timeout
+        GstStateChangeReturn ret = gst_element_get_state(GST_ELEMENT(playbin_), &state, &pending, timeout);
+
+        if (ret == GST_STATE_CHANGE_SUCCESS && state == GST_STATE_PLAYING) {
+            // The pipeline is in the playing state, proceed with dot file generation
+
+            // Generate dot file for playbin_
+            std::string playbinDotFileName = generateDotFileName("playbin", currentFile_);
+            GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, playbinDotFileName.c_str());
+
+            // Generate dot file for videoBin_
+            std::string videoBinDotFileName = generateDotFileName("videobin", currentFile_);
+            GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL, videoBinDotFileName.c_str());
+        }
+    }
+
     return true;
 }
-
 bool GStreamerVideo::initializeGstElements(const std::string& file)
 {
     gchar *uriFile = gst_filename_to_uri(file.c_str(), nullptr);
@@ -246,7 +291,7 @@ bool GStreamerVideo::createAndLinkGstElements()
     capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
 
     // Only create videoConvert and videoConvertCaps if not using DirectX11
-    if (Configuration::HardwareVideoAccel && SDL::getRendererBackend(0) == "direct3d11") {
+    if (useD3dHardware_) {
         // Omitting the videoConvert element entirely in DirectX11 case
         videoConvertCaps_ = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
     }
@@ -303,87 +348,90 @@ bool GStreamerVideo::createAndLinkGstElements()
 
 
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video) {
-#if defined(WIN32) || defined(__APPLE__)
-    bool hardwareVideoAccel = Configuration::HardwareVideoAccel;
-    if (!hardwareVideoAccel) {
-#ifdef WIN32
-        std::vector<std::string> decoderPluginNames = {"d3d11h264dec", "d3d11h265dec"};
-#elif __APPLE__
-        std::vector<std::string> decoderPluginNames = { "vtdec", "vtdec_hw" };
-#endif
-        for (const auto& pluginName : decoderPluginNames) {
-            GstElementFactory *factory = gst_element_factory_find(pluginName.c_str());
-            if (factory) {
-                gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_NONE);
-                g_object_unref(factory);
-            }
-        }
-    }
-#endif
 
-    gchar *elementName = gst_element_get_name(element);
-    if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265")) {
-        #ifdef WIN32
-        if (!hardwareVideoAccel) {
-        #endif
-            // Modify the properties of the avdec_h265 element here
-            g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
-        #ifdef WIN32
-        }
-        #endif
-    }
-    g_free(elementName);
+	gchar* elementName = gst_element_get_name(element);
+	if (!Configuration::HardwareVideoAccel) 
+    {
+		if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265"))
+		{
+			// Modify the properties of the avdec_h265 element here
+			g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
+		}
+	}
+#ifdef WIN32
+    if (g_str_has_prefix(elementName, "Wasapi2"))
+	{
+		g_object_set(G_OBJECT(element), "low-latency", TRUE, nullptr);
+	}
+#endif
+	g_free(elementName);
+
 }
 
-void GStreamerVideo::processNewBuffer(GstElement const */* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
+
+void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
+    SDL_LockMutex(SDL::getMutex());
     auto* video = static_cast<GStreamerVideo*>(userdata);
+
     if (!video || !video->isPlaying_) {
         LOG_ERROR("Video", "Invalid video or not playing.");
+        gst_buffer_ref(buf);
+        gst_clear_buffer(&buf);
+        SDL_UnlockMutex(SDL::getMutex());
         return; // If video is null or not playing, exit early.
     }
 
     // Only proceed if the frame is not ready yet.
-    if (!video->frameReady_) {
+    if (!video->frameReady_)
+    {
         // Only retrieve and set width and height if they have not been set yet.
         if (video->width_ == 0 || video->height_ == 0) {
             GstCaps* caps = gst_pad_get_current_caps(new_pad);
             if (!caps) {
                 LOG_ERROR("Video", "Failed to get current caps.");
-                return; // Exit if caps retrieval failed.
+                gst_buffer_ref(buf);
+                gst_clear_buffer(&buf);
+                SDL_UnlockMutex(SDL::getMutex());
+                return;
             }
 
-            if (const GstStructure* s = gst_caps_get_structure(caps, 0);
-                !s || !gst_structure_get_int(s, "width", &video->width_) || !gst_structure_get_int(s, "height", &video->height_)) {
+            const GstStructure* s = gst_caps_get_structure(caps, 0);
+            if (!s || !gst_structure_get_int(s, "width", &video->width_) || !gst_structure_get_int(s, "height", &video->height_)) {
                 LOG_ERROR("Video", "Failed to get width and height from structure.");
                 gst_caps_unref(caps);
-                return; // Exit if width or height retrieval failed.
+                gst_buffer_ref(buf);
+                gst_clear_buffer(&buf);
+                SDL_UnlockMutex(SDL::getMutex());
+                return;
             }
             gst_caps_unref(caps); // Always unref caps after use.
         }
 
         // If height and width are now set, and the video buffer hasn't been set yet, proceed.
         if (video->width_ > 0 && video->height_ > 0 && !video->videoBuffer_) {
-           if (SDL_LockMutex(SDL::getMutex()) == 0) { // Lock the mutex, check for success.
-                video->videoBuffer_ = gst_buffer_ref(buf);
-                if (!video->videoBuffer_) {
-                    LOG_ERROR("Video", "Failed to ref buffer.");
-                    SDL_UnlockMutex(SDL::getMutex());
-                    return; // Exit if buffer ref failed.
-                }
-                video->frameReady_ = true; // Set frame ready if all operations are successful.
-                SDL_UnlockMutex(SDL::getMutex());
-            }
-            else {
-                LOG_ERROR("Video", "Failed to lock mutex.");
-                return;
-            }
+            video->videoBuffer_ = gst_buffer_ref(buf);
+            if (!video->expectedBufSize_)
+                video->expectedBufSize_ = video->width_ * video->height_ + (video->width_ * video->height_ / 2);
+            video->frameReady_ = true; // Set frame ready if all operations are successful.
+        }
+        else
+        {
+            gst_buffer_ref(buf);
+            gst_clear_buffer(&buf);
         }
     }
+    else
+    {
+        gst_buffer_ref(buf);
+        gst_clear_buffer(&buf);
+    }
+    SDL_UnlockMutex(SDL::getMutex());
 }
+
 
 void GStreamerVideo::update(float /* dt */)
 {
-	if(!playbin_ || frameReady_ || paused_)
+	if(!playbin_ || paused_)
 	{
 		return;
 	}
@@ -408,40 +456,15 @@ void GStreamerVideo::update(float /* dt */)
         }
         
         // Lambda functions for handling each case
-        auto handleContiguous = [&]() {
-            // Directly lock the texture for the entire area
-            Uint8* texture_pixels = nullptr;
-            int texture_pitch;
-            if (SDL_LockTexture(texture_, nullptr, (void**)&texture_pixels, &texture_pitch) < 0) {
-                Logger::write(Logger::ZONE_ERROR, "Video", "Unable to lock texture");
-                return;
-            }
-
-            // Pointers to Y and UV planes in the source buffer
-            const auto* src_y = (const Uint8*)bufInfo.data;
-            const Uint8* src_uv = src_y + GST_ROUND_UP_4(width_) * height_;
-
-            // Pointers to Y and UV planes in the texture
-            Uint8* dst_y = texture_pixels;
-            Uint8* dst_uv = dst_y + texture_pitch * height_;
-
-            // Y plane copying
-            for (int i = 0; i < height_; i++) {
-                SDL_memcpy(dst_y, src_y, width_);
-                src_y += GST_ROUND_UP_4(width_);
-                dst_y += texture_pitch;
-                // UV plane copying (NV12 specific)
-                if (i % 2 == 0) {
-                    // This assumes the UV plane is exactly half the height of the Y plane.
-                    SDL_memcpy(dst_uv, src_uv, GST_ROUND_UP_4(width_));
-                    src_uv += GST_ROUND_UP_4(width_);
-                    dst_uv += texture_pitch;
+        
+        
+        auto handleContiguous = [&]()
+            {
+                if (bufInfo.size == expectedBufSize_)
+                {
+                    SDL_UpdateTexture(texture_, nullptr, bufInfo.data, width_);
                 }
-            }
-
-            SDL_UnlockTexture(texture_);
-            return;
-        };
+            };
 
         auto handleNonContiguous = [&]() {
             GstVideoMeta const* meta = gst_buffer_get_video_meta(videoBuffer_);
@@ -462,17 +485,15 @@ void GStreamerVideo::update(float /* dt */)
             gsize expected_uv_offset = height_ * static_cast<gsize>(expected_y_stride);
 
             // Assume CONTIGUOUS is more likely.
-            if (!meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
+            if (!Configuration::HardwareVideoAccel || !meta || meta->offset[0] != 0 || meta->stride[0] != expected_y_stride || 
                 meta->stride[1] != expected_uv_stride || meta->offset[1] != expected_uv_offset)
             {
                 bufferLayout_ = NON_CONTIGUOUS;
-                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non - Contiguous");
                 handleNonContiguous();
             }
             else 
             {
                 bufferLayout_ = CONTIGUOUS;
-                LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
                 handleContiguous();
             }
         }
@@ -498,11 +519,9 @@ void GStreamerVideo::update(float /* dt */)
         }
 
         gst_buffer_unmap(videoBuffer_, &bufInfo);
-        gst_buffer_unref(videoBuffer_);
-        videoBuffer_ = nullptr;
+        gst_clear_buffer(&videoBuffer_);
     }
     SDL_UnlockMutex(SDL::getMutex());
-    volumeUpdate();
 }
 
 void GStreamerVideo::loopHandler()
@@ -692,15 +711,11 @@ void GStreamerVideo::skipBackwardp( )
 
 void GStreamerVideo::pause()
 {    
-    if (!Configuration::HardwareVideoAccel) 
-        g_object_set(G_OBJECT(videoSink_), "sync", FALSE, "async", FALSE, nullptr);
     paused_ = !paused_;
     if (paused_)
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
     else
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-    if (!Configuration::HardwareVideoAccel)
-        g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "async", TRUE, nullptr);
 }
 
 
@@ -736,4 +751,39 @@ unsigned long long GStreamerVideo::getDuration( )
 bool GStreamerVideo::isPaused( )
 {
     return paused_;
+}
+
+std::string GStreamerVideo::generateDotFileName(const std::string& prefix, const std::string& videoFilePath) {
+    std::string videoFileName = Utils::getFileName(videoFilePath);
+
+    auto now = std::chrono::system_clock::now();
+    auto now_c = std::chrono::system_clock::to_time_t(now);
+    auto microseconds = std::chrono::duration_cast<std::chrono::microseconds>(
+        now.time_since_epoch()) % 1000000;
+
+    std::stringstream ss;
+    ss << prefix << "_"
+        << videoFileName << "_"
+        << std::put_time(std::localtime(&now_c), "%Y%m%d_%H%M%S_")
+        << std::setfill('0') << std::setw(6) << microseconds.count();
+
+    return ss.str();
+}
+
+void GStreamerVideo::enablePlugin(const std::string& pluginName) {
+    GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
+    if (factory) {
+        // Sets the plugin rank to PRIMARY + 1 to prioritize its use
+        gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_PRIMARY + 1);
+        gst_object_unref(factory);
+    }
+}
+
+void GStreamerVideo::disablePlugin(const std::string& pluginName) {
+    GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
+    if (factory) {
+        // Sets the plugin rank to GST_RANK_NONE to disable its use
+        gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_NONE);
+        gst_object_unref(factory);
+    }
 }

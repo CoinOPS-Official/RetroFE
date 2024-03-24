@@ -51,6 +51,7 @@ public:
     static int AvdecThreadType;
     static bool HardwareVideoAccel; // Declare HardwareVideoAccel as a static member variable
 	static bool MuteVideo;
+    static bool debugDotEnabled;
 
 private:
     bool getRawProperty(const std::string& key, std::string &value);

@@ -16,6 +16,9 @@
 #pragma once
 
 #include "IVideo.h"
+#include "../SDL.h"
+#include "../Database/Configuration.h"
+#include "../Utility/Utils.h"
 
 extern "C"
 {
@@ -59,6 +62,7 @@ public:
     unsigned long long getDuration( ) override;
     bool isPaused( ) override;
 
+
 private:
     enum BufferLayout {
         UNKNOWN,        // Initial state
@@ -68,6 +72,9 @@ private:
     
     static void processNewBuffer (GstElement const *fakesink, GstBuffer *buf, GstPad *pad, gpointer data);
     static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
+    std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath);
+    void enablePlugin(const std::string& pluginName);
+    void disablePlugin(const std::string& pluginName);
     bool initializeGstElements(const std::string& file);
     bool createAndLinkGstElements();
     void loopHandler();
@@ -98,4 +105,11 @@ private:
     double lastSetVolume_{ 0.0 };
     bool lastSetMuteState_{ false };
     BufferLayout bufferLayout_{ UNKNOWN };
+    unsigned int expectedBufSize_{ 0 };
+
+    bool useD3dHardware_{ Configuration::HardwareVideoAccel
+    && SDL::getRendererBackend(0) == "direct3d11" };
+    bool useVaHardware_{ Configuration::HardwareVideoAccel
+        && SDL::getRendererBackend(0) == "opengl"
+        && Utils::getOSType() == "linux" };
 };
