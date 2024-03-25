@@ -327,22 +327,24 @@ bool GStreamerVideo::createAndLinkGstElements()
 
 
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video) {
-	if (!Configuration::HardwareVideoAccel)
-	{
-		gchar* elementName = gst_element_get_name(element);
-		if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265"))
-		{
-			// Modify the properties of the avdec_h265 element here
-			g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
-		}
-#ifdef WIN32
-        if (g_str_has_prefix(elementName, "Wasapi2")) 
+
+    gchar* elementName = gst_element_get_name(element);
+    if (!Configuration::HardwareVideoAccel)
+    {
+        if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265"))
         {
-            g_object_set(G_OBJECT(element), "low-latency", TRUE, nullptr);
+            // Modify the properties of the avdec_h265 element here
+            g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
         }
+    }
+#ifdef WIN32
+    if (strstr(elementName, "wasapi2") != NULL)
+    {
+        g_object_set(G_OBJECT(element), "low-latency", TRUE, nullptr);
+    }
 #endif
-        g_free(elementName);
-	}
+    g_free(elementName);
+
 }
 
 
