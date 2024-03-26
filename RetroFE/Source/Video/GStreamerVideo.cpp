@@ -153,7 +153,6 @@ bool GStreamerVideo::stop()
     if(videoBuffer_)
     {
         gst_buffer_unref(videoBuffer_);
-        gst_clear_buffer(&videoBuffer_);
     }
 
     // Free GStreamer elements and related resources
@@ -169,6 +168,7 @@ bool GStreamerVideo::stop()
     videoBin_ = nullptr;
     capsFilter_ = nullptr;
     videoSink_ = nullptr;
+    videoBuffer_ = nullptr;
     
     expectedBufSize_ = 0;
     isPlaying_ = false;
@@ -335,8 +335,6 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
         g_object_set(G_OBJECT(element), "low-latency", TRUE, nullptr);
     }
 #endif
-    if (strstr(elementName, "multiqueue") != nullptr)
-        g_object_set(G_OBJECT(element), "max-size-buffers", 1, "sync-by-running-time", FALSE, nullptr);
     g_free(elementName);
 
 }
@@ -372,7 +370,8 @@ void GStreamerVideo::processNewBuffer(GstElement const*/* fakesink */, GstBuffer
         // If height and width are now set, and the video buffer hasn't been set yet, proceed.
         if (video->width_ > 0 && video->height_ > 0 && !video->videoBuffer_) {
             if (SDL_LockMutex(SDL::getMutex()) == 0) { // Lock the mutex, check for success.
-                video->videoBuffer_ = gst_buffer_copy(buf);
+                video->videoBuffer_ = gst_buffer_copy_deep(buf);
+                //gst_buffer_unref(buf);
                 if (!video->videoBuffer_) {
                     LOG_ERROR("Video", "Failed to ref buffer.");
                     SDL_UnlockMutex(SDL::getMutex());
@@ -563,7 +562,7 @@ void GStreamerVideo::update(float /* dt */)
         }
 
         gst_buffer_unref(videoBuffer_);
-        gst_clear_buffer(&videoBuffer_);
+        videoBuffer_ = nullptr;
 }
 
     SDL_UnlockMutex(SDL::getMutex());

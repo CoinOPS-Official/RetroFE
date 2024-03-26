@@ -68,7 +68,7 @@ bool VideoComponent::update(float dt)
             hasBeenOnScreen_ = true;
 
         // Handle Pause/Resume based on visibility and PauseOnScroll setting
-        if (baseViewInfo.PauseOnScroll && !videoInst_->getFrameReady())
+        if (baseViewInfo.PauseOnScroll)
         {
             if (!isCurrentlyVisible && !isPaused())
             {
