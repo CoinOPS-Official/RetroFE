@@ -163,7 +163,6 @@ bool GStreamerVideo::stop()
     videoBus_ = nullptr;
     playbin_ = nullptr;
     videoBin_ = nullptr;
-    videoConvertCaps_ = nullptr;
     capsFilter_ = nullptr;
     videoSink_ = nullptr;
     
@@ -265,48 +264,27 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
     if(!uriFile)
         return false;
 
-    if (!playbin_ && !createAndLinkGstElements())
-    {
-        stop();
-        return false;
-    }
-
-    // Set properties of playbin and videoSink
-    const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002;
-    g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, nullptr);
-    g_free(uriFile);
-    elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
-    videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-    gst_object_unref(videoBus_);
-    g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, nullptr);
-    handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
-
-    return true;
-}
-
-bool GStreamerVideo::createAndLinkGstElements()
-{
     playbin_ = gst_element_factory_make("playbin3", "player");
     videoBin_ = gst_bin_new("SinkBin");
     videoSink_ = gst_element_factory_make("fakesink", "video_sink");
     capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
-
+    GstCaps* videoConvertCaps;
     if (useD3dHardware_ || useVaHardware_) {
-        videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+        videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
     }
     else {
-        videoConvertCaps_ = gst_caps_from_string("video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
+        videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
     }
 
-    if (!playbin_ || !videoSink_ || !capsFilter_ || !videoConvertCaps_) {
+    if (!playbin_ || !videoSink_ || !capsFilter_) {
         LOG_DEBUG("Video", "Could not create elements");
         return false;
     }
 
-    g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "qos", FALSE, "enable-last-sample", FALSE, nullptr);
-    g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps_, nullptr);
-    gst_caps_unref(videoConvertCaps_);
-    videoConvertCaps_ = nullptr;
+    g_object_set(G_OBJECT(capsFilter_), "caps", videoConvertCaps, nullptr);
+    gst_caps_unref(videoConvertCaps);
+    videoConvertCaps = nullptr;
+
     gst_bin_add_many(GST_BIN(videoBin_), capsFilter_, videoSink_, nullptr);
 
     // Directly link capsFilter to videoSink
@@ -317,10 +295,20 @@ bool GStreamerVideo::createAndLinkGstElements()
 
     GstPad* sinkPad = nullptr;
     sinkPad = gst_element_get_static_pad(capsFilter_, "sink");
-    
+
     GstPad* ghostPad = gst_ghost_pad_new("sink", sinkPad);
     gst_element_add_pad(videoBin_, ghostPad);
     gst_object_unref(sinkPad);
+
+    // Set properties of playbin and videoSink
+    const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002;
+    g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, "buffer-size", -1, nullptr);
+    g_free(uriFile);
+    elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
+    videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+    gst_object_unref(videoBus_);
+    g_object_set(G_OBJECT(videoSink_), "signal-handoffs", TRUE, "sync", TRUE, "enable-last-sample", FALSE, nullptr);
+    handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
 
     return true;
 }
@@ -338,11 +326,13 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
         }
     }
 #ifdef WIN32
-    if (strstr(elementName, "wasapi2") != NULL)
+    if (strstr(elementName, "wasapi2") != nullptr)
     {
         g_object_set(G_OBJECT(element), "low-latency", TRUE, nullptr);
     }
 #endif
+    if (strstr(elementName, "multiqueue") != nullptr)
+        g_object_set(G_OBJECT(element), "max-size-buffers", 1, "sync-by-running-time", FALSE, nullptr);
     g_free(elementName);
 
 }
@@ -438,7 +428,7 @@ void GStreamerVideo::update(float /* dt */)
                 {
                     SDL_UpdateTexture(texture_, nullptr, bufInfo.data, width_);
                 }
-                else
+                else if (!Configuration::HardwareVideoAccel)
                 {
                     int y_stride, u_stride, v_stride;
                     const Uint8* y_plane, * u_plane, * v_plane;
@@ -453,6 +443,46 @@ void GStreamerVideo::update(float /* dt */)
                         y_plane, y_stride,
                         u_plane, u_stride,
                         v_plane, v_stride);
+                }
+                else
+                {
+
+                    if (!videoMeta_)
+                        videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
+                    GstMapInfo bufInfo;
+                    if (!gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
+                        return; // Early return if mapping fails
+
+                    void* pixels;
+                    int pitch;
+                    if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) != 0) {
+                        gst_buffer_unmap(videoBuffer_, &bufInfo); // Unmap before returning
+                        return; // Early return if locking fails
+                    }
+
+                    // Directly access the Y plane data
+                    const Uint8* y_plane = bufInfo.data + videoMeta_->offset[0];
+                    // Copy the Y plane data row by row
+                    for (int row = 0; row < height_; ++row) {
+                        Uint8* dst = static_cast<Uint8*>(pixels) + row * pitch; // Destination row in the texture
+                        const Uint8* src = y_plane + row * videoMeta_->stride[0]; // Source row in the Y plane
+                        SDL_memcpy(dst, src, width_); // Assuming width is the actual visible width to copy
+                    }
+
+                    // Directly access the UV plane data
+                    const Uint8* uv_plane = bufInfo.data + videoMeta_->offset[1];
+                    // Calculate the starting point for the UV plane in the texture's pixel buffer
+                    Uint8* uv_plane_pixels = static_cast<Uint8*>(pixels) + pitch * height_;
+                    // Copy the UV plane data row by row
+                    for (int row = 0; row < height_ / 2; ++row) {
+                        Uint8* dst = uv_plane_pixels + row * pitch; // Destination row in the texture for UV data
+                        const Uint8* src = uv_plane + row * videoMeta_->stride[1]; // Source row in the UV plane
+                        SDL_memcpy(dst, src, width_); // Copy the UV data, adjusting for NV12 format
+                    }
+
+                    SDL_UnlockTexture(texture_); // Unlock after copying
+                    gst_buffer_unmap(videoBuffer_, &bufInfo); // Unmap the GstBuffer
+                    videoMeta_ = nullptr; // Reset videoMeta_ for the next frame
                 }
                 gst_buffer_unmap(videoBuffer_, &bufInfo); // Unmap the buffer after use
             };
@@ -482,44 +512,7 @@ void GStreamerVideo::update(float /* dt */)
             videoMeta_ = nullptr;
             };
 
-        auto handleNonContiguousHardwareDecode = [&]() {
-            if (!videoMeta_)
-                videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
-            GstMapInfo bufInfo;
-            if (!gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ))
-                return; // Early return if mapping fails
-
-            void* pixels;
-            int pitch;
-            if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) != 0) {
-                gst_buffer_unmap(videoBuffer_, &bufInfo); // Unmap before returning
-                return; // Early return if locking fails
-            }
-
-            // Directly access the Y plane data
-            const Uint8* y_plane = bufInfo.data + videoMeta_->offset[0];
-            // Copy the Y plane data row by row
-            for (int row = 0; row < height_; ++row) {
-                Uint8* dst = static_cast<Uint8*>(pixels) + row * pitch; // Destination row in the texture
-                const Uint8* src = y_plane + row * videoMeta_->stride[0]; // Source row in the Y plane
-                SDL_memcpy(dst, src, width_); // Assuming width is the actual visible width to copy
-            }
-
-            // Directly access the UV plane data
-            const Uint8* uv_plane = bufInfo.data + videoMeta_->offset[1];
-            // Calculate the starting point for the UV plane in the texture's pixel buffer
-            Uint8* uv_plane_pixels = static_cast<Uint8*>(pixels) + pitch * height_;
-            // Copy the UV plane data row by row
-            for (int row = 0; row < height_ / 2; ++row) {
-                Uint8* dst = uv_plane_pixels + row * pitch; // Destination row in the texture for UV data
-                const Uint8* src = uv_plane + row * videoMeta_->stride[1]; // Source row in the UV plane
-                SDL_memcpy(dst, src, width_); // Copy the UV data, adjusting for NV12 format
-            }
-
-            SDL_UnlockTexture(texture_); // Unlock after copying
-            gst_buffer_unmap(videoBuffer_, &bufInfo); // Unmap the GstBuffer
-            videoMeta_ = nullptr; // Reset videoMeta_ for the next frame
-            };
+        
 
 
 
@@ -538,14 +531,17 @@ void GStreamerVideo::update(float /* dt */)
                 if (useD3dHardware_ || useVaHardware_)
                 {
                     bufferLayout_ = CONTIGUOUS;
+                    if (Logger::isLevelEnabled("DEBUG"))
+                        LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Contiguous");
                 }
                 else
                 {
                     bufferLayout_ = NON_CONTIGUOUS;
+                    if (Logger::isLevelEnabled("DEBUG"))
+                        LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non-Contiguous");
                 }
                 videoMeta_ = meta; // Store meta for future use
-                if (Logger::isLevelEnabled("DEBUG"))
-                    LOG_DEBUG("Video", "Buffer for " + Utils::getFileName(currentFile_) + " is Non-Contiguous");
+
             }
         }
 
@@ -561,12 +557,6 @@ void GStreamerVideo::update(float /* dt */)
         case NON_CONTIGUOUS:
         {
             handleNonContiguous();
-            break;
-        }
-
-        case NON_CONTIGUOUS_HARDWARE_DECODE:
-        {
-            handleNonContiguousHardwareDecode();
             break;
         }
 
@@ -771,15 +761,13 @@ void GStreamerVideo::skipBackwardp( )
 
 void GStreamerVideo::pause()
 {    
-    if (!Configuration::HardwareVideoAccel) 
-        g_object_set(G_OBJECT(videoSink_), "sync", FALSE, "async", FALSE, nullptr);
     paused_ = !paused_;
-    if (paused_)
+    if (paused_) {
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
+        //gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
+    }
     else
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-    if (!Configuration::HardwareVideoAccel)
-        g_object_set(G_OBJECT(videoSink_), "sync", TRUE, "async", TRUE, nullptr);
 }
 
 
@@ -815,6 +803,11 @@ unsigned long long GStreamerVideo::getDuration( )
 bool GStreamerVideo::isPaused( )
 {
     return paused_;
+}
+
+bool GStreamerVideo::getFrameReady()
+{
+    return frameReady_;
 }
 
 std::string GStreamerVideo::generateDotFileName(const std::string& prefix, const std::string& videoFilePath) {

@@ -65,6 +65,7 @@ public:
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
+    bool getFrameReady();
     // Helper functions...
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
@@ -74,18 +75,15 @@ private:
         UNKNOWN,        // Initial state
         CONTIGUOUS,     // Contiguous buffer layout
         NON_CONTIGUOUS,  // Non-contiguous buffer layout
-        NON_CONTIGUOUS_HARDWARE_DECODE // Non-contiguous hardware decode for windows/linux
     };
 
     static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
     bool initializeGstElements(const std::string& file);
-    bool createAndLinkGstElements();
     GstElement* playbin_{ nullptr };
     GstElement* videoBin_{ nullptr };
     GstElement* videoSink_{ nullptr };
     GstElement* capsFilter_{ nullptr };
-    GstCaps* videoConvertCaps_{ nullptr };
     GstBus* videoBus_{ nullptr };
     SDL_Texture* texture_{ nullptr };
     gulong elementSetupHandlerId_{ 0 };
