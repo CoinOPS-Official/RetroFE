@@ -153,6 +153,7 @@ public:
     bool  isPlaying() const;
     void  resetScrollPeriod() const;
     void  updateScrollPeriod() const;
+    bool  isMenuFastScrolling() const;
     void  scroll(bool forward);
     bool  hasSubs();
     int   getLayoutWidth(int layout);

@@ -1080,6 +1080,11 @@ void ScrollingList::updateScrollPeriod(  )
     }
 }
 
+bool ScrollingList::isFastScrolling() const
+{
+    return scrollPeriod_ == minScrollTime_;
+}
+
 void ScrollingList::scroll(bool forward)
 {
     // Exit conditions

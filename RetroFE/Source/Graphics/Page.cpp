@@ -1587,6 +1587,16 @@ void Page::updateScrollPeriod() const
     }
 }
 
+bool Page::isMenuFastScrolling() const
+{
+    for (const auto& menu : activeMenu_) {
+        if (menu && menu->isFastScrolling()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 
 void Page::scroll(bool forward) {
     if (useThreading_) {

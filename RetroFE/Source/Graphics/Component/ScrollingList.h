@@ -117,6 +117,7 @@ public:
     void allocateSpritePoints();
     void resetScrollPeriod();
     void updateScrollPeriod();
+    bool isFastScrolling() const;
     void scroll(bool forward);
     bool isPlaylist() const;
 private:
