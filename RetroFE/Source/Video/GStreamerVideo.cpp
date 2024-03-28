@@ -357,31 +357,14 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
             }
         }
 
-        // Check if new buffer is ready to be processed.
         if (video->height_ && video->width_) {
-            gboolean shouldReplaceBuffer = FALSE;
-            // Check if there is already a buffer and compare timestamps if so.
+            // Clear the existing videoBuffer_ if it exists.
             if (video->videoBuffer_) {
-                GstClockTime bufTimestamp = GST_BUFFER_PTS(buf);
-                GstClockTime videoBufferTimestamp = GST_BUFFER_PTS(video->videoBuffer_);
-
-                // If incoming buffer is newer, set flag to replace the current buffer.
-                shouldReplaceBuffer = bufTimestamp > videoBufferTimestamp;
+                gst_clear_buffer(&video->videoBuffer_);
             }
-            else {
-                // If there is no current buffer, simply set flag to replace (which in this case means assign).
-                shouldReplaceBuffer = TRUE;
-            }
-
-            if (shouldReplaceBuffer) {
-                // Explicitly clear the current buffer if it exists.
-                if (video->videoBuffer_) {
-                    gst_clear_buffer(&video->videoBuffer_);
-                }
-                // Replace the current buffer with the new one.
-                video->videoBuffer_ = gst_buffer_copy_deep(buf);
-                video->frameReady_ = true;
-            }
+            // Make a copy of the incoming buffer and set it as the new videoBuffer_.
+            video->videoBuffer_ = gst_buffer_copy(buf);
+            video->frameReady_ = true;
         }
     }
     SDL_UnlockMutex(SDL::getMutex());
