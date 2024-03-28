@@ -376,7 +376,8 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
             if (shouldReplaceBuffer) {
                 // Explicitly clear the current buffer if it exists.
                 if (video->videoBuffer_) {
-                    gst_clear_buffer(&video->videoBuffer_);
+                    gst_buffer_unref(video->videoBuffer_);
+                    video->videoBuffer_ = nullptr;
                 }
                 // Replace the current buffer with the new one.
                 gst_buffer_replace(&video->videoBuffer_, buf);
