@@ -152,7 +152,7 @@ bool GStreamerVideo::stop()
     // Unref the video buffer
     if(videoBuffer_)
     {
-        gst_buffer_unref(videoBuffer_);
+        gst_clear_buffer(&videoBuffer_);
     }
 
     // Free GStreamer elements and related resources
@@ -174,8 +174,7 @@ bool GStreamerVideo::stop()
     isPlaying_ = false;
     height_ = 0;
     width_ = 0;
-    frameReady_ = false;
-
+ 
     return true;
 }
 
@@ -188,9 +187,10 @@ bool GStreamerVideo::play(const std::string& file)
         return false;
 
 #if defined(WIN32)
-    //enablePlugin("directsoundsink");
+    enablePlugin("directsoundsink");
     if (!Configuration::HardwareVideoAccel) 
     {
+        //enablePlugin("openh264dec");
         disablePlugin("d3d11h264dec");
         disablePlugin("d3d11h265dec");
     }
@@ -323,7 +323,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
     gchar* elementName = gst_element_get_name(element);
     if (!Configuration::HardwareVideoAccel)
     {
-        if (g_str_has_prefix(elementName, "avdec_h264") || g_str_has_prefix(elementName, "avdec_h265"))
+        if (g_str_has_prefix(elementName, "avdec_h26"))
         {
             // Modify the properties of the avdec_h265 element here
             g_object_set(G_OBJECT(element), "thread-type", Configuration::AvdecThreadType, "max-threads", Configuration::AvdecMaxThreads, "direct-rendering", false, nullptr);
@@ -341,62 +341,61 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
 
 
 
-void GStreamerVideo::processNewBuffer(GstElement const*/* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
-    auto* video = static_cast<GStreamerVideo*>(userdata);
-    if (!video || !video->isPlaying_) {
-        LOG_ERROR("Video", "Invalid video or not playing.");
-        return; // If video is null or not playing, exit early.
-    }
+void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
+    GStreamerVideo* video = (GStreamerVideo*)userdata;
 
-    // Only proceed if the frame is not ready yet.
-    if (!video->frameReady_) {
-        // Only retrieve and set width and height if they have not been set yet.
-        if (video->width_ == 0 || video->height_ == 0) {
+    SDL_LockMutex(SDL::getMutex());
+    if (video && video->isPlaying_) {
+        // Retrieve caps and set width/height if not yet set.
+        if (!video->width_ || !video->height_) {
             GstCaps* caps = gst_pad_get_current_caps(new_pad);
-            if (!caps) {
-                LOG_ERROR("Video", "Failed to get current caps.");
-                return; // Exit if caps retrieval failed.
-            }
-
-            if (const GstStructure* s = gst_caps_get_structure(caps, 0);
-                !s || !gst_structure_get_int(s, "width", &video->width_) || !gst_structure_get_int(s, "height", &video->height_)) {
-                LOG_ERROR("Video", "Failed to get width and height from structure.");
+            if (caps) {
+                GstStructure* s = gst_caps_get_structure(caps, 0);
+                gst_structure_get_int(s, "width", &video->width_);
+                gst_structure_get_int(s, "height", &video->height_);
                 gst_caps_unref(caps);
-                return; // Exit if width or height retrieval failed.
             }
-            gst_caps_unref(caps); // Always unref caps after use.
         }
 
-        // If height and width are now set, and the video buffer hasn't been set yet, proceed.
-        if (video->width_ > 0 && video->height_ > 0 && !video->videoBuffer_) {
-            if (SDL_LockMutex(SDL::getMutex()) == 0) { // Lock the mutex, check for success.
-                video->videoBuffer_ = gst_buffer_copy_deep(buf);
-                //gst_buffer_unref(buf);
-                if (!video->videoBuffer_) {
-                    LOG_ERROR("Video", "Failed to ref buffer.");
-                    SDL_UnlockMutex(SDL::getMutex());
-                    return; // Exit if buffer ref failed.
-                }
-                video->frameReady_ = true; // Set frame ready if all operations are successful.
-                SDL_UnlockMutex(SDL::getMutex());
+        // Check if new buffer is ready to be processed.
+        if (video->height_ && video->width_) {
+            gboolean shouldReplaceBuffer = FALSE;
+            // Check if there is already a buffer and compare timestamps if so.
+            if (video->videoBuffer_) {
+                GstClockTime bufTimestamp = GST_BUFFER_PTS(buf);
+                GstClockTime videoBufferTimestamp = GST_BUFFER_PTS(video->videoBuffer_);
+
+                // If incoming buffer is newer, set flag to replace the current buffer.
+                shouldReplaceBuffer = bufTimestamp > videoBufferTimestamp;
             }
             else {
-                LOG_ERROR("Video", "Failed to lock mutex.");
-                return;
+                // If there is no current buffer, simply set flag to replace (which in this case means assign).
+                shouldReplaceBuffer = TRUE;
+            }
+
+            if (shouldReplaceBuffer) {
+                // Explicitly clear the current buffer if it exists.
+                if (video->videoBuffer_) {
+                    gst_clear_buffer(&video->videoBuffer_);
+                }
+                // Replace the current buffer with the new one.
+                gst_buffer_replace(&video->videoBuffer_, buf);
+                video->frameReady_ = true;
             }
         }
     }
+    SDL_UnlockMutex(SDL::getMutex());
 }
 
 
 void GStreamerVideo::update(float /* dt */)
 {
+    SDL_LockMutex(SDL::getMutex());
     if (!playbin_ || !videoBuffer_ || paused_)
     {
+        SDL_UnlockMutex(SDL::getMutex());
         return;
     }
-
-    SDL_LockMutex(SDL::getMutex());
 
     if (!texture_ && width_ != 0)
     {
@@ -561,8 +560,7 @@ void GStreamerVideo::update(float /* dt */)
             break;
         }
 
-        gst_buffer_unref(videoBuffer_);
-        videoBuffer_ = nullptr;
+        gst_clear_buffer(&videoBuffer_);
 }
 
     SDL_UnlockMutex(SDL::getMutex());
@@ -760,7 +758,6 @@ void GStreamerVideo::pause()
     paused_ = !paused_;
     if (paused_) {
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
-        //gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
     }
     else
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
