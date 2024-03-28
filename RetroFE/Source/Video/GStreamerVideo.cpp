@@ -345,7 +345,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
     GStreamerVideo* video = (GStreamerVideo*)userdata;
 
     SDL_LockMutex(SDL::getMutex());
-    if (video && video->isPlaying_) {
+    if (video && video->isPlaying_ && !video->frameReady_) {
         // Retrieve caps and set width/height if not yet set.
         if (!video->width_ || !video->height_) {
             GstCaps* caps = gst_pad_get_current_caps(new_pad);
@@ -374,11 +374,6 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
             }
 
             if (shouldReplaceBuffer) {
-                // Explicitly clear the current buffer if it exists.
-                if (video->videoBuffer_) {
-                    gst_buffer_unref(video->videoBuffer_);
-                    video->videoBuffer_ = nullptr;
-                }
                 // Replace the current buffer with the new one.
                 gst_buffer_replace(&video->videoBuffer_, buf);
                 video->frameReady_ = true;
