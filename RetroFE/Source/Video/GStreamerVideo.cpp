@@ -390,13 +390,14 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 
 void GStreamerVideo::update(float /* dt */)
 {
-    SDL_LockMutex(SDL::getMutex());
+
     if (!playbin_ || !videoBuffer_ || paused_)
     {
-        SDL_UnlockMutex(SDL::getMutex());
-        return;
+         return;
     }
-
+    
+    SDL_LockMutex(SDL::getMutex());
+    
     if (!texture_ && width_ != 0)
     {
         if (useD3dHardware_ || useVaHardware_)
