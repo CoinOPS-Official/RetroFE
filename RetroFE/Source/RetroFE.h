@@ -161,6 +161,10 @@ private:
     std::string getLayoutFileName();
     void resetInfoToggle();
 
+    void startBenchmarking();
+
+    void stopAndReportBenchmarking();
+
 
     Configuration     &config_;
     DB                *db_;
@@ -192,4 +196,8 @@ private:
     std::map<std::string, size_t> lastMenuOffsets_;
     std::map<std::string, std::string>  lastMenuPlaylists_;
     std::vector<std::string> cycleVector_;
+
+    bool isBenchmarking_;
+    Uint32 benchmarkStartTime_;
+    int scrollCount_;
 };

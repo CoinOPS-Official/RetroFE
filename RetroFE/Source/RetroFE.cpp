@@ -81,6 +81,9 @@ RetroFE::RetroFE(Configuration& c)
     , collectionInfo_(false)
     , gameInfo_(false)
     , playlistCycledOnce_(false)
+    , isBenchmarking_(false)
+    , scrollCount_(0)
+    , benchmarkStartTime_(0)
 {
     menuMode_ = false;
     attractMode_ = false;
@@ -696,6 +699,9 @@ bool RetroFE::run( )
                 currentPage_->setScrolling(Page::ScrollDirectionForward);
                 currentPage_->scroll(true);
                 currentPage_->updateScrollPeriod();
+                if (isBenchmarking_) {
+                    scrollCount_++;
+                }
             }
             state = RETROFE_IDLE;
             break;
@@ -705,6 +711,9 @@ bool RetroFE::run( )
                 currentPage_->setScrolling(Page::ScrollDirectionBack);
                 currentPage_->scroll(false);
                 currentPage_->updateScrollPeriod();
+                if (isBenchmarking_) {
+                    scrollCount_++;
+                }
             }
             state = RETROFE_IDLE;
             break;
@@ -2115,37 +2124,21 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
     }
 
     // Handle next/previous game inputs
-    if ( page->isHorizontalScroll( ) )
-    {
-        if (input_.keystate(UserInput::KeyCodeRight))
-        {
-            attract_.reset( );
+    if (page->isHorizontalScroll()) {
+        if (input_.keystate(UserInput::KeyCodeRight)) {
+            if (!isBenchmarking_) {
+                startBenchmarking(); // Start or reset benchmarking
+            }
+            attract_.reset();
             if (infoExitOnScroll) {
                 resetInfoToggle();
             }
             return RETROFE_SCROLL_FORWARD;
         }
-        else if (input_.keystate(UserInput::KeyCodeLeft))
-        {
-            attract_.reset( );
-            if (infoExitOnScroll) {
-                resetInfoToggle();
+        else if (input_.keystate(UserInput::KeyCodeLeft)) {
+            if (!isBenchmarking_) {
+                startBenchmarking(); // Start or reset benchmarking
             }
-            return RETROFE_SCROLL_BACK;
-        }
-    }
-    else
-    {
-        if (input_.keystate(UserInput::KeyCodeDown))
-        {
-           attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
-            }
-            return RETROFE_SCROLL_FORWARD;
-        }
-        else if (input_.keystate(UserInput::KeyCodeUp))
-        {
             attract_.reset();
             if (infoExitOnScroll) {
                 resetInfoToggle();
@@ -2153,6 +2146,29 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
             return RETROFE_SCROLL_BACK;
         }
     }
+    else {
+        if (input_.keystate(UserInput::KeyCodeDown)) {
+            if (!isBenchmarking_) {
+                startBenchmarking(); // Start or reset benchmarking
+            }
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_FORWARD;
+        }
+        else if (input_.keystate(UserInput::KeyCodeUp)) {
+            if (!isBenchmarking_) {
+                startBenchmarking(); // Start or reset benchmarking
+            }
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_BACK;
+        }
+    }
+
     
     // don't wait for idle
     if (currentTime_ - keyLastTime_ > keyDelayTime_) {
@@ -2653,6 +2669,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
          !input_.keystate(UserInput::KeyCodeLetterDown) &&
          !attract_.isActive( ) )
     {
+
+        if (isBenchmarking_) {
+            stopAndReportBenchmarking(); // Conclude benchmarking and report results
+            isBenchmarking_ = false;
+        }
+
         page->resetScrollPeriod( );
         if (page->isMenuScrolling( ))
         {
@@ -2926,5 +2948,44 @@ void RetroFE::resetInfoToggle()
     if (buildInfo_) {
         currentPage_->buildInfoExit();
         buildInfo_ = false;
+    }
+}
+
+void RetroFE::startBenchmarking() {
+    if (!isBenchmarking_) {
+        // Reset or initialize benchmarking variables
+        isBenchmarking_ = true;
+        scrollCount_ = 0; // Reset scroll count
+        benchmarkStartTime_ = SDL_GetTicks(); // Optionally capture the start time if measuring duration
+    }
+}
+
+void RetroFE::stopAndReportBenchmarking() {
+    if (isBenchmarking_) {
+        // Calculate the duration of the benchmarking session in seconds
+        Uint32 endTime = SDL_GetTicks();
+        double duration = (endTime - benchmarkStartTime_) / 1000.0; // Convert milliseconds to seconds
+
+        // Avoid division by zero
+        if (duration <= 0) {
+            duration = 1;
+        }
+
+        // Calculate scrolls per second
+        double scrollsPerSecond = scrollCount_ / duration;
+
+        // Use stringstream to format the message
+        std::stringstream message;
+        message << "Benchmarking session ended: ";
+        message << "Total Scrolls: " << scrollCount_ << ", ";
+        message << "Duration: " << duration << " seconds, ";
+        message << "Scrolls per Second: " << scrollsPerSecond;
+
+        // Log the results with one call
+        LOG_NOTICE("RetroFE", message.str());
+
+        // Reset benchmarking state
+        isBenchmarking_ = false;
+        scrollCount_ = 0; // Reset for the next session
     }
 }
