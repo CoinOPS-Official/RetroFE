@@ -126,15 +126,6 @@ bool GStreamerVideo::stop()
         gst_object_unref(videoBin_);
         videoBin_ = nullptr;
     }
-    // Set playbin state to GST_STATE_NULL
-    if(playbin_)
-    {
-        GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_NULL);
-        if (ret == GST_STATE_CHANGE_FAILURE) 
-        {
-            LOG_ERROR("Video", "Failed to set playbin to NULL state");
-            return false;
-        }
 
     // Initiate the transition of playbin to GST_STATE_NULL without waiting
     if (playbin_)
