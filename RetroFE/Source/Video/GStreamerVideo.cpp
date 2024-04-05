@@ -98,8 +98,7 @@ bool GStreamerVideo::deInitialize()
 
 bool GStreamerVideo::stop()
 {
-
-    if(!initialized_)
+    if (!initialized_)
     {
         return false;
     }
@@ -120,9 +119,12 @@ bool GStreamerVideo::stop()
         g_signal_handler_disconnect(videoSink_, handoffHandlerId_);
         handoffHandlerId_ = 0;
     }
+
+    // Release the custom video sink bin
     if (videoBin_)
     {
         gst_object_unref(videoBin_);
+        videoBin_ = nullptr;
     }
     // Set playbin state to GST_STATE_NULL
     if(playbin_)
@@ -134,23 +136,27 @@ bool GStreamerVideo::stop()
             return false;
         }
 
-        ret = gst_element_get_state(playbin_, nullptr, nullptr, GST_CLOCK_TIME_NONE);
-        if (ret == GST_STATE_CHANGE_FAILURE) 
+    // Initiate the transition of playbin to GST_STATE_NULL without waiting
+    if (playbin_)
         {
-            LOG_ERROR("Video", "Failed to wait for playbin to reach NULL state");
-            return false;
+        gst_element_set_state(playbin_, GST_STATE_NULL);
+
+        // Optionally perform a quick, non-blocking state check
+        GstStateChangeReturn ret = gst_element_get_state(playbin_, nullptr, nullptr, 0);
+        if (ret != GST_STATE_CHANGE_SUCCESS && ret != GST_STATE_CHANGE_ASYNC) {
+            LOG_ERROR("Video", "Unexpected state change result when stopping playback");
         }
     }
 
     // Release SDL Texture
-    if(texture_)
+    if (texture_)
     {
         SDL_DestroyTexture(texture_);
         texture_ = nullptr;
     }
 
     // Unref the video buffer
-    if(videoBuffer_)
+    if (videoBuffer_)
     {
         gst_clear_buffer(&videoBuffer_);
     }
@@ -158,10 +164,11 @@ bool GStreamerVideo::stop()
     // Free GStreamer elements and related resources
     if (playbin_)
     {
-        gst_object_unref(playbin_);
-
+        gst_object_unref(GST_OBJECT(playbin_));
+        playbin_ = nullptr;
     }
 
+    // Reset remaining pointers and variables to ensure the object is in a clean state.
     videoMeta_ = nullptr;
     videoBus_ = nullptr;
     playbin_ = nullptr;
