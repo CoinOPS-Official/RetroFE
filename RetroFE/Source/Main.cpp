@@ -234,7 +234,7 @@ int main(int argc, char** argv)
             sendEnterKey();
             return 0;
         }
-        else if ((argc % 2 != 0 || argc % 2 == 0) && param != "-help" && param != "-h")
+        else if ((argc % 2 != 0 || argc % 2 == 0) && param != "-help" && param != "-h" && param != "--help")
         {
             // Pass global settings via CLI
             for (int i = 1; i <= argc - 1 ; i+=2) {

@@ -56,8 +56,7 @@ public:
     static std::string uppercaseFirst(std::string str);
     static std::string filterComments(const std::string& line);
     static std::string trimEnds(const std::string& str);
-    static std::string_view trimEnds(std::string_view str);
-    static void listToVector(std::string_view str, std::vector<std::string>& vec, char delimiter);
+    static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter);
     static int gcd(int a, int b);
     static std::string trim(std::string& str);
     static std::string removeAbsolutePath(const std::string& fullPath);

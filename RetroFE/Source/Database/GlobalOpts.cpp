@@ -38,11 +38,11 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_FULLSCREEN,              "true",      global_options::option_type::BOOLEAN,  "Run the frontend in fullscreen" },
     { OPTION_HORIZONTAL,              "stretch",   global_options::option_type::STRING,   "Pixel width INT or STRETCH" },
     { OPTION_VERTICAL,                "stretch",   global_options::option_type::STRING,   "Pixel height INT or STRETCH" },
-    { OPTION_FULLSCREENX,             "",          global_options::option_type::BOOLEAN,  "Run the frontend in fullscreen for monitor x" },
+    { OPTION_FULLSCREENX,             "true",      global_options::option_type::BOOLEAN,  "Run the frontend in fullscreen for monitor x" },
     { OPTION_HORIZONTALX,             "",          global_options::option_type::INTEGER,  "Pixel width for monitor x" },
     { OPTION_VERTICALX,               "",          global_options::option_type::INTEGER,  "Pixel height for monitor x" },
     { OPTION_SCREENNUMX,              "",          global_options::option_type::INTEGER,  "Define which monitor x is which display window, Screen numbers start at 0!"},
-    { OPTION_MIRRORX,                 "",          global_options::option_type::BOOLEAN,  "Divides monitor x into two halves" },
+    { OPTION_MIRRORX,                 "false",     global_options::option_type::BOOLEAN,  "Divides monitor x into two halves" },
     { OPTION_ROTATIONX,               "0",         global_options::option_type::INTEGER,  "Rotation of monitor x (0, 1, 2, 3)" },
 
     { nullptr,                        nullptr,     global_options::option_type::HEADER,   "WINDOW OPTIONS" },

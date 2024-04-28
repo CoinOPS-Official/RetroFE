@@ -305,33 +305,25 @@ std::string Utils::trimEnds(const std::string& str) {
     return std::string(trimmedView.begin(), trimmedView.end());
 }
 
-std::string_view Utils::trimEnds(std::string_view str) {
-    const auto trimStart = str.find_first_not_of(" \t");
-    if (trimStart == std::string_view::npos) {
-        return std::string_view{}; // Return an empty view
-    }
-    const auto trimEnd = str.find_last_not_of(" \t");
-    return str.substr(trimStart, trimEnd - trimStart + 1);
-}
 
-
-void Utils::listToVector(std::string_view str, std::vector<std::string>& vec, char delimiter = ',') {
+void Utils::listToVector( const std::string& str, std::vector<std::string> &vec, char delimiter = ',' )
+{
+    std::string value;
     std::size_t current;
     std::size_t previous = 0;
-    current = str.find(delimiter);
-    while (current != std::string_view::npos) {
-        std::string_view trimmedStr = trimEnds(str.substr(previous, current - previous));
-        if (!trimmedStr.empty()) {
-            // Constructing std::string from std::string_view before adding to the vector
-            vec.emplace_back(trimmedStr.begin(), trimmedStr.end());
+    current = str.find( delimiter );
+    while (current != std::string::npos)
+    {
+        value = Utils::trimEnds(str.substr(previous, current - previous));
+        if (value != "") {
+            vec.push_back(value);
         }
         previous = current + 1;
-        current = str.find(delimiter, previous);
+        current  = str.find( delimiter, previous );
     }
-    // Handling the last segment after the final delimiter
-    std::string_view trimmedStr = trimEnds(str.substr(previous, current - previous));
-    if (!trimmedStr.empty()) {
-        vec.emplace_back(trimmedStr.begin(), trimmedStr.end());
+    value = Utils::trimEnds(str.substr(previous, current - previous));
+    if (value != "") {
+        vec.push_back(value);
     }
 }
 

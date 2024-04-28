@@ -19,7 +19,7 @@
 #include <SDL2/SDL.h>
 #include <string>
 
-class Image final : public Component
+class Image : public Component
 {
 public:
     Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive);
@@ -29,7 +29,7 @@ public:
     void draw() override;
     std::string_view filePath() override;
 
-private:
+protected:
     SDL_Texture* texture_{ nullptr };
     std::string  file_;
     std::string  altFile_;
