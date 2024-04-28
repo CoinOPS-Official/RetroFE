@@ -345,7 +345,9 @@ void ReloadableText::ReloadTexture()
             ss << text;
         }
 
-        imageInst_ = new Text(ss.str(), page, fontInst_, baseViewInfo.Monitor);
+        if (!ss.str().empty()) {
+            imageInst_ = new Text(ss.str(), page, fontInst_, baseViewInfo.Monitor);
+        }
     }
 }
 

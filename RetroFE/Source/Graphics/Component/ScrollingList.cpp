@@ -994,13 +994,10 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
     }
 
-    if (!t)
-    {
-        std::string title = item->title;
-        if (!textFallback_){
-            title = "";
+    if (!t) {
+        if (textFallback_) {  // Check if fallback text should be used
+            t = new Text(item->title, page, fontInst_, baseViewInfo.Monitor);  // Use item's title
         }
-        t = new Text(title, page, fontInst_, baseViewInfo.Monitor );
     }
 
     if ( t )
