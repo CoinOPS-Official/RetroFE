@@ -25,6 +25,7 @@
 #include <string_view>
 #include <set>
 #include <cstdio>
+#include <algorithm>
 
 #ifdef WIN32
 #include <windows.h>
@@ -404,6 +405,12 @@ std::string Configuration::convertToAbsolutePath(const std::string& prefix, cons
 bool Configuration::getPropertyAbsolutePath(const std::string& key, std::string &value)
 {
     bool retVal = getProperty(key, value);
+    
+    #ifndef WIN32
+        // This is a catch me to change dos paths to unix
+        // Windows can resolve unix paths but not vice versa
+        std::replace(value.begin(), value.end(), '\\', '/');
+    #endif
 
     if(retVal)
     {

@@ -29,7 +29,6 @@ VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monito
     , videoFile_(videoFile)
     , numLoops_(numLoops)
     , monitor_(monitor)
-    , currentPage_(&p)
 {
 
 }
@@ -44,7 +43,7 @@ bool VideoComponent::update(float dt)
 {
     if (videoInst_)
     {
-        isPlaying_ = videoInst_->isPlaying();
+        isPlaying_ = ((GStreamerVideo*)(videoInst_))->isPlaying();
     }
 
     if (videoInst_ && isPlaying_)
