@@ -52,4 +52,5 @@ private:
     bool hasBeenOnScreen_{ false };
     int numLoops_;
     int monitor_;
+    Page* currentPage_{ nullptr };
 };

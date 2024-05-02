@@ -1040,7 +1040,7 @@ void ScrollingList::draw(unsigned int layer)
     }
 }
 
-bool ScrollingList::isScrollingListIdle(  )
+bool ScrollingList::isScrollingListIdle()
 {
     size_t componentSize = components_.size();
     if ( !Component::isIdle(  ) ) return false;
@@ -1054,7 +1054,7 @@ bool ScrollingList::isScrollingListIdle(  )
     return true;
 }
 
-bool ScrollingList::isScrollingListAttractIdle(  )
+bool ScrollingList::isScrollingListAttractIdle()
 {
     size_t componentSize = components_.size();
     if ( !Component::isAttractIdle(  ) ) return false;

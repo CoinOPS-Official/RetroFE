@@ -96,8 +96,8 @@ public:
     void cfwLetterSubUp();
     void cfwLetterSubDown();
     void random();
-    bool isScrollingListIdle() const;
-    bool isScrollingListAttractIdle() const;
+    bool isScrollingListIdle();
+    bool isScrollingListAttractIdle();
     size_t getScrollOffsetIndex() const;
     void setScrollOffsetIndex(size_t index);
     void setSelectedIndex(int selectedIndex);

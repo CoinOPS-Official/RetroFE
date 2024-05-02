@@ -29,6 +29,7 @@ VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monito
     , videoFile_(videoFile)
     , numLoops_(numLoops)
     , monitor_(monitor)
+    , currentPage_(&p)
 {
 
 }
