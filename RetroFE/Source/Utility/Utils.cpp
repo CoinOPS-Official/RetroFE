@@ -59,6 +59,66 @@ void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lP
         PostMessage(hwnd, Msg, wParam, lParam);
     }
 }
+
+bool Utils::send_message_to_doflinx_pipe(const std::string& name) {
+    HANDLE hPipe;
+    DWORD dwMode;
+    BOOL fSuccess;
+    char chBuf[512];
+    DWORD cbRead, cbToWrite, cbWritten;
+    const TCHAR* pipeName = TEXT("\\\\.\\pipe\\DOFLinx");
+
+    // Construct the message
+    std::string message = "MENU_ROM=MAME," + name;
+
+    // Open the named pipe.
+    hPipe = CreateFile(
+        pipeName,            // pipe name
+        GENERIC_READ |       // read and write access
+        GENERIC_WRITE,
+        0,                   // no sharing
+        NULL,                // default security attributes
+        OPEN_EXISTING,       // opens existing pipe
+        0,                   // default attributes
+        NULL);               // no template file
+
+    // If the pipe is not available, fail silently.
+    if (hPipe == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    // Set the pipe read mode to message.
+    dwMode = PIPE_READMODE_MESSAGE;
+    fSuccess = SetNamedPipeHandleState(
+        hPipe, &dwMode, NULL, NULL);
+
+    if (!fSuccess) {
+        CloseHandle(hPipe);
+        return false;
+    }
+
+    // Send a message to the pipe server.
+    cbToWrite = static_cast<DWORD>((message.length() + 1) * sizeof(char));
+    fSuccess = WriteFile(
+        hPipe, message.c_str(), cbToWrite, &cbWritten, NULL);
+
+    if (!fSuccess) {
+        CloseHandle(hPipe);
+        return false;
+    }
+
+    // Read the response from the pipe server.
+    fSuccess = ReadFile(
+        hPipe, chBuf, 512 * sizeof(char), &cbRead, NULL);
+
+    if (!fSuccess) {
+        CloseHandle(hPipe);
+        return false;
+    }
+
+    CloseHandle(hPipe);
+    return true;
+}
 #endif
 
 std::string Utils::toLower(const std::string& inputStr)

@@ -555,7 +555,10 @@ bool RetroFE::run( )
         case RETROFE_LOAD_ART:
             currentPage_->start( );
 #ifdef WIN32            
-			Utils::postMessage("MediaplayerHiddenWindow",0x8001, 50, 0);		
+			Utils::postMessage("MediaplayerHiddenWindow",0x8001, 50, 0);
+            Utils::send_message_to_doflinx_pipe(currentPage_->getSelectedItem()->name);
+
+
 #endif			
             state = RETROFE_ENTER;
             break;
@@ -910,8 +913,11 @@ bool RetroFE::run( )
         // Start onHighlightEnter animation
         case RETROFE_HIGHLIGHT_LOAD_ART:
             currentPage_->highlightEnter( );
-            if ( currentPage_->getSelectedItem( ) )
-                l.LEDBlinky( 9, currentPage_->getSelectedItem( )->collectionInfo->name, currentPage_->getSelectedItem( ) );
+            if (currentPage_->getSelectedItem())
+            {
+                l.LEDBlinky(9, currentPage_->getSelectedItem()->collectionInfo->name, currentPage_->getSelectedItem());
+                Utils::send_message_to_doflinx_pipe(currentPage_->getSelectedItem()->name);
+            }
             state = RETROFE_HIGHLIGHT_ENTER;
             break;
 
@@ -1132,8 +1138,11 @@ bool RetroFE::run( )
             {
                 currentPage_->start( );
             }
-            if ( currentPage_->getSelectedItem( ) )
-                l.LEDBlinky( 9, currentPage_->getSelectedItem( )->collectionInfo->name, currentPage_->getSelectedItem( ) );
+            if (currentPage_->getSelectedItem())
+            {
+                l.LEDBlinky(9, currentPage_->getSelectedItem()->collectionInfo->name, currentPage_->getSelectedItem());
+                Utils::send_message_to_doflinx_pipe(currentPage_->getSelectedItem()->name);
+            }
             state = RETROFE_NEXT_PAGE_MENU_ENTER;
             break;
 
