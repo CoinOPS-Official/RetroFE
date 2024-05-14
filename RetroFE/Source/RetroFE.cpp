@@ -362,6 +362,7 @@ bool RetroFE::run( )
     int attractModeCollectionTime = 0;
     int attractModeMinTime        = 1000;
     int attractModeMaxTime        = 5000;
+    bool LEDBlinkyCloseOnExit     = true;
     std::string firstCollection   = "Main";
     bool running                  = true;
     RETROFE_STATE state           = RETROFE_NEW;
@@ -374,6 +375,7 @@ bool RetroFE::run( )
     config_.getProperty( OPTION_ATTRACTMODEMAXTIME, attractModeMaxTime );
     config_.getProperty( OPTION_FIRSTCOLLECTION, firstCollection );
     config_.getProperty( OPTION_ATTRACTMODEFAST, attractModeFast);
+    config_.getProperty( OPTION_LEDBLINKYCLOSEONEXIT, LEDBlinkyCloseOnExit);
 
     attract_.idleTime           = static_cast<float>(attractModeTime);
     attract_.idleNextTime       = static_cast<float>(attractModeNextTime);
@@ -1680,11 +1682,15 @@ bool RetroFE::run( )
 
         // Wait for onExit animation to finish before quitting RetroFE
         case RETROFE_QUIT:
-            if ( currentPage_->isGraphicsIdle( ) ) {
-                l.LEDBlinky( 2 );
-                l.exitScript();
-                running = false;
-            }
+            bool LEDBlinkyCloseOnExit = true;
+            config_.getProperty(OPTION_LEDBLINKYCLOSEONEXIT, LEDBlinkyCloseOnExit);
+            if ( currentPage_->isGraphicsIdle() ) {
+                if (LEDBlinkyCloseOnExit == true) {
+                    l.LEDBlinky(2);
+                    running = false;
+                }
+                else running = false;
+             }
             break;
         }
 		

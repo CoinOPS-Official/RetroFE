@@ -122,6 +122,7 @@
 
 // WINDOWS ONLY OPTIONS
 #define OPTION_LEDBLINKYDIRECTORY     "LEDBlinkyDirectory"
+#define OPTION_LEDBLINKYCLOSEONEXIT   "LEDBlinkyCloseOnExit"
 
 // MEDIA SEARCH PATH OPTIONS
 #define OPTION_BASEMEDIAPATH          "baseMediaPath"
@@ -251,6 +252,7 @@ public:
     bool showsquarebrackets() const { return bool_value(OPTION_SHOWSQUAREBRACKETS); }
     
     const char *ledblinkydirectory() const { return value(OPTION_LEDBLINKYDIRECTORY); }
+    bool ledblinkycloseonexit() const { return bool_value(OPTION_LEDBLINKYCLOSEONEXIT); }
     
     const char *basemediapath() const { return value(OPTION_BASEMEDIAPATH); }
     const char *baseitempath() const { return value(OPTION_BASEITEMPATH); }
