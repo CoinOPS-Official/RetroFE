@@ -27,7 +27,7 @@ class VideoComponent : public Component
 {
 public:
     VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
-    virtual ~VideoComponent();
+    ~VideoComponent() final;
     bool update(float dt) override;
     void draw() override;
     void freeGraphicsMemory() override;

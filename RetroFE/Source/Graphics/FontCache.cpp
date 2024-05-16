@@ -19,14 +19,14 @@
 #include "../Utility/Log.h"
 #include "../SDL.h"
 #if (__APPLE__)
-    #include <SDL2_ttf/SDL_ttf.h>
+#include <SDL2_ttf/SDL_ttf.h>
 #else
-    #include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_ttf.h>
 #endif
 #include <sstream>
 
-//todo: memory leak when launching games
-FontCache::FontCache()
+ //todo: memory leak when launching games
+FontCache::FontCache() : initialized_(false)
 {
 }
 
@@ -37,55 +37,67 @@ FontCache::~FontCache()
 
 void FontCache::deInitialize()
 {
-    std::map<std::string, Font *>::iterator it = fontFaceMap_.begin();
-    while(it != fontFaceMap_.end()) {
-        delete it->second;
-        fontFaceMap_.erase(it);
-        it = fontFaceMap_.begin();
-    }
     SDL_LockMutex(SDL::getMutex());
-    TTF_Quit();
+    for (auto& entry : fontFaceMap_) {
+        delete entry.second;
+    }
+    fontFaceMap_.clear();
+    if (initialized_) {
+        TTF_Quit();
+        initialized_ = false;
+    }
     SDL_UnlockMutex(SDL::getMutex());
 }
 
-
 void FontCache::initialize()
 {
-    //todo: make bool
-    TTF_Init();
-}
-Font *FontCache::getFont(std::string fontPath, int fontSize, SDL_Color color)
-{
-    Font *t = NULL;
-
-    std::map<std::string, Font *>::iterator it = fontFaceMap_.find(buildFontKey(fontPath, fontSize, color));
-
-    if(it != fontFaceMap_.end()) {
-        t = it->second;
+    SDL_LockMutex(SDL::getMutex());
+    if (TTF_Init() == -1) {
+        LOG_ERROR("FontCache", "Failed to initialize TTF: " + std::string(TTF_GetError()));
     }
-
-    return t;
+    else {
+        initialized_ = true;
+    }
+    SDL_UnlockMutex(SDL::getMutex());
 }
 
-std::string FontCache::buildFontKey(std::string font, int fontSize, SDL_Color color)
+Font* FontCache::getFont(const std::string& fontPath, int fontSize, SDL_Color color)
+{
+    SDL_LockMutex(SDL::getMutex());
+    auto it = fontFaceMap_.find(buildFontKey(fontPath, fontSize, color));
+    if (it != fontFaceMap_.end()) {
+        SDL_UnlockMutex(SDL::getMutex());
+        return it->second;
+    }
+    SDL_UnlockMutex(SDL::getMutex());
+    return nullptr;
+}
+
+std::string FontCache::buildFontKey(const std::string& font, int fontSize, SDL_Color color)
 {
     std::stringstream ss;
-    ss << font << "_SIZE=" << fontSize << " RGB=" << color.r << "." << color.g << "." << color.b;
-
+    ss << font << "_SIZE=" << fontSize << " RGB=" << (int)color.r << "." << (int)color.g << "." << (int)color.b;
     return ss.str();
 }
 
-bool FontCache::loadFont(std::string fontPath, int fontSize, SDL_Color color, int monitor)
+bool FontCache::loadFont(const std::string& fontPath, int fontSize, SDL_Color color, int monitor)
 {
+    SDL_LockMutex(SDL::getMutex());
     std::string key = buildFontKey(fontPath, fontSize, color);
-    std::map<std::string, Font *>::iterator it = fontFaceMap_.find(key);
-
-    if(it == fontFaceMap_.end()) {
-        Font *f = new Font(fontPath, fontSize, color, monitor);
-        f->initialize();
-        fontFaceMap_[key] = f;
+    auto it = fontFaceMap_.find(key);
+    if (it == fontFaceMap_.end()) {
+        Font* f = new Font(fontPath, fontSize, color, monitor);
+        if (f->initialize()) {
+            fontFaceMap_[key] = f;
+        }
+        else {
+            delete f;
+            SDL_UnlockMutex(SDL::getMutex());
+            return false;
+        }
     }
-
+    SDL_UnlockMutex(SDL::getMutex());
     return true;
 }
+
 

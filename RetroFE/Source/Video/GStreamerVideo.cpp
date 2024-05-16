@@ -322,7 +322,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const* pla
 
 
 
-void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
+void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer const* buf, GstPad* new_pad, gpointer userdata) {
     GStreamerVideo* video = (GStreamerVideo*)userdata;
 
     SDL_LockMutex(SDL::getMutex());
@@ -331,7 +331,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
         if (!video->width_ || !video->height_) {
             GstCaps* caps = gst_pad_get_current_caps(new_pad);
             if (caps) {
-                GstStructure* s = gst_caps_get_structure(caps, 0);
+                GstStructure const* s = gst_caps_get_structure(caps, 0);
                 gst_structure_get_int(s, "width", &video->width_);
                 gst_structure_get_int(s, "height", &video->height_);
                 gst_caps_unref(caps);
@@ -382,7 +382,9 @@ void GStreamerVideo::update(float /* dt */)
                     SDL_UpdateTexture(texture_, nullptr, bufInfo.data, width_);
                 }
                 else if (!Configuration::HardwareVideoAccel) {
-                    int y_stride, u_stride, v_stride;
+                    int y_stride;
+                    int u_stride;
+                    int v_stride;
                     const Uint8* y_plane, * u_plane, * v_plane;
 
                     y_stride = GST_ROUND_UP_4(width_);
@@ -441,7 +443,9 @@ void GStreamerVideo::update(float /* dt */)
             if (!videoMeta_)
                 videoMeta_ = gst_buffer_get_video_meta(videoBuffer_);
             GstMapInfo bufInfo;
-            const Uint8* y_plane, * u_plane, * v_plane;
+            const Uint8* y_plane;
+            const Uint8 * u_plane;
+            const Uint8 * v_plane;
             int y_stride, u_stride, v_stride;
 
             gst_buffer_map(videoBuffer_, &bufInfo, GST_MAP_READ);

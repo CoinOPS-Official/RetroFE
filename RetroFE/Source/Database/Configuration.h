@@ -31,14 +31,14 @@ public:
     // gets the global configuration
     bool import(const std::string& keyPrefix, const std::string& file, bool mustExist = true);
     bool import(const std::string& collection, const std::string& keyPrefix, const std::string& file, bool mustExist = true);
-    bool getProperty(const std::string& key, std::string &value);
-    bool getProperty(const std::string& key, int &value);
-    bool getProperty(const std::string& key, bool &value);
+    bool getProperty(const std::string_view key, std::string &value);
+    bool getProperty(const std::string_view key, int &value);
+    bool getProperty(const std::string_view key, bool &value);
     void childKeyCrumbs(const std::string& parent, std::vector<std::string> &children);
-    void setProperty(const std::string& key, const std::string& value);
+    void setProperty(const std::string& key, std::string_view value);
     bool propertiesEmpty() const;
-    bool propertyExists(const std::string& key);
-    bool propertyPrefixExists(const std::string& key);
+    bool propertyExists(std::string_view key) const;
+    bool propertyPrefixExists(std::string_view key) const;
     bool getPropertyAbsolutePath(const std::string& key, std::string &value);
     void getMediaPropertyAbsolutePath(const std::string& collectionName, const std::string& mediaType, std::string &value);
     void getMediaPropertyAbsolutePath(const std::string& collectionName, const std::string& mediaType, bool system, std::string &value);
@@ -54,10 +54,10 @@ public:
     static bool debugDotEnabled;
 
 private:
-    bool getRawProperty(const std::string& key, std::string &value);
+    bool getRawProperty(const std::string_view key, std::string &value);
     bool parseLine(const std::string& collection, std::string keyPrefix, std::string line, int lineCount);
     using PropertiesType = std::map<std::string, std::string, std::less<>>;
-    typedef std::pair<std::string, std::string> PropertiesPair;
+    using PropertiesPair = std::pair<std::string, std::string>;
 
     PropertiesType properties_;
 

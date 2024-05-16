@@ -29,7 +29,7 @@ public:
     void draw() override;
     std::string_view filePath() override;
 
-protected:
+private:
     SDL_Texture* texture_{ nullptr };
     std::string  file_;
     std::string  altFile_;

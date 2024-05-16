@@ -77,7 +77,7 @@ private:
         NON_CONTIGUOUS,  // Non-contiguous buffer layout
     };
 
-    static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata);
+    static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer const* buf, GstPad* new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
     bool initializeGstElements(const std::string& file);
     GstElement* playbin_{ nullptr };

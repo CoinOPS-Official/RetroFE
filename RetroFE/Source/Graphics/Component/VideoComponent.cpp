@@ -36,7 +36,7 @@ VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monito
 
 VideoComponent::~VideoComponent()
 {
-    freeGraphicsMemory();
+    VideoComponent::freeGraphicsMemory();
 }
 
 

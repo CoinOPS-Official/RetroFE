@@ -26,6 +26,7 @@
 #include <set>
 #include <cstdio>
 #include <algorithm>
+#include <charconv>
 
 #ifdef WIN32
 #include <windows.h>
@@ -238,9 +239,8 @@ std::string Configuration::trimEnds(std::string str)
     return str;
 }
 
-bool Configuration::getRawProperty(const std::string& key, std::string& value)
-{
-    auto it = properties_.find(key); // Use iterator to search for the key
+bool Configuration::getRawProperty(std::string_view key, std::string& value) {
+    auto it = properties_.find(key); // Directly use string_view for lookup
     if (it != properties_.end()) {
         value = it->second; // Directly access the value from the iterator
         return true;
@@ -248,53 +248,63 @@ bool Configuration::getRawProperty(const std::string& key, std::string& value)
     return false;
 }
 
-bool Configuration::getProperty(const std::string& key, std::string& value)
-{
+bool Configuration::getProperty(std::string_view key, std::string& value) {
     bool retVal = getRawProperty(key, value);
 
-    std::string baseMediaPath = absolutePath;
-    std::string baseItemPath = absolutePath;
-
-    baseMediaPath = Utils::combinePath(absolutePath, "collections");
-    baseItemPath = Utils::combinePath(absolutePath, "collections");
-
-    getRawProperty("baseMediaPath", baseMediaPath);
-    getRawProperty("baseItemPath", baseItemPath);
+    // Compute base paths only if necessary
+    bool basePathsComputed = false;
+    std::string baseMediaPath;
+    std::string baseItemPath;
 
     std::string_view valueView(value);
 
-    if (valueView.find("%BASE_MEDIA_PATH%") != std::string_view::npos) {
-        value = Utils::replace(value, "%BASE_MEDIA_PATH%", baseMediaPath);
+    if (valueView.find("%BASE_MEDIA_PATH%") != std::string_view::npos ||
+        valueView.find("%BASE_ITEM_PATH%") != std::string_view::npos) {
+
+        basePathsComputed = true;
+
+        baseMediaPath = Utils::combinePath(absolutePath, "collections");
+        baseItemPath = Utils::combinePath(absolutePath, "collections");
+
+        getRawProperty("baseMediaPath", baseMediaPath);
+        getRawProperty("baseItemPath", baseItemPath);
     }
-    if (valueView.find("%BASE_ITEM_PATH%") != std::string_view::npos) {
-        value = Utils::replace(value, "%BASE_ITEM_PATH%", baseItemPath);
+
+    if (basePathsComputed) {
+        if (valueView.find("%BASE_MEDIA_PATH%") != std::string_view::npos) {
+            value = Utils::replace(value, "%BASE_MEDIA_PATH%", baseMediaPath);
+        }
+        if (valueView.find("%BASE_ITEM_PATH%") != std::string_view::npos) {
+            value = Utils::replace(value, "%BASE_ITEM_PATH%", baseItemPath);
+        }
     }
+
     return retVal;
 }
 
 
-bool Configuration::getProperty(const std::string& key, int& value)
-{
+
+
+bool Configuration::getProperty(std::string_view key, int& value) {
     std::string strValue;
     bool retVal = getProperty(key, strValue);
 
     if (retVal) {
-        try {
-            value = std::stoi(strValue);
+        auto [ptr, ec] = std::from_chars(strValue.data(), strValue.data() + strValue.size(), value);
+        if (ec == std::errc::invalid_argument) {
+            LOG_WARNING("RetroFE", "Invalid integer format for key: " + std::string(key));
+            retVal = false;
         }
-        catch (const std::invalid_argument&) {
-            LOG_WARNING("RetroFE", "Invalid integer format for key: " + key);
-        }
-        catch (const std::out_of_range&) {
-            LOG_WARNING("RetroFE", "Integer out of range for key: " + key);
+        else if (ec == std::errc::result_out_of_range) {
+            LOG_WARNING("RetroFE", "Integer out of range for key: " + std::string(key));
+            retVal = false;
         }
     }
     return retVal;
 }
 
 
-bool Configuration::getProperty(const std::string& key, bool& value)
-{
+bool Configuration::getProperty(std::string_view key, bool& value) {
     std::string strValue;
     bool retVal = getProperty(key, strValue);
 
@@ -306,7 +316,7 @@ bool Configuration::getProperty(const std::string& key, bool& value)
 }
 
 
-void Configuration::setProperty(const std::string& key, const std::string& value)
+void Configuration::setProperty(const std::string& key, std::string_view value)
 {
     properties_[key] = value;
 }
@@ -316,21 +326,16 @@ bool Configuration::propertiesEmpty() const
     return properties_.empty();
 }
 
-bool Configuration::propertyExists(const std::string& key)
-{
+bool Configuration::propertyExists(std::string_view key) const {
     return (properties_.find(key) != properties_.end());
 }
 
-bool Configuration::propertyPrefixExists(const std::string& key)
-{
-    std::string search = key + ".";
+bool Configuration::propertyPrefixExists(std::string_view key) const {
+    std::string search(key);
+    search += '.';
+
     auto it = properties_.lower_bound(search);
-
-    if (it != properties_.end() && it->first.compare(0, search.length(), search) == 0) {
-        return true;
-    }
-
-    return false;
+    return (it != properties_.end() && it->first.compare(0, search.length(), search) == 0);
 }
 
 

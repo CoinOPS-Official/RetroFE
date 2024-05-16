@@ -34,7 +34,7 @@ Component::Component(Page &p)
     newItemSelected = false;
     newScrollItemSelected = false;
     menuIndex_ = -1;
-
+    pauseOnScroll_ = false;
     currentTweens_ = nullptr;
     currentTweenIndex_ = 0;
     currentTweenComplete_ = true;
@@ -231,7 +231,7 @@ bool Component::animate() {
     }
     else {
         bool currentDone = true;
-        TweenSet* tweens = currentTweens_->tweenSet(currentTweenIndex_);
+        TweenSet const* tweens = currentTweens_->tweenSet(currentTweenIndex_);
         if (!tweens) return true; // Additional check for safety
 
         std::string playlist;

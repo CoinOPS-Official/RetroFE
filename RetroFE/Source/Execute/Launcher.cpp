@@ -188,9 +188,20 @@ void Launcher::exitScript()
 
 void Launcher::LEDBlinky( int command, std::string collection, Item *collectionItem )
 {
-	std::string LEDBlinkyDirectory = "";
-	config_.getProperty( OPTION_LEDBLINKYDIRECTORY, LEDBlinkyDirectory );
-	if (LEDBlinkyDirectory == "") {
+    static std::string LEDBlinkyDirectory = "";
+    static bool isLEDBlinkyDirectoryValid = false;
+    static bool isLEDBlinkyDirectoryChecked = false;
+
+    if (!isLEDBlinkyDirectoryChecked) {
+        config_.getProperty(OPTION_LEDBLINKYDIRECTORY, LEDBlinkyDirectory);
+
+        if (!LEDBlinkyDirectory.empty() && std::filesystem::exists(LEDBlinkyDirectory) && std::filesystem::is_directory(LEDBlinkyDirectory)) {
+            isLEDBlinkyDirectoryValid = true;
+        }
+        isLEDBlinkyDirectoryChecked = true;
+    }
+
+    if (!isLEDBlinkyDirectoryValid) {
         return;
     }
     std::string exe  = Utils::combinePath(LEDBlinkyDirectory, "LEDBlinky.exe");
