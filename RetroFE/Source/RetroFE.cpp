@@ -465,7 +465,6 @@ bool RetroFE::run( )
         case RETROFE_IDLE:
 
             currentPage_->cleanup( );
-
             // Not in splash mode
             if ( currentPage_ && !splashMode ) {
                 // account for when returning from a menu and the previous key was still "stuck"
@@ -524,7 +523,7 @@ bool RetroFE::run( )
                 delete currentPage_;
 
                 // find first collection
-                std::string firstCollection = "Main";
+                firstCollection = "Main";
                 config_.getProperty(OPTION_FIRSTCOLLECTION, firstCollection);
                 currentPage_ = loadPage(firstCollection);
                 splashMode = false;
@@ -1601,7 +1600,6 @@ bool RetroFE::run( )
                 config_.getProperty( OPTION_COLLECTIONINPUTCLEAR, collectionInputClear );
                 if (collectionInputClear) {
                     // Empty event queue
-                    SDL_Event e;
                     while ( SDL_PollEvent( &e ) )
                         input_.update(e);
                     input_.resetStates( );
@@ -1657,7 +1655,6 @@ bool RetroFE::run( )
 
         case RETROFE_MENUMODE_START_ENTER:
             if ( currentPage_->isIdle( ) ) {
-                SDL_Event e;
                 while ( SDL_PollEvent( &e ) )
                     input_.update(e);
                 input_.resetStates( );
@@ -1876,7 +1873,7 @@ bool RetroFE::isInAttractModeSkipPlaylist(std::string playlist)
         if (attractModeSkipPlaylist != "") {
             // see if any of the comma seperated match current playlist
             std::stringstream ss(attractModeSkipPlaylist);
-            std::string playlist = "";
+            playlist = "";
             while (ss.good()) {
                 getline(ss, playlist, ',');
                 lkupAttractModeSkipPlaylist_.try_emplace(playlist, true);
@@ -2569,7 +2566,7 @@ CollectionInfo* RetroFE::getCollection(const std::string& collectionName)
     std::string defaultPath = Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info", "default.conf");
     for (auto& item : collection->items) {
         item->loadInfo(defaultPath);
-        std::string path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info", item->name + ".conf");
+        path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info", item->name + ".conf");
         item->loadInfo(path);
     }
 
