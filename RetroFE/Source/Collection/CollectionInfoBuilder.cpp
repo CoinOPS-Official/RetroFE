@@ -369,7 +369,7 @@ bool CollectionInfoBuilder::ImportDirectory(CollectionInfo *info, const std::str
     std::string playCountFile = Utils::combinePath(Configuration::absolutePath, "collections", "playCount.txt");
     std::map<std::string, Item*> curretPlayCountList = ImportPlayCount(playCountFile);
     std::string lookup;
-    Item* i = nullptr;
+    Item const* i = nullptr;
 
     if (!curretPlayCountList.empty()) {
         for (auto it = info->items.begin(); it != info->items.end(); ++it) {
@@ -658,25 +658,24 @@ void CollectionInfoBuilder::updateLastPlayedPlaylist(CollectionInfo *info, Item 
     info->playlists["lastplayed"]->push_back(item);
 
     // Add the items already in the playlist up to the lastplayedSize.
-    for(auto it = lastplayedList.begin(); it != lastplayedList.end(); it++) {
-        if (info->playlists["lastplayed"]->size() >= static_cast<unsigned int>( size ))
+    for (const auto& lastPlayedItem : lastplayedList) {
+        if (info->playlists["lastplayed"]->size() >= static_cast<unsigned int>(size))
             break;
 
         std::string collectionName = info->name;
-        std::string itemName       = (*it)->name;
-        if (itemName.at(0) == '_') // name consists of _<collectionName>:<itemName>
-        {
-             itemName.erase(0, 1); // Remove _
-             size_t position = itemName.find(":");
-             if (position != std::string::npos ) {
-                 collectionName = itemName.substr(0, position);
-                 itemName       = itemName.erase(0, position+1);
-             }
+        std::string itemName = lastPlayedItem->name;
+        if (itemName.at(0) == '_') { // name consists of _<collectionName>:<itemName>
+            itemName.erase(0, 1); // Remove _
+            size_t position = itemName.find(":");
+            if (position != std::string::npos) {
+                collectionName = itemName.substr(0, position);
+                itemName = itemName.erase(0, position + 1);
+            }
         }
 
-        for(auto it = info->items.begin(); it != info->items.end(); it++) {
-            if ( (*it)->name == itemName && (*it)->collectionInfo->name == collectionName && (*it) != item) {
-                info->playlists["lastplayed"]->push_back((*it));
+        for (const auto& itemInfo : info->items) {
+            if (itemInfo->name == itemName && itemInfo->collectionInfo->name == collectionName && itemInfo != item) {
+                info->playlists["lastplayed"]->push_back(itemInfo);
             }
         }
     }
