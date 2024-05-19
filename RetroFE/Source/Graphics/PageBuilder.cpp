@@ -108,22 +108,22 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
         layouts.push_back("layout - " + std::to_string(i));
     }
     int monitor=0;
-    for ( unsigned int layout = 0; layout < layouts.size(); layout++ ) {
+    for (unsigned int layout = 0; layout < layouts.size(); layout++) {
         rapidxml::xml_document<> doc;
         std::ifstream file;
-        
+
         // Override layout with layoutFromAnotherCollection = <collection> in layouts/Arcades/collections/<collection>
         std::string layoutFromAnotherCollection;
         config_.getProperty("collections." + collectionName + ".layoutFromAnotherCollection", layoutFromAnotherCollection);
-        if (layoutFromAnotherCollection != "") {
+        if (!layoutFromAnotherCollection.empty()) {
             LOG_INFO("Layout", "Using layout from collection: " + layoutFromAnotherCollection + " " + layouts[layout] + ".xml");
             std::string layoutFileFromAnotherCollection = Utils::combinePath(layoutPathDefault, "collections", layoutFromAnotherCollection, "layout");
             layoutPath = layoutFileFromAnotherCollection;
         }
-        
+
         layoutFile = Utils::combinePath(layoutPath, layouts[layout] + ".xml");
-        
-        if(fixedResLayouts) {
+
+        if (fixedResLayouts) {
             // Use fixed resolution layout ie layout1920x1080.xml
             if (!fixedResLayoutsInitialized) {
                 LOG_INFO("Layout", "Fixed resolution layouts have been enabled");
@@ -131,8 +131,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
             }
             layoutFileAspect = Utils::combinePath(layoutPathDefault,
                 std::to_string(screenWidth_ / Utils::gcd(screenWidth_, screenHeight_)) + "x" +
-                std::to_string(screenHeight_ / Utils::gcd(screenWidth_, screenHeight_)) + layouts[layout] +
-                ".xml");
+                std::to_string(screenHeight_ / Utils::gcd(screenWidth_, screenHeight_)) + layouts[layout] + ".xml");
             if (fs::exists(layoutFileAspect)) {
                 layoutFile = layoutFileAspect;
             }
@@ -141,45 +140,44 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                 exit(EXIT_FAILURE);
             }
         }
-        
+
         if (fs::exists(layoutFile)) {
             // Check for layouts/<layout>/collections/<collectionName>/layout
             LOG_INFO("Layout", "Attempting to initialize collection layout: " + layoutFile);
-            file.open( layoutFile.c_str() );
-            std::ifstream file(layoutFile.c_str());
-            file.close();
         }
         else {
             if (layoutPath != layoutPathDefault) {
-                if ( layouts[layout] != "splash") {
-                    if ( layoutFile = Utils::combinePath(layoutPathDefault, layouts[layout] + ".xml"); fs::exists(layoutFile) ) {
+                if (layouts[layout] != "splash") {
+                    std::string defaultLayoutFile = Utils::combinePath(layoutPathDefault, layouts[layout] + ".xml");
+                    if (fs::exists(defaultLayoutFile)) {
                         // Check for layouts/<layout>/layout
-                        LOG_INFO("Layout", "Attempting to initialize default layout: " + layoutFile);
-                        file.open( layoutFile.c_str() );
-                        std::ifstream file(layoutFile.c_str());
-                        file.close();
+                        LOG_INFO("Layout", "Attempting to initialize default layout: " + defaultLayoutFile);
+                        layoutFile = defaultLayoutFile;
                     }
-                    else if(!fs::exists(layoutFile)) {
-                        // If layouts/<layout>/layout - x.xml doesn't exist log here but continue
-                        LOG_WARNING("Layout", "Layout not found: " + layoutFile);
+                    else {
+                        LOG_WARNING("Layout", "Layout not found: " + defaultLayoutFile);
                         continue;
                     }
                 }
                 else if (!splashInitialized && fs::exists(Utils::combinePath(layoutPathDefault, "splash.xml"))) {
                     // Check for splash page then don't check again
-                    std::string layoutSplashFile;
-                    layoutSplashFile = Utils::combinePath(layoutPathDefault, "splash.xml");
-                    LOG_INFO("Layout", "Attempting to initialize splash: " + layoutSplashFile);
-                    file.open( layoutSplashFile.c_str() );
-                    std::ifstream file(layoutSplashFile.c_str());
-                    file.close();
+                    layoutFile = Utils::combinePath(layoutPathDefault, "splash.xml");
+                    LOG_INFO("Layout", "Attempting to initialize splash: " + layoutFile);
                     splashInitialized = true;
                 }
             }
         }
-        
-        std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
 
+        // Open the layout file for reading
+        file.open(layoutFile.c_str());
+        if (!file.is_open()) {
+            LOG_ERROR("Layout", "Failed to open layout file: " + layoutFile);
+            continue;
+        }
+
+        // Read the file into a buffer
+        std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
         try {
             buffer.push_back('\0');
 
@@ -253,7 +251,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                 }
 
                 // add additional controls to replace others based on theme/layout
-				if (controls && controls->value() && controls->value()[0] != '\0'){
+                if (controls && controls->value() && controls->value()[0] != '\0') {
                     std::string controlLayout = controls->value();
                     LOG_INFO("Layout", "Layout set custom control type " + controlLayout);
                     page->setControlsType(controlLayout);
@@ -266,7 +264,6 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                     std::string file = Configuration::convertToAbsolutePath(layoutPath, src->value());
 
                     // check if collection's assets are in a different theme
-                    std::string layoutName;
                     config_.getProperty("collections." + collectionName + ".layout", layoutName);
                     if (layoutName == "") {
                         config_.getProperty(OPTION_LAYOUT, layoutName);
@@ -304,7 +301,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                 }
             }
         }
-        catch(rapidxml::parse_error &e) {
+        catch (rapidxml::parse_error& e) {
             std::string what = e.what();
             auto line = static_cast<long>(std::count(&buffer.front(), e.where<char>(), char('\n')) + 1);
             std::stringstream ss;
@@ -312,13 +309,13 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
 
             LOG_ERROR("Layout", ss.str());
         }
-        catch(std::exception &e) {
+        catch (std::exception& e) {
             std::string what = e.what();
             LOG_ERROR("Layout", "Could not parse layout file. Reason: " + what);
         }
 
-        if(page) {
-            if(fixedResLayouts) {
+        if (page) {
+            if (fixedResLayouts) {
                 LOG_INFO("Layout", "Initialized " + layoutFileAspect);
             }
             else {
@@ -329,7 +326,6 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
             LOG_ERROR("Layout", "Could not initialize layout (see previous messages for reason)");
         }
     }
-
     return page;
 }
 
@@ -1260,8 +1256,8 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuX
             component = overrideItems[MENU_LAST];
 
             buildViewInfo(component, *viewInfo, itemDefaults);
-            xml_attribute<> const *itemSpacingXml = component->first_attribute("spacing");
-            int itemSpacing = itemSpacingXml ? Utils::convertInt(itemSpacingXml->value()) : 0;
+            itemSpacingXml = component->first_attribute("spacing");
+            itemSpacing = itemSpacingXml ? Utils::convertInt(itemSpacingXml->value()) : 0;
             nextHeight = height + viewInfo->Height + itemSpacing;
         }
 
@@ -1464,7 +1460,7 @@ void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_no
 
 void PageBuilder::getTweenSet(const xml_node<>* node, Animation* animation) {
     if (node) {
-        for (xml_node<>* set = node->first_node("set"); set; set = set->next_sibling("set")) {
+        for (xml_node<> const* set = node->first_node("set"); set; set = set->next_sibling("set")) {
             // Create a unique_ptr to manage the TweenSet instance.
             auto ts = std::make_unique<TweenSet>();
             getAnimationEvents(set, *ts);
