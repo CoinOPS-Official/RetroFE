@@ -19,7 +19,7 @@
 #include <SDL2/SDL.h>
 #include <string>
 
-class Image : public Component
+class Image final : public Component
 {
 public:
     Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive);
