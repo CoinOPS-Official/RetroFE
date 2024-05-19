@@ -18,6 +18,9 @@
 #include <string>
 #include <map>
 #include "CollectionInfo.h"
+#include <filesystem>
+
+namespace fs = std::filesystem;
 
 class Item
 {
@@ -56,7 +59,7 @@ public:
     InfoType info_;
     void setInfo( std::string key, std::string value );
     bool getInfo(const std::string& key, std::string& value);
-    void loadInfo(const std::string& path);
+    void loadInfo(const fs::path& path);
     bool static validSortType(std::string attribute);
     bool static isSortDesc(std::string attribute);
 };

@@ -122,11 +122,11 @@ bool Item::getInfo(const std::string& key, std::string& value)
 }
 
 
-void Item::loadInfo(const std::string& path)
+void Item::loadInfo(const fs::path& path)
 {
     int           lineCount = 0;
     std::string   line;
-    std::ifstream ifs(path.c_str());  // No need to call .c_str() in C++11 and above
+    std::ifstream ifs(path);  // fs::path can be used directly with ifstream
     size_t        position;
     std::string   key;
     std::string   value;
@@ -151,7 +151,7 @@ void Item::loadInfo(const std::string& path)
         else
         {
             std::stringstream ss;
-            ss << "Missing an assignment operator (=) on line " << lineCount << " " << path;
+            ss << "Missing an assignment operator (=) on line " << lineCount << " " << path.string();
             LOG_ERROR("Item", ss.str());
         }
     }
