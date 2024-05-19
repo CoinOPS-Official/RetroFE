@@ -474,7 +474,7 @@ std::string Page::controlsType() const
     return controlsType_;
 }
 
-void Page::setControlsType(const std::string& type)
+void Page::setControlsType(std::string_view type)
 {
     controlsType_ = type;
 }
@@ -666,7 +666,6 @@ void Page::setScrolling(ScrollDirection direction)
         }
         scrollActive_ = true;
         break;
-    case ScrollDirectionIdle:
     default:
         scrollActive_ = false;
         break;
@@ -1000,7 +999,7 @@ void Page::prevPlaylist()
 }
 
 
-void Page::selectPlaylist(const std::string& playlist)
+void Page::selectPlaylist(std::string_view playlist)
 {
     MenuInfo_S &info = collections_.back();
     //info.collection->saveFavorites();
@@ -1140,7 +1139,7 @@ void Page::update(float dt) {
 
         // Future for asynchronous update of ScrollingLists within menus_
         auto menuUpdateFuture = pool_.enqueue([this, dt, playlistName]() {
-            for (auto& menuList : menus_) {
+            for (auto const& menuList : menus_) {
                 for (auto* menu : menuList) {
                     menu->playlistName = playlistName;
                     menu->update(dt);
@@ -1175,7 +1174,7 @@ void Page::update(float dt) {
     else {
         // Synchronous (non-threaded) version for OpenGL backend
 
-        for (auto& menuList : menus_) {
+        for (auto const& menuList : menus_) {
             for (auto* menu : menuList) {
                 menu->playlistName = playlistName;
                 menu->update(dt);
@@ -1220,6 +1219,7 @@ void Page::updateReloadables(float dt)
 
 void Page::cleanup()
 {
+
     auto del = deleteCollections_.begin();
 
     while(del != deleteCollections_.end()) {
@@ -1494,12 +1494,9 @@ void Page::updateScrollPeriod() const
 
 bool Page::isMenuFastScrolling() const
 {
-    for (const auto& menu : activeMenu_) {
-        if (menu && menu->isFastScrolling()) {
-            return true;
-        }
-    }
-    return false;
+    return std::any_of(activeMenu_.begin(), activeMenu_.end(), [](const auto& menu) {
+        return menu && menu->isFastScrolling();
+        });
 }
 
 
