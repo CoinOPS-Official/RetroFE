@@ -31,7 +31,11 @@ IVideo* VideoFactory::createVideo(int monitor, int numLoops)
     }
 
     auto* instance = new GStreamerVideo(monitor);
-    instance->initialize();
+    if (!instance->initialize()) {
+        LOG_ERROR("VideoFactory", "Failed to initialize GStreamerVideo");
+        delete instance;
+        return nullptr;
+    }
 
     int loopsToSet = (numLoops > 0) ? numLoops : numLoops_;
     instance->setNumLoops(loopsToSet);
