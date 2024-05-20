@@ -15,13 +15,16 @@
  */
 #pragma once
 
-#include "../Collection/CollectionInfo.h"
-#include "ThreadPool.h"
-
+#include <stddef.h>
 #include <map>
 #include <string>
 #include <list>
 #include <vector>
+#include <xstring>
+#include <xtree>
+
+#include "../Collection/CollectionInfo.h"
+#include "ThreadPool.h"
 
 class Component;
 class Configuration;

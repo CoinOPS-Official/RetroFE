@@ -15,9 +15,17 @@
  */
 #pragma once
 
+#include <SDL2/SDL.h>
+
 #include "Component/Image.h"
 #include "FontCache.h"
-#include <SDL2/SDL.h>
+#include "SDL_pixels.h"
+
+class Animation;
+class AnimationEvents;
+class Component;
+class FontCache;
+class TweenSet;
 #if (__APPLE__)
     #include <SDL2_mixer/SDL_mixer.h>
 #else
@@ -25,6 +33,7 @@
 #endif
 #include <rapidxml.hpp>
 #include <vector>
+#include <xstring>
 
 static const int MENU_INDEX_HIGH = 16;
 

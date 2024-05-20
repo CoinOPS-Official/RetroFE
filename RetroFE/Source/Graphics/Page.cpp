@@ -15,19 +15,29 @@
  */
 
 #include "Page.h"
-#include "ComponentItemBinding.h"
+
+#include <ctype.h>
+#include <stdlib.h>
+#include <algorithm>
+#include <sstream>
+#include <future>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <xutility>
+
 #include "Component/Component.h"
 #include "../Collection/CollectionInfo.h"
 #include "Component/Text.h"
 #include "../Utility/Log.h"
 #include "Component/ScrollingList.h"
 #include "../Sound/Sound.h"
-#include "ComponentItemBindingBuilder.h"
 #include "PageBuilder.h"
-#include "../Utility/Utils.h"
 #include "../Database/GlobalOpts.h"
-#include <algorithm>
-#include <sstream>
+#include "../Collection/Item.h"
+#include "../Database/Configuration.h"
+#include "../SDL.h"
+#include "ViewInfo.h"
 
 
 Page::Page(Configuration &config, int layoutWidth, int layoutHeight)

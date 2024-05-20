@@ -15,6 +15,23 @@
  */
 
 #include "PageBuilder.h"
+
+#include <process.h>
+#include <stdlib.h>
+#include <cfloat>
+#include <fstream>
+#include <vector>
+#include <map>
+#include <filesystem>
+#include <memory>
+#include <chrono>
+#include <iterator>
+#include <string>
+#include <type_traits>
+#include <utility>
+#include <xtree>
+#include <xutility>
+
 #include "Page.h"
 #include "ViewInfo.h"
 #include "Component/Container.h"
@@ -28,20 +45,22 @@
 #include "Animate/AnimationEvents.h"
 #include "Animate/TweenTypes.h"
 #include "../Sound/Sound.h"
-#include "../Collection/Item.h"
 #include "../SDL.h"
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
 #include "../Database/GlobalOpts.h"
-#include <algorithm>
-#include <cfloat>
-#include <fstream>
-#include <sstream>
-#include <stdexcept>
-#include <vector>
-#include <map>
-#include <filesystem>
-#include <memory>
+#include "Animate/Animation.h"
+#include "Animate/Tween.h"
+#include "Animate/TweenSet.h"
+#include "C:/Users/User/Documents/GitHub/RetroFE/RetroFE/Source/Database/Configuration.h"
+#include "Component/Component.h"
+#include "Component/VideoComponent.h"
+#include "FontCache.h"
+#include "rapidxml.hpp"
+
+#ifdef WIN32
+    #include <vcruntime_exception.h>
+#endif
 
 using namespace rapidxml;
 

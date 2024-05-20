@@ -15,19 +15,27 @@
  */
 
 #include "ReloadableMedia.h"
+
+#include <stdlib.h>
+#include <vector>
+#include <cmath>
+#include <type_traits>
+#include <utility>
+
 #include "ImageBuilder.h"
 #include "VideoBuilder.h"
-#include "ReloadableText.h"
 #include "../ViewInfo.h"
-#include "../../Video/VideoFactory.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
-#include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
-#include "../../SDL.h"
-#include <fstream>
-#include <vector>
-#include <iostream>
+#include "../../Collection/CollectionInfo.h"
+#include "../../Collection/Item.h"
+#include "../Page.h"
+#include "Image.h"
+#include "Text.h"
+#include "VideoComponent.h"
+
+class Font;
 
 ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, [[maybe_unused]] bool menuMode, const std::string& type, const std::string& imageType,
     Page& p, int displayOffset, bool isVideo, Font* font, bool jukebox, int jukeboxNumLoops, int randomSelect)

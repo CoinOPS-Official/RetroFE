@@ -44,7 +44,9 @@
 class CollectionInfo;
 class Configuration;
 class Page;
-
+class DB;
+class Item;
+class MetadataDatabase;
 
 class RetroFE
 {

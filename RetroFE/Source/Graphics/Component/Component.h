@@ -16,6 +16,8 @@
 #pragma once
 
 #include <vector>
+#include <memory>
+#include <xstring>
 
 #include "../../SDL.h"
 #include "../Page.h"
@@ -23,7 +25,11 @@
 #include "../Animate/Tween.h"
 #include "../Animate/AnimationEvents.h"
 #include "../../Collection/Item.h"
-#include <memory>
+#include "SDL_render.h"
+
+class Animation;
+class AnimationEvents;
+class Page;
 
 class Component
 {

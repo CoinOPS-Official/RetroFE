@@ -16,34 +16,38 @@
 
 
 #include "ScrollingList.h"
+
+#include <stdlib.h>
+
 #include "../Animate/Tween.h"
 #include "../Animate/TweenSet.h"
 #include "../Animate/Animation.h"
 #include "../Animate/AnimationEvents.h"
 #include "../Animate/TweenTypes.h"
-#include "../Font.h"
 #include "ImageBuilder.h"
 #include "VideoBuilder.h"
 #include "VideoComponent.h"
-#include "ReloadableMedia.h"
 #include "Text.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
 #include "../../Collection/Item.h"
 #include "../../Utility/Utils.h"
-#include "../../Utility/Log.h"
-#include "../../SDL.h"
 #include "../ViewInfo.h"
-#include <math.h>
+#include "../../Collection/CollectionInfo.h"
+#include "Image.h"
+
+class Page;
 #if (__APPLE__)
     #include <SDL2_image/SDL_image.h>
 #else
-    #include <SDL2/SDL_image.h>
 #endif
 #include <sstream>
 #include <cctype>
-#include <iomanip>
 #include <algorithm>
+#include <memory>
+#include <type_traits>
+#include <utility>
+#include <xutility>
 
 ScrollingList::ScrollingList( Configuration &c,
                               Page          &p,
@@ -612,7 +616,7 @@ bool ScrollingList::update(float dt)
         return done;
 
     // Check if all components are nullptr
-    if (std::all_of(components_.begin(), components_.end(), [](Component* comp) { return comp == nullptr; })) {
+    if (std::all_of(components_.begin(), components_.end(), [](Component const* comp) { return comp == nullptr; })) {
         return done; // No need to proceed if all components are nullptr
     }
 
@@ -1035,7 +1039,7 @@ void ScrollingList::scroll(bool forward)
     if (scrollPeriod_ < minScrollTime_)
         scrollPeriod_ = minScrollTime_;
 
-    if (std::all_of(components_.begin(), components_.end(), [](Component* comp) { return comp == nullptr; })) {
+    if (std::all_of(components_.begin(), components_.end(), [](Component const* comp) { return comp == nullptr; })) {
         return; // No need to proceed if all components are nullptr
     }
 

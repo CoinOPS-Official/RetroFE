@@ -16,17 +16,23 @@
 #pragma once
 
 
+#include <SDL2/SDL.h>
+#include <stddef.h>
 #include <vector>
+#include <xstring>
+
 #include "Component.h"
 #include "../Animate/Tween.h"
 #include "../Page.h"
 #include "../ViewInfo.h"
 #include "../../Database/Configuration.h"
-#include <SDL2/SDL.h>
-
 
 class Configuration;
 class Font;
+class AnimationEvents;
+class Item;
+class Page;
+class ViewInfo;
 
 class ScrollingList : public Component
 {

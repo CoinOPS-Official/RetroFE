@@ -14,11 +14,27 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "Component.h"
+
+#include <istream>
+#include <memory>
+#include <string>
+#include <sstream>
+#include <utility>
+
 #include "../Animate/Tween.h"
 #include "../../Graphics/ViewInfo.h"
-#include "../../Utility/Log.h"
 #include "../../SDL.h"
 #include "../PageBuilder.h"
+#include "../Animate/Animation.h"
+#include "../Animate/AnimationEvents.h"
+#include "../Animate/TweenSet.h"
+#include "../Animate/TweenTypes.h"
+#include "../Page.h"
+#include "SDL_blendmode.h"
+#include "SDL_mutex.h"
+#include "SDL_pixels.h"
+#include "SDL_rect.h"
+#include "SDL_surface.h"
 
 Component::Component(Page &p)
 : page(p)

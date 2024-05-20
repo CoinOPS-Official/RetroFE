@@ -14,14 +14,20 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 #pragma once
+#include <SDL2/SDL.h>
+#include <string>
+#include <vector>
+#include <xstring>
+
 #include "Component.h"
 #include "ReloadableText.h"
 #include "../../Video/IVideo.h"
 #include "../../Collection/Item.h"
-#include <SDL2/SDL.h>
-#include <string>
 
 class Image;
+class Configuration;
+class Font;
+class Page;
 
 //todo: this class should aggregate Image, Text, and Video component classes
 class ReloadableMedia : public Component
