@@ -14,14 +14,20 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 #pragma once
+#include <SDL2/SDL.h>
+#include <string>
+#include <xstring>
+#include <mutex>
+
 #include "Component.h"
 #include "Image.h"
 #include "../Page.h"
 #include "../../Collection/Item.h"
 #include "../../Video/IVideo.h"
 #include "../../Video/VideoFactory.h"
-#include <SDL2/SDL.h>
-#include <string>
+
+class IVideo;
+class Page;
 
 class VideoComponent final : public Component
 {
@@ -53,4 +59,5 @@ private:
     int numLoops_;
     int monitor_;
     Page* currentPage_{ nullptr };
+    SDL_mutex* videoMutex_;
 };

@@ -15,139 +15,173 @@
  */
 
 #include "VideoComponent.h"
-#include "../ViewInfo.h"
-#include "../../Database/Configuration.h"
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
-#include "../../Video/GStreamerVideo.h"
 #include "../../Video/VideoFactory.h"
 #include "../../SDL.h"
-#include <string>
+#include "../Page.h"
+#include "SDL_rect.h"
+#include "SDL_render.h"
 
-VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops)
-    : Component(p)
-    , videoFile_(videoFile)
-    , numLoops_(numLoops)
-    , monitor_(monitor)
-    , currentPage_(&p)
+VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops)
+    : Component(p), videoFile_(videoFile), videoInst_(nullptr), isPlaying_(false),
+    hasBeenOnScreen_(false), numLoops_(numLoops), monitor_(monitor), currentPage_(&p),
+    videoMutex_(SDL_CreateMutex())
 {
-
+    if (!videoMutex_) {
+        LOG_ERROR("VideoComponent", "Failed to create mutex");
+    }
 }
 
 VideoComponent::~VideoComponent()
 {
     VideoComponent::freeGraphicsMemory();
+    if (videoMutex_) {
+        SDL_DestroyMutex(videoMutex_);
+    }
 }
-
 
 bool VideoComponent::update(float dt)
 {
-    if (videoInst_) {
-        isPlaying_ = ((GStreamerVideo*)(videoInst_))->isPlaying();
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            isPlaying_ = videoInst_->isPlaying();
+        }
+
+        if (videoInst_ && isPlaying_) {
+            videoInst_->setVolume(baseViewInfo.Volume);
+            videoInst_->update(dt);
+            videoInst_->volumeUpdate();
+            if (!currentPage_->isMenuScrolling()) {
+                videoInst_->loopHandler();
+            }
+
+            if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0) {
+                baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
+                baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
+            }
+
+            bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0;
+
+            if (isCurrentlyVisible) {
+                hasBeenOnScreen_ = true;
+            }
+
+            if (baseViewInfo.PauseOnScroll && !currentPage_->isMenuFastScrolling()) {
+                if (!isCurrentlyVisible && !isPaused()) {
+                    videoInst_->pause();
+                    if (Logger::isLevelEnabled("DEBUG")) {
+                        LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+                    }
+                }
+                else if (isCurrentlyVisible && isPaused()) {
+                    videoInst_->pause();
+                    if (Logger::isLevelEnabled("DEBUG")) {
+                        LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+                    }
+                }
+            }
+
+            if (baseViewInfo.Restart && hasBeenOnScreen_) {
+                videoInst_->restart();
+                if (Logger::isLevelEnabled("DEBUG")) {
+                    LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
+                }
+                baseViewInfo.Restart = false;
+            }
+        }
+        SDL_UnlockMutex(videoMutex_);
     }
-
-    if (videoInst_ && isPlaying_) {
-        videoInst_->setVolume(baseViewInfo.Volume);
-        videoInst_->update(dt);
-        videoInst_->volumeUpdate();
-        if(!currentPage_->isMenuScrolling())
-            videoInst_->loopHandler();
-
-        // video needs to run a frame to start getting size info
-        if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0) {
-            baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
-            baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
-        }
-
-        bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0;
-
-        if (isCurrentlyVisible)
-            hasBeenOnScreen_ = true;
-
-        // Handle Pause/Resume based on visibility and PauseOnScroll setting
-        if (baseViewInfo.PauseOnScroll && !currentPage_->isMenuFastScrolling()) {
-            if (!isCurrentlyVisible && !isPaused()) {
-                videoInst_->pause();
-                if(Logger::isLevelEnabled("DEBUG"))
-                    LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
-            }
-            else if (isCurrentlyVisible && isPaused()) {
-                videoInst_->pause(); // This resumes the video
-                if (Logger::isLevelEnabled("DEBUG"))
-                    LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
-            }
-        }
-
-        // Handle Restart
-        if (baseViewInfo.Restart && hasBeenOnScreen_) {
-            videoInst_->restart();
-            if (Logger::isLevelEnabled("DEBUG"))
-                LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
-            baseViewInfo.Restart = false;
-        }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in update()");
     }
 
     return Component::update(dt);
 }
 
-
 void VideoComponent::allocateGraphicsMemory()
 {
-    Component::allocateGraphicsMemory();
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        Component::allocateGraphicsMemory();
 
-    if(!isPlaying_) {
-        if (!videoInst_) {
-            videoInst_ = VideoFactory::createVideo(monitor_, numLoops_);
+        if (!isPlaying_) {
+            if (!videoInst_) {
+                videoInst_ = VideoFactory::createVideo(monitor_, numLoops_);
+                if (!videoInst_) {
+                    LOG_ERROR("VideoComponent", "Failed to create video instance");
+                }
+            }
+            if (!videoFile_.empty() && videoInst_) {
+                isPlaying_ = videoInst_->play(videoFile_);
+            }
         }
-        if (videoFile_ != "") {
-            isPlaying_ = videoInst_->play(videoFile_);
-        }
+
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in allocateGraphicsMemory()");
     }
 }
-
 
 void VideoComponent::freeGraphicsMemory()
 {
-    //videoInst_->stop();
-        
-    Component::freeGraphicsMemory();
-    if (Logger::isLevelEnabled("DEBUG"))
-        LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
-    
-    if (videoInst_)  {
-        delete videoInst_;
-        isPlaying_ = false;
-        if (Logger::isLevelEnabled("DEBUG"))
-            LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
-        videoInst_ = nullptr;
-        
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        Component::freeGraphicsMemory();
+        if (Logger::isLevelEnabled("DEBUG")) {
+            LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
+        }
+
+        if (videoInst_) {
+            videoInst_->stop();
+            delete videoInst_;
+            videoInst_ = nullptr;
+            isPlaying_ = false;
+            if (Logger::isLevelEnabled("DEBUG")) {
+                LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
+            }
+        }
+
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in freeGraphicsMemory()");
     }
 }
 
-
 void VideoComponent::draw()
 {
-    if (baseViewInfo.Alpha > 0.0f) {
-        SDL_Rect rect = { 0, 0, 0, 0 };
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (baseViewInfo.Alpha > 0.0f) {
+            SDL_Rect rect = { 0, 0, 0, 0 };
 
-        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
+            rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
+            rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
+            rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
+            rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
 
-        videoInst_->draw();
-        SDL_Texture* texture = videoInst_->getTexture();
+            videoInst_->draw();
+            SDL_Texture* texture = videoInst_->getTexture();
 
-        if (texture)
-        {
-            SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+            if (texture) {
+                SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+            }
         }
+
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in draw()");
     }
 }
 
 bool VideoComponent::isPlaying()
 {
-    return isPlaying_;
+    bool playing = false;
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        playing = isPlaying_;
+        SDL_UnlockMutex(videoMutex_);
+    }
+    return playing;
 }
 
 std::string_view VideoComponent::filePath()
@@ -155,70 +189,116 @@ std::string_view VideoComponent::filePath()
     return videoFile_;
 }
 
-void VideoComponent::skipForward( )
+void VideoComponent::skipForward()
 {
-    if ( videoInst_ )
-        videoInst_->skipForward( );
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            videoInst_->skipForward();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in skipForward()");
+    }
 }
 
-
-void VideoComponent::skipBackward( )
+void VideoComponent::skipBackward()
 {
-    if ( videoInst_ )
-        videoInst_->skipBackward( );
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            videoInst_->skipBackward();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in skipBackward()");
+    }
 }
 
-
-void VideoComponent::skipForwardp( )
+void VideoComponent::skipForwardp()
 {
-    if ( videoInst_ )
-        videoInst_->skipForwardp( );
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            videoInst_->skipForwardp();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in skipForwardp()");
+    }
 }
 
-
-void VideoComponent::skipBackwardp( )
+void VideoComponent::skipBackwardp()
 {
-    if ( videoInst_ )
-        videoInst_->skipBackwardp( );
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            videoInst_->skipBackwardp();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in skipBackwardp()");
+    }
 }
 
-
-void VideoComponent::pause( )
+void VideoComponent::pause()
 {
-    if ( videoInst_ )
-        videoInst_->pause( );
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            videoInst_->pause();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in pause()");
+    }
 }
 
-
-void VideoComponent::restart( )
+void VideoComponent::restart()
 {
-    if ( videoInst_ )
-        videoInst_->restart( );
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            videoInst_->restart();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    else {
+        LOG_ERROR("VideoComponent", "Failed to lock mutex in restart()");
+    }
 }
 
-
-unsigned long long VideoComponent::getCurrent( )
+unsigned long long VideoComponent::getCurrent()
 {
-    if ( videoInst_ )
-        return videoInst_->getCurrent( );
-    else
-        return 0;
+    unsigned long long current = 0;
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            current = videoInst_->getCurrent();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    return current;
 }
 
-
-unsigned long long VideoComponent::getDuration( )
+unsigned long long VideoComponent::getDuration()
 {
-    if ( videoInst_ )
-        return videoInst_->getDuration( );
-    else
-        return 0;
+    unsigned long long duration = 0;
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            duration = videoInst_->getDuration();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    return duration;
 }
 
-
-bool VideoComponent::isPaused( )
+bool VideoComponent::isPaused()
 {
-    if ( videoInst_ )
-        return videoInst_->isPaused( );
-    else
-        return false;
+    bool paused = false;
+    if (SDL_LockMutex(videoMutex_) == 0) {
+        if (videoInst_) {
+            paused = videoInst_->isPaused();
+        }
+        SDL_UnlockMutex(videoMutex_);
+    }
+    return paused;
 }
