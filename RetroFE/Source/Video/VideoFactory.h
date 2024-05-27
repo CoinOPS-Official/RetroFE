@@ -27,5 +27,4 @@ public:
 private:
     static bool    enabled_;
     static int     numLoops_;
-    static IVideo *instance_;
 };

@@ -33,7 +33,7 @@ VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, 
 
     if(std::string file; Utils::findMatchingFile(prefix, extensions, file)) {
         component = new VideoComponent(page, file, monitor, numLoops);
-        component->allocateGraphicsMemory();
+        //component->allocateGraphicsMemory();
     }
 
     return component;

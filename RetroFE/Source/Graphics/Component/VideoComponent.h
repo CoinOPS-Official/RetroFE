@@ -17,7 +17,6 @@
 #include <SDL2/SDL.h>
 #include <string>
 #include <xstring>
-#include <mutex>
 
 #include "Component.h"
 #include "Image.h"
@@ -29,10 +28,10 @@
 class IVideo;
 class Page;
 
-class VideoComponent final : public Component
+class VideoComponent final: public Component
 {
 public:
-    VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
+    explicit VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
     ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
@@ -52,12 +51,10 @@ public:
 
 private:
     std::string videoFile_;
-    std::string name_;
     IVideo* videoInst_{ nullptr };
     bool isPlaying_{ false };
     bool hasBeenOnScreen_{ false };
     int numLoops_;
     int monitor_;
     Page* currentPage_{ nullptr };
-    SDL_mutex* videoMutex_;
 };

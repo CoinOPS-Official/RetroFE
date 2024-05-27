@@ -15,14 +15,12 @@
  */
 
 #include "VideoFactory.h"
-#include "IVideo.h"
+
 #include "../Utility/Log.h"
 #include "GStreamerVideo.h"
 
 bool VideoFactory::enabled_ = true;
 int VideoFactory::numLoops_ = 0;
-IVideo *VideoFactory::instance_ = nullptr;
-
 
 IVideo* VideoFactory::createVideo(int monitor, int numLoops) 
 {
