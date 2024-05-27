@@ -17,7 +17,6 @@
 
 #include <vector>
 #include <memory>
-#include <xstring>
 
 #include "../../SDL.h"
 #include "../Page.h"

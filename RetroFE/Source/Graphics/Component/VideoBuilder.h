@@ -15,7 +15,6 @@
  */
 #pragma once
 
-#include <xstring>
 
 #include "Image.h"
 #include "VideoComponent.h"

@@ -15,10 +15,11 @@
  */
 #pragma once
 
-#include "Animate/TweenTypes.h"
 #include <string>
 #include <map>
 #include <cfloat>
+
+#include "Animate/TweenTypes.h"
 
 class Font;
 

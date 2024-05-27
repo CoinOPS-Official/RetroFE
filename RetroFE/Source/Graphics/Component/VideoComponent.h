@@ -16,7 +16,6 @@
 #pragma once
 #include <SDL2/SDL.h>
 #include <string>
-#include <xstring>
 
 #include "Component.h"
 #include "Image.h"

@@ -17,7 +17,6 @@
 #include <SDL2/SDL.h>
 #include <string>
 #include <vector>
-#include <xstring>
 
 #include "Component.h"
 #include "ReloadableText.h"

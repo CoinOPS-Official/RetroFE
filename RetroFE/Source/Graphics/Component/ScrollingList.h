@@ -19,7 +19,6 @@
 #include <SDL2/SDL.h>
 #include <stddef.h>
 #include <vector>
-#include <xstring>
 
 #include "Component.h"
 #include "../Animate/Tween.h"
