@@ -142,7 +142,7 @@ private:
         RETROFE_QUIT,
     };
 
-    void            render();
+    void            render() const;
     bool            back( bool &exit );
     bool isStandalonePlaylist(std::string playlist);
     bool isInAttractModeSkipPlaylist(std::string playlist);

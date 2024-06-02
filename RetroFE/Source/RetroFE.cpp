@@ -97,7 +97,7 @@ RetroFE::~RetroFE( )
 
 
 // Render the current page to the screen
-void RetroFE::render()
+void RetroFE::render() const
 {
 
     SDL_LockMutex(SDL::getMutex());
