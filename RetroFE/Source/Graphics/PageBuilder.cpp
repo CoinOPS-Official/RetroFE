@@ -88,9 +88,8 @@ PageBuilder::PageBuilder(const std::string& layoutKey, const std::string& layout
 
 PageBuilder::~PageBuilder() = default;
 
-Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToCurrentLayout)
-{
-    Page *page = nullptr;
+Page* PageBuilder::buildPage(const std::string& collectionName, bool defaultToCurrentLayout) {
+    Page* page = nullptr;
 
     std::string layoutFile;
     std::string layoutFileAspect;
@@ -99,15 +98,15 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
     bool fixedResLayouts = false;
     config_.getProperty(OPTION_FIXEDRESLAYOUTS, fixedResLayouts);
     namespace fs = std::filesystem;
-    
+
     // These just prevented repeated logging
     bool splashInitialized = false;
     bool fixedResLayoutsInitialized = false;
 
-    if ( isMenu_ ) {
+    if (isMenu_) {
         layoutPath = Utils::combinePath(Configuration::absolutePath, "menu");
     }
-    else if ( collectionName != "" ) {
+    else if (collectionName != "") {
         layoutPath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", collectionName);
         layoutPath = Utils::combinePath(layoutPath, "layout");
 
@@ -126,9 +125,9 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
     for (int i = 0; i < Page::MAX_LAYOUTS; i++) {
         layouts.push_back("layout - " + std::to_string(i));
     }
-    int monitor=0;
+    int monitor = 0;
     for (unsigned int layout = 0; layout < layouts.size(); layout++) {
-        rapidxml::xml_document<> doc;
+        auto doc = std::make_unique<rapidxml::xml_document<>>();
         std::ifstream file;
 
         // Override layout with layoutFromAnotherCollection = <collection> in layouts/Arcades/collections/<collection>
@@ -195,14 +194,14 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
         }
 
         // Read the file into a buffer
-        std::vector<char> buffer((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        auto buffer = std::make_unique<std::vector<char>>((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
         file.close();
         try {
-            buffer.push_back('\0');
+            buffer->push_back('\0');
 
-            doc.parse<0>(&buffer[0]);
+            doc->parse<0>(&buffer->at(0));
 
-            xml_node<>* root = doc.first_node("layout");
+            const xml_node<>* root = doc->first_node("layout");
 
             if (!root) {
                 LOG_ERROR("Layout", "Missing <layout> tag");
@@ -280,7 +279,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                 for (xml_node<> const* sound = root->first_node("sound"); sound; sound = sound->next_sibling("sound")) {
                     xml_attribute<> const* src = sound->first_attribute("src");
                     xml_attribute<> const* type = sound->first_attribute("type");
-                    std::string file = Configuration::convertToAbsolutePath(layoutPath, src->value());
+                    std::string soundfile = Configuration::convertToAbsolutePath(layoutPath, src->value());
 
                     // check if collection's assets are in a different theme
                     config_.getProperty("collections." + collectionName + ".layout", layoutName);
@@ -293,7 +292,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
                     }
                     else {
                         // TODO MuteSound key, also this is such a mess
-                        auto* sound = new Sound(file, altfile);
+                        auto* sound = new Sound(soundfile, altfile);
                         std::string soundType = type->value();
 
                         if (!soundType.compare("load")) {
@@ -322,7 +321,7 @@ Page *PageBuilder::buildPage( const std::string& collectionName, bool defaultToC
         }
         catch (rapidxml::parse_error& e) {
             std::string what = e.what();
-            auto line = static_cast<long>(std::count(&buffer.front(), e.where<char>(), char('\n')) + 1);
+            auto line = static_cast<long>(std::count(&buffer->front(), e.where<char>(), char('\n')) + 1);
             std::stringstream ss;
             ss << "Could not parse layout file. [Line: " << line << "] in " << layoutFile << " Reason: " << e.what();
 
@@ -405,7 +404,7 @@ float PageBuilder::getVerticalAlignment(const xml_attribute<> *attribute, float 
     return value;
 }
 
-bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::string& collectionName)
+bool PageBuilder::buildComponents(const xml_node<>* layout, Page* page, const std::string& collectionName)
 
 {
     xml_attribute<> const* layoutMonitorXml = layout->first_attribute("monitor");
@@ -416,7 +415,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         return true; // Skip this layout
     }
 
-    for (xml_node<>* componentXml = layout->first_node("menu"); componentXml; componentXml = componentXml->next_sibling("menu")) {
+    for (const xml_node<>* componentXml = layout->first_node("menu"); componentXml; componentXml = componentXml->next_sibling("menu")) {
         // Extract "monitor" attribute specifically for this "menu" node
         xml_attribute<> const* menuMonitorXml = componentXml->first_attribute("monitor");
         int menuMonitor = menuMonitorXml ? Utils::convertInt(menuMonitorXml->value()) : layoutMonitor;
@@ -438,7 +437,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         }
     }
 
-    for(xml_node<> *componentXml = layout->first_node("container"); componentXml; componentXml = componentXml->next_sibling("container")) {
+    for(const xml_node<> *componentXml = layout->first_node("container"); componentXml; componentXml = componentXml->next_sibling("container")) {
         auto* c = new Container(*page);
         if (auto const* menuScrollReload = componentXml->first_attribute("menuScrollReload");
             menuScrollReload && (Utils::toLower(menuScrollReload->value()) == "true" ||
@@ -453,7 +452,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         loadTweens(c, componentXml);
         page->addComponent(c);
     }
-    for(xml_node<> *componentXml = layout->first_node("image"); componentXml; componentXml = componentXml->next_sibling("image")) {
+    for(const xml_node<> *componentXml = layout->first_node("image"); componentXml; componentXml = componentXml->next_sibling("image")) {
         xml_attribute<> const *src        = componentXml->first_attribute("src");
         xml_attribute<> const *idXml      = componentXml->first_attribute("id");
         xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
@@ -526,7 +525,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
     }
 
 
-    for(xml_node<> *componentXml = layout->first_node("video"); componentXml; componentXml = componentXml->next_sibling("video"))
+    for(const xml_node<> *componentXml = layout->first_node("video"); componentXml; componentXml = componentXml->next_sibling("video"))
     {
         xml_attribute<> const *srcXml      = componentXml->first_attribute("src");
         xml_attribute<> const *numLoopsXml = componentXml->first_attribute("numLoops");
@@ -604,7 +603,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
 
     }
 
-    for(xml_node<> *componentXml = layout->first_node("text"); componentXml; componentXml = componentXml->next_sibling("text")) {
+    for(const xml_node<> *componentXml = layout->first_node("text"); componentXml; componentXml = componentXml->next_sibling("text")) {
         xml_attribute<> const *value      = componentXml->first_attribute("value");
         xml_attribute<> const *idXml      = componentXml->first_attribute("id");
         xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
@@ -636,7 +635,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         }
     }
 
-    for(xml_node<> *componentXml = layout->first_node("statusText"); componentXml; componentXml = componentXml->next_sibling("statusText")) {
+    for(const xml_node<> *componentXml = layout->first_node("statusText"); componentXml; componentXml = componentXml->next_sibling("statusText")) {
         xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
         int statusTextMonitor = monitorXml ? Utils::convertInt(monitorXml->value()) : layoutMonitor;
         Font* font = addFont(componentXml, NULL, statusTextMonitor);
@@ -670,7 +669,7 @@ void PageBuilder::loadReloadableImages(const xml_node<> *layout, const std::stri
     xml_attribute<> const* layoutMonitorXml = layout->first_attribute("monitor");
     int monitor = layoutMonitorXml ? Utils::convertInt(layoutMonitorXml->value()) : monitor_;
     int cMonitor = 0;
-    for(xml_node<> *componentXml = layout->first_node(tagName.c_str()); componentXml; componentXml = componentXml->next_sibling(tagName.c_str())) {
+    for(const xml_node<> *componentXml = layout->first_node(tagName.c_str()); componentXml; componentXml = componentXml->next_sibling(tagName.c_str())) {
         std::string reloadableImagePath;
         std::string reloadableVideoPath;
         xml_attribute<> const *type              = componentXml->first_attribute("type");
@@ -956,14 +955,14 @@ Font *PageBuilder::addFont(const xml_node<> *component, const xml_node<> *defaul
     return fontCache_->getFont(fontName, fontSize, fontColor);
 }
 
-void PageBuilder::loadTweens(Component *c, xml_node<> *componentXml)
+void PageBuilder::loadTweens(Component *c, const xml_node<> *componentXml)
 {
     buildViewInfo(componentXml, c->baseViewInfo);
 
     c->setTweens(createTweenInstance(componentXml));
 }
 
-AnimationEvents *PageBuilder::createTweenInstance(rapidxml::xml_node<> *componentXml)
+AnimationEvents *PageBuilder::createTweenInstance(const rapidxml::xml_node<> *componentXml)
 {
     auto *tweens = new AnimationEvents();
 
@@ -1007,7 +1006,7 @@ AnimationEvents *PageBuilder::createTweenInstance(rapidxml::xml_node<> *componen
     return tweens;
 }
 
-void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXml, const std::string& tagName, const std::string& tweenName)
+void PageBuilder::buildTweenSet(AnimationEvents *tweens, const xml_node<> *componentXml, const std::string& tagName, const std::string& tweenName)
 {
     for(componentXml = componentXml->first_node(tagName.c_str()); componentXml; componentXml = componentXml->next_sibling(tagName.c_str())) {
         xml_attribute<> const *indexXml = componentXml->first_attribute("menuIndex");
@@ -1067,14 +1066,14 @@ void PageBuilder::buildTweenSet(AnimationEvents *tweens, xml_node<> *componentXm
     }
 }
 
-ScrollingList * PageBuilder::buildMenu(xml_node<> *menuXml, Page &page, int monitor)
+ScrollingList * PageBuilder::buildMenu(const xml_node<> *menuXml, Page &page, int monitor)
 {
     ScrollingList *menu = nullptr;
     std::string menuType = "vertical";
     std::string imageType = "null";
     std::string videoType = "null";
     std::map<int, xml_node<> *> overrideItems;
-    xml_node<> *itemDefaults               = menuXml->first_node("itemDefaults");
+    const xml_node<> *itemDefaults               = menuXml->first_node("itemDefaults");
     xml_attribute<> const *modeXml               = menuXml->first_attribute("mode");
     xml_attribute<> const *imageTypeXml          = menuXml->first_attribute("imageType");
     xml_attribute<> const *videoTypeXml          = menuXml->first_attribute("videoType");
@@ -1175,14 +1174,14 @@ ScrollingList * PageBuilder::buildMenu(xml_node<> *menuXml, Page &page, int moni
 }
 
 
-void PageBuilder::buildCustomMenu(ScrollingList *menu, const xml_node<> *menuXml, xml_node<> *itemDefaults)
+void PageBuilder::buildCustomMenu(ScrollingList *menu, const xml_node<> *menuXml, const xml_node<> *itemDefaults)
 {
     auto *points = new std::vector<ViewInfo *>();
     auto *tweenPoints = new std::vector<AnimationEvents *>();
 
     int i = 0;
 
-    for(xml_node<> *componentXml = menuXml->first_node("item"); componentXml; componentXml = componentXml->next_sibling("item")) {
+    for(xml_node<> const *componentXml = menuXml->first_node("item"); componentXml; componentXml = componentXml->next_sibling("item")) {
         auto *viewInfo = new ViewInfo();
         viewInfo->Monitor = menu->baseViewInfo.Monitor;
         viewInfo->Layout = menu->baseViewInfo.Layout;
@@ -1203,7 +1202,7 @@ void PageBuilder::buildCustomMenu(ScrollingList *menu, const xml_node<> *menuXml
     menu->setPoints(points, tweenPoints);
 }
 
-void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuXml, xml_node<> *itemDefaults)
+void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuXml, const xml_node<> *itemDefaults)
 {
     auto *points = new std::vector<ViewInfo *>();
     auto *tweenPoints = new std::vector<AnimationEvents *>();
@@ -1238,7 +1237,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuX
     int index = 0;
 
     if(overrideItems.find(MENU_START) != overrideItems.end()) {
-        xml_node<> *component = overrideItems[MENU_START];
+        xml_node<> const *component = overrideItems[MENU_START];
         ViewInfo *viewInfo = createMenuItemInfo(component, itemDefaults, menu->baseViewInfo);
         viewInfo->Y = menu->baseViewInfo.Y + height;
         points->push_back(viewInfo);
@@ -1253,7 +1252,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuX
         viewInfo->Monitor = menu->baseViewInfo.Monitor;
         viewInfo->Layout = menu->baseViewInfo.Layout;
 
-        xml_node<> *component = itemDefaults;
+        xml_node<> const *component = itemDefaults;
 
         // uss overridden item setting if specified by layout for the given index
         if(overrideItems.find(index) != overrideItems.end()) {
@@ -1289,7 +1288,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuX
 
     //menu end
     if(overrideItems.find(MENU_END) != overrideItems.end()) {
-        xml_node<> *component = overrideItems[MENU_END];
+        xml_node<> const *component = overrideItems[MENU_END];
         ViewInfo *viewInfo = createMenuItemInfo(component, itemDefaults, menu->baseViewInfo);
         viewInfo->Y = menu->baseViewInfo.Y + height;
         points->push_back(viewInfo);
@@ -1311,7 +1310,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList *menu, const xml_node<> *menuX
     menu->setPoints(points, tweenPoints);
 }
 
-ViewInfo *PageBuilder::createMenuItemInfo(xml_node<> *component, xml_node<> *defaults, const ViewInfo& menuViewInfo)
+ViewInfo *PageBuilder::createMenuItemInfo(const xml_node<> *component, const xml_node<> *defaults, const ViewInfo& menuViewInfo)
 {
     auto *viewInfo = new ViewInfo();
     viewInfo->Monitor = menuViewInfo.Monitor;
@@ -1321,7 +1320,7 @@ ViewInfo *PageBuilder::createMenuItemInfo(xml_node<> *component, xml_node<> *def
     return viewInfo;
 }
 
-int PageBuilder::parseMenuPosition(const std::string& strIndex)
+int PageBuilder::parseMenuPosition(const std::string& strIndex) const
 {
     int index = MENU_FIRST;
 
@@ -1354,7 +1353,7 @@ xml_attribute<> *PageBuilder::findAttribute(const xml_node<> *componentXml, cons
     return attributeXml;
 }
 
-void PageBuilder::buildViewInfo(xml_node<> *componentXml, ViewInfo &info, xml_node<> *defaultXml)
+void PageBuilder::buildViewInfo(const xml_node<> *componentXml, ViewInfo &info, const xml_node<> *defaultXml)
 {
     xml_attribute<> const *x                  = findAttribute(componentXml, "x", defaultXml);
     xml_attribute<> const *y                  = findAttribute(componentXml, "y", defaultXml);
