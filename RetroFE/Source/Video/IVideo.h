@@ -17,6 +17,8 @@
 
 #include <SDL2/SDL.h>
 #include <string>
+#include <gst/gst.h>
+
 
 class IVideo
 {
@@ -40,7 +42,7 @@ public:
     virtual void skipBackwardp( ) = 0;
     virtual void pause( ) = 0;
     virtual void restart( ) = 0;
-    virtual unsigned long long getCurrent( ) = 0;
+    virtual gint64 getCurrent( ) = 0;
     virtual unsigned long long getDuration( ) = 0;
     virtual bool isPaused( ) = 0;
     virtual bool isPlaying() = 0;

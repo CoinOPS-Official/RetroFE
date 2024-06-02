@@ -62,7 +62,7 @@ public:
     void skipBackwardp() override;
     void pause() override;
     void restart() override;
-    unsigned long long getCurrent() override;
+    gint64 getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
     bool getFrameReady() override;
@@ -77,7 +77,7 @@ private:
         NON_CONTIGUOUS,  // Non-contiguous buffer layout
     };
 
-    static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer const* buf, GstPad* new_pad, gpointer userdata);
+    static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
     bool initializeGstElements(const std::string& file);
     GstElement* playbin_{ nullptr };
@@ -113,6 +113,6 @@ private:
         && Utils::getOSType() == "linux" };
 
     BufferLayout bufferLayout_{ UNKNOWN };
-    std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath);
+    std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
 
 };
