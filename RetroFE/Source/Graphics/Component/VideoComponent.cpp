@@ -49,7 +49,6 @@ bool VideoComponent::update(float dt)
 		return Component::update(dt);
 	}
 
-	if (isPlaying_) {
 		videoInst_->setVolume(baseViewInfo.Volume);
 		videoInst_->update(dt);
 		videoInst_->volumeUpdate();
@@ -90,7 +89,7 @@ bool VideoComponent::update(float dt)
 			if (Logger::isLevelEnabled("DEBUG"))
 				LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
 		}
-	}
+	
 
 	return Component::update(dt);
 }
@@ -138,8 +137,8 @@ void VideoComponent::draw()
 
 		if (SDL_Texture* texture = videoInst_->getTexture()) {
 			SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+			videoInst_->draw();
 		}
-		videoInst_->draw();
 	}
 }
 
