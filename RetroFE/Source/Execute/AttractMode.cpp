@@ -92,7 +92,7 @@ int AttractMode::update(float dt, Page &page)
     if(isActive_) {
         if (page.isMenuIdle()) {
             page.setScrolling(Page::ScrollDirectionForward);
-            page.scroll(true);
+            page.scroll(true, false);
             if (isFast) {
                 page.updateScrollPeriod(); // accelerate scrolling
             }

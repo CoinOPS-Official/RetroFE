@@ -627,7 +627,7 @@ bool RetroFE::run( )
         case RETROFE_SCROLL_FORWARD:
             if (currentPage_->isIdle()) {
                 currentPage_->setScrolling(Page::ScrollDirectionForward);
-                currentPage_->scroll(true);
+                currentPage_->scroll(true, false);
                 currentPage_->updateScrollPeriod();
             }
             state = RETROFE_IDLE;
@@ -635,7 +635,23 @@ bool RetroFE::run( )
         case RETROFE_SCROLL_BACK:
             if (currentPage_->isIdle()) {
                 currentPage_->setScrolling(Page::ScrollDirectionBack);
-                currentPage_->scroll(false);
+                currentPage_->scroll(false, false);
+                currentPage_->updateScrollPeriod();
+            }
+            state = RETROFE_IDLE;
+            break;
+        case RETROFE_SCROLL_PLAYLIST_FORWARD:
+            if (currentPage_->isIdle()) {
+                currentPage_->setScrolling(Page::ScrollDirectionPlaylistForward);
+                currentPage_->scroll(true, true);
+                currentPage_->updateScrollPeriod();
+            }
+            state = RETROFE_IDLE;
+            break;
+        case RETROFE_SCROLL_PLAYLIST_BACK:
+            if (currentPage_->isIdle()) {
+                currentPage_->setScrolling(Page::ScrollDirectionPlaylistBack);
+                currentPage_->scroll(false, true);
                 currentPage_->updateScrollPeriod();
             }
             state = RETROFE_IDLE;
@@ -837,6 +853,15 @@ bool RetroFE::run( )
 
         // Wait for onHighlightEnter animation to finish
         case RETROFE_HIGHLIGHT_ENTER:
+            // detect that playlist selected is different the current then go to that playlist      
+            if (currentPage_->isMenuIdle() && currentPage_->getPlaylistMenu()) {
+                std::string selected_playlist = currentPage_->getPlaylistMenu()->getSelectedItem()->name;
+                if (selected_playlist != currentPage_->getPlaylistName()) {
+                    currentPage_->selectPlaylist(selected_playlist);
+                    state = RETROFE_PLAYLIST_EXIT;
+                    break;
+                }
+            } 
             if (RETROFE_STATE state_tmp = processUserInput(currentPage_); currentPage_->isMenuIdle() &&
                 (state_tmp == RETROFE_HIGHLIGHT_REQUEST ||
                     state_tmp == RETROFE_MENUJUMP_REQUEST ||
@@ -1192,7 +1217,7 @@ bool RetroFE::run( )
                 config_.getProperty( "attractModePlaylistCollectionNumber", attractModePlaylistCollectionNumber );
                 if (!( attractMode_ && attractModePlaylistCollectionNumber > 0 && attractModePlaylistCollectionNumber_ == 0 )) {
                     currentPage_->setScrolling(Page::ScrollDirectionForward);
-                    currentPage_->scroll(true);
+                    currentPage_->scroll(true, false);
                     currentPage_->updateScrollPeriod( );
                 }
                 state = RETROFE_COLLECTION_DOWN_SCROLL;
@@ -1207,7 +1232,7 @@ bool RetroFE::run( )
                 // Check if we need to skip this collection in attract mode or if we can select it
                 if ( attractMode_ && currentPage_->getSelectedItem()->name == attractModeSkipCollection ) {
                     currentPage_->setScrolling(Page::ScrollDirectionForward);
-                    currentPage_->scroll(true);
+                    currentPage_->scroll(true, false);
                     currentPage_->updateScrollPeriod( );
                 }
                 else {
@@ -1374,7 +1399,7 @@ bool RetroFE::run( )
         case RETROFE_COLLECTION_UP_ENTER:
             if ( currentPage_->isIdle( ) ) {
                 currentPage_->setScrolling(Page::ScrollDirectionBack);
-                currentPage_->scroll(false);
+                currentPage_->scroll(false, false);
                 currentPage_->updateScrollPeriod( );
                 state = RETROFE_COLLECTION_UP_SCROLL;
             }
@@ -1959,8 +1984,24 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
             }
             return RETROFE_SCROLL_BACK;
         }
+        // playlist scroll
+        if (input_.keystate(UserInput::KeyCodeDown)) {
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_PLAYLIST_FORWARD;
+        }
+        else if (input_.keystate(UserInput::KeyCodeUp)) {
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_PLAYLIST_BACK;
+        }
     }
     else {
+        // vertical 
         if (input_.keystate(UserInput::KeyCodeDown)) {
            attract_.reset();
             if (infoExitOnScroll) {
@@ -1974,6 +2015,21 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
                 resetInfoToggle();
             }
             return RETROFE_SCROLL_BACK;
+        }
+        // playlist scroll
+        if (input_.keystate(UserInput::KeyCodeRight)) {
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_PLAYLIST_FORWARD;
+        }
+        else if (input_.keystate(UserInput::KeyCodeLeft)) {
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_PLAYLIST_BACK;
         }
     }
     

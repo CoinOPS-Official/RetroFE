@@ -68,18 +68,18 @@ bool VideoComponent::update(float dt)
 			hasBeenOnScreen_ = true;
 		}
 
-		if (baseViewInfo.PauseOnScroll) {
-			if (!isCurrentlyVisible && !videoInst_->isPaused() && !currentPage_->isMenuFastScrolling()) {
-				videoInst_->pause();
-                    if (Logger::isLevelEnabled("DEBUG"))
-						LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
-			}
-			else if (isCurrentlyVisible && videoInst_->isPaused()) {
-				videoInst_->pause();
-				if (Logger::isLevelEnabled("DEBUG"))
-					LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
-			}
-		}
+        if (baseViewInfo.PauseOnScroll) {
+            if (!isCurrentlyVisible && !isPaused() && !currentPage_->isMenuFastScrolling()) {
+                videoInst_->pause();
+                if(Logger::isLevelEnabled("DEBUG"))
+                    LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+            }
+            else if (isCurrentlyVisible && isPaused()) {
+                videoInst_->pause(); // This resumes the video
+                if (Logger::isLevelEnabled("DEBUG"))
+                    LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+            }
+        }
 
 		if (baseViewInfo.Restart && hasBeenOnScreen_) {
 			if (videoInst_->isPaused())

@@ -1034,7 +1034,7 @@ bool ScrollingList::isFastScrolling() const
 void ScrollingList::scroll(bool forward)
 {
     // Exit conditions
-    if (playlistType_ || !items_ || items_->empty() || !scrollPoints_ || scrollPoints_->empty())
+    if (!items_ || items_->empty() || !scrollPoints_ || scrollPoints_->empty())
         return;
 
     if (scrollPeriod_ < minScrollTime_)

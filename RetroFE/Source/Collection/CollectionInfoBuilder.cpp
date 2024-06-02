@@ -588,7 +588,6 @@ void CollectionInfoBuilder::loadPlaylistItems(CollectionInfo* info, std::map<std
                 playlistItem->fullTitle = basename;
                 playlistItem->leaf = false;
                 playlistItem->collectionInfo = info;
-                playlistItems->insert({ basename, playlistItem });
                 std::string sortType = Item::validSortType(basename) ? basename : "";
 
                 for (Item const* pfItem : playlistFilter) {
@@ -617,6 +616,9 @@ void CollectionInfoBuilder::loadPlaylistItems(CollectionInfo* info, std::map<std
                                 break;
                         }
                     }
+                }
+                if (info->playlists[basename]->size()) {
+                    playlistItems->insert({ basename, playlistItem });
                 }
                 playlistFilter.clear();
             }

@@ -140,6 +140,8 @@ private:
         RETROFE_NEW,
         RETROFE_QUIT_REQUEST,
         RETROFE_QUIT,
+        RETROFE_SCROLL_PLAYLIST_FORWARD,
+        RETROFE_SCROLL_PLAYLIST_BACK,
     };
 
     void            render() const;

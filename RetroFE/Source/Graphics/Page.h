@@ -42,8 +42,9 @@ public:
     {
         ScrollDirectionForward,
         ScrollDirectionBack,
-        ScrollDirectionIdle
-
+        ScrollDirectionIdle,
+        ScrollDirectionPlaylistForward,
+        ScrollDirectionPlaylistBack,
     };
 
     Page(Configuration &c, int layoutWidth, int layoutHeight );
@@ -124,6 +125,7 @@ public:
     std::string controlsType() const;
     void setControlsType(std::string_view type);
     void  menuScroll() const;
+    void playlistScroll();
     void  highlightEnter();
     void  highlightExit();
     void  playlistEnter();
@@ -156,7 +158,7 @@ public:
     void  resetScrollPeriod() const;
     void  updateScrollPeriod() const;
     bool  isMenuFastScrolling() const;
-    void  scroll(bool forward);
+    void  scroll(bool forward, bool playlist);
     bool  hasSubs();
     int   getLayoutWidth(int layout);
     int   getLayoutHeight(int layout);
