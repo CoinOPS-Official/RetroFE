@@ -224,12 +224,12 @@ bool Component::update(float dt)
 void Component::draw()
 {
     if (backgroundTexture_ && baseViewInfo.Alpha > 0.0f) {
-        SDL_Rect rect = { 0,0,0,0 };
-        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
-        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-
+        SDL_Rect rect = {
+            static_cast<int>(baseViewInfo.XRelativeToOrigin()),
+            static_cast<int>(baseViewInfo.YRelativeToOrigin()),
+            static_cast<int>(baseViewInfo.ScaledWidth()),
+            static_cast<int>(baseViewInfo.ScaledHeight())
+        };
 
         SDL_SetTextureColorMod(backgroundTexture_,
             static_cast<char>(baseViewInfo.BackgroundRed * 255),
