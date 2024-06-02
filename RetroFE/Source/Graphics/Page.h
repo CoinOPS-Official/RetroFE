@@ -103,14 +103,14 @@ public:
     void setScrollOffsetIndex(size_t i);
     size_t getScrollOffsetIndex();
     bool isIdle();
-    bool isAttractIdle();
+    bool isAttractIdle() const;
     bool isGraphicsIdle();
-    bool isMenuIdle();
+    bool isMenuIdle() const;
     void setStatusTextComponent(Text *t);
     void update(float dt);
-    void updateReloadables(float dt);
+    void updateReloadables(float dt) const;
     void cleanup();
-    void draw();
+    void draw() const;
     void freeGraphicsMemory();
     void allocateGraphicsMemory();
     void deInitializeFonts( ) const;
@@ -123,7 +123,7 @@ public:
     float getMinShowTime() const;
     std::string controlsType() const;
     void setControlsType(std::string_view type);
-    void  menuScroll();
+    void  menuScroll() const;
     void  highlightEnter();
     void  highlightExit();
     void  playlistEnter();
@@ -145,8 +145,8 @@ public:
     void buildInfoEnter();
     void buildInfoExit();
     void  jukeboxJump( );
-    void  triggerEvent( const std::string& action );
-    void  setText( const std::string& text, int id );
+    void  triggerEvent( const std::string& action ) const;
+    void  setText( const std::string& text, int id ) const;
     void  addPlaylist();
     void  removePlaylist();
     void  togglePlaylist();
