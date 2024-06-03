@@ -20,7 +20,6 @@
 #include <string>
 #include <list>
 #include <vector>
-#include <xtree>
 
 #include "../Collection/CollectionInfo.h"
 #include "ThreadPool.h"
