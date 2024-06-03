@@ -16,7 +16,6 @@
 
 #include "PageBuilder.h"
 
-#include <process.h>
 #include <stdlib.h>
 #include <cfloat>
 #include <fstream>
@@ -59,6 +58,7 @@
 
 #ifdef WIN32
     #include <vcruntime_exception.h>
+    #include <process.h>
 #endif
 
 using namespace rapidxml;
