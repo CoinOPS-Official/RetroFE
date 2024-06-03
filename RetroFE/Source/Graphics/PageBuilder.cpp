@@ -49,7 +49,7 @@
 #include "Animate/Animation.h"
 #include "Animate/Tween.h"
 #include "Animate/TweenSet.h"
-#include "C:/Users/User/Documents/GitHub/RetroFE/RetroFE/Source/Database/Configuration.h"
+#include "../Database/Configuration.h"
 #include "Component/Component.h"
 #include "Component/VideoComponent.h"
 #include "FontCache.h"
