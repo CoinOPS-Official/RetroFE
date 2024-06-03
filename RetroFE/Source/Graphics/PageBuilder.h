@@ -33,7 +33,6 @@ class TweenSet;
 #endif
 #include <rapidxml.hpp>
 #include <vector>
-#include <xstring>
 
 static const int MENU_INDEX_HIGH = 16;
 

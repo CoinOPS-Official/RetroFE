@@ -24,7 +24,6 @@
 #include <string>
 #include <type_traits>
 #include <utility>
-#include <xutility>
 
 #include "Component/Component.h"
 #include "../Collection/CollectionInfo.h"
