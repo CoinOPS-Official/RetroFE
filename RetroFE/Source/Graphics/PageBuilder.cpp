@@ -28,7 +28,7 @@
 #include <string>
 #include <type_traits>
 #include <utility>
-
+#include <algorithm>
 #include "Page.h"
 #include "ViewInfo.h"
 #include "Component/Container.h"
