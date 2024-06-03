@@ -47,7 +47,6 @@ class Page;
 #include <memory>
 #include <type_traits>
 #include <utility>
-#include <xutility>
 
 ScrollingList::ScrollingList( Configuration &c,
                               Page          &p,
