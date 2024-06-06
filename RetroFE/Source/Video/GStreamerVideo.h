@@ -23,10 +23,8 @@ extern "C"
 {
 #if (__APPLE__)
     #include <GStreamer/gst/gst.h>
-    #include <GStreamer/gst/video/gstvideometa.h>
 #else
     #include <gst/gst.h>
-    #include <gst/video/gstvideometa.h>
 
 
 
@@ -71,12 +69,6 @@ public:
     static void disablePlugin(const std::string& pluginName);
 
 private:
-    enum BufferLayout {
-        UNKNOWN,        // Initial state
-        CONTIGUOUS,     // Contiguous buffer layout
-        NON_CONTIGUOUS,  // Non-contiguous buffer layout
-    };
-
     static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
     bool initializeGstElements(const std::string& file);
@@ -91,7 +83,6 @@ private:
     gint height_{ 0 };
     gint width_{ 0 };
     GstBuffer* videoBuffer_{ nullptr };
-    const GstVideoMeta* videoMeta_{ nullptr };
     bool frameReady_{ false };
     bool isPlaying_{ false };
     static bool initialized_;
@@ -112,7 +103,6 @@ private:
         && SDL::getRendererBackend(0) == "opengl"
         && Utils::getOSType() == "linux" };
 
-    BufferLayout bufferLayout_{ UNKNOWN };
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
 
 };
