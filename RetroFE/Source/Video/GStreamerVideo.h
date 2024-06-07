@@ -15,38 +15,33 @@
  */
 #pragma once
 
-#include "IVideo.h"
-#include "../SDL.h"
 #include "../Database/Configuration.h"
+#include "../SDL.h"
 #include "../Utility/Utils.h"
+#include "IVideo.h"
 extern "C"
 {
 #if (__APPLE__)
-    #include <GStreamer/gst/gst.h>
-    #include <GStreamer/gst/video/gstvideometa.h>
+#include <GStreamer/gst/gst.h>
 #else
-    #include <gst/gst.h>
-    #include <gst/video/gstvideometa.h>
-
-
+#include <gst/gst.h>
+#include <gst/video/video.h>
 
 #endif
-
 }
-
 
 class GStreamerVideo final : public IVideo
 {
-public:
+  public:
     explicit GStreamerVideo(int monitor);
-    GStreamerVideo(const GStreamerVideo&) = delete;
-    GStreamerVideo& operator=(const GStreamerVideo&) = delete;
+    GStreamerVideo(const GStreamerVideo &) = delete;
+    GStreamerVideo &operator=(const GStreamerVideo &) = delete;
     ~GStreamerVideo() override;
     bool initialize() override;
-    bool play(const std::string& file) override;
+    bool play(const std::string &file) override;
     bool stop() override;
     bool deInitialize() override;
-    SDL_Texture* getTexture() const override;
+    SDL_Texture *getTexture() const override;
     void update(float dt) override;
     void loopHandler() override;
     void volumeUpdate() override;
@@ -67,52 +62,39 @@ public:
     bool isPaused() override;
     bool getFrameReady() override;
     // Helper functions...
-    static void enablePlugin(const std::string& pluginName);
-    static void disablePlugin(const std::string& pluginName);
+    static void enablePlugin(const std::string &pluginName);
+    static void disablePlugin(const std::string &pluginName);
 
-private:
-    enum BufferLayout {
-        UNKNOWN,        // Initial state
-        CONTIGUOUS,     // Contiguous buffer layout
-        NON_CONTIGUOUS,  // Non-contiguous buffer layout
-    };
-
-    static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata);
-    static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
-    bool initializeGstElements(const std::string& file);
-    GstElement* playbin_{ nullptr };
-    GstElement* videoBin_{ nullptr };
-    GstElement* videoSink_{ nullptr };
-    GstElement* capsFilter_{ nullptr };
-    GstBus* videoBus_{ nullptr };
-    SDL_Texture* texture_{ nullptr };
-    gulong elementSetupHandlerId_{ 0 };
-    gulong handoffHandlerId_{ 0 };
-    gint height_{ 0 };
-    gint width_{ 0 };
-    GstBuffer* videoBuffer_{ nullptr };
-    const GstVideoMeta* videoMeta_{ nullptr };
-    bool frameReady_{ false };
-    bool isPlaying_{ false };
+  private:
+    static void processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
+    static void elementSetupCallback([[maybe_unused]] GstElement const *playbin, GstElement *element,
+                                     [[maybe_unused]] GStreamerVideo const *video);
+    bool initializeGstElements(const std::string &file);
+    GstElement *playbin_{nullptr};
+    GstElement *videoBin_{nullptr};
+    GstElement *videoSink_{nullptr};
+    GstElement *capsFilter_{nullptr};
+    GstBus *videoBus_{nullptr};
+    GstVideoInfo videoInfo_;
+    SDL_Texture *texture_{nullptr};
+    SDL_PixelFormatEnum sdlFormat_{SDL_PIXELFORMAT_UNKNOWN};
+    gulong elementSetupHandlerId_{0};
+    gulong handoffHandlerId_{0};
+    gint height_{0};
+    gint width_{0};
+    GstBuffer *videoBuffer_{nullptr};
+    bool frameReady_{false};
+    bool isPlaying_{false};
     static bool initialized_;
-    int playCount_{ 0 };
+    int playCount_{0};
     std::string currentFile_{};
-    int numLoops_{ 0 };
-    float volume_{ 0.0f };
-    double currentVolume_{ 0.0 };
+    int numLoops_{0};
+    float volume_{0.0f};
+    double currentVolume_{0.0};
     int monitor_;
-    bool paused_{ false };
-    double lastSetVolume_{ 0.0 };
-    bool lastSetMuteState_{ false };
-    unsigned int expectedBufSize_{ 0 };
+    bool paused_{false};
+    double lastSetVolume_{0.0};
+    bool lastSetMuteState_{false};
 
-    bool useD3dHardware_{ Configuration::HardwareVideoAccel
-        && SDL::getRendererBackend(0) == "direct3d11" };
-    bool useVaHardware_{ Configuration::HardwareVideoAccel
-        && SDL::getRendererBackend(0) == "opengl"
-        && Utils::getOSType() == "linux" };
-
-    BufferLayout bufferLayout_{ UNKNOWN };
-    std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath);
-
+    std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };
