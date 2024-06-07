@@ -388,38 +388,31 @@ void GStreamerVideo::update(float /* dt */) {
 		GstVideoFormat format = GST_VIDEO_INFO_FORMAT(&videoInfo_);
 		SDL_LockMutex(SDL::getMutex());
 
-		int sdlResult = 0;
-
 		if (format == GST_VIDEO_FORMAT_NV12) {
-			sdlResult = SDL_UpdateNVTexture(texture_, nullptr,
-				GST_VIDEO_FRAME_COMP_DATA(&vframe, 0),
-				GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 0),
-				GST_VIDEO_FRAME_COMP_DATA(&vframe, 1),
-				GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 1));
-
-			if (sdlResult != 0) {
+			if (SDL_UpdateNVTexture(texture_, nullptr,
+				static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
+				static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1)) != 0) {
 				LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
 			}
 		}
 		else if (format == GST_VIDEO_FORMAT_I420) {
-			sdlResult = SDL_UpdateYUVTexture(texture_, nullptr,
-				GST_VIDEO_FRAME_COMP_DATA(&vframe, 0),
-				GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 0),
-				GST_VIDEO_FRAME_COMP_DATA(&vframe, 1),
-				GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 1),
-				GST_VIDEO_FRAME_COMP_DATA(&vframe, 2),
-				GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 2));
-
-			if (sdlResult != 0) {
+			if (SDL_UpdateYUVTexture(texture_, nullptr,
+				static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
+				static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
+				static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
 				LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
 			}
 		}
 		else {
 			LOG_ERROR("Video", "Unsupported format or fallback handling required.");
 		}
-
-		gst_video_frame_unmap(&vframe);
 		SDL_UnlockMutex(SDL::getMutex());
+		gst_video_frame_unmap(&vframe);
 
 		GstBuffer* oldBuffer = videoBuffer_.exchange(nullptr);
 		if (oldBuffer) {
