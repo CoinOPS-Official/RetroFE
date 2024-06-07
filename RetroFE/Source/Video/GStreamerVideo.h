@@ -25,6 +25,7 @@ extern "C"
     #include <GStreamer/gst/gst.h>
 #else
     #include <gst/gst.h>
+    #include <gst/video/video.h>
 
 
 
@@ -77,7 +78,9 @@ private:
     GstElement* videoSink_{ nullptr };
     GstElement* capsFilter_{ nullptr };
     GstBus* videoBus_{ nullptr };
+    GstVideoInfo videoInfo_;
     SDL_Texture* texture_{ nullptr };
+    SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     gulong elementSetupHandlerId_{ 0 };
     gulong handoffHandlerId_{ 0 };
     gint height_{ 0 };
@@ -95,13 +98,6 @@ private:
     bool paused_{ false };
     double lastSetVolume_{ 0.0 };
     bool lastSetMuteState_{ false };
-    unsigned int expectedBufSize_{ 0 };
-
-    bool useD3dHardware_{ Configuration::HardwareVideoAccel
-        && SDL::getRendererBackend(0) == "direct3d11" };
-    bool useVaHardware_{ Configuration::HardwareVideoAccel
-        && SDL::getRendererBackend(0) == "opengl"
-        && Utils::getOSType() == "linux" };
 
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
 
