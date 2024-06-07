@@ -257,9 +257,9 @@ bool GStreamerVideo::play(const std::string &file)
     return true;
 }
 
-bool GStreamerVideo::initializeGstElements(const std::string& file)
+bool GStreamerVideo::initializeGstElements(const std::string &file)
 {
-    gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
+    gchar *uriFile = gst_filename_to_uri(file.c_str(), nullptr);
 
     if (!uriFile)
         return false;
@@ -268,7 +268,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
     videoBin_ = gst_bin_new("SinkBin");
     videoSink_ = gst_element_factory_make("fakesink", "video_sink");
     capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
-    GstCaps* videoConvertCaps;
+    GstCaps *videoConvertCaps;
     if (Configuration::HardwareVideoAccel)
     {
         videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
@@ -297,17 +297,17 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
         return false;
     }
 
-    GstPad* sinkPad = nullptr;
+    GstPad *sinkPad = nullptr;
     sinkPad = gst_element_get_static_pad(capsFilter_, "sink");
 
-    GstPad* ghostPad = gst_ghost_pad_new("sink", sinkPad);
+    GstPad *ghostPad = gst_ghost_pad_new("sink", sinkPad);
     gst_element_add_pad(videoBin_, ghostPad);
     gst_object_unref(sinkPad);
 
     // Set properties of playbin and videoSink
     const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002;
     g_object_set(G_OBJECT(playbin_), "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags",
-        PLAYBIN_FLAGS, "buffer-size", -1, nullptr);
+                 PLAYBIN_FLAGS, "buffer-size", -1, nullptr);
     g_free(uriFile);
     elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
     videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
@@ -340,28 +340,36 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const *pla
     g_free(elementName);
 }
 
-void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
-    auto* video = static_cast<GStreamerVideo*>(userdata);
+void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad,
+                                      gpointer userdata)
+{
+    auto *video = static_cast<GStreamerVideo *>(userdata);
 
-    if (video && video->isPlaying_) {
+    if (video && video->isPlaying_)
+    {
         // Retrieve caps and set width/height/format if not yet set.
-        if (!video->width_ || !video->height_) {
-            GstCaps* caps = gst_pad_get_current_caps(new_pad);
-            if (caps) {
-                const GstStructure* structure = gst_caps_get_structure(caps, 0);
+        if (!video->width_ || !video->height_)
+        {
+            GstCaps *caps = gst_pad_get_current_caps(new_pad);
+            if (caps)
+            {
+                const GstStructure *structure = gst_caps_get_structure(caps, 0);
                 gst_structure_get_int(structure, "width", &video->width_);
                 gst_structure_get_int(structure, "height", &video->height_);
-                const gchar* format = gst_structure_get_string(structure, "format");
+                const gchar *format = gst_structure_get_string(structure, "format");
 
-                if (g_strcmp0(format, "NV12") == 0) {
+                if (g_strcmp0(format, "NV12") == 0)
+                {
                     video->sdlFormat_ = SDL_PIXELFORMAT_NV12;
                     gst_video_info_set_format(&video->videoInfo_, GST_VIDEO_FORMAT_NV12, video->width_, video->height_);
                 }
-                else if (g_strcmp0(format, "I420") == 0) {
+                else if (g_strcmp0(format, "I420") == 0)
+                {
                     video->sdlFormat_ = SDL_PIXELFORMAT_IYUV;
                     gst_video_info_set_format(&video->videoInfo_, GST_VIDEO_FORMAT_I420, video->width_, video->height_);
                 }
-                else {
+                else
+                {
                     // Handle other formats or default to a specific format
                     video->sdlFormat_ = SDL_PIXELFORMAT_UNKNOWN;
                     LOG_ERROR("Video", "Cannot determine pixel format.");
@@ -370,17 +378,20 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
                 gst_caps_unref(caps);
 
                 // Create texture now that width and height are known
-                if (video->sdlFormat_ != SDL_PIXELFORMAT_UNKNOWN) {
+                if (video->sdlFormat_ != SDL_PIXELFORMAT_UNKNOWN)
+                {
                     video->texture_ = SDL_CreateTexture(SDL::getRenderer(video->monitor_), video->sdlFormat_,
-                        SDL_TEXTUREACCESS_STREAMING, video->width_, video->height_);
+                                                        SDL_TEXTUREACCESS_STREAMING, video->width_, video->height_);
                     SDL_SetTextureBlendMode(video->texture_, SDL_BLENDMODE_BLEND);
                 }
             }
         }
 
         // Clear the existing videoBuffer_ if it exists and set the new buffer.
-        if (!video->frameReady_) {
-            if (video->videoBuffer_) {
+        if (!video->frameReady_)
+        {
+            if (video->videoBuffer_)
+            {
                 gst_clear_buffer(&video->videoBuffer_);
             }
             video->videoBuffer_ = gst_buffer_copy(buf);
@@ -389,28 +400,34 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
     }
 }
 
-void GStreamerVideo::update(float /* dt */) {
-    if (!playbin_ || !videoBuffer_ || !texture_|| paused_) {
+void GStreamerVideo::update(float /* dt */)
+{
+    if (!playbin_ || !videoBuffer_ || !texture_ || paused_)
+    {
         return;
     }
 
     GstVideoFrame vframe;
 
-    if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, GST_MAP_READ)) {
+    if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, GST_MAP_READ))
+    {
         SDL_LockMutex(SDL::getMutex());
 
-        if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-            SDL_UpdateNVTexture(texture_, nullptr,
-                GST_VIDEO_FRAME_COMP_DATA(&vframe, 0), GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 0),
-                GST_VIDEO_FRAME_COMP_DATA(&vframe, 1), GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 1));
+        if (sdlFormat_ == SDL_PIXELFORMAT_NV12)
+        {
+            SDL_UpdateNVTexture(texture_, nullptr, GST_VIDEO_FRAME_COMP_DATA(&vframe, 0),
+                                GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 0), GST_VIDEO_FRAME_COMP_DATA(&vframe, 1),
+                                GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 1));
         }
-        else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-            SDL_UpdateYUVTexture(texture_, nullptr,
-                GST_VIDEO_FRAME_COMP_DATA(&vframe, 0), GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 0),
-                GST_VIDEO_FRAME_COMP_DATA(&vframe, 1), GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 1),
-                GST_VIDEO_FRAME_COMP_DATA(&vframe, 2), GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 2));
+        else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV)
+        {
+            SDL_UpdateYUVTexture(texture_, nullptr, GST_VIDEO_FRAME_COMP_DATA(&vframe, 0),
+                                 GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 0), GST_VIDEO_FRAME_COMP_DATA(&vframe, 1),
+                                 GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 1), GST_VIDEO_FRAME_COMP_DATA(&vframe, 2),
+                                 GST_VIDEO_FRAME_COMP_STRIDE(&vframe, 2));
         }
-        else {
+        else
+        {
             // Handle other formats or provide a fallback
         }
 
