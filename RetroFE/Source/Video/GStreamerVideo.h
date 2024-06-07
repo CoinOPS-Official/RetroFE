@@ -26,6 +26,7 @@ extern "C"
 #else
 #include <gst/gst.h>
 #include <gst/video/video.h>
+#include <atomic>
 
 #endif
 }
@@ -77,12 +78,11 @@ class GStreamerVideo final : public IVideo
     GstBus *videoBus_{nullptr};
     GstVideoInfo videoInfo_;
     SDL_Texture *texture_{nullptr};
-    SDL_PixelFormatEnum sdlFormat_{SDL_PIXELFORMAT_UNKNOWN};
     gulong elementSetupHandlerId_{0};
     gulong handoffHandlerId_{0};
     gint height_{0};
     gint width_{0};
-    GstBuffer *videoBuffer_{nullptr};
+    std::atomic<GstBuffer*> videoBuffer_;  // Atomic pointer to the video buffer
     bool frameReady_{false};
     bool isPlaying_{false};
     static bool initialized_;
