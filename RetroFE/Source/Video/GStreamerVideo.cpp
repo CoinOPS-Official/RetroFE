@@ -317,6 +317,7 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
 
     return true;
 }
+
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement const *playbin, GstElement *element,
                                           [[maybe_unused]] GStreamerVideo const *video)
 {
@@ -362,11 +363,13 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuff
                 {
                     video->sdlFormat_ = SDL_PIXELFORMAT_NV12;
                     gst_video_info_set_format(&video->videoInfo_, GST_VIDEO_FORMAT_NV12, video->width_, video->height_);
+                    LOG_INFO("Video", "Pixel Format : NV12");
                 }
                 else if (g_strcmp0(format, "I420") == 0)
                 {
                     video->sdlFormat_ = SDL_PIXELFORMAT_IYUV;
                     gst_video_info_set_format(&video->videoInfo_, GST_VIDEO_FORMAT_I420, video->width_, video->height_);
+                    LOG_INFO("Video", "Pixel Format : I420");
                 }
                 else
                 {
@@ -378,7 +381,7 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuff
                 gst_caps_unref(caps);
 
                 // Create texture now that width and height are known
-                if (video->sdlFormat_ != SDL_PIXELFORMAT_UNKNOWN)
+                if (video->sdlFormat_ != SDL_PIXELFORMAT_UNKNOWN && video->height_ && video->width_)
                 {
                     video->texture_ = SDL_CreateTexture(SDL::getRenderer(video->monitor_), video->sdlFormat_,
                                                         SDL_TEXTUREACCESS_STREAMING, video->width_, video->height_);
