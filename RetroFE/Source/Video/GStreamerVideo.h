@@ -19,6 +19,9 @@
 #include "../SDL.h"
 #include "../Utility/Utils.h"
 #include "IVideo.h"
+#include <atomic>
+
+
 extern "C"
 {
 #if (__APPLE__)
@@ -26,8 +29,6 @@ extern "C"
 #else
 #include <gst/gst.h>
 #include <gst/video/video.h>
-#include <atomic>
-
 #endif
 }
 
@@ -77,6 +78,7 @@ class GStreamerVideo final : public IVideo
     GstElement *capsFilter_{nullptr};
     GstBus *videoBus_{nullptr};
     GstVideoInfo videoInfo_;
+    GstVideoFormat videoFormat_;
     SDL_Texture *texture_{nullptr};
     gulong elementSetupHandlerId_{0};
     gulong handoffHandlerId_{0};
