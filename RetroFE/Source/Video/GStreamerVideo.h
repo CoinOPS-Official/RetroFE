@@ -19,7 +19,6 @@
 #include "../SDL.h"
 #include "../Utility/Utils.h"
 #include "IVideo.h"
-#include <atomic>
 
 
 extern "C"
@@ -84,7 +83,7 @@ class GStreamerVideo final : public IVideo
     gulong handoffHandlerId_{0};
     gint height_{0};
     gint width_{0};
-    std::atomic<GstBuffer*> videoBuffer_;  // Atomic pointer to the video buffer
+    GstBuffer* videoBuffer_{ nullptr };
     bool frameReady_{false};
     bool isPlaying_{false};
     static bool initialized_;

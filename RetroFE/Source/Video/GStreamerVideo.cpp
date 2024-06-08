@@ -39,8 +39,7 @@ GStreamerVideo::GStreamerVideo(int monitor)
 	: monitor_(monitor)
 
 {
-	//gst_video_info_init(&videoInfo_);
-	videoBuffer_.store(nullptr); // Initialize the atomic pointer
+
 }
 
 GStreamerVideo::~GStreamerVideo() { GStreamerVideo::stop(); }
@@ -119,8 +118,8 @@ bool GStreamerVideo::stop() {
 		texture_ = nullptr;
 	}
 	// Unref the video buffer
-	if (GstBuffer* localBuffer = videoBuffer_.exchange(nullptr)) {
-		gst_clear_buffer(&localBuffer);
+	if (videoBuffer_){
+		gst_clear_buffer(&videoBuffer_);
 	}
 	// Free GStreamer elements and related resources
 	if (playbin_) {
@@ -146,6 +145,7 @@ bool GStreamerVideo::play(const std::string& file) {
 		return false;
 #if defined(WIN32)
 	enablePlugin("directsoundsink");
+	disablePlugin("mfdeviceprovider");
 	if (!Configuration::HardwareVideoAccel) {
 		//enablePlugin("openh264dec");
 		disablePlugin("d3d11h264dec");
@@ -320,26 +320,27 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, const Gs
 				gst_caps_unref(caps);
 			}
 		}
-		// Clear the existing videoBuffer_ if it exists and set the new buffer.
-		if (GstBuffer* oldBuffer = video->videoBuffer_.exchange(gst_buffer_copy(buf))) {
-			gst_clear_buffer(&oldBuffer);
+		if (video->texture_) {
+			// Clear the existing videoBuffer_ if it exists.
+			if (video->videoBuffer_) {
+				gst_clear_buffer(&video->videoBuffer_);
+			}
+			// Make a copy of the incoming buffer and set it as the new videoBuffer_.
+			video->videoBuffer_ = gst_buffer_copy(buf);
+			video->frameReady_ = true;
 		}
-		video->frameReady_ = true;
 	}
 }
 
 void GStreamerVideo::update(float /* dt */) {
-	if (!playbin_ || !texture_ || paused_) {
+	if (!playbin_ || !texture_ || paused_ || !videoBuffer_) {
 		return;
 	}
 
-	GstBuffer* localBuffer = videoBuffer_.exchange(nullptr);
-	if (!localBuffer) {
-		return;
-	}
+
 
 	GstVideoFrame vframe;
-	if (gst_video_frame_map(&vframe, &videoInfo_, localBuffer, GST_MAP_READ)) {
+	if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, GST_MAP_READ)) {
 		SDL_LockMutex(SDL::getMutex());
 
 		if (videoFormat_ == GST_VIDEO_FORMAT_NV12) {
@@ -369,11 +370,11 @@ void GStreamerVideo::update(float /* dt */) {
 		SDL_UnlockMutex(SDL::getMutex());
 		gst_video_frame_unmap(&vframe);
 
-		gst_clear_buffer(&localBuffer);  // Clear the buffer reference and set it to NULL
+		gst_clear_buffer(&videoBuffer_);  // Clear the buffer reference and set it to NULL
 	}
 	else {
 		LOG_ERROR("Video", "Failed to map video buffer.");
-		gst_clear_buffer(&localBuffer);  // Clear the buffer reference even if mapping fails
+		gst_clear_buffer(&videoBuffer_);  // Clear the buffer reference even if mapping fails
 	}
 }
 
