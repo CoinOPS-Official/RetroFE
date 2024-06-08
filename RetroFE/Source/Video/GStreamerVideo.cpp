@@ -369,10 +369,11 @@ void GStreamerVideo::update(float /* dt */) {
 		SDL_UnlockMutex(SDL::getMutex());
 		gst_video_frame_unmap(&vframe);
 
-		gst_clear_buffer(&localBuffer);
+		gst_clear_buffer(&localBuffer);  // Clear the buffer reference and set it to NULL
 	}
 	else {
 		LOG_ERROR("Video", "Failed to map video buffer.");
+		gst_clear_buffer(&localBuffer);  // Clear the buffer reference even if mapping fails
 	}
 }
 
