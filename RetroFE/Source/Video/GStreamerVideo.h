@@ -68,7 +68,7 @@ class GStreamerVideo final : public IVideo
     static void disablePlugin(const std::string &pluginName);
 
   private:
-    static void processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
+    static void processNewBuffer(GstElement const * /* fakesink */, const GstBuffer *buf, GstPad *new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] GstElement const *playbin, GstElement *element,
                                      [[maybe_unused]] GStreamerVideo const *video);
     bool initializeGstElements(const std::string &file);
