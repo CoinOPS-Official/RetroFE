@@ -353,11 +353,11 @@ void GStreamerVideo::update(float /* dt */) {
 		//}
 		//else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
 			if (SDL_UpdateYUVTexture(texture_, nullptr,
-				static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
 				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-				static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
 				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
-				static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
+				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
 				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
 				LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
 			}
