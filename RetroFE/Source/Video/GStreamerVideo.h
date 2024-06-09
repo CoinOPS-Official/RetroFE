@@ -15,20 +15,23 @@
  */
 #pragma once
 
-#include "../Database/Configuration.h"
-#include "../SDL.h"
-#include "../Utility/Utils.h"
 #include "IVideo.h"
-
-
+#include "../SDL.h"
+#include "../Database/Configuration.h"
+#include "../Utility/Utils.h"
 extern "C"
 {
 #if (__APPLE__)
 #include <GStreamer/gst/gst.h>
+#include <GStreamer/gst/video/video.h>
 #else
 #include <gst/gst.h>
 #include <gst/video/video.h>
+
+
+
 #endif
+
 }
 
 class GStreamerVideo final : public IVideo

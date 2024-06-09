@@ -14,23 +14,23 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "GStreamerVideo.h"
-#include "../Database/Configuration.h"
-#include "../Graphics/Component/Image.h"
 #include "../Graphics/ViewInfo.h"
-#include "../SDL.h"
+#include "../Graphics/Component/Image.h"
+#include "../Database/Configuration.h"
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
-#include <SDL2/SDL.h>
-#include <cstdio>
-#include <cstdlib>
-#include <cstring>
-#include <gst/audio/audio.h>
-#include <gst/gstdebugutils.h>
-#include <gst/video/video.h>
+#include "../SDL.h"
 #include <sstream>
+#include <cstring>
+#include <cstdlib>
+#include <cstdio>
+#include <vector>
+#include <SDL2/SDL.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <vector>
+#include <gst/gstdebugutils.h>
+#include <gst/video/video.h>
+#include <gst/audio/audio.h>
 
 bool GStreamerVideo::initialized_ = false;
 
@@ -118,7 +118,7 @@ bool GStreamerVideo::stop() {
 		texture_ = nullptr;
 	}
 	// Unref the video buffer
-	if (videoBuffer_){
+	if (videoBuffer_) {
 		gst_clear_buffer(&videoBuffer_);
 	}
 	// Free GStreamer elements and related resources
@@ -224,10 +224,12 @@ bool GStreamerVideo::initializeGstElements(const std::string& file) {
 	if (Configuration::HardwareVideoAccel) {
 		videoConvertCaps = gst_caps_from_string(
 			"video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+		sdlFormat_ = SDL_PIXELFORMAT_NV12;
 	}
 	else {
 		videoConvertCaps = gst_caps_from_string(
 			"video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
+		sdlFormat_ = SDL_PIXELFORMAT_IYUV;
 	}
 	if (!playbin_ || !videoSink_ || !capsFilter_) {
 		LOG_DEBUG("Video", "Could not create elements");
@@ -288,28 +290,16 @@ void GStreamerVideo::elementSetupCallback(
 
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, const GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
 	auto* video = static_cast<GStreamerVideo*>(userdata);
-	if (video && video->isPlaying_) {
+	if (video && video->isPlaying_ && !video->frameReady_) {
 		// Retrieve caps and set video info if not yet set.
-		if (!video->width_ || !video->height_) {
+		if (video->width_ == 0 || video->height_ == 0) {
 			if (GstCaps* caps = gst_pad_get_current_caps(new_pad)) {
 				if (gst_video_info_from_caps(&video->videoInfo_, caps)) {
 					video->width_ = video->videoInfo_.width;
 					video->height_ = video->videoInfo_.height;
-					GstVideoFormat videoFormat = GST_VIDEO_INFO_FORMAT(&video->videoInfo_);
-
-					if (videoFormat == GST_VIDEO_FORMAT_NV12) {
-						LOG_INFO("Video", "Pixel Format : NV12");
-					}
-					else if (videoFormat == GST_VIDEO_FORMAT_I420) {
-						LOG_INFO("Video", "Pixel Format : I420");
-					}
-					else {
-						LOG_ERROR("Video", "Unsupported pixel format.");
-					}
 
 					// Create texture now that width, height, and pixel format are known
-					if (video->height_ && video->width_) {
-						video->sdlFormat_ = (videoFormat == GST_VIDEO_FORMAT_NV12) ? SDL_PIXELFORMAT_NV12 : SDL_PIXELFORMAT_IYUV;
+					if (!video->texture_ && video->height_ && video->width_ && video->sdlFormat_ != SDL_PIXELFORMAT_UNKNOWN) {
 						video->texture_ = SDL_CreateTexture(SDL::getRenderer(video->monitor_), video->sdlFormat_, SDL_TEXTUREACCESS_STREAMING, video->width_, video->height_);
 						SDL_SetTextureBlendMode(video->texture_, SDL_BLENDMODE_BLEND);
 					}
@@ -320,61 +310,61 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, const Gs
 				gst_caps_unref(caps);
 			}
 		}
-		if (video->texture_) {
-			// Clear the existing videoBuffer_ if it exists.
-			if (video->videoBuffer_) {
-				gst_clear_buffer(&video->videoBuffer_);
-			}
-			// Make a copy of the incoming buffer and set it as the new videoBuffer_.
-			video->videoBuffer_ = gst_buffer_copy(buf);
-			video->frameReady_ = true;
+		SDL_LockMutex(SDL::getMutex());
+
+		// Clear the existing videoBuffer_ if it exists and set the new buffer.
+		if (video->videoBuffer_) {
+			gst_clear_buffer(&video->videoBuffer_);
 		}
+		video->videoBuffer_ = gst_buffer_copy(buf);
+		video->frameReady_ = true;
+		SDL_UnlockMutex(SDL::getMutex());
+
 	}
 }
 
 void GStreamerVideo::update(float /* dt */) {
-	if (!playbin_ || !texture_ || paused_ || !videoBuffer_) {
+	if (!playbin_ || paused_) {
 		return;
 	}
+	SDL_LockMutex(SDL::getMutex());
 
+	if (videoBuffer_) {
 
-
-	GstVideoFrame vframe;
-	if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, GST_MAP_READ)) {
-		SDL_LockMutex(SDL::getMutex());
-		//if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-			//if (SDL_UpdateNVTexture(texture_, nullptr,
-				//static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
-				//GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-				//static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
-				//GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1)) != 0) {
-				//LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
-		//	}
-		//}
-		//else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-			if (SDL_UpdateYUVTexture(texture_, nullptr,
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
-				LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
+		GstVideoFrame vframe;
+		if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, GST_MAP_READ)) {
+			if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
+				if (SDL_UpdateNVTexture(texture_, nullptr,
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1)) != 0) {
+					LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
+				}
 			}
-		//}
-		//else {
-			//LOG_ERROR("Video", "Unsupported format or fallback handling required.");
-		//}
+			else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
+				if (SDL_UpdateYUVTexture(texture_, nullptr,
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
+					LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
+				}
+			}
+			else {
+				LOG_ERROR("Video", "Unsupported format or fallback handling required.");
+			}
 
-		SDL_UnlockMutex(SDL::getMutex());
-		gst_video_frame_unmap(&vframe);
-
-		gst_clear_buffer(&videoBuffer_);  // Clear the buffer reference and set it to NULL
+			gst_video_frame_unmap(&vframe);
+		}
+		else {
+			LOG_ERROR("Video", "Failed to map video buffer.");
+		}
+		gst_clear_buffer(&videoBuffer_);
 	}
-	else {
-		LOG_ERROR("Video", "Failed to map video buffer.");
-		gst_clear_buffer(&videoBuffer_);  // Clear the buffer reference even if mapping fails
-	}
+	SDL_UnlockMutex(SDL::getMutex());
 }
 
 void GStreamerVideo::loopHandler() {
