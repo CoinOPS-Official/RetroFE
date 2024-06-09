@@ -77,8 +77,8 @@ class GStreamerVideo final : public IVideo
     GstElement *capsFilter_{nullptr};
     GstBus *videoBus_{nullptr};
     GstVideoInfo videoInfo_;
-    GstVideoFormat videoFormat_;
     SDL_Texture *texture_{nullptr};
+    SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     gulong elementSetupHandlerId_{0};
     gulong handoffHandlerId_{0};
     gint height_{0};
