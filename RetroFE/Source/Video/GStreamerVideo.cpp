@@ -332,7 +332,8 @@ void GStreamerVideo::update(float /* dt */) {
 	if (videoBuffer_) {
 
 		GstVideoFrame vframe;
-		if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, GST_MAP_READ)) {
+		GstMapFlags map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
+		if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, map_flags)) {
 			if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
 				if (SDL_UpdateNVTexture(texture_, nullptr,
 					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
