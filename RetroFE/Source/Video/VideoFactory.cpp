@@ -15,23 +15,25 @@
  */
 
 #include "VideoFactory.h"
-#include "IVideo.h"
+
 #include "../Utility/Log.h"
 #include "GStreamerVideo.h"
 
 bool VideoFactory::enabled_ = true;
 int VideoFactory::numLoops_ = 0;
-IVideo *VideoFactory::instance_ = nullptr;
 
-
-IVideo* VideoFactory::createVideo(int monitor, int numLoops) 
+IVideo* VideoFactory::createVideo(int monitor, int numLoops)
 {
     if (!enabled_) {
         return nullptr; // Early return if not enabled
     }
 
     auto* instance = new GStreamerVideo(monitor);
-    instance->initialize();
+    if (!instance->initialize()) {
+        LOG_ERROR("VideoFactory", "Failed to initialize GStreamerVideo");
+        delete instance;
+        return nullptr;
+    }
 
     int loopsToSet = (numLoops > 0) ? numLoops : numLoops_;
     instance->setNumLoops(loopsToSet);

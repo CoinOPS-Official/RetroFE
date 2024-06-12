@@ -26,8 +26,8 @@
 class VideoComponent : public Component
 {
 public:
-    VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
-    virtual ~VideoComponent();
+    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops);
+    ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
     void freeGraphicsMemory() override;
@@ -46,7 +46,6 @@ public:
 
 private:
     std::string videoFile_;
-    std::string name_;
     IVideo* videoInst_{ nullptr };
     bool isPlaying_{ false };
     bool hasBeenOnScreen_{ false };

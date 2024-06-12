@@ -15,14 +15,20 @@
  */
 
 #include "VideoComponent.h"
-#include "../ViewInfo.h"
-#include "../../Database/Configuration.h"
+
+#include <string>
+#include <type_traits>
+#include <utility>
+
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
-#include "../../Video/GStreamerVideo.h"
 #include "../../Video/VideoFactory.h"
 #include "../../SDL.h"
-#include <string>
+#include "../Page.h"
+#include "SDL_rect.h"
+#include "SDL_render.h"
+#include "../../Graphics/ViewInfo.h"
+#include "../../Video/IVideo.h"
 
 VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops)
     : Component(p)
@@ -36,24 +42,25 @@ VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monito
 
 VideoComponent::~VideoComponent()
 {
-    freeGraphicsMemory();
+    VideoComponent::freeGraphicsMemory();
 }
 
 
 bool VideoComponent::update(float dt)
 {
-    if (videoInst_) {
-        isPlaying_ = ((GStreamerVideo*)(videoInst_))->isPlaying();
+    if (!videoInst_ || !isPlaying_) {
+        return Component::update(dt);
     }
 
-    if (videoInst_ && isPlaying_) {
+    if (isPlaying_) {
         videoInst_->setVolume(baseViewInfo.Volume);
         videoInst_->update(dt);
         videoInst_->volumeUpdate();
-        if(!currentPage_->isMenuScrolling())
-            videoInst_->loopHandler();
 
-        // video needs to run a frame to start getting size info
+        if (!currentPage_->isMenuScrolling()) {
+            videoInst_->loopHandler();
+        }
+
         if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0) {
             baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
             baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
@@ -61,45 +68,49 @@ bool VideoComponent::update(float dt)
 
         bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0;
 
-        if (isCurrentlyVisible)
+        if (isCurrentlyVisible) {
             hasBeenOnScreen_ = true;
+        }
 
-        // Handle Pause/Resume based on visibility and PauseOnScroll setting
         if (baseViewInfo.PauseOnScroll) {
-            if (!isCurrentlyVisible && !isPaused() && !currentPage_->isMenuFastScrolling()) {
+            if (!isCurrentlyVisible && !videoInst_->isPaused() && !currentPage_->isMenuFastScrolling()) {
                 videoInst_->pause();
-                if(Logger::isLevelEnabled("DEBUG"))
+                if (Logger::isLevelEnabled("DEBUG"))
                     LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
             }
-            else if (isCurrentlyVisible && isPaused()) {
-                videoInst_->pause(); // This resumes the video
+            else if (isCurrentlyVisible && videoInst_->isPaused()) {
+                videoInst_->pause();
                 if (Logger::isLevelEnabled("DEBUG"))
                     LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
             }
         }
 
-        // Handle Restart
         if (baseViewInfo.Restart && hasBeenOnScreen_) {
+            if (videoInst_->isPaused())
+                videoInst_->pause();
             videoInst_->restart();
+            baseViewInfo.Restart = false;
             if (Logger::isLevelEnabled("DEBUG"))
                 LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
-            baseViewInfo.Restart = false;
         }
     }
 
     return Component::update(dt);
 }
 
-
 void VideoComponent::allocateGraphicsMemory()
 {
-    Component::allocateGraphicsMemory();
-
-    if(!isPlaying_) {
-        if (!videoInst_) {
+    if (videoInst_) {
+        return;
+    }
+    else {
+        Component::allocateGraphicsMemory();
+        if (!videoInst_ && !videoFile_.empty()) {
             videoInst_ = VideoFactory::createVideo(monitor_, numLoops_);
-        }
-        if (videoFile_ != "") {
+            if (!videoInst_) {
+                LOG_ERROR("VideoComponent", "Failed to create video instance");
+                return;
+            }
             isPlaying_ = videoInst_->play(videoFile_);
         }
     }
@@ -108,19 +119,13 @@ void VideoComponent::allocateGraphicsMemory()
 
 void VideoComponent::freeGraphicsMemory()
 {
-    //videoInst_->stop();
-        
-    Component::freeGraphicsMemory();
-    if (Logger::isLevelEnabled("DEBUG"))
-        LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
-    
-    if (videoInst_)  {
+    if (videoInst_) {
+        Component::freeGraphicsMemory();
         delete videoInst_;
         isPlaying_ = false;
         if (Logger::isLevelEnabled("DEBUG"))
             LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
         videoInst_ = nullptr;
-        
     }
 }
 
@@ -128,20 +133,22 @@ void VideoComponent::freeGraphicsMemory()
 void VideoComponent::draw()
 {
     if (baseViewInfo.Alpha > 0.0f) {
-        SDL_Rect rect = { 0, 0, 0, 0 };
-
-        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
 
         videoInst_->draw();
-        SDL_Texture* texture = videoInst_->getTexture();
+        SDL_LockMutex(SDL::getTextureMutex()); // Lock the texture mutex
 
-        if (texture)
+        if (SDL_Texture* texture = videoInst_->getTexture())
         {
+            SDL_Rect rect = { 0, 0, 0, 0 };
+
+            rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
+            rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
+            rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
+            rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
+            
             SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
         }
+        SDL_UnlockMutex(SDL::getTextureMutex()); // Lock the texture mutex
     }
 }
 
