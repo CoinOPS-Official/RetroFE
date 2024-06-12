@@ -132,9 +132,9 @@ void VideoComponent::freeGraphicsMemory()
 
 void VideoComponent::draw()
 {
-    if (baseViewInfo.Alpha > 0.0f) {
+    if (videoInst_ && baseViewInfo.Alpha > 0.0f) {
 
-        videoInst_->draw();
+        //videoInst_->draw();
         SDL_LockMutex(SDL::getTextureMutex()); // Lock the texture mutex
 
         if (SDL_Texture* texture = videoInst_->getTexture())

@@ -74,6 +74,7 @@ class GStreamerVideo final : public IVideo
     static void elementSetupCallback([[maybe_unused]] GstElement const *playbin, GstElement *element,
                                      [[maybe_unused]] GStreamerVideo const *video);
     bool initializeGstElements(const std::string &file);
+    void createSdlTexture();
     GstElement *playbin_{nullptr};
     GstElement *videoBin_{nullptr};
     GstElement *videoSink_{nullptr};

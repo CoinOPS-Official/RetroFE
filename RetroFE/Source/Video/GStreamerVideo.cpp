@@ -276,7 +276,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file) {
 void GStreamerVideo::elementSetupCallback(
 	[[maybe_unused]] GstElement const* playbin, GstElement* element,
 	[[maybe_unused]] GStreamerVideo const* video) {
-	const gchar* elementName = gst_element_get_name(element);
+	gchar* elementName = gst_element_get_name(element);
 
     if (!Configuration::HardwareVideoAccel) {
         if (g_str_has_prefix(elementName, "avdec_h26")) {
@@ -291,7 +291,7 @@ void GStreamerVideo::elementSetupCallback(
         g_object_set(element, "low-latency", TRUE, nullptr);
     }
 #endif
-    g_free((gchar*)elementName); // Cast to gchar* because gst_element_get_name returns a const gchar*
+    g_free(elementName); // Cast to gchar* because gst_element_get_name returns a const gchar*
 }
 
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
@@ -306,13 +306,6 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 					video->bufSize_ = gst_buffer_get_size(buf);
 					// Calculate expected buffer size
 					video->expectedBufSize_ = video->width_ * video->height_ * 3 / 2;
-					// Create texture now that width, height, and pixel format are known
-					SDL_LockMutex(SDL::getTextureMutex());
-					if (!video->texture_ && video->height_ && video->width_ && video->sdlFormat_ != SDL_PIXELFORMAT_UNKNOWN) {
-						video->texture_ = SDL_CreateTexture(SDL::getRenderer(video->monitor_), video->sdlFormat_, SDL_TEXTUREACCESS_STREAMING, video->width_, video->height_);
-						SDL_SetTextureBlendMode(video->texture_, SDL_BLENDMODE_BLEND);
-					}
-					SDL_UnlockMutex(SDL::getTextureMutex());
 				}
 				else {
 					LOG_ERROR("Video", "Failed to set video info from caps.");
@@ -321,7 +314,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 			}
 		}
 		SDL_LockMutex(SDL::getBufferMutex());
-		if (video && !video->frameReady_) {
+		if (video) {
 			// Clear the existing videoBuffer_ if it exists and set the new buffer.
 			if (video->videoBuffer_) {
 				gst_clear_buffer(&video->videoBuffer_);
@@ -338,7 +331,6 @@ void GStreamerVideo::update(float /* dt */) {
 	if (!playbin_ || !isPlaying_)
 		return;
 
-
 	SDL_LockMutex(SDL::getBufferMutex());
 
     if (videoBuffer_) {
@@ -348,6 +340,9 @@ void GStreamerVideo::update(float /* dt */) {
 			GstMapInfo mapInfo;
 			if (gst_buffer_map(videoBuffer_, &mapInfo, GST_MAP_READ)) {
 				SDL_LockMutex(SDL::getTextureMutex());
+				if (!texture_ && height_ && width_) {
+					createSdlTexture();
+				}
 				if (SDL_UpdateTexture(texture_, nullptr, mapInfo.data, width_) != 0) {
 					LOG_ERROR("Video", "SDL_UpdateTexture failed: " + std::string(SDL_GetError()));
 				}
@@ -364,6 +359,9 @@ void GStreamerVideo::update(float /* dt */) {
             if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, map_flags)) {
                 if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
 					SDL_LockMutex(SDL::getTextureMutex());
+					if (!texture_ && height_ && width_) {
+						createSdlTexture();
+					}
 					if (SDL_UpdateNVTexture(texture_, nullptr,
                                              static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
                                              GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
@@ -374,6 +372,9 @@ void GStreamerVideo::update(float /* dt */) {
 					SDL_UnlockMutex(SDL::getTextureMutex());
                 } else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
 					SDL_LockMutex(SDL::getTextureMutex());
+					if (!texture_ && height_ && width_) {
+						createSdlTexture();
+					}
 					if (SDL_UpdateYUVTexture(texture_, nullptr,
                                              static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
                                              GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
@@ -392,11 +393,14 @@ void GStreamerVideo::update(float /* dt */) {
             }
         }
         gst_clear_buffer(&videoBuffer_);
-		//frameReady_ = false;
 	}
 	SDL_UnlockMutex(SDL::getBufferMutex());
 }
 
+void GStreamerVideo::createSdlTexture() {
+		texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), sdlFormat_, SDL_TEXTUREACCESS_STREAMING, width_, height_);
+		SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+}
 
 void GStreamerVideo::loopHandler() {
 	if (videoBus_) {
