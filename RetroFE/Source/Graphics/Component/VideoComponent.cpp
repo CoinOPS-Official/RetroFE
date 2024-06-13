@@ -54,7 +54,6 @@ bool VideoComponent::update(float dt)
 
     if (isPlaying_) {
         videoInst_->setVolume(baseViewInfo.Volume);
-        videoInst_->update(dt);
         videoInst_->volumeUpdate();
 
         if (!currentPage_->isMenuScrolling()) {
@@ -134,21 +133,17 @@ void VideoComponent::draw()
 {
     if (videoInst_ && baseViewInfo.Alpha > 0.0f) {
 
-        //videoInst_->draw();
-        SDL_LockMutex(SDL::getTextureMutex()); // Lock the texture mutex
+        videoInst_->draw();
 
         if (SDL_Texture* texture = videoInst_->getTexture())
         {
-            SDL_Rect rect = { 0, 0, 0, 0 };
+            SDL_Rect rect = { static_cast<int>(baseViewInfo.XRelativeToOrigin()), 
+                static_cast<int>(baseViewInfo.YRelativeToOrigin()), 
+                static_cast<int>(baseViewInfo.ScaledWidth()), 
+                static_cast<int>(baseViewInfo.ScaledHeight()) };
 
-            rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-            rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-            rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-            rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
-            
             SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
         }
-        SDL_UnlockMutex(SDL::getTextureMutex()); // Lock the texture mutex
     }
 }
 

@@ -27,6 +27,7 @@ extern "C"
 #else
 #include <gst/gst.h>
 #include <gst/video/video.h>
+#include <gst/pbutils/pbutils.h>
 
 
 
@@ -46,7 +47,6 @@ class GStreamerVideo final : public IVideo
     bool stop() override;
     bool deInitialize() override;
     SDL_Texture *getTexture() const override;
-    void update(float dt) override;
     void loopHandler() override;
     void volumeUpdate() override;
     void draw() override;
@@ -65,14 +65,13 @@ class GStreamerVideo final : public IVideo
     unsigned long long getDuration() override;
     bool isPaused() override;
     bool getFrameReady() override;
-    // Helper functions...
-    static void enablePlugin(const std::string &pluginName);
-    static void disablePlugin(const std::string &pluginName);
 
   private:
     static void processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] GstElement const *playbin, GstElement *element,
                                      [[maybe_unused]] GStreamerVideo const *video);
+    static void enablePlugin(const std::string& pluginName);
+    static void disablePlugin(const std::string& pluginName);
     bool initializeGstElements(const std::string &file);
     void createSdlTexture();
     GstElement *playbin_{nullptr};

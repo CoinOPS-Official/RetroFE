@@ -29,8 +29,6 @@
 std::vector<SDL_Window *>   SDL::window_;
 std::vector<SDL_Renderer *> SDL::renderer_;
 SDL_mutex                  *SDL::mutex_ = nullptr;
-SDL_mutex* SDL::bufferMutex_ = nullptr;
-SDL_mutex* SDL::textureMutex_ = nullptr;
 std::vector<int>            SDL::displayWidth_;
 std::vector<int>            SDL::displayHeight_;
 std::vector<int>            SDL::windowWidth_;
@@ -320,8 +318,6 @@ bool SDL::initialize( Configuration &config )
     }
 
     mutex_ = SDL_CreateMutex( );
-    bufferMutex_ = SDL_CreateMutex();
-    textureMutex_ = SDL_CreateMutex();
 
     if ( mutex_ == nullptr ) {
         std::string error = SDL_GetError( );
@@ -364,17 +360,6 @@ bool SDL::deInitialize( )
         SDL_DestroyMutex(mutex_);
         mutex_ = nullptr;
     }
-
-    if (bufferMutex_) {
-        SDL_DestroyMutex(bufferMutex_);
-        bufferMutex_ = nullptr;
-    }
-
-    if (textureMutex_) {
-      SDL_DestroyMutex(textureMutex_);
-        textureMutex_ = nullptr;
-    }
-
     
     for ( int i = 0; i < screenCount_; ++i ) {
         if ( !renderer_.empty() ) {
@@ -425,16 +410,6 @@ std::string SDL::getRendererBackend(int index) {
     return std::string(info.name);
 }
 
-// Get the mutex
-SDL_mutex* SDL::getBufferMutex( )
-{
-    return bufferMutex_;
-}
-
-SDL_mutex* SDL::getTextureMutex()
-{
-    return textureMutex_;
-}
 
 SDL_mutex* SDL::getMutex()
 {
