@@ -181,6 +181,12 @@ int main(int argc, char** argv)
             metadb->resetDatabase();
             return 0;
         }
+        else if (param == "-gstdotdebug" ||
+            param == "--gstdotdebug") {
+            std::string path =
+                Utils::combinePath(Configuration::absolutePath, "retrofe");
+            Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", path);
+        }
         else if (param == "-showconfig" ||
             param == "--showconfig" ||
             param == "-sc") {
@@ -199,6 +205,7 @@ int main(int argc, char** argv)
             if (argc == 2) {
                 gst_debug_set_default_threshold(GST_LEVEL_ERROR);
                 gst_init(nullptr, nullptr);
+
                 ImportConfiguration(&config);
                 config.dumpPropertiesToFile(Utils::combinePath(Configuration::absolutePath, "properties.txt"));
                 
@@ -277,6 +284,7 @@ int main(int argc, char** argv)
             std::cout << "  -v   -version            Print the version of RetroFE" << std::endl;
             std::cout << std::endl;
             std::cout << "  -cc  -createcollection   Create a collection directory structure        [collectionName] {local}" << std::endl;
+            std::cout << "       -gstdotdebug        Create debugging graph dot files of the GStreamer pipeline" << std::endl;
             std::cout << "  -rdb -rebuilddatabase    Rebuild the database from /meta subfolder" << std::endl;
             std::cout << "  -su  -showusage          Print a list of all global settings" << std::endl;
             std::cout << "  -sc  -showconfig         Print a list of current settings" << std::endl;
@@ -302,6 +310,12 @@ int main(int argc, char** argv)
     gst_debug_set_default_threshold(GST_LEVEL_ERROR);
 
     gst_init(nullptr, nullptr);
+#ifdef WIN32
+    std::string path =
+        Utils::combinePath(Configuration::absolutePath, "retrofe");
+    GstRegistry* registry = gst_registry_get();
+    gst_registry_scan_path(registry, path.c_str());
+#endif
 
     try {
         while (true) {
