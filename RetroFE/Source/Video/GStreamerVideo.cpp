@@ -108,12 +108,11 @@ bool GStreamerVideo::stop() {
 			LOG_ERROR("Video",
 				"Unexpected state change result when stopping playback");
 		}
+		gst_object_unref(GST_OBJECT(playbin_));
+		playbin_ = nullptr;
+
 	}
-	// Release the custom video sink bin
-	if (videoBin_) {
-		gst_object_unref(videoBin_);
-		videoBin_ = nullptr;
-	}
+
 	// Release SDL Texture
 	if (texture_) {
 		SDL_DestroyTexture(texture_);
@@ -123,15 +122,10 @@ bool GStreamerVideo::stop() {
 	if (videoBuffer_) {
 		gst_clear_buffer(&videoBuffer_);
 	}
-	// Free GStreamer elements and related resources
-	if (playbin_) {
-		gst_object_unref(GST_OBJECT(playbin_));
-		playbin_ = nullptr;
-	}
+
 	// Reset remaining pointers and variables to ensure the object is in a clean
 	// state.
 	videoBus_ = nullptr;
-	playbin_ = nullptr;
 	videoBin_ = nullptr;
 	capsFilter_ = nullptr;
 	videoSink_ = nullptr;
@@ -234,7 +228,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file) {
 		return false;
 	}
 
-	GstCaps* videoConvertCaps;
+	GstCaps* videoConvertCaps = nullptr;
 	if (Configuration::HardwareVideoAccel) {
 		videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
 		sdlFormat_ = SDL_PIXELFORMAT_NV12;
@@ -260,7 +254,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file) {
 	gst_object_unref(sinkPad);
 
 	const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002;
-	g_object_set(playbin_, "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS,  nullptr);
+	g_object_set(playbin_, "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, nullptr);
 	g_object_set(playbin_, "volume", 0.0, nullptr);
 
 	g_free(uriFile);
@@ -298,7 +292,12 @@ void GStreamerVideo::elementSetupCallback(
 
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
 	auto* video = static_cast<GStreamerVideo*>(userdata);
-	if (video && !video->frameReady_) {
+	if (video) {
+		std::lock_guard<std::mutex> lock(video->bufferMutex_);
+
+		// Replace the existing videoBuffer_ with the new buffer
+		gst_buffer_replace(&video->videoBuffer_, buf);
+
 		// Retrieve caps and set video info if not yet set.
 		if (video->width_ == 0 || video->height_ == 0) {
 			if (GstCaps* caps = gst_pad_get_current_caps(new_pad)) {
@@ -316,12 +315,8 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 				gst_caps_unref(caps);
 			}
 		}
-		// Clear the existing videoBuffer_ if it exists and set the new buffer.
-		if (video->videoBuffer_) {
-			gst_clear_buffer(&video->videoBuffer_);
-		}
-		video->videoBuffer_ = gst_buffer_copy(buf);
-		video->frameReady_ = true;
+		video->frameReady_.store(true, std::memory_order_release);
+		video->frameReadyCondVar_.notify_one(); // Notify that a new frame is ready
 	}
 }
 
@@ -386,19 +381,31 @@ int GStreamerVideo::getHeight() { return height_; }
 
 int GStreamerVideo::getWidth() { return width_; }
 
-void GStreamerVideo::draw() {
-	if (!playbin_ || !isPlaying_ || paused_)
+
+void GStreamerVideo::updateTexture() {
+	std::unique_lock<std::mutex> lock(bufferMutex_);
+	frameReadyCondVar_.wait(lock, [this]() { return frameReady_.load(std::memory_order_acquire); });
+
+	if (!playbin_ || !isPlaying_ || paused_) {
+		frameReady_.store(false, std::memory_order_release);
 		return;
+	}
 
-	if (frameReady_) {
+	GstBuffer* localBuffer = nullptr;
+	gst_buffer_replace(&localBuffer, videoBuffer_);
 
+	frameReady_.store(false, std::memory_order_release); // Reset the flag
+
+	lock.unlock();
+
+	if (localBuffer) {
 		if (bufSize_ == expectedBufSize_) {
 			GstMapInfo mapInfo;
-			if (gst_buffer_map(videoBuffer_, &mapInfo, GST_MAP_READ)) {
+			if (gst_buffer_map(localBuffer, &mapInfo, GST_MAP_READ)) {
 				if (SDL_UpdateTexture(texture_, nullptr, static_cast<const Uint8*>(mapInfo.data), width_) != 0) {
 					LOG_ERROR("Video", "SDL_UpdateTexture failed: " + std::string(SDL_GetError()));
 				}
-				gst_buffer_unmap(videoBuffer_, &mapInfo);
+				gst_buffer_unmap(localBuffer, &mapInfo);
 			}
 			else {
 				LOG_ERROR("Video", "gst_buffer_map failed");
@@ -408,7 +415,7 @@ void GStreamerVideo::draw() {
 			// Use gst_video_frame_map for more complex cases
 			GstVideoFrame vframe;
 			GstMapFlags map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
-			if (gst_video_frame_map(&vframe, &videoInfo_, videoBuffer_, map_flags)) {
+			if (gst_video_frame_map(&vframe, &videoInfo_, localBuffer, map_flags)) {
 				if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
 					if (SDL_UpdateNVTexture(texture_, nullptr,
 						static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
@@ -436,14 +443,13 @@ void GStreamerVideo::draw() {
 				gst_video_frame_unmap(&vframe);
 			}
 		}
-		gst_clear_buffer(&videoBuffer_);
-		frameReady_ = false;
+		gst_clear_buffer(&localBuffer); // Unref the local buffer
 	}
 }
 
 bool GStreamerVideo::isPlaying() { return isPlaying_; }
 
-void GStreamerVideo::setVolume(float volume) { 
+void GStreamerVideo::setVolume(float volume) {
 	if (!isPlaying_)
 		return;
 	volume_ = volume;
@@ -482,7 +488,6 @@ void GStreamerVideo::skipBackward() {
 }
 
 void GStreamerVideo::skipForwardp() {
-
 	if (!isPlaying_)
 		return;
 	gint64 current;
@@ -503,16 +508,12 @@ void GStreamerVideo::skipBackwardp() {
 
 	if (!isPlaying_)
 		return;
-
 	gint64 current;
 	gint64 duration;
-
 	if (!gst_element_query_position(playbin_, GST_FORMAT_TIME, &current))
 		return;
-
 	if (!gst_element_query_duration(playbin_, GST_FORMAT_TIME, &duration))
 		return;
-
 	if (current > duration / 20)
 		current -= duration / 20;
 	else
@@ -557,7 +558,9 @@ unsigned long long GStreamerVideo::getDuration() {
 
 bool GStreamerVideo::isPaused() { return paused_; }
 
-bool GStreamerVideo::getFrameReady() { return frameReady_; }
+bool GStreamerVideo::getFrameReady() {
+	return frameReady_.load(std::memory_order_acquire);
+}
 
 std::string GStreamerVideo::generateDotFileName(const std::string& prefix,
 	const std::string& videoFilePath) const {

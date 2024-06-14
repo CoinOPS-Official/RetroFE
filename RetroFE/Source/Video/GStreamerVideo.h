@@ -19,6 +19,10 @@
 #include "../SDL.h"
 #include "../Database/Configuration.h"
 #include "../Utility/Utils.h"
+#include <mutex>
+#include <condition_variable>
+#include <atomic>
+
 extern "C"
 {
 #if (__APPLE__)
@@ -28,7 +32,6 @@ extern "C"
 #include <gst/gst.h>
 #include <gst/video/video.h>
 #include <gst/pbutils/pbutils.h>
-
 
 
 #endif
@@ -49,7 +52,7 @@ class GStreamerVideo final : public IVideo
     SDL_Texture *getTexture() const override;
     void loopHandler() override;
     void volumeUpdate() override;
-    void draw() override;
+    void updateTexture() override;
     void setNumLoops(int n);
     int getHeight() override;
     int getWidth() override;
@@ -87,7 +90,8 @@ class GStreamerVideo final : public IVideo
     gint height_{0};
     gint width_{0};
     GstBuffer* videoBuffer_{ nullptr };
-    bool frameReady_{false};
+    std::atomic<bool> frameReady_{ false };  // Atomic flag to indicate a new buffer is ready
+    std::condition_variable frameReadyCondVar_;
     bool isPlaying_{false};
     static bool initialized_;
     int playCount_{0};
@@ -101,6 +105,8 @@ class GStreamerVideo final : public IVideo
     bool lastSetMuteState_{false};
     gsize bufSize_{ 0 };
     gsize expectedBufSize_{ 0 };
+    std::mutex bufferMutex_;  // Mutex to protect videoBuffer_
+
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };
