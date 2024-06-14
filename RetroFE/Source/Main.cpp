@@ -185,6 +185,9 @@ int main(int argc, char** argv)
             param == "--gstdotdebug") {
             Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", Configuration::absolutePath);
             config.debugDotEnabled = true;
+            std::string path =
+                Utils::combinePath(Configuration::absolutePath, "retrofe");
+            Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", path);
         }
         else if (param == "-showconfig" ||
             param == "--showconfig" ||
