@@ -332,9 +332,8 @@ void GStreamerVideo::createSdlTexture() {
 		return;
 	}
 
-	LOG_DEBUG("GStreamerVideo", "SDL texture created and blend mode set successfully.");
+	LOG_DEBUG("GStreamerVideo", "SDL texture created and blend mode set successfully. Texture pointer: " + std::to_string(reinterpret_cast<std::uintptr_t>(texture_)));
 }
-
 
 void GStreamerVideo::loopHandler() {
 	if (videoBus_) {
