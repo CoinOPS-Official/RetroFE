@@ -130,24 +130,28 @@ void VideoComponent::freeGraphicsMemory()
 }
 
 
-void VideoComponent::draw()
-{
+void VideoComponent::draw() {
     if (videoInst_ && baseViewInfo.Alpha > 0.0f) {
-
-        if (videoInst_->getFrameReady())
+        if (videoInst_->getFrameReady()) {
+            LOG_DEBUG("VideoComponent", "Frame is ready. Updating texture...");
             videoInst_->updateTexture();
+        }
 
-        if (SDL_Texture* texture = videoInst_->getTexture())
-        {
-            SDL_Rect rect = { static_cast<int>(baseViewInfo.XRelativeToOrigin()), 
-                static_cast<int>(baseViewInfo.YRelativeToOrigin()), 
-                static_cast<int>(baseViewInfo.ScaledWidth()), 
-                static_cast<int>(baseViewInfo.ScaledHeight()) };
+        if (SDL_Texture* texture = videoInst_->getTexture()) {
+            SDL_Rect rect = { static_cast<int>(baseViewInfo.XRelativeToOrigin()),
+                              static_cast<int>(baseViewInfo.YRelativeToOrigin()),
+                              static_cast<int>(baseViewInfo.ScaledWidth()),
+                              static_cast<int>(baseViewInfo.ScaledHeight()) };
 
+            LOG_DEBUG("VideoComponent", "Rendering texture...");
             SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        }
+        else {
+            LOG_ERROR("VideoComponent", "Texture is null. Cannot render.");
         }
     }
 }
+
 
 bool VideoComponent::isPlaying()
 {

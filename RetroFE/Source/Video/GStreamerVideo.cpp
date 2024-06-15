@@ -290,6 +290,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 
 		// Replace the existing videoBuffer_ with the new buffer
 		gst_buffer_replace(&video->videoBuffer_, buf);
+		LOG_DEBUG("Video", "Buffer received and replaced.");
 
 		// Retrieve caps and set video info if not yet set.
 		if (video->width_ == 0 || video->height_ == 0) {
@@ -301,6 +302,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 					video->bufSize_ = gst_buffer_get_size(buf);
 					// Calculate expected buffer size
 					video->expectedBufSize_ = static_cast<gsize>(video->width_) * static_cast<gsize>(video->height_) * 3 / 2;
+					LOG_DEBUG("Video", "Video info set: width = " + std::to_string(video->width_) + ", height = " + std::to_string(video->height_));
 				}
 				else {
 					LOG_ERROR("Video", "Failed to set video info from caps.");
@@ -314,9 +316,25 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 }
 
 void GStreamerVideo::createSdlTexture() {
+	LOG_DEBUG("GStreamerVideo", "Creating SDL texture with width: " + std::to_string(width_) + ", height: " + std::to_string(height_) + ", format: " + std::to_string(sdlFormat_));
+
 	texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), sdlFormat_, SDL_TEXTUREACCESS_STREAMING, width_, height_);
-	SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND);
+
+	if (!texture_) {
+		LOG_ERROR("GStreamerVideo", "SDL_CreateTexture failed: " + std::string(SDL_GetError()));
+		return;
+	}
+
+	if (SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND) != 0) {
+		LOG_ERROR("GStreamerVideo", "SDL_SetTextureBlendMode failed: " + std::string(SDL_GetError()));
+		SDL_DestroyTexture(texture_);
+		texture_ = nullptr;
+		return;
+	}
+
+	LOG_DEBUG("GStreamerVideo", "SDL texture created and blend mode set successfully.");
 }
+
 
 void GStreamerVideo::loopHandler() {
 	if (videoBus_) {
@@ -395,6 +413,7 @@ void GStreamerVideo::updateTexture() {
 		if (bufSize_ == expectedBufSize_) {
 			GstMapInfo mapInfo;
 			if (gst_buffer_map(localBuffer, &mapInfo, GST_MAP_READ)) {
+				LOG_DEBUG("Video", "Buffer mapped successfully. Updating texture...");
 				if (SDL_UpdateTexture(texture_, nullptr, static_cast<const Uint8*>(mapInfo.data), width_) != 0) {
 					LOG_ERROR("Video", "SDL_UpdateTexture failed: " + std::string(SDL_GetError()));
 				}
@@ -409,6 +428,7 @@ void GStreamerVideo::updateTexture() {
 			GstVideoFrame vframe;
 			GstMapFlags map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
 			if (gst_video_frame_map(&vframe, &videoInfo_, localBuffer, map_flags)) {
+				LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
 				if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
 					if (SDL_UpdateNVTexture(texture_, nullptr,
 						static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
