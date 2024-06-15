@@ -82,6 +82,7 @@ class GStreamerVideo final : public IVideo
     GstElement *videoSink_{nullptr};
     GstBus *videoBus_{nullptr};
     GstVideoInfo videoInfo_;
+    bool videoInfoSet_{ false };
     SDL_Texture *texture_{nullptr};
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     gulong elementSetupHandlerId_{0};
@@ -102,8 +103,6 @@ class GStreamerVideo final : public IVideo
     bool paused_{false};
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
-    gsize bufSize_{ 0 };
-    gsize expectedBufSize_{ 0 };
     std::mutex bufferMutex_;  // Mutex to protect videoBuffer_
 
 
