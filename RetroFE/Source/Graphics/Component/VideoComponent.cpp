@@ -178,7 +178,7 @@ void VideoComponent::draw()
 
 bool VideoComponent::isPlaying()
 {
-    return isPlaying_;
+    return videoInst_->isPlaying();
 }
 
 std::string_view VideoComponent::filePath()
