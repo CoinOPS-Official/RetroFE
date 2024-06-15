@@ -1972,68 +1972,92 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
     }
 
     // Handle next/previous game inputs
-    if ( page->isHorizontalScroll( ) ) {
-        if (input_.keystate(UserInput::KeyCodeRight)) {
-            attract_.reset( );
-            if (infoExitOnScroll) {
-                resetInfoToggle();
+    if (page->isHorizontalScroll()) {
+        if (currentScrollState == NoScroll || currentScrollState == ItemScroll) {
+            if (input_.keystate(UserInput::KeyCodeRight)) {
+                attract_.reset();
+                if (infoExitOnScroll) {
+                    resetInfoToggle();
+                }
+                currentScrollState = ItemScroll;
+                return RETROFE_SCROLL_FORWARD;
             }
-            return RETROFE_SCROLL_FORWARD;
+            else if (input_.keystate(UserInput::KeyCodeLeft)) {
+                attract_.reset();
+                if (infoExitOnScroll) {
+                    resetInfoToggle();
+                }
+                currentScrollState = ItemScroll;
+                return RETROFE_SCROLL_BACK;
+            }
         }
-        else if (input_.keystate(UserInput::KeyCodeLeft)) {
-            attract_.reset( );
-            if (infoExitOnScroll) {
-                resetInfoToggle();
+        if (currentScrollState == NoScroll || currentScrollState == PlaylistScroll) {
+            // playlist scroll
+            if (input_.keystate(UserInput::KeyCodeDown)) {
+                attract_.reset();
+                if (infoExitOnScroll) {
+                    resetInfoToggle();
+                }
+                currentScrollState = PlaylistScroll;
+                return RETROFE_SCROLL_PLAYLIST_FORWARD;
             }
-            return RETROFE_SCROLL_BACK;
-        }
-        // playlist scroll
-        if (input_.keystate(UserInput::KeyCodeDown)) {
-            attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
+            else if (input_.keystate(UserInput::KeyCodeUp)) {
+                attract_.reset();
+                if (infoExitOnScroll) {
+                    resetInfoToggle();
+                }
+                currentScrollState = PlaylistScroll;
+                return RETROFE_SCROLL_PLAYLIST_BACK;
             }
-            return RETROFE_SCROLL_PLAYLIST_FORWARD;
-        }
-        else if (input_.keystate(UserInput::KeyCodeUp)) {
-            attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
-            }
-            return RETROFE_SCROLL_PLAYLIST_BACK;
         }
     }
     else {
         // vertical 
-        if (input_.keystate(UserInput::KeyCodeDown)) {
-           attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
+        if (currentScrollState == NoScroll || currentScrollState == ItemScroll) {
+            if (input_.keystate(UserInput::KeyCodeDown)) {
+                attract_.reset();
+                if (infoExitOnScroll) {
+                    resetInfoToggle();
+                }
+                currentScrollState = ItemScroll;
+                return RETROFE_SCROLL_FORWARD;
             }
-            return RETROFE_SCROLL_FORWARD;
-        }
-        else if (input_.keystate(UserInput::KeyCodeUp)) {
-            attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
+            else if (input_.keystate(UserInput::KeyCodeUp)) {
+                attract_.reset();
+                if (infoExitOnScroll) {
+                    resetInfoToggle();
+                }
+                currentScrollState = ItemScroll;
+                return RETROFE_SCROLL_BACK;
             }
-            return RETROFE_SCROLL_BACK;
         }
-        // playlist scroll
-        if (input_.keystate(UserInput::KeyCodeRight)) {
-            attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
+        if (currentScrollState == NoScroll || currentScrollState == PlaylistScroll) {
+            // playlist scroll
+            if (input_.keystate(UserInput::KeyCodeRight)) {
+                attract_.reset();
+                if (infoExitOnScroll) {
+                    resetInfoToggle();
+                }
+                currentScrollState = PlaylistScroll;
+                return RETROFE_SCROLL_PLAYLIST_FORWARD;
             }
-            return RETROFE_SCROLL_PLAYLIST_FORWARD;
-        }
-        else if (input_.keystate(UserInput::KeyCodeLeft)) {
-            attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
+            else if (input_.keystate(UserInput::KeyCodeLeft)) {
+                attract_.reset();
+                if (infoExitOnScroll) {
+                    resetInfoToggle();
+                }
+                currentScrollState = PlaylistScroll;
+                return RETROFE_SCROLL_PLAYLIST_BACK;
             }
-            return RETROFE_SCROLL_PLAYLIST_BACK;
         }
+    }
+
+    // Reset currentScrollState when no key is pressed
+    if (!input_.keystate(UserInput::KeyCodeUp) &&
+        !input_.keystate(UserInput::KeyCodeDown) &&
+        !input_.keystate(UserInput::KeyCodeLeft) &&
+        !input_.keystate(UserInput::KeyCodeRight)) {
+        currentScrollState = NoScroll;
     }
     
     // don't wait for idle

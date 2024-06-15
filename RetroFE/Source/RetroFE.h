@@ -40,7 +40,6 @@
     #include <Windows.h>
 #endif
 
-
 class CollectionInfo;
 class Configuration;
 class Page;
@@ -141,6 +140,14 @@ private:
         RETROFE_SCROLL_PLAYLIST_FORWARD,
         RETROFE_SCROLL_PLAYLIST_BACK,
     };
+
+    enum SCROLLSTATE {
+        NoScroll,
+        ItemScroll,
+        PlaylistScroll
+    };
+
+    SCROLLSTATE currentScrollState = NoScroll;
 
     void            render();
     bool            back( bool &exit );
