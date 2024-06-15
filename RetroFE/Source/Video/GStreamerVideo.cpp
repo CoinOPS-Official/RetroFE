@@ -351,6 +351,7 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuff
     auto *video = static_cast<GStreamerVideo *>(userdata);
     if (video)
     {
+        std::lock_guard<std::mutex> lock(video->bufferMutex_); // Lock the mutex to protect shared resources
         if (video->videoBuffer_)
         {
             gst_clear_buffer(&video->videoBuffer_);
@@ -375,6 +376,7 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuff
         video->videoBuffer_ = gst_buffer_copy(buf);
         LOG_DEBUG("Video", "Buffer received and copied.");
         video->frameReady_.store(true, std::memory_order_release);
+        video->frameReadyCondVar_.notify_one();
     }
 }
 
@@ -474,10 +476,13 @@ int GStreamerVideo::getWidth()
 }
 
 void GStreamerVideo::updateTexture()
-{   
+{
+    std::unique_lock<std::mutex> lock(bufferMutex_);
+    frameReadyCondVar_.wait(lock, [this]() { return frameReady_.load(std::memory_order_acquire); });
     GstBuffer *localBuffer = nullptr;
     gst_buffer_replace(&localBuffer, videoBuffer_);
-
+    frameReady_.store(false, std::memory_order_release); // Reset the flag
+    lock.unlock();
     if (localBuffer)
     {
 
@@ -521,7 +526,6 @@ void GStreamerVideo::updateTexture()
 
         gst_clear_buffer(&localBuffer); // Unref the local buffer
     }
-    frameReady_.store(false, std::memory_order_release); // Reset the flag
 }
 
 bool GStreamerVideo::isPlaying()
