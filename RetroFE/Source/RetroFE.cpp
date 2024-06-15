@@ -1973,22 +1973,11 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
 
     // Handle next/previous game inputs
     if ( page->isHorizontalScroll( ) ) {
-        if (input_.keystate(UserInput::KeyCodeRight)) {
-            attract_.reset( );
-            if (infoExitOnScroll) {
-                resetInfoToggle();
-            }
-            return RETROFE_SCROLL_FORWARD;
-        }
-        else if (input_.keystate(UserInput::KeyCodeLeft)) {
-            attract_.reset( );
-            if (infoExitOnScroll) {
-                resetInfoToggle();
-            }
-            return RETROFE_SCROLL_BACK;
-        }
         // playlist scroll
         if (input_.keystate(UserInput::KeyCodeDown)) {
+            if (page->isGamesScrolling()) {
+                return RETROFE_HIGHLIGHT_REQUEST;
+            }
             attract_.reset();
             if (infoExitOnScroll) {
                 resetInfoToggle();
@@ -1996,31 +1985,46 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
             return RETROFE_SCROLL_PLAYLIST_FORWARD;
         }
         else if (input_.keystate(UserInput::KeyCodeUp)) {
+            if (page->isGamesScrolling()) {
+                return RETROFE_HIGHLIGHT_REQUEST;
+            }
             attract_.reset();
             if (infoExitOnScroll) {
                 resetInfoToggle();
             }
             return RETROFE_SCROLL_PLAYLIST_BACK;
+        }
+
+        // game scroll
+        if (input_.keystate(UserInput::KeyCodeRight)) {
+            if (page->isPlaylistScrolling()) {
+                return RETROFE_HIGHLIGHT_REQUEST;
+            }
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_FORWARD;
+        }
+        else if (input_.keystate(UserInput::KeyCodeLeft)) {
+            if (page->isPlaylistScrolling()) {
+                return RETROFE_HIGHLIGHT_REQUEST;
+            }
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_BACK;
         }
     }
     else {
         // vertical 
-        if (input_.keystate(UserInput::KeyCodeDown)) {
-           attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
-            }
-            return RETROFE_SCROLL_FORWARD;
-        }
-        else if (input_.keystate(UserInput::KeyCodeUp)) {
-            attract_.reset();
-            if (infoExitOnScroll) {
-                resetInfoToggle();
-            }
-            return RETROFE_SCROLL_BACK;
-        }
+        // 
         // playlist scroll
         if (input_.keystate(UserInput::KeyCodeRight)) {
+            if (page->isGamesScrolling()) {
+                return RETROFE_HIGHLIGHT_REQUEST;
+            }
             attract_.reset();
             if (infoExitOnScroll) {
                 resetInfoToggle();
@@ -2028,11 +2032,36 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput( Page *page )
             return RETROFE_SCROLL_PLAYLIST_FORWARD;
         }
         else if (input_.keystate(UserInput::KeyCodeLeft)) {
+            if (page->isGamesScrolling()) {
+                return RETROFE_HIGHLIGHT_REQUEST;
+            }
             attract_.reset();
             if (infoExitOnScroll) {
                 resetInfoToggle();
             }
             return RETROFE_SCROLL_PLAYLIST_BACK;
+        }
+
+        // game scroll
+        if (input_.keystate(UserInput::KeyCodeDown)) {
+            if (page->isPlaylistScrolling()) {
+                return RETROFE_HIGHLIGHT_REQUEST;
+            }
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_FORWARD;
+        }
+        else if (input_.keystate(UserInput::KeyCodeUp)) {
+            if (page->isPlaylistScrolling()) {
+                return RETROFE_HIGHLIGHT_REQUEST;
+            }
+            attract_.reset();
+            if (infoExitOnScroll) {
+                resetInfoToggle();
+            }
+            return RETROFE_SCROLL_BACK;
         }
     }
     

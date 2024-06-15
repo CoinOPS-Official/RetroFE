@@ -152,6 +152,8 @@ public:
     void  togglePlaylist();
     void  reallocateMenuSpritePoints(bool updatePlaylistMenu = true) const;
     bool  isMenuScrolling() const;
+    bool isPlaylistScrolling() const;
+    bool isGamesScrolling() const;
     bool  isPlaying() const;
     void  resetScrollPeriod() const;
     void  updateScrollPeriod() const;
@@ -218,6 +220,8 @@ private:
     std::map<std::string, size_t> lastPlaylistOffsets_;
 
     bool scrollActive_;
+    bool playlistScrollActive_;
+    bool gameScrollActive_;
 
     Item *selectedItem_;
     Text *textStatusComponent_;

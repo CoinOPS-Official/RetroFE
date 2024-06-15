@@ -141,6 +141,11 @@ bool Component::isMenuScrolling() const
     return (!currentTweenComplete_ && (animationType_ == "menuScroll" || animationType_ == "playlistScroll"));
 }
 
+bool Component::isPlaylistScrolling() const
+{
+    return (!currentTweenComplete_ && animationType_ == "playlistScroll");
+}
+
 void Component::setTweens(AnimationEvents *set)
 {
     tweens_ = set;

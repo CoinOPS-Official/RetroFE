@@ -41,6 +41,7 @@ public:
     bool isIdle() const;
     bool isAttractIdle() const;
     bool isMenuScrolling() const;
+    bool isPlaylistScrolling() const;
     bool newItemSelected;
     bool newScrollItemSelected;
     void setId( int id );
