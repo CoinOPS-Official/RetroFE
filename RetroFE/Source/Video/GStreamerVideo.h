@@ -78,9 +78,7 @@ class GStreamerVideo final : public IVideo
     bool initializeGstElements(const std::string &file);
     void createSdlTexture();
     GstElement *playbin_{nullptr};
-    GstElement *videoBin_{nullptr};
     GstElement *videoSink_{nullptr};
-    GstElement *capsFilter_{nullptr};
     GstBus *videoBus_{nullptr};
     GstVideoInfo videoInfo_;
     SDL_Texture *texture_{nullptr};

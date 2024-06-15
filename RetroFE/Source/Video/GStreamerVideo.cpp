@@ -126,8 +126,6 @@ bool GStreamerVideo::stop() {
 	// Reset remaining pointers and variables to ensure the object is in a clean
 	// state.
 	videoBus_ = nullptr;
-	videoBin_ = nullptr;
-	capsFilter_ = nullptr;
 	videoSink_ = nullptr;
 	videoBuffer_ = nullptr;
 	height_ = 0;
@@ -200,11 +198,6 @@ bool GStreamerVideo::play(const std::string& file) {
 				generateDotFileName("playbin", currentFile_);
 			GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL,
 				playbinDotFileName.c_str());
-			// Generate dot file for videoBin_
-			std::string videoBinDotFileName =
-				generateDotFileName("videobin", currentFile_);
-			GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(videoBin_), GST_DEBUG_GRAPH_SHOW_ALL,
-				videoBinDotFileName.c_str());
 		}
 	}
 	return true;
@@ -218,11 +211,11 @@ bool GStreamerVideo::initializeGstElements(const std::string& file) {
 	}
 
 	playbin_ = gst_element_factory_make("playbin3", "player");
-	videoBin_ = gst_bin_new("SinkBin");
+	GstElement* capsFilter = gst_element_factory_make("capsfilter", "caps_filter");
+	GstElement* videoBin = gst_bin_new("SinkBin");
 	videoSink_ = gst_element_factory_make("fakesink", "video_sink");
-	capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
 
-	if (!playbin_ || !videoBin_ || !videoSink_ || !capsFilter_) {
+	if (!playbin_ || !videoBin || !videoSink_ || !capsFilter) {
 		LOG_DEBUG("Video", "Could not create GStreamer elements");
 		g_free(uriFile);
 		return false;
@@ -238,23 +231,23 @@ bool GStreamerVideo::initializeGstElements(const std::string& file) {
 		sdlFormat_ = SDL_PIXELFORMAT_IYUV;
 	}
 
-	g_object_set(capsFilter_, "caps", videoConvertCaps, nullptr);
+	g_object_set(capsFilter, "caps", videoConvertCaps, nullptr);
 	gst_caps_unref(videoConvertCaps);
 
-	gst_bin_add_many(GST_BIN(videoBin_), capsFilter_, videoSink_, nullptr);
-	if (!gst_element_link(capsFilter_, videoSink_)) {
+	gst_bin_add_many(GST_BIN(videoBin), capsFilter, videoSink_, nullptr);
+	if (!gst_element_link(capsFilter, videoSink_)) {
 		LOG_DEBUG("Video", "Could not link video processing elements");
 		g_free(uriFile);
 		return false;
 	}
 
-	GstPad* sinkPad = gst_element_get_static_pad(capsFilter_, "sink");
+	GstPad* sinkPad = gst_element_get_static_pad(capsFilter, "sink");
 	GstPad* ghostPad = gst_ghost_pad_new("sink", sinkPad);
-	gst_element_add_pad(videoBin_, ghostPad);
+	gst_element_add_pad(videoBin, ghostPad);
 	gst_object_unref(sinkPad);
 
 	const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002;
-	g_object_set(playbin_, "uri", uriFile, "video-sink", videoBin_, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, nullptr);
+	g_object_set(playbin_, "uri", uriFile, "video-sink", videoBin, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, nullptr);
 	g_object_set(playbin_, "volume", 0.0, nullptr);
 
 	g_free(uriFile);
