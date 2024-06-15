@@ -264,9 +264,8 @@ bool GStreamerVideo::initializeGstElements(const std::string& file) {
 	return true;
 }
 
-void GStreamerVideo::elementSetupCallback(
-	[[maybe_unused]] GstElement const* playbin, GstElement* element,
-	[[maybe_unused]] GStreamerVideo const* video) {
+void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement playbin, GstElement* element,
+	[[maybe_unused]] GStreamerVideo* video) {
 	gchar* elementName = gst_element_get_name(element);
 
 	if (!Configuration::HardwareVideoAccel) {
@@ -282,14 +281,47 @@ void GStreamerVideo::elementSetupCallback(
 		g_object_set(element, "low-latency", TRUE, nullptr);
 	}
 #endif
+
+	// Add pad probe for video sink to extract video dimensions
+	if (g_strrstr(elementName, "video_sink") != nullptr) {
+		GstPad* pad = gst_element_get_static_pad(element, "sink");
+		if (pad) {
+			gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, padProbeCallback, video, nullptr);
+			gst_object_unref(pad);
+		}
+	}
+
 	g_free(elementName);
+}
+
+GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
+	auto* video = static_cast<GStreamerVideo*>(user_data);
+
+	GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
+	if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
+		GstCaps* caps = nullptr;
+		gst_event_parse_caps(event, &caps);
+		if (caps) {
+			GstStructure* s = gst_caps_get_structure(caps, 0);
+			gst_structure_get_int(s, "width", &video->width_);
+			gst_structure_get_int(s, "height", &video->height_);
+			video->createSdlTexture();
+			LOG_DEBUG("GStreamerVideo", "Video dimensions: width = " + std::to_string(video->width_) + ", height = " + std::to_string(video->height_));
+			gst_caps_unref(caps);
+		}
+	}
+	return GST_PAD_PROBE_OK;
 }
 
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
 	auto* video = static_cast<GStreamerVideo*>(userdata);
 	if (video) {
 		std::lock_guard<std::mutex> lock(video->bufferMutex_);
-
+		if (video->bufSize_ == 0) {
+			video->bufSize_ = gst_buffer_get_size(buf);
+			// Calculate expected buffer size
+			video->expectedBufSize_ = static_cast<gsize>(video->width_) * static_cast<gsize>(video->height_) * 3 / 2;
+		}
 		// Replace the existing videoBuffer_ with the new buffer
 		gst_buffer_replace(&video->videoBuffer_, buf);
 		LOG_DEBUG("Video", "Buffer received and replaced.");
@@ -301,9 +333,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 					video->width_ = video->videoInfo_.width;
 					video->height_ = video->videoInfo_.height;
 					video->createSdlTexture();
-					video->bufSize_ = gst_buffer_get_size(buf);
-					// Calculate expected buffer size
-					video->expectedBufSize_ = static_cast<gsize>(video->width_) * static_cast<gsize>(video->height_) * 3 / 2;
+
 					LOG_DEBUG("Video", "Video info set: width = " + std::to_string(video->width_) + ", height = " + std::to_string(video->height_));
 				}
 				else {
@@ -412,17 +442,12 @@ void GStreamerVideo::updateTexture() {
 
 	if (localBuffer) {
 		if (bufSize_ == expectedBufSize_) {
-			GstMapInfo mapInfo;
-			if (gst_buffer_map(localBuffer, &mapInfo, GST_MAP_READ)) {
-				LOG_DEBUG("Video", "Buffer mapped successfully. Updating texture...");
-				if (SDL_UpdateTexture(texture_, nullptr, static_cast<const Uint8*>(mapInfo.data), width_) != 0) {
-					LOG_ERROR("Video", "SDL_UpdateTexture failed: " + std::string(SDL_GetError()));
-				}
-				gst_buffer_unmap(localBuffer, &mapInfo);
-			}
-			else {
-				LOG_ERROR("Video", "gst_buffer_map failed");
-			}
+			LOG_DEBUG("Video", "bufSize matches expectedBufSize, using SDL_LockTexture\\SDL_UnlockTexture.");
+			void* pixels;
+			int pitch;
+			SDL_LockTexture(texture_, nullptr, &pixels, &pitch);
+			gst_buffer_extract(localBuffer, 0, pixels, bufSize_);
+			SDL_UnlockTexture(texture_);
 		}
 		else {
 			// Use gst_video_frame_map for more complex cases
