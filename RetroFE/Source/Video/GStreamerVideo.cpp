@@ -337,7 +337,6 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad *pad, GstPadProbeInfo 
             GstStructure *s = gst_caps_get_structure(caps, 0);
             gst_structure_get_int(s, "width", &video->width_);
             gst_structure_get_int(s, "height", &video->height_);
-            video->createSdlTexture();
             LOG_DEBUG("GStreamerVideo", "Video dimensions: width = " + std::to_string(video->width_) +
                                             ", height = " + std::to_string(video->height_));
             gst_caps_unref(caps);
@@ -475,8 +474,7 @@ int GStreamerVideo::getWidth()
 }
 
 void GStreamerVideo::updateTexture()
-{
-
+{   
     GstBuffer *localBuffer = nullptr;
     gst_buffer_replace(&localBuffer, videoBuffer_);
 

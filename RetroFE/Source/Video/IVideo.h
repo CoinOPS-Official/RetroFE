@@ -27,6 +27,7 @@ class IVideo
     virtual bool stop() = 0;
     virtual bool deInitialize() = 0;
     virtual SDL_Texture *getTexture() const = 0;
+    virtual void createSdlTexture() = 0;
     virtual void updateTexture() = 0;
     virtual void loopHandler() = 0;
     virtual void volumeUpdate() = 0;

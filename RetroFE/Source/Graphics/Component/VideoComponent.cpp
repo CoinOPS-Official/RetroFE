@@ -142,27 +142,33 @@ void VideoComponent::draw()
     {
         if (videoInst_->isPlaying())
         {
-
-            if (videoInst_->getFrameReady())
+            // Create the texture if it is not initialized and width/height are known
+            if (!textureInitialized_ && videoInst_->getWidth() > 0 && videoInst_->getHeight() > 0)
             {
-                LOG_DEBUG("VideoComponent", "Frame is ready. Updating texture...");
-                videoInst_->updateTexture();
-                textureInitialized_ = true; // Set the flag to true after the first update
+                videoInst_->createSdlTexture();
+                textureInitialized_ = true; // Set the flag to true after creating the texture
             }
 
+            // Only check for frame readiness and update texture if the texture is initialized
             if (textureInitialized_)
             {
-                if (SDL_Texture *texture = videoInst_->getTexture())
+                if (videoInst_->getFrameReady())
                 {
-                    SDL_Rect rect = {static_cast<int>(baseViewInfo.XRelativeToOrigin()),
+                    LOG_DEBUG("VideoComponent", "Frame is ready. Updating texture...");
+                    videoInst_->updateTexture();
+                }
+
+                if (SDL_Texture* texture = videoInst_->getTexture())
+                {
+                    SDL_Rect rect = { static_cast<int>(baseViewInfo.XRelativeToOrigin()),
                                      static_cast<int>(baseViewInfo.YRelativeToOrigin()),
                                      static_cast<int>(baseViewInfo.ScaledWidth()),
-                                     static_cast<int>(baseViewInfo.ScaledHeight())};
+                                     static_cast<int>(baseViewInfo.ScaledHeight()) };
 
                     LOG_DEBUG("VideoComponent", "Rendering texture...");
                     SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
-                                    page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-                                    page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+                        page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+                        page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
                 }
                 else
                 {
