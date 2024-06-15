@@ -183,9 +183,7 @@ int main(int argc, char** argv)
         }
         else if (param == "-gstdotdebug" ||
             param == "--gstdotdebug") {
-            std::string path =
-                Utils::combinePath(Configuration::absolutePath, "retrofe");
-            Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", path);
+            Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", Configuration::absolutePath);
             config.debugDotEnabled = true;
         }
         else if (param == "-showconfig" ||
