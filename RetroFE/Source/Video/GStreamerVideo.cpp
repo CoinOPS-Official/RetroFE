@@ -230,7 +230,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file) {
 	else {
 		videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
 		sdlFormat_ = SDL_PIXELFORMAT_IYUV;
-		LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_IYUV" "HarwareVideoAccel:false");
+		LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_IYUV. HarwareVideoAccel:false");
 	}
 
 	g_object_set(capsFilter, "caps", videoConvertCaps, nullptr);
