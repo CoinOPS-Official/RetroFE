@@ -376,7 +376,7 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuff
         video->videoBuffer_ = gst_buffer_copy(buf);
         LOG_DEBUG("Video", "Buffer received and copied.");
         video->frameReady_.store(true, std::memory_order_release);
-        video->frameReadyCondVar_.notify_one();
+        // video->frameReadyCondVar_.notify_one();
     }
 }
 
@@ -478,7 +478,7 @@ int GStreamerVideo::getWidth()
 void GStreamerVideo::updateTexture()
 {
     std::unique_lock<std::mutex> lock(bufferMutex_);
-    frameReadyCondVar_.wait(lock, [this]() { return frameReady_.load(std::memory_order_acquire); });
+    // frameReadyCondVar_.wait(lock, [this]() { return frameReady_.load(std::memory_order_acquire); });
     GstBuffer *localBuffer = nullptr;
     gst_buffer_replace(&localBuffer, videoBuffer_);
     frameReady_.store(false, std::memory_order_release); // Reset the flag
