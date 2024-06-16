@@ -93,22 +93,7 @@ bool GStreamerVideo::stop()
 	{
 		return false;
 	}
-	// Disable handoffs for videoSink
-	if (videoSink_)
-	{
-		g_object_set(G_OBJECT(videoSink_), "signal-handoffs", FALSE, nullptr);
-	}
-	// Disconnect associated signals
-	if (playbin_ && elementSetupHandlerId_)
-	{
-		g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
-		elementSetupHandlerId_ = 0;
-	}
-	if (videoSink_ && handoffHandlerId_)
-	{
-		g_signal_handler_disconnect(videoSink_, handoffHandlerId_);
-		handoffHandlerId_ = 0;
-	}
+	
 	// Initiate the transition of playbin to GST_STATE_NULL without waiting
 	if (playbin_)
 	{
@@ -122,17 +107,8 @@ bool GStreamerVideo::stop()
 		}
 		isPlaying_ = false;
 		gst_object_unref(GST_OBJECT(playbin_));
-		playbin_ = nullptr;
 	}
-
-	// Release SDL Texture
-	if (texture_)
-	{
-		SDL_DestroyTexture(texture_);
-		texture_ = nullptr;
-	}
-	// Unref the video buffer
-
+	
 	while (!bufferQueue_.empty())
 	{
 		GstBuffer* buffer = bufferQueue_.front();
@@ -141,12 +117,17 @@ bool GStreamerVideo::stop()
 	}
 
 
+	// Release SDL Texture
+	if (texture_)
+	{
+		SDL_DestroyTexture(texture_);
+		texture_ = nullptr;
+	}
 	// Reset remaining pointers and variables to ensure the object is in a clean
 	// state.
-	videoBus_ = nullptr;
+	playbin_ = nullptr;
 	videoSink_ = nullptr;
-	height_ = 0;
-	width_ = 0;
+	videoBus_ = nullptr;
 	return true;
 }
 
@@ -291,7 +272,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
 	return true;
 }
 
-void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement playbin, GstElement* element,
+void GStreamerVideo::elementSetupCallback([[maybe_unused]] const GstElement& playbin, GstElement* element,
 	[[maybe_unused]] GStreamerVideo* video)
 {
 	gchar* elementName = gst_element_get_name(element);
@@ -322,11 +303,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement playbin, G
 			gst_object_unref(pad);
 		}
 	}
-	if (g_strrstr(elementName, "vqueue") != nullptr || g_strrstr(elementName, "aqueue") != nullptr)
-	{
-		LOG_DEBUG("GStreamerVideo", "Setting properties on queue element: " + std::string(elementName));
-		g_object_set(element, "max-size-buffers", 4, nullptr); // Set your desired queue properties
-	}
+
 
 	g_free(elementName);
 }
@@ -335,14 +312,14 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 {
 	auto* video = static_cast<GStreamerVideo*>(user_data);
 
-	GstEvent* event = GST_PAD_PROBE_INFO_EVENT(info);
+	auto* event = GST_PAD_PROBE_INFO_EVENT(info);
 	if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS)
 	{
 		GstCaps* caps = nullptr;
 		gst_event_parse_caps(event, &caps);
 		if (caps)
 		{
-			GstStructure* s = gst_caps_get_structure(caps, 0);
+			GstStructure const* s = gst_caps_get_structure(caps, 0);
 			gst_structure_get_int(s, "width", &video->width_);
 			gst_structure_get_int(s, "height", &video->height_);
 			video->expectedBufSize_ = static_cast<gsize>(video->width_) * static_cast<gsize>(video->height_) * 3 / 2;
@@ -379,7 +356,7 @@ void GStreamerVideo::createSdlTexture()
 	}
 
 	// Fill the texture with black
-	SDL_memset(pixels, 0, height_ * pitch);
+	SDL_memset(pixels, 0, static_cast<size_t>(height_) * static_cast<size_t>(pitch));
 
 	// Unlock the texture to apply the changes
 	SDL_UnlockTexture(texture_);
@@ -486,7 +463,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 		}
 
 		// Clear the oldest buffer if the queue has reached its limit
-		if (video->bufferQueue_.size() >= 8) {
+		if (video->bufferQueue_.size() >= 10) {
 			GstBuffer* oldBuffer = video->bufferQueue_.front();
 			video->bufferQueue_.pop();
 			gst_clear_buffer(&oldBuffer);
@@ -496,8 +473,6 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 		// Push the new buffer into the queue
 		video->bufferQueue_.push(gst_buffer_copy(buf));
 		LOG_DEBUG("Video", "Buffer received and added to queue.");
-		//video->frameReady_.store(true, std::memory_order_release);
-		// video->bufferCondVar_.notify_one();
 	}
 }
 
@@ -533,7 +508,7 @@ void GStreamerVideo::updateTexture() {
 		}
 		else {
 			GstVideoFrame vframe;
-			GstMapFlags map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
+			auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
 			if (gst_video_frame_map(&vframe, &videoInfo_, localBuffer, map_flags)) {
 				LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
 				if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
@@ -565,7 +540,6 @@ void GStreamerVideo::updateTexture() {
 		}
 
 		gst_clear_buffer(&localBuffer); // Unref the local buffer
-		//frameReady_.store(false, std::memory_order_release); // Reset the flag after processing
 	}
 }
 

@@ -71,7 +71,7 @@ class GStreamerVideo final : public IVideo
 
   private:
     static void processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
-    static void elementSetupCallback([[maybe_unused]] GstElement playbin, GstElement* element,
+    static void elementSetupCallback([[maybe_unused]] const GstElement& playbin, GstElement* element,
         [[maybe_unused]] GStreamerVideo* video);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void enablePlugin(const std::string& pluginName);
