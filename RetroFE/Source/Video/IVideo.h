@@ -44,5 +44,4 @@ class IVideo
     virtual unsigned long long getDuration() = 0;
     virtual bool isPaused() = 0;
     virtual bool isPlaying() = 0;
-    virtual bool getFrameReady() = 0;
 };

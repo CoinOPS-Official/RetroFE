@@ -20,7 +20,6 @@
 #include "../Database/Configuration.h"
 #include "../Utility/Utils.h"
 #include <mutex>
-#include <atomic>
 #include <queue>
 
 extern "C"
@@ -67,7 +66,6 @@ class GStreamerVideo final : public IVideo
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
-    bool getFrameReady() override;
 
   private:
     static void processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
@@ -89,10 +87,7 @@ class GStreamerVideo final : public IVideo
     gulong handoffHandlerId_{0};
     gint height_{0};
     gint width_{0};
-    gsize bufSize_{ 0 };
-    gsize expectedBufSize_{ 0 };
     std::queue<GstBuffer*> bufferQueue_;
-    std::atomic<bool> frameReady_{ false };  // Atomic flag to indicate a new buffer is ready
     bool isPlaying_{false};
     static bool initialized_;
     int playCount_{0};

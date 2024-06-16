@@ -39,7 +39,7 @@ GStreamerVideo::GStreamerVideo(int monitor)
 	: monitor_(monitor)
 
 {
-	// gst_video_info_init(&videoInfo_);
+	gst_video_info_init(&videoInfo_);
 }
 
 GStreamerVideo::~GStreamerVideo()
@@ -115,7 +115,6 @@ bool GStreamerVideo::stop()
 		bufferQueue_.pop();
 		gst_clear_buffer(&buffer);
 	}
-
 
 	// Release SDL Texture
 	if (texture_)
@@ -228,7 +227,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
 	GstCaps* videoConvertCaps = nullptr;
 	if (Configuration::HardwareVideoAccel)
 	{
-		videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+		videoConvertCaps = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
 		sdlFormat_ = SDL_PIXELFORMAT_NV12;
 		LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_NV12. HarwareVideoAccel:true");
 	}
@@ -322,7 +321,6 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 			GstStructure const* s = gst_caps_get_structure(caps, 0);
 			gst_structure_get_int(s, "width", &video->width_);
 			gst_structure_get_int(s, "height", &video->height_);
-			video->expectedBufSize_ = static_cast<gsize>(video->width_) * static_cast<gsize>(video->height_) * 3 / 2;
 			LOG_DEBUG("GStreamerVideo", "Video dimensions: width = " + std::to_string(video->width_) +
 				", height = " + std::to_string(video->height_));
 			gst_caps_unref(caps);
@@ -452,7 +450,6 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 			if (GstCaps* caps = gst_pad_get_current_caps(new_pad)) {
 				if (gst_video_info_from_caps(&video->videoInfo_, caps)) {
 					video->videoInfoSet_ = true;
-					video->bufSize_ = GST_VIDEO_INFO_SIZE(&video->videoInfo_);
 					LOG_DEBUG("Video", "First buffer received. VideoInfo_ set.");
 				}
 				else {
@@ -493,20 +490,8 @@ void GStreamerVideo::updateTexture() {
 	}
 
 	if (localBuffer) {
-		if (bufSize_ == expectedBufSize_) {
-			GstMapInfo mapInfo;
-			if (gst_buffer_map(localBuffer, &mapInfo, GST_MAP_READ)) {
-				LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
 
-				// Update SDL texture directly with the buffer data
-				if (SDL_UpdateTexture(texture_, nullptr, mapInfo.data, videoInfo_.stride[0]) != 0) {
-					LOG_ERROR("Video", "SDL_UpdateTexture failed: " + std::string(SDL_GetError()));
-				}
 
-				gst_buffer_unmap(localBuffer, &mapInfo);
-			}
-		}
-		else {
 			GstVideoFrame vframe;
 			auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
 			if (gst_video_frame_map(&vframe, &videoInfo_, localBuffer, map_flags)) {
@@ -536,7 +521,7 @@ void GStreamerVideo::updateTexture() {
 				}
 
 				gst_video_frame_unmap(&vframe);
-			}
+			
 		}
 
 		gst_clear_buffer(&localBuffer); // Unref the local buffer
@@ -662,11 +647,6 @@ unsigned long long GStreamerVideo::getDuration()
 bool GStreamerVideo::isPaused()
 {
 	return paused_;
-}
-
-bool GStreamerVideo::getFrameReady()
-{
-	return frameReady_.load(std::memory_order_acquire);
 }
 
 std::string GStreamerVideo::generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const
