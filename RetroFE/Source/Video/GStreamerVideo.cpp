@@ -358,6 +358,23 @@ void GStreamerVideo::createSdlTexture()
 		return;
 	}
 
+	// Lock the texture to get a pointer to its pixels
+	void* pixels = nullptr;
+	int pitch = 0;
+	if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) != 0)
+	{
+		LOG_ERROR("GStreamerVideo", "SDL_LockTexture failed: " + std::string(SDL_GetError()));
+		SDL_DestroyTexture(texture_);
+		texture_ = nullptr;
+		return;
+	}
+
+	// Fill the texture with black
+	SDL_memset(pixels, 0, height_ * pitch);
+
+	// Unlock the texture to apply the changes
+	SDL_UnlockTexture(texture_);
+
 	if (SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_BLEND) != 0)
 	{
 		LOG_ERROR("GStreamerVideo", "SDL_SetTextureBlendMode failed: " + std::string(SDL_GetError()));
@@ -443,7 +460,7 @@ int GStreamerVideo::getWidth()
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
 	auto* video = static_cast<GStreamerVideo*>(userdata);
 	if (video) {
-		std::lock_guard<std::mutex> lock(video->bufferMutex_); // Lock the mutex to protect shared resources
+		std::scoped_lock lock(video->bufferMutex_); // Lock the mutex to protect shared resources
 
 		if (!video->videoInfoSet_) {
 			if (GstCaps* caps = gst_pad_get_current_caps(new_pad)) {
@@ -479,7 +496,7 @@ void GStreamerVideo::updateTexture() {
 	GstBuffer* localBuffer = nullptr;
 
 	{
-		std::unique_lock<std::mutex> lock(bufferMutex_);
+		std::unique_lock lock(bufferMutex_);
 		if (bufferQueue_.empty()) {
 			return; // No new buffer to process
 		}
@@ -488,6 +505,7 @@ void GStreamerVideo::updateTexture() {
 		gst_buffer_replace(&localBuffer, bufferQueue_.front());
 		gst_clear_buffer(&bufferQueue_.front());
 		bufferQueue_.pop();
+		//mutex unlocks here because scope
 	}
 
 	if (localBuffer) {
