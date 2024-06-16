@@ -20,8 +20,8 @@
 #include "../Database/Configuration.h"
 #include "../Utility/Utils.h"
 #include <mutex>
-#include <condition_variable>
 #include <atomic>
+#include <queue>
 
 extern "C"
 {
@@ -89,9 +89,10 @@ class GStreamerVideo final : public IVideo
     gulong handoffHandlerId_{0};
     gint height_{0};
     gint width_{0};
-    GstBuffer* videoBuffer_{ nullptr };
+    gsize bufSize_{ 0 };
+    gsize expectedBufSize_{ 0 };
+    std::queue<GstBuffer*> bufferQueue_;
     std::atomic<bool> frameReady_{ false };  // Atomic flag to indicate a new buffer is ready
-    std::condition_variable frameReadyCondVar_;
     bool isPlaying_{false};
     static bool initialized_;
     int playCount_{0};

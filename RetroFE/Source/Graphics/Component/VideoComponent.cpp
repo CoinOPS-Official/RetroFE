@@ -150,11 +150,10 @@ void VideoComponent::draw()
         if (textureInitialized_ && baseViewInfo.Alpha > 0.0f && videoInst_->isPlaying())
         {
 
-            if (videoInst_->getFrameReady())
-            {
+
                 LOG_DEBUG("VideoComponent", "Frame is ready. Updating texture...");
                 videoInst_->updateTexture();
-            }
+            
 
             if (SDL_Texture *texture = videoInst_->getTexture())
             {
