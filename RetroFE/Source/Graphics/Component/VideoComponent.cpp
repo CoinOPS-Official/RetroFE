@@ -150,7 +150,7 @@ void VideoComponent::draw()
         if (textureInitialized_ && baseViewInfo.Alpha > 0.0f && videoInst_->isPlaying())
         {
 
-
+            if(!videoInst_->isPaused())
                 videoInst_->updateTexture();
             
 
