@@ -223,56 +223,60 @@ bool GStreamerVideo::play(const std::string& file)
 	return true;
 }
 
-bool GStreamerVideo::initializeGstElements(const std::string& file) {
+bool GStreamerVideo::initializeGstElements(const std::string& file)
+{
 	gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
-	if (!uriFile) {
+	if (!uriFile)
+	{
 		LOG_DEBUG("Video", "Failed to convert filename to URI");
 		return false;
 	}
 
 	playbin_ = gst_element_factory_make("playbin3", "player");
 	GstElement* capsFilter = gst_element_factory_make("capsfilter", "caps_filter");
-	GstElement* queue = gst_element_factory_make("queue", "buffer_queue");
 	GstElement* videoBin = gst_bin_new("SinkBin");
 	videoSink_ = gst_element_factory_make("fakesink", "video_sink");
 
-	if (!playbin_ || !videoBin || !videoSink_ || !capsFilter || !queue) {
+	if (!playbin_ || !videoBin || !videoSink_ || !capsFilter)
+	{
 		LOG_DEBUG("Video", "Could not create GStreamer elements");
 		g_free(uriFile);
 		return false;
 	}
 
-	g_object_set(queue, "max-size-buffers", 5, nullptr); // Limit to 5 buffers
-
 	GstCaps* videoConvertCaps = nullptr;
-	if (Configuration::HardwareVideoAccel) {
+	if (Configuration::HardwareVideoAccel)
+	{
 		videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
 		sdlFormat_ = SDL_PIXELFORMAT_NV12;
-		LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_NV12. HardwareVideoAccel:true");
+		LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_NV12. HarwareVideoAccel:true");
 	}
-	else {
+	else
+	{
 		videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
 		sdlFormat_ = SDL_PIXELFORMAT_IYUV;
-		LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_IYUV. HardwareVideoAccel:false");
+		LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_IYUV. HarwareVideoAccel:false");
 	}
 
 	g_object_set(capsFilter, "caps", videoConvertCaps, nullptr);
 	gst_caps_unref(videoConvertCaps);
 
-	gst_bin_add_many(GST_BIN(videoBin), queue, capsFilter, videoSink_, nullptr);
-	if (!gst_element_link_many(queue, capsFilter, videoSink_, nullptr)) {
+	gst_bin_add_many(GST_BIN(videoBin), capsFilter, videoSink_, nullptr);
+	if (!gst_element_link(capsFilter, videoSink_))
+	{
 		LOG_DEBUG("Video", "Could not link video processing elements");
 		g_free(uriFile);
 		return false;
 	}
 
-	GstPad* sinkPad = gst_element_get_static_pad(queue, "sink");
+	GstPad* sinkPad = gst_element_get_static_pad(capsFilter, "sink");
 	GstPad* ghostPad = gst_ghost_pad_new("sink", sinkPad);
 	gst_element_add_pad(videoBin, ghostPad);
 	gst_object_unref(sinkPad);
 
 	const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002;
-	g_object_set(playbin_, "uri", uriFile, "video-sink", videoBin, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS, nullptr);
+	g_object_set(playbin_, "uri", uriFile, "video-sink", videoBin, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS,
+		nullptr);
 	g_object_set(playbin_, "volume", 0.0, nullptr);
 
 	g_free(uriFile);
@@ -317,6 +321,11 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement playbin, G
 			gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, padProbeCallback, video, nullptr);
 			gst_object_unref(pad);
 		}
+	}
+	if (g_strrstr(elementName, "vqueue") != nullptr || g_strrstr(elementName, "aqueue") != nullptr)
+	{
+		LOG_DEBUG("GStreamerVideo", "Setting properties on queue element: " + std::string(elementName));
+		g_object_set(element, "max-size-buffers", 4, nullptr); // Set your desired queue properties
 	}
 
 	g_free(elementName);

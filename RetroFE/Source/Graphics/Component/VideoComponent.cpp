@@ -151,7 +151,6 @@ void VideoComponent::draw()
         {
 
 
-                LOG_DEBUG("VideoComponent", "Frame is ready. Updating texture...");
                 videoInst_->updateTexture();
             
 
@@ -162,7 +161,7 @@ void VideoComponent::draw()
                                  static_cast<int>(baseViewInfo.ScaledWidth()),
                                  static_cast<int>(baseViewInfo.ScaledHeight())};
 
-                LOG_DEBUG("VideoComponent", "Rendering texture...");
+                LOG_DEBUG("VideoComponent", "Drawing texture...");
                 SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
                                 page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
                                 page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
