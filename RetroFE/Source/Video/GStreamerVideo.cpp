@@ -444,8 +444,7 @@ int GStreamerVideo::getWidth()
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
 	auto* video = static_cast<GStreamerVideo*>(userdata);
 	if (video) {
-		std::scoped_lock lock(video->bufferMutex_); // Lock the mutex to protect shared resources
-
+		// Check and set videoInfo_ without holding the mutex
 		if (!video->videoInfoSet_) {
 			if (GstCaps* caps = gst_pad_get_current_caps(new_pad)) {
 				if (gst_video_info_from_caps(&video->videoInfo_, caps)) {
@@ -458,6 +457,9 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 				gst_caps_unref(caps);
 			}
 		}
+
+		// Lock the mutex to protect shared resources
+		std::scoped_lock lock(video->bufferMutex_);
 
 		// Clear the oldest buffer if the queue has reached its limit
 		if (video->bufferQueue_.size() >= 10) {
@@ -473,6 +475,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 		LOG_DEBUG("Video", "Buffer received and added to queue.");
 	}
 }
+
 
 void GStreamerVideo::updateTexture() {
 	if (bufferQueueEmpty_.load(std::memory_order_acquire)) {
