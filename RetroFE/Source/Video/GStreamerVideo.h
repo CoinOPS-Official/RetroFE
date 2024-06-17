@@ -21,6 +21,7 @@
 #include "../Utility/Utils.h"
 #include <mutex>
 #include <queue>
+#include <atomic>
 
 extern "C"
 {
@@ -100,7 +101,7 @@ class GStreamerVideo final : public IVideo
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
     std::mutex bufferMutex_;  // Mutex to protect videoBuffer_
-
+    std::atomic<bool> bufferQueueEmpty_{ true };
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };

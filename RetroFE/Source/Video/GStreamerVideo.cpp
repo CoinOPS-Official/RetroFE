@@ -469,59 +469,61 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 
 		// Push the new buffer into the queue
 		video->bufferQueue_.push(gst_buffer_copy(buf));
+		video->bufferQueueEmpty_.store(false); // Set the flag to false
 		LOG_DEBUG("Video", "Buffer received and added to queue.");
 	}
 }
 
 void GStreamerVideo::updateTexture() {
+	if (bufferQueueEmpty_.load(std::memory_order_acquire)) {
+		return; // No new buffer to process, skip the locking
+	}
+
 	GstBuffer* localBuffer = nullptr;
 
 	{
 		std::unique_lock lock(bufferMutex_);
-		if (bufferQueue_.empty()) {
-			return; // No new buffer to process
-		}
 
 		// Replace localBuffer with the front buffer in the queue and pop it
 		gst_buffer_replace(&localBuffer, bufferQueue_.front());
 		gst_clear_buffer(&bufferQueue_.front());
 		bufferQueue_.pop();
-		//mutex unlocks here because scope
+
+		if (bufferQueue_.empty()) {
+			bufferQueueEmpty_.store(true, std::memory_order_release); // Set the flag to true when queue is empty
+		}
 	}
 
 	if (localBuffer) {
-
-
-			GstVideoFrame vframe;
-			auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
-			if (gst_video_frame_map(&vframe, &videoInfo_, localBuffer, map_flags)) {
-				LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
-				if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-					if (SDL_UpdateNVTexture(texture_, nullptr,
-						static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
-						GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-						static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
-						GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1)) != 0) {
-						LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
-					}
+		GstVideoFrame vframe;
+		auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
+		if (gst_video_frame_map(&vframe, &videoInfo_, localBuffer, map_flags)) {
+			LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
+			if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
+				if (SDL_UpdateNVTexture(texture_, nullptr,
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1)) != 0) {
+					LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
 				}
-				else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-					if (SDL_UpdateYUVTexture(texture_, nullptr,
-						static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
-						GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-						static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
-						GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
-						static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
-						GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
-						LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
-					}
+			}
+			else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
+				if (SDL_UpdateYUVTexture(texture_, nullptr,
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
+					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
+					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
+					LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
 				}
-				else {
-					LOG_ERROR("Video", "Unsupported format or fallback handling required.");
-				}
+			}
+			else {
+				LOG_ERROR("Video", "Unsupported format or fallback handling required.");
+			}
 
-				gst_video_frame_unmap(&vframe);
-			
+			gst_video_frame_unmap(&vframe);
 		}
 
 		gst_clear_buffer(&localBuffer); // Unref the local buffer
