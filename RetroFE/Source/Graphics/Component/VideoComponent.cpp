@@ -42,12 +42,12 @@ VideoComponent::~VideoComponent()
 
 bool VideoComponent::update(float dt)
 {
-    if (!videoInst_ || !isPlaying_)
+    if (!videoInst_ || !videoInst_->isPlaying())
     {
         return Component::update(dt);
     }
 
-    if (isPlaying_)
+    if (videoInst_->isPlaying())
     {
         videoInst_->setVolume(baseViewInfo.Volume);
 
@@ -118,7 +118,7 @@ void VideoComponent::allocateGraphicsMemory()
                 LOG_ERROR("VideoComponent", "Failed to create video instance");
                 return;
             }
-            isPlaying_ = videoInst_->play(videoFile_);
+            videoInst_->play(videoFile_);
         }
     }
 }
@@ -138,7 +138,7 @@ void VideoComponent::freeGraphicsMemory()
 
 void VideoComponent::draw()
 {
-    if (videoInst_)
+    if (videoInst_ && baseViewInfo.Alpha > 0.0f)
     {
         // Create the texture if it is not initialized and width/height are known
         if (!textureInitialized_ && videoInst_->getWidth() > 0 && videoInst_->getHeight() > 0)
@@ -147,10 +147,10 @@ void VideoComponent::draw()
             textureInitialized_ = true; // Set the flag to true after creating the texture
         }
 
-        if (textureInitialized_ && baseViewInfo.Alpha > 0.0f && videoInst_->isPlaying())
+        if (textureInitialized_ && videoInst_->isPlaying() && !videoInst_->isPaused())
         {
 
-            if(!videoInst_->isPaused())
+
                 videoInst_->updateTexture();
             
 
