@@ -69,7 +69,6 @@ class GStreamerVideo final : public IVideo
     bool isPaused() override;
 
   private:
-    static void processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] const GstElement& playbin, GstElement* element,
         [[maybe_unused]] GStreamerVideo* video);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
@@ -84,11 +83,8 @@ class GStreamerVideo final : public IVideo
     bool videoInfoSet_{ false };
     SDL_Texture *texture_{nullptr};
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
-    gulong elementSetupHandlerId_{0};
-    gulong handoffHandlerId_{0};
     gint height_{0};
     gint width_{0};
-    std::queue<GstBuffer*> bufferQueue_;
     bool isPlaying_{false};
     static bool initialized_;
     int playCount_{0};
@@ -100,8 +96,6 @@ class GStreamerVideo final : public IVideo
     bool paused_{false};
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
-    std::mutex bufferMutex_;  // Mutex to protect videoBuffer_
-    std::atomic<bool> bufferQueueEmpty_{ true };
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };

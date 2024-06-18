@@ -27,6 +27,7 @@
 #include <gst/audio/audio.h>
 #include <gst/gstdebugutils.h>
 #include <gst/video/video.h>
+#include <gst/app/gstappsink.h>
 #include <sstream>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -107,13 +108,6 @@ bool GStreamerVideo::stop()
 		}
 		isPlaying_ = false;
 		gst_object_unref(GST_OBJECT(playbin_));
-	}
-	
-	while (!bufferQueue_.empty())
-	{
-		GstBuffer* buffer = bufferQueue_.front();
-		bufferQueue_.pop();
-		gst_clear_buffer(&buffer);
 	}
 
 	// Release SDL Texture
@@ -215,7 +209,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
 	playbin_ = gst_element_factory_make("playbin3", "player");
 	GstElement* capsFilter = gst_element_factory_make("capsfilter", "caps_filter");
 	GstElement* videoBin = gst_bin_new("SinkBin");
-	videoSink_ = gst_element_factory_make("fakesink", "video_sink");
+	videoSink_ = gst_element_factory_make("appsink", "video_sink");
 
 	if (!playbin_ || !videoBin || !videoSink_ || !capsFilter)
 	{
@@ -227,7 +221,7 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
 	GstCaps* videoConvertCaps = nullptr;
 	if (Configuration::HardwareVideoAccel)
 	{
-		videoConvertCaps = gst_caps_from_string("video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+		videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
 		sdlFormat_ = SDL_PIXELFORMAT_NV12;
 		LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_NV12. HarwareVideoAccel:true");
 	}
@@ -254,6 +248,10 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
 	gst_element_add_pad(videoBin, ghostPad);
 	gst_object_unref(sinkPad);
 
+	g_object_set(videoSink_, "drop", TRUE, nullptr);
+	g_object_set(videoSink_, "emit-signals", FALSE, nullptr);
+	gst_app_sink_set_max_buffers(GST_APP_SINK(videoSink_), 15);
+
 	const guint PLAYBIN_FLAGS = 0x00000001 | 0x00000002;
 	g_object_set(playbin_, "uri", uriFile, "video-sink", videoBin, "instant-uri", TRUE, "flags", PLAYBIN_FLAGS,
 		nullptr);
@@ -261,12 +259,9 @@ bool GStreamerVideo::initializeGstElements(const std::string& file)
 
 	g_free(uriFile);
 
-	elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
+	g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
 	videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 	gst_object_unref(videoBus_);
-
-	g_object_set(videoSink_, "signal-handoffs", TRUE, "sync", TRUE, "enable-last-sample", FALSE, nullptr);
-	handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
 
 	return true;
 }
@@ -331,9 +326,6 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 
 void GStreamerVideo::createSdlTexture()
 {
-	LOG_DEBUG("GStreamerVideo", "Creating SDL texture with width: " + std::to_string(width_) +
-		", height: " + std::to_string(height_) + ", format: " + std::to_string(sdlFormat_));
-
 	texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), sdlFormat_, SDL_TEXTUREACCESS_STREAMING, width_, height_);
 
 	if (!texture_)
@@ -367,8 +359,6 @@ void GStreamerVideo::createSdlTexture()
 		return;
 	}
 
-	LOG_DEBUG("GStreamerVideo", "SDL texture created and blend mode set successfully. Texture pointer: " +
-		std::to_string(reinterpret_cast<std::uintptr_t>(texture_)));
 }
 
 void GStreamerVideo::loopHandler()
@@ -441,96 +431,58 @@ int GStreamerVideo::getWidth()
 	return width_;
 }
 
-void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
-	auto* video = static_cast<GStreamerVideo*>(userdata);
-	if (video) {
-		// Check and set videoInfo_ without holding the mutex
-		if (!video->videoInfoSet_) {
-			if (GstCaps* caps = gst_pad_get_current_caps(new_pad)) {
-				if (gst_video_info_from_caps(&video->videoInfo_, caps)) {
-					video->videoInfoSet_ = true;
-					LOG_DEBUG("Video", "First buffer received. VideoInfo_ set.");
-				}
-				else {
-					LOG_ERROR("Video", "Failed to set video info from caps.");
-				}
-				gst_caps_unref(caps);
-			}
-		}
-
-		// Lock the mutex to protect shared resources
-		std::scoped_lock lock(video->bufferMutex_);
-
-		// Clear the oldest buffer if the queue has reached its limit
-		if (video->bufferQueue_.size() >= 10) {
-			GstBuffer* oldBuffer = video->bufferQueue_.front();
-			video->bufferQueue_.pop();
-			gst_clear_buffer(&oldBuffer);
-			LOG_DEBUG("Video", "Buffer queue limit reached. Oldest buffer removed.");
-		}
-
-		// Push the new buffer into the queue
-		video->bufferQueue_.push(gst_buffer_copy(buf));
-		video->bufferQueueEmpty_.store(false); // Set the flag to false
-		LOG_DEBUG("Video", "Buffer received and added to queue.");
-	}
-}
-
-
-void GStreamerVideo::updateTexture() {
-	if (bufferQueueEmpty_.load(std::memory_order_acquire)) {
-		return; // No new buffer to process, skip the locking
+void GStreamerVideo::updateTexture()
+{
+	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
+	if (!sample) {
+		return; // No new sample available
 	}
 
-	GstBuffer* localBuffer = nullptr;
-
-	{
-		std::unique_lock lock(bufferMutex_);
-
-		// Replace localBuffer with the front buffer in the queue and pop it
-		gst_buffer_replace(&localBuffer, bufferQueue_.front());
-		gst_clear_buffer(&bufferQueue_.front());
-		bufferQueue_.pop();
-
-		if (bufferQueue_.empty()) {
-			bufferQueueEmpty_.store(true, std::memory_order_release); // Set the flag to true when queue is empty
+	GstBuffer* buffer = gst_sample_get_buffer(sample);
+	if (!videoInfoSet_) {
+		GstCaps* caps = gst_sample_get_caps(sample);
+		if (gst_video_info_from_caps(&videoInfo_, caps)) {
+			videoInfoSet_ = true;
+			LOG_DEBUG("Video", "First buffer received. VideoInfo_ set from caps.");
 		}
+		else {
+			LOG_ERROR("Video", "Failed to set video info from caps.");
+			gst_sample_unref(sample);
+			return;
+		}
+		gst_caps_unref(caps);
 	}
 
-	if (localBuffer) {
-		GstVideoFrame vframe;
-		auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
-		if (gst_video_frame_map(&vframe, &videoInfo_, localBuffer, map_flags)) {
-			LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
-			if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-				if (SDL_UpdateNVTexture(texture_, nullptr,
-					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
-					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
-					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1)) != 0) {
-					LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
-				}
+	GstVideoFrame vframe;
+	auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
+	if (gst_video_frame_map(&vframe, &videoInfo_, buffer, map_flags)) {
+		LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
+		if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
+			if (SDL_UpdateNVTexture(texture_, nullptr,
+				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
+				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1)) != 0) {
+				LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
 			}
-			else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-				if (SDL_UpdateYUVTexture(texture_, nullptr,
-					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
-					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
-					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
-					static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
-					GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
-					LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
-				}
-			}
-			else {
-				LOG_ERROR("Video", "Unsupported format or fallback handling required.");
-			}
-
-			gst_video_frame_unmap(&vframe);
 		}
-
-		gst_clear_buffer(&localBuffer); // Unref the local buffer
+		else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
+			if (SDL_UpdateYUVTexture(texture_, nullptr,
+				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
+				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
+				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
+				GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
+				LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
+			}
+		}
+		else {
+			LOG_ERROR("Video", "Unsupported format or fallback handling required.");
+		}
+		gst_video_frame_unmap(&vframe);
 	}
+	gst_sample_unref(sample); // Unref the sample after usage
 }
 
 bool GStreamerVideo::isPlaying()
