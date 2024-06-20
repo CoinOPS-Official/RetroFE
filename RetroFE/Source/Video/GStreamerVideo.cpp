@@ -27,6 +27,7 @@
 #include <gst/audio/audio.h>
 #include <gst/gstdebugutils.h>
 #include <gst/video/video.h>
+#include <gst/app/gstappsink.h>
 #include <sstream>
 #include <sys/stat.h>
 #include <sys/types.h>
