@@ -15,13 +15,13 @@
  */
 #pragma once
 
-#include "IVideo.h"
-#include "../SDL.h"
 #include "../Database/Configuration.h"
+#include "../SDL.h"
 #include "../Utility/Utils.h"
+#include "IVideo.h"
+#include <atomic>
 #include <mutex>
 #include <queue>
-#include <atomic>
 
 extern "C"
 {
@@ -30,12 +30,10 @@ extern "C"
 #include <GStreamer/gst/video/video.h>
 #else
 #include <gst/gst.h>
-#include <gst/video/video.h>
 #include <gst/pbutils/pbutils.h>
-
+#include <gst/video/video.h>
 
 #endif
-
 }
 
 class GStreamerVideo final : public IVideo
@@ -52,7 +50,8 @@ class GStreamerVideo final : public IVideo
     SDL_Texture *getTexture() const override;
     void loopHandler() override;
     void volumeUpdate() override;
-    void updateTexture() override;
+    void update(float dt) override;
+    void draw() override;
     void setNumLoops(int n);
     int getHeight() override;
     int getWidth() override;
@@ -70,25 +69,26 @@ class GStreamerVideo final : public IVideo
 
   private:
     static void processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
-    static void elementSetupCallback([[maybe_unused]] const GstElement& playbin, GstElement* element,
-        [[maybe_unused]] GStreamerVideo* video);
-    static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static void enablePlugin(const std::string& pluginName);
-    static void disablePlugin(const std::string& pluginName);
+    static void elementSetupCallback([[maybe_unused]] const GstElement &playbin, GstElement *element,
+                                     [[maybe_unused]] GStreamerVideo *video);
+    static GstPadProbeReturn padProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
+    static void enablePlugin(const std::string &pluginName);
+    static void disablePlugin(const std::string &pluginName);
     bool initializeGstElements(const std::string &file);
     void createSdlTexture();
     GstElement *playbin_{nullptr};
     GstElement *videoSink_{nullptr};
     GstBus *videoBus_{nullptr};
     GstVideoInfo videoInfo_;
-    bool videoInfoSet_{ false };
+    bool videoInfoSet_{false};
     SDL_Texture *texture_{nullptr};
-    SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
-    gulong elementSetupHandlerId_{0};
-    gulong handoffHandlerId_{0};
+    SDL_PixelFormatEnum sdlFormat_{SDL_PIXELFORMAT_UNKNOWN};
+    guint elementSetupHandlerId_{0};
+    guint handoffHandlerId_{0};
+    guint padProbeId_{0};
     gint height_{0};
     gint width_{0};
-    std::queue<GstBuffer*> bufferQueue_;
+    std::queue<GstBuffer *> bufferQueue_;
     bool isPlaying_{false};
     static bool initialized_;
     int playCount_{0};
@@ -100,8 +100,9 @@ class GStreamerVideo final : public IVideo
     bool paused_{false};
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
-    std::mutex bufferMutex_;  // Mutex to protect videoBuffer_
-    std::atomic<bool> bufferQueueEmpty_{ true };
+    std::mutex bufferMutex_; // Mutex to protect videoBuffer_
+    std::atomic<bool> frameReady_{false};
+    std::atomic<bool> bufferQueueEmpty_{true};
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };

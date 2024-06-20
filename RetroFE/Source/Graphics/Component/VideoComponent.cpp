@@ -50,7 +50,7 @@ bool VideoComponent::update(float dt)
     if (isPlaying_)
     {
         videoInst_->setVolume(baseViewInfo.Volume);
-
+        videoInst_->update(dt);
         if (!currentPage_->isMenuScrolling())
         {
             videoInst_->volumeUpdate();
@@ -149,11 +149,7 @@ void VideoComponent::draw()
 
         if (textureInitialized_ && baseViewInfo.Alpha > 0.0f && videoInst_->isPlaying())
         {
-
-            if(!videoInst_->isPaused())
-                videoInst_->updateTexture();
-            
-
+            videoInst_->draw();
             if (SDL_Texture *texture = videoInst_->getTexture())
             {
                 SDL_Rect rect = {static_cast<int>(baseViewInfo.XRelativeToOrigin()),
