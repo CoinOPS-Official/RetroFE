@@ -105,8 +105,7 @@ class GStreamerVideo final : public IVideo
     std::atomic<bool> frameReady_{false};
     std::atomic<bool> bufferQueueEmpty_{true};
     std::atomic<bool> stopping_{false};
-    std::mutex stopMutex_;
-    std::shared_mutex textureMutex_; // Mutex to protect access to the texture
+    std::mutex syncMutex_;
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };
