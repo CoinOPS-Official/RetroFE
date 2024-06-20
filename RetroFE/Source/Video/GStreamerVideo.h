@@ -22,6 +22,7 @@
 #include <atomic>
 #include <mutex>
 #include <queue>
+#include <shared_mutex>
 
 extern "C"
 {
@@ -103,6 +104,9 @@ class GStreamerVideo final : public IVideo
     std::mutex bufferMutex_; // Mutex to protect videoBuffer_
     std::atomic<bool> frameReady_{false};
     std::atomic<bool> bufferQueueEmpty_{true};
+    std::atomic<bool> stopping_{false};
+    std::mutex stopMutex_;
+    std::shared_mutex textureMutex_; // Mutex to protect access to the texture
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };
