@@ -92,40 +92,42 @@ bool GStreamerVideo::deInitialize()
     return true;
 }
 
-bool GStreamerVideo::stop() {
-    if (!initialized_.load(std::memory_order_acquire)) {
+bool GStreamerVideo::stop()
+{
+    if (!initialized_.load(std::memory_order_acquire))
+    {
         return false;
     }
 
     stopping_.store(true, std::memory_order_release);
-    frameReady_.store(
-        true, std::memory_order_release); // Prevent further buffer processing
+    frameReady_.store(true, std::memory_order_release); // Prevent further buffer processing
 
     stopFuture_ = std::async(std::launch::async, [this] {
-      std::unique_lock lock(syncMutex_);
+        std::unique_lock lock(syncMutex_);
 
-      if (playbin_) {
-        gst_element_set_state(playbin_, GST_STATE_NULL);
-        GstStateChangeReturn ret =
-            gst_element_get_state(playbin_, nullptr, nullptr, 0);
-        if (ret != GST_STATE_CHANGE_SUCCESS && ret != GST_STATE_CHANGE_ASYNC) {
-          LOG_ERROR("Video",
-                    "Unexpected state change result when stopping playback");
+        if (playbin_)
+        {
+            gst_element_set_state(playbin_, GST_STATE_NULL);
+            GstStateChangeReturn ret = gst_element_get_state(playbin_, nullptr, nullptr, 0);
+            if (ret != GST_STATE_CHANGE_SUCCESS && ret != GST_STATE_CHANGE_ASYNC)
+            {
+                LOG_ERROR("Video", "Unexpected state change result when stopping playback");
+            }
+            isPlaying_.store(false, std::memory_order_release);
+            gst_object_unref(GST_OBJECT(playbin_));
         }
-        isPlaying_.store(false, std::memory_order_release);
-        gst_object_unref(GST_OBJECT(playbin_));
-      }
 
-      clearBuffers();
+        clearBuffers();
 
-      if (texture_) {
-        SDL_DestroyTexture(texture_);
-        texture_ = nullptr;
-      }
+        if (texture_)
+        {
+            SDL_DestroyTexture(texture_);
+            texture_ = nullptr;
+        }
 
-      playbin_ = nullptr;
-      videoSink_ = nullptr;
-      videoBus_ = nullptr;
+        playbin_ = nullptr;
+        videoSink_ = nullptr;
+        videoBus_ = nullptr;
     });
 
     return true;
@@ -240,8 +242,7 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
     GstCaps *videoConvertCaps = nullptr;
     if (Configuration::HardwareVideoAccel)
     {
-        videoConvertCaps = gst_caps_from_string(
-            "video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+        videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
         sdlFormat_ = SDL_PIXELFORMAT_NV12;
         LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_NV12. HardwareVideoAccel:true");
     }
@@ -487,7 +488,7 @@ void GStreamerVideo::update(float /* dt */)
             bufferQueueEmpty_.store(true, std::memory_order_release);
         }
     }
-    
+
     if (!texture_ && width_ > 0 && height_ > 0)
         createSdlTexture();
 
