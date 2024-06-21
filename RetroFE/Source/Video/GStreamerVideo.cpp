@@ -442,7 +442,8 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuff
                                       gpointer userdata)
 {
     auto *video = static_cast<GStreamerVideo *>(userdata);
-    if (video && !video->frameReady_.load(std::memory_order_acquire))
+    if (video && !video->frameReady_.load(std::memory_order_acquire) &&
+        !video->stopping_.load(std::memory_order_acquire))
     {
         // Lock the unified mutex to protect shared resources
         std::scoped_lock lock(video->syncMutex_);
@@ -539,7 +540,10 @@ void GStreamerVideo::update(float /* dt */)
 
 void GStreamerVideo::draw()
 {
-    frameReady_.store(false, std::memory_order_release);
+    if (!stopping_.load(std::memory_order_acquire)) // Only reset if not stopping
+    {
+        frameReady_.store(false, std::memory_order_release);
+    }
 }
 
 bool GStreamerVideo::isPlaying()
