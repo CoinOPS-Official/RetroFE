@@ -52,6 +52,10 @@ GStreamerVideo::~GStreamerVideo()
     {
         stopFuture_.get();
     }
+    if (playbackThread_.joinable())
+    {
+        playbackThread_.join(); // Ensure the playback thread is joined
+    }
 }
 
 void GStreamerVideo::setNumLoops(int n)
@@ -100,7 +104,7 @@ bool GStreamerVideo::stop()
     }
 
     stopping_.store(true, std::memory_order_release);
-    frameReady_.store(true, std::memory_order_release); // Prevent further buffer processing
+    frameReady_.store(true, std::memory_order_release);
 
     stopFuture_ = std::async(std::launch::async, [this] {
         std::unique_lock lock(syncMutex_);
@@ -129,6 +133,11 @@ bool GStreamerVideo::stop()
         videoSink_ = nullptr;
         videoBus_ = nullptr;
     });
+
+    if (playbackThread_.joinable())
+    {
+        playbackThread_.join(); // Ensure the playback thread is joined
+    }
 
     return true;
 }
@@ -187,7 +196,13 @@ bool GStreamerVideo::play(const std::string &file)
         return false;
     }
 
-    std::thread([this] {
+    if (playbackThread_.joinable())
+    {
+        playbackThread_.join(); // Ensure any previous thread is joined before
+                                // starting a new one
+    }
+
+    playbackThread_ = std::thread([this] {
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
         if (playState != GST_STATE_CHANGE_ASYNC)
         {
@@ -213,7 +228,7 @@ bool GStreamerVideo::play(const std::string &file)
                 }
             }
         }
-    }).detach();
+    });
 
     return true;
 }

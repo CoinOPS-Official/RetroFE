@@ -100,6 +100,7 @@ class GStreamerVideo final : public IVideo
     std::mutex syncMutex_;
     std::queue<GstBuffer *> bufferQueue_;
     std::future<void> stopFuture_;
+    std::thread playbackThread_;
 
     // Other properties
     int playCount_ = 0;
