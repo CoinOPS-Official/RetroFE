@@ -50,18 +50,16 @@ GStreamerVideo::~GStreamerVideo()
     try
     {
         stop();
-        if (stopFuture_.valid())
-        {
-            stopFuture_.get();
-        }
     }
     catch (const std::exception &e)
     {
         LOG_ERROR("GStreamerVideo", "Exception caught in destructor: " + std::string(e.what()));
+        // Handle the exception (log it, clean up, etc.)
     }
     catch (...)
     {
         LOG_ERROR("GStreamerVideo", "Unknown exception caught in destructor");
+        // Handle the unknown exception
     }
 }
 
@@ -113,33 +111,31 @@ bool GStreamerVideo::stop()
     stopping_.store(true, std::memory_order_release);
     frameReady_.store(true, std::memory_order_release);
 
-    stopFuture_ = std::async(std::launch::async, [this] {
-        std::unique_lock lock(syncMutex_);
+    std::unique_lock lock(syncMutex_);
 
-        if (playbin_)
+    if (playbin_)
+    {
+        gst_element_set_state(playbin_, GST_STATE_NULL);
+        GstStateChangeReturn ret = gst_element_get_state(playbin_, nullptr, nullptr, 0);
+        if (ret != GST_STATE_CHANGE_SUCCESS && ret != GST_STATE_CHANGE_ASYNC)
         {
-            gst_element_set_state(playbin_, GST_STATE_NULL);
-            GstStateChangeReturn ret = gst_element_get_state(playbin_, nullptr, nullptr, 0);
-            if (ret != GST_STATE_CHANGE_SUCCESS && ret != GST_STATE_CHANGE_ASYNC)
-            {
-                LOG_ERROR("Video", "Unexpected state change result when stopping playback");
-            }
-            isPlaying_.store(false, std::memory_order_release);
-            gst_object_unref(GST_OBJECT(playbin_));
+            LOG_ERROR("Video", "Unexpected state change result when stopping playback");
         }
+        isPlaying_.store(false, std::memory_order_release);
+        gst_object_unref(GST_OBJECT(playbin_));
+    }
 
-        clearBuffers();
+    clearBuffers();
 
-        if (texture_)
-        {
-            SDL_DestroyTexture(texture_);
-            texture_ = nullptr;
-        }
+    if (texture_)
+    {
+        SDL_DestroyTexture(texture_);
+        texture_ = nullptr;
+    }
 
-        playbin_ = nullptr;
-        videoSink_ = nullptr;
-        videoBus_ = nullptr;
-    });
+    playbin_ = nullptr;
+    videoSink_ = nullptr;
+    videoBus_ = nullptr;
 
     return true;
 }
@@ -198,33 +194,30 @@ bool GStreamerVideo::play(const std::string &file)
         return false;
     }
 
-    SingletonThreadPool::getInstance().enqueue([this] {
-        GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-        if (playState != GST_STATE_CHANGE_ASYNC)
-        {
-            isPlaying_.store(false, std::memory_order_release);
-            LOG_ERROR("Video", "Unable to set the pipeline to the playing state.");
-            stop();
-        }
-        else
-        {
-            paused_.store(false, std::memory_order_release);
-            isPlaying_.store(true, std::memory_order_release);
+    GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
+    if (playState != GST_STATE_CHANGE_ASYNC)
+    {
+        isPlaying_.store(false, std::memory_order_release);
+        LOG_ERROR("Video", "Unable to set the pipeline to the playing state.");
+        stop();
+        return false;
+    }
 
-            if (Configuration::debugDotEnabled)
-            {
-                GstState state;
-                GstState pending;
-                GstClockTime timeout = 5 * GST_SECOND;
-                GstStateChangeReturn ret = gst_element_get_state(GST_ELEMENT(playbin_), &state, &pending, timeout);
-                if (ret == GST_STATE_CHANGE_SUCCESS && state == GST_STATE_PLAYING)
-                {
-                    std::string playbinDotFileName = generateDotFileName("playbin", currentFile_);
-                    GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, playbinDotFileName.c_str());
-                }
-            }
+    paused_.store(false, std::memory_order_release);
+    isPlaying_.store(true, std::memory_order_release);
+
+    if (Configuration::debugDotEnabled)
+    {
+        GstState state;
+        GstState pending;
+        GstClockTime timeout = 5 * GST_SECOND;
+        GstStateChangeReturn ret = gst_element_get_state(GST_ELEMENT(playbin_), &state, &pending, timeout);
+        if (ret == GST_STATE_CHANGE_SUCCESS && state == GST_STATE_PLAYING)
+        {
+            std::string playbinDotFileName = generateDotFileName("playbin", currentFile_);
+            GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, playbinDotFileName.c_str());
         }
-    });
+    }
 
     return true;
 }

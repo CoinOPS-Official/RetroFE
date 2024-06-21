@@ -1,7 +1,6 @@
 #pragma once
 
 #include "../Database/Configuration.h"
-#include "../Graphics/SingletonThreadPool.h"
 #include "../SDL.h"
 #include "../Utility/Utils.h"
 #include "IVideo.h"
@@ -99,7 +98,6 @@ class GStreamerVideo final : public IVideo
     // Synchronization
     std::mutex syncMutex_;
     std::queue<GstBuffer *> bufferQueue_;
-    std::future<void> stopFuture_;
 
     // Other properties
     int playCount_ = 0;
