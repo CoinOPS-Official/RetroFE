@@ -47,14 +47,59 @@ GStreamerVideo::GStreamerVideo(int monitor)
 
 GStreamerVideo::~GStreamerVideo()
 {
-    stop();
-    if (stopFuture_.valid())
+    bool stopSuccess = false;
+    try
     {
-        stopFuture_.get();
+        stop();
+        if (stopFuture_.valid())
+        {
+            stopFuture_.get();
+        }
+        stopSuccess = true;
     }
-    if (playbackThread_.joinable())
+    catch (const std::exception &e)
     {
-        playbackThread_.join(); // Ensure the playback thread is joined
+        LOG_ERROR("GStreamerVideo", "Exception caught in destructor: " + std::string(e.what()));
+    }
+    catch (...)
+    {
+        LOG_ERROR("GStreamerVideo", "Unknown exception caught in destructor");
+    }
+
+    if (!stopSuccess)
+    {
+        // Manual cleanup if stop failed
+        if (playbin_)
+        {
+            gst_element_set_state(playbin_, GST_STATE_NULL);
+            gst_object_unref(GST_OBJECT(playbin_));
+            playbin_ = nullptr;
+        }
+        clearBuffers();
+        if (texture_)
+        {
+            SDL_DestroyTexture(texture_);
+            texture_ = nullptr;
+        }
+        playbin_ = nullptr;
+        videoSink_ = nullptr;
+        videoBus_ = nullptr;
+    }
+
+    try
+    {
+        if (playbackThread_.joinable())
+        {
+            playbackThread_.join();
+        }
+    }
+    catch (const std::exception &e)
+    {
+        LOG_ERROR("GStreamerVideo", "Exception caught while joining playback thread: " + std::string(e.what()));
+    }
+    catch (...)
+    {
+        LOG_ERROR("GStreamerVideo", "Unknown exception caught while joining playback thread");
     }
 }
 
