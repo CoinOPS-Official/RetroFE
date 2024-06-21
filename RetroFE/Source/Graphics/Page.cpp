@@ -48,7 +48,7 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , selectSoundChunk_(NULL)
     , minShowTime_(0)
     , jukebox_(false)
-    , useThreading_(SDL::getRendererBackend(0) != "opengl")
+    , useThreading_(false)
 {
 
     for (int i = 0; i < MAX_LAYOUTS; i++) {
