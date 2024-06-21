@@ -481,6 +481,8 @@ void GStreamerVideo::update(float /* dt */)
             bufferQueueEmpty_.store(true, std::memory_order_release);
         }
     }
+    if (!texture_ && width_ > 0 && height_ >0)
+        createSdlTexture();
 
     if (localBuffer)
     {

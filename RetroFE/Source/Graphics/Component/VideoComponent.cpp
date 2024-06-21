@@ -140,14 +140,7 @@ void VideoComponent::draw()
 {
     if (videoInst_)
     {
-        // Create the texture if it is not initialized and width/height are known
-        if (!textureInitialized_ && videoInst_->getWidth() > 0 && videoInst_->getHeight() > 0)
-        {
-            videoInst_->createSdlTexture();
-            textureInitialized_ = true; // Set the flag to true after creating the texture
-        }
-
-        if (textureInitialized_ && baseViewInfo.Alpha > 0.0f && videoInst_->isPlaying())
+        if (baseViewInfo.Alpha > 0.0f && videoInst_->isPlaying())
         {
             videoInst_->draw();
             if (SDL_Texture *texture = videoInst_->getTexture())
