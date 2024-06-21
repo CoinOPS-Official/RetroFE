@@ -1,6 +1,7 @@
 #pragma once
 
 #include "../Database/Configuration.h"
+#include "../Graphics/SingletonThreadPool.h"
 #include "../SDL.h"
 #include "../Utility/Utils.h"
 #include "IVideo.h"
@@ -72,7 +73,6 @@ class GStreamerVideo final : public IVideo
     GstElement *videoSink_ = nullptr;
     GstBus *videoBus_ = nullptr;
     GstVideoInfo videoInfo_;
-    bool videoInfoSet_ = false;
 
     // SDL elements
     SDL_Texture *texture_ = nullptr;

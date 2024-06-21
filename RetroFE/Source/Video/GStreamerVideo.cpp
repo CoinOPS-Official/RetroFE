@@ -47,7 +47,6 @@ GStreamerVideo::GStreamerVideo(int monitor)
 
 GStreamerVideo::~GStreamerVideo()
 {
-    bool stopSuccess = false;
     try
     {
         stop();
@@ -55,7 +54,6 @@ GStreamerVideo::~GStreamerVideo()
         {
             stopFuture_.get();
         }
-        stopSuccess = true;
     }
     catch (const std::exception &e)
     {
@@ -64,42 +62,6 @@ GStreamerVideo::~GStreamerVideo()
     catch (...)
     {
         LOG_ERROR("GStreamerVideo", "Unknown exception caught in destructor");
-    }
-
-    if (!stopSuccess)
-    {
-        // Manual cleanup if stop failed
-        if (playbin_)
-        {
-            gst_element_set_state(playbin_, GST_STATE_NULL);
-            gst_object_unref(GST_OBJECT(playbin_));
-            playbin_ = nullptr;
-        }
-        clearBuffers();
-        if (texture_)
-        {
-            SDL_DestroyTexture(texture_);
-            texture_ = nullptr;
-        }
-        playbin_ = nullptr;
-        videoSink_ = nullptr;
-        videoBus_ = nullptr;
-    }
-
-    try
-    {
-        if (playbackThread_.joinable())
-        {
-            playbackThread_.join();
-        }
-    }
-    catch (const std::exception &e)
-    {
-        LOG_ERROR("GStreamerVideo", "Exception caught while joining playback thread: " + std::string(e.what()));
-    }
-    catch (...)
-    {
-        LOG_ERROR("GStreamerVideo", "Unknown exception caught while joining playback thread");
     }
 }
 
@@ -179,11 +141,6 @@ bool GStreamerVideo::stop()
         videoBus_ = nullptr;
     });
 
-    if (playbackThread_.joinable())
-    {
-        playbackThread_.join(); // Ensure the playback thread is joined
-    }
-
     return true;
 }
 
@@ -241,13 +198,7 @@ bool GStreamerVideo::play(const std::string &file)
         return false;
     }
 
-    if (playbackThread_.joinable())
-    {
-        playbackThread_.join(); // Ensure any previous thread is joined before
-                                // starting a new one
-    }
-
-    playbackThread_ = std::thread([this] {
+    SingletonThreadPool::getInstance().enqueue([this] {
         GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
         if (playState != GST_STATE_CHANGE_ASYNC)
         {
