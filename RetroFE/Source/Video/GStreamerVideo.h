@@ -8,7 +8,6 @@
 #include <future>
 #include <mutex>
 #include <queue>
-#include <shared_mutex>
 #include <thread>
 
 extern "C"
