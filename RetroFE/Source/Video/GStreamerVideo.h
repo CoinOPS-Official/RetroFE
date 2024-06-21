@@ -114,7 +114,6 @@ class GStreamerVideo final : public IVideo
     std::atomic<bool> stopping_{false};
     
     std::mutex syncMutex_;
-    std::mutex bufferMutex_; // Mutex to protect videoBuffer_
 
     std::queue<GstBuffer*> bufferQueue_;
 
