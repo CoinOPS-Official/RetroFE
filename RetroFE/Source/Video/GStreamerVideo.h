@@ -19,10 +19,13 @@
 #include "../SDL.h"
 #include "../Utility/Utils.h"
 #include "IVideo.h"
+#include <condition_variable>
 #include <atomic>
 #include <mutex>
 #include <queue>
 #include <shared_mutex>
+#include <thread>
+#include <future>
 
 extern "C"
 {
@@ -77,6 +80,7 @@ class GStreamerVideo final : public IVideo
     static void disablePlugin(const std::string& pluginName);
     bool initializeGstElements(const std::string &file);
     void createSdlTexture();
+    void clearBuffers();
     GstElement *playbin_{nullptr};
     GstElement *videoSink_{nullptr};
     GstBus *videoBus_{nullptr};
@@ -89,23 +93,32 @@ class GStreamerVideo final : public IVideo
     guint padProbeId_{0};
     gint height_{0};
     gint width_{0};
-    std::queue<GstBuffer *> bufferQueue_;
-    bool isPlaying_{false};
-    static bool initialized_;
+    
+    std::atomic<bool> isPlaying_{false};
+    
+    static std::atomic<bool> initialized_;
+    static std::once_flag initFlag_;
+
     int playCount_{0};
     std::string currentFile_{};
     int numLoops_{0};
     float volume_{0.0f};
     double currentVolume_{0.0};
     int monitor_;
-    bool paused_{false};
+    std::atomic<bool> paused_{false};
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
-    std::mutex bufferMutex_; // Mutex to protect videoBuffer_
+    
     std::atomic<bool> frameReady_{false};
     std::atomic<bool> bufferQueueEmpty_{true};
     std::atomic<bool> stopping_{false};
+    
     std::mutex syncMutex_;
+    std::mutex bufferMutex_; // Mutex to protect videoBuffer_
+
+    std::queue<GstBuffer*> bufferQueue_;
+
+    std::future<void> stopFuture_;
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };
