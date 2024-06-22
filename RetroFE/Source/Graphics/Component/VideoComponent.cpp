@@ -15,46 +15,51 @@
  */
 
 #include "VideoComponent.h"
-#include "../ViewInfo.h"
-#include "../../Database/Configuration.h"
+
+#include <string>
+#include <type_traits>
+#include <utility>
+
+#include "../../Graphics/ViewInfo.h"
+#include "../../SDL.h"
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
-#include "../../Video/GStreamerVideo.h"
+#include "../../Video/IVideo.h"
 #include "../../Video/VideoFactory.h"
-#include "../../SDL.h"
-#include <string>
+#include "../Page.h"
+#include "SDL_rect.h"
+#include "SDL_render.h"
 
-VideoComponent::VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops)
-    : Component(p)
-    , videoFile_(videoFile)
-    , numLoops_(numLoops)
-    , monitor_(monitor)
-    , currentPage_(&p)
+VideoComponent::VideoComponent(Page &p, const std::string &videoFile, int monitor, int numLoops)
+    : Component(p), videoFile_(videoFile), numLoops_(numLoops), monitor_(monitor), currentPage_(&p)
 {
-
 }
 
 VideoComponent::~VideoComponent()
 {
-    freeGraphicsMemory();
+    VideoComponent::freeGraphicsMemory();
 }
-
 
 bool VideoComponent::update(float dt)
 {
-    if (videoInst_) {
-        isPlaying_ = ((GStreamerVideo*)(videoInst_))->isPlaying();
+    if (!videoInst_ || !isPlaying_)
+    {
+        return Component::update(dt);
     }
 
-    if (videoInst_ && isPlaying_) {
+    if (isPlaying_)
+    {
         videoInst_->setVolume(baseViewInfo.Volume);
         videoInst_->update(dt);
-        videoInst_->volumeUpdate();
-        if(!currentPage_->isMenuScrolling())
-            videoInst_->loopHandler();
+        if (!currentPage_->isMenuScrolling())
+        {
+            videoInst_->volumeUpdate();
 
-        // video needs to run a frame to start getting size info
-        if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0) {
+            videoInst_->loopHandler();
+        }
+
+        if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
+        {
             baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
             baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
         }
@@ -62,92 +67,102 @@ bool VideoComponent::update(float dt)
         bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0;
 
         if (isCurrentlyVisible)
+        {
             hasBeenOnScreen_ = true;
+        }
 
-        // Handle Pause/Resume based on visibility and PauseOnScroll setting
-        if (baseViewInfo.PauseOnScroll) {
-            if (!isCurrentlyVisible && !isPaused() && !currentPage_->isMenuFastScrolling()) {
+        if (baseViewInfo.PauseOnScroll)
+        {
+            if (!isCurrentlyVisible && !videoInst_->isPaused() && !currentPage_->isMenuFastScrolling())
+            {
                 videoInst_->pause();
-                if(Logger::isLevelEnabled("DEBUG"))
+                if (Logger::isLevelEnabled("DEBUG"))
                     LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
             }
-            else if (isCurrentlyVisible && isPaused()) {
-                videoInst_->pause(); // This resumes the video
+            else if (isCurrentlyVisible && videoInst_->isPaused())
+            {
+                videoInst_->pause();
                 if (Logger::isLevelEnabled("DEBUG"))
                     LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
             }
         }
 
-        // Handle Restart
-        if (baseViewInfo.Restart && hasBeenOnScreen_) {
+        if (baseViewInfo.Restart && hasBeenOnScreen_)
+        {
+            if (videoInst_->isPaused())
+                videoInst_->pause();
             videoInst_->restart();
+            baseViewInfo.Restart = false;
             if (Logger::isLevelEnabled("DEBUG"))
                 LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
-            baseViewInfo.Restart = false;
         }
     }
 
     return Component::update(dt);
 }
 
-
 void VideoComponent::allocateGraphicsMemory()
 {
-    Component::allocateGraphicsMemory();
-
-    if(!isPlaying_) {
-        if (!videoInst_) {
+    if (videoInst_)
+    {
+        return;
+    }
+    else
+    {
+        Component::allocateGraphicsMemory();
+        if (!videoInst_ && !videoFile_.empty())
+        {
             videoInst_ = VideoFactory::createVideo(monitor_, numLoops_);
-        }
-        if (videoFile_ != "") {
+            if (!videoInst_)
+            {
+                LOG_ERROR("VideoComponent", "Failed to create video instance");
+                return;
+            }
             isPlaying_ = videoInst_->play(videoFile_);
         }
     }
 }
 
-
 void VideoComponent::freeGraphicsMemory()
 {
-    //videoInst_->stop();
-        
-    Component::freeGraphicsMemory();
-    if (Logger::isLevelEnabled("DEBUG"))
-        LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
-    
-    if (videoInst_)  {
+    if (videoInst_)
+    {
+        Component::freeGraphicsMemory();
         delete videoInst_;
         isPlaying_ = false;
         if (Logger::isLevelEnabled("DEBUG"))
             LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
         videoInst_ = nullptr;
-        
     }
 }
 
-
 void VideoComponent::draw()
 {
-    if (baseViewInfo.Alpha > 0.0f) {
-        SDL_Rect rect = { 0, 0, 0, 0 };
-
-        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
-        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
-
-        videoInst_->draw();
-        SDL_Texture* texture = videoInst_->getTexture();
-
-        if (texture)
+    if (videoInst_)
+    {
+        if (baseViewInfo.Alpha > 0.0f && videoInst_->isPlaying())
         {
-            SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+            if (SDL_Texture *texture = videoInst_->getTexture())
+            {
+                videoInst_->draw();
+
+                SDL_Rect rect = {static_cast<int>(baseViewInfo.XRelativeToOrigin()),
+                                 static_cast<int>(baseViewInfo.YRelativeToOrigin()),
+                                 static_cast<int>(baseViewInfo.ScaledWidth()),
+                                 static_cast<int>(baseViewInfo.ScaledHeight())};
+
+                LOG_DEBUG("VideoComponent", "Drawing texture...");
+                SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
+                                page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+                                page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+            }
         }
     }
 }
 
 bool VideoComponent::isPlaying()
 {
-    return isPlaying_;
+    return videoInst_->isPlaying();
 }
 
 std::string_view VideoComponent::filePath()
@@ -155,70 +170,62 @@ std::string_view VideoComponent::filePath()
     return videoFile_;
 }
 
-void VideoComponent::skipForward( )
+void VideoComponent::skipForward()
 {
-    if ( videoInst_ )
-        videoInst_->skipForward( );
+    if (videoInst_)
+        videoInst_->skipForward();
 }
 
-
-void VideoComponent::skipBackward( )
+void VideoComponent::skipBackward()
 {
-    if ( videoInst_ )
-        videoInst_->skipBackward( );
+    if (videoInst_)
+        videoInst_->skipBackward();
 }
 
-
-void VideoComponent::skipForwardp( )
+void VideoComponent::skipForwardp()
 {
-    if ( videoInst_ )
-        videoInst_->skipForwardp( );
+    if (videoInst_)
+        videoInst_->skipForwardp();
 }
 
-
-void VideoComponent::skipBackwardp( )
+void VideoComponent::skipBackwardp()
 {
-    if ( videoInst_ )
-        videoInst_->skipBackwardp( );
+    if (videoInst_)
+        videoInst_->skipBackwardp();
 }
 
-
-void VideoComponent::pause( )
+void VideoComponent::pause()
 {
-    if ( videoInst_ )
-        videoInst_->pause( );
+    if (videoInst_)
+        videoInst_->pause();
 }
 
-
-void VideoComponent::restart( )
+void VideoComponent::restart()
 {
-    if ( videoInst_ )
-        videoInst_->restart( );
+    if (videoInst_)
+        videoInst_->restart();
 }
 
-
-unsigned long long VideoComponent::getCurrent( )
+unsigned long long VideoComponent::getCurrent()
 {
-    if ( videoInst_ )
-        return videoInst_->getCurrent( );
+    if (videoInst_)
+        return videoInst_->getCurrent();
     else
         return 0;
 }
 
-
-unsigned long long VideoComponent::getDuration( )
+unsigned long long VideoComponent::getDuration()
 {
-    if ( videoInst_ )
-        return videoInst_->getDuration( );
+    if (videoInst_)
+        return videoInst_->getDuration();
     else
         return 0;
 }
 
-
-bool VideoComponent::isPaused( )
+bool VideoComponent::isPaused()
 {
-    if ( videoInst_ )
-        return videoInst_->isPaused( );
+    if (videoInst_)
+        return videoInst_->isPaused();
     else
         return false;
 }

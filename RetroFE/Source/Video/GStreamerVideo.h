@@ -1,55 +1,43 @@
-/* This file is part of RetroFE.
- *
- * RetroFE is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * RetroFE is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
- */
 #pragma once
 
-#include "IVideo.h"
-#include "../SDL.h"
 #include "../Database/Configuration.h"
+#include "../SDL.h"
 #include "../Utility/Utils.h"
+#include "IVideo.h"
+#include <atomic>
+#include <future>
+#include <mutex>
+#include <queue>
+#include <thread>
+
 extern "C"
 {
 #if (__APPLE__)
-    #include <GStreamer/gst/gst.h>
-    #include <GStreamer/gst/video/gstvideometa.h>
+#include <GStreamer/gst/gst.h>
+#include <GStreamer/gst/video/video.h>
 #else
-    #include <gst/gst.h>
-    #include <gst/video/gstvideometa.h>
-
-
-
+#include <gst/gst.h>
+#include <gst/video/video.h>
 #endif
-
 }
-
 
 class GStreamerVideo final : public IVideo
 {
-public:
+  public:
     explicit GStreamerVideo(int monitor);
-    GStreamerVideo(const GStreamerVideo&) = delete;
-    GStreamerVideo& operator=(const GStreamerVideo&) = delete;
+    GStreamerVideo(const GStreamerVideo &) = delete;
+    GStreamerVideo &operator=(const GStreamerVideo &) = delete;
     ~GStreamerVideo() override;
+
+    // IVideo interface methods
     bool initialize() override;
-    bool play(const std::string& file) override;
+    bool play(const std::string &file) override;
     bool stop() override;
     bool deInitialize() override;
-    SDL_Texture* getTexture() const override;
-    void update(float dt) override;
+    SDL_Texture *getTexture() const override;
     void loopHandler() override;
     void volumeUpdate() override;
+    void update(float dt) override;
     void draw() override;
     void setNumLoops(int n);
     int getHeight() override;
@@ -65,54 +53,61 @@ public:
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
-    bool getFrameReady() override;
-    // Helper functions...
-    static void enablePlugin(const std::string& pluginName);
-    static void disablePlugin(const std::string& pluginName);
 
-private:
-    enum BufferLayout {
-        UNKNOWN,        // Initial state
-        CONTIGUOUS,     // Contiguous buffer layout
-        NON_CONTIGUOUS,  // Non-contiguous buffer layout
-    };
+  private:
+    // GStreamer callback methods
+    static void processNewBuffer(GstElement const *fakesink, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
+    static void elementSetupCallback(const GstElement &playbin, GstElement *element, GStreamerVideo *video);
+    static GstPadProbeReturn padProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
 
-    static void processNewBuffer(GstElement const*/* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata);
-    static void elementSetupCallback([[maybe_unused]] GstElement const* playbin, GstElement* element, [[maybe_unused]] GStreamerVideo const* video);
-    bool initializeGstElements(const std::string& file);
-    GstElement* playbin_{ nullptr };
-    GstElement* videoBin_{ nullptr };
-    GstElement* videoSink_{ nullptr };
-    GstElement* capsFilter_{ nullptr };
-    GstBus* videoBus_{ nullptr };
-    SDL_Texture* texture_{ nullptr };
-    gulong elementSetupHandlerId_{ 0 };
-    gulong handoffHandlerId_{ 0 };
-    gint height_{ 0 };
-    gint width_{ 0 };
-    GstBuffer* videoBuffer_{ nullptr };
-    const GstVideoMeta* videoMeta_{ nullptr };
-    bool frameReady_{ false };
-    bool isPlaying_{ false };
+    // GStreamer utility methods
+    static void enablePlugin(const std::string &pluginName);
+    static void disablePlugin(const std::string &pluginName);
+    bool initializeGstElements(const std::string &file);
+    void createSdlTexture();
+    void clearBuffers();
+
+    // GStreamer elements
+    GstElement *playbin_ = nullptr;
+    GstElement *videoSink_ = nullptr;
+    GstBus *videoBus_ = nullptr;
+    GstVideoInfo videoInfo_;
+
+    // SDL elements
+    SDL_Texture *texture_ = nullptr;
+    SDL_PixelFormatEnum sdlFormat_ = SDL_PIXELFORMAT_UNKNOWN;
+
+    // GStreamer handler IDs
+    guint elementSetupHandlerId_ = 0;
+    guint handoffHandlerId_ = 0;
+    guint padProbeId_ = 0;
+
+    // Video properties
+    gint height_ = 0;
+    gint width_ = 0;
+
+    // Atomic flags
+    std::atomic<bool> isPlaying_ = false;
     static bool initialized_;
-    int playCount_{ 0 };
-    std::string currentFile_{};
-    int numLoops_{ 0 };
-    float volume_{ 0.0f };
-    double currentVolume_{ 0.0 };
+    std::atomic<bool> paused_ = false;
+    std::atomic<bool> frameReady_ = false;
+    std::atomic<bool> bufferQueueEmpty_ = true;
+    std::atomic<bool> stopping_ = false;
+
+    // Synchronization
+    std::mutex syncMutex_;
+    std::queue<GstBuffer *> bufferQueue_;
+
+    // Other properties
+    int playCount_ = 0;
+    std::string currentFile_;
+    int numLoops_ = 0;
+    float volume_ = 0.0f;
+    double currentVolume_ = 0.0;
     int monitor_;
-    bool paused_{ false };
-    double lastSetVolume_{ 0.0 };
-    bool lastSetMuteState_{ false };
-    unsigned int expectedBufSize_{ 0 };
+    double lastSetVolume_ = 0.0;
+    bool lastSetMuteState_ = false;
 
-    bool useD3dHardware_{ Configuration::HardwareVideoAccel
-        && SDL::getRendererBackend(0) == "direct3d11" };
-    bool useVaHardware_{ Configuration::HardwareVideoAccel
-        && SDL::getRendererBackend(0) == "opengl"
-        && Utils::getOSType() == "linux" };
-
-    BufferLayout bufferLayout_{ UNKNOWN };
-    std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath);
-
+    // Utility methods
+    std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };

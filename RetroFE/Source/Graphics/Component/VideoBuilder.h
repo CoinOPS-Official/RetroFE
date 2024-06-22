@@ -20,6 +20,9 @@
 #include "../Page.h"
 #include "../../Video/VideoFactory.h"
 
+class Page;
+class VideoComponent;
+
 //todo: this is more of a factory than a builder
 class VideoBuilder
 {

@@ -360,7 +360,6 @@ bool SDL::deInitialize( )
         SDL_DestroyMutex(mutex_);
         mutex_ = nullptr;
     }
-
     
     for ( int i = 0; i < screenCount_; ++i ) {
         if ( !renderer_.empty() ) {
@@ -411,12 +410,11 @@ std::string SDL::getRendererBackend(int index) {
     return std::string(info.name);
 }
 
-// Get the mutex
-SDL_mutex* SDL::getMutex( )
+
+SDL_mutex* SDL::getMutex()
 {
     return mutex_;
 }
-
 
 // Get the window
 SDL_Window* SDL::getWindow( int index )

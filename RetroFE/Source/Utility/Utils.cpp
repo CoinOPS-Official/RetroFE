@@ -281,6 +281,20 @@ std::string Utils::getEnvVar(std::string const& key)
     return val == NULL ? std::string() : std::string(val);
 }
 
+void Utils::setEnvVar(const std::string& var, const std::string& value) {
+#ifdef _WIN32
+    // On Windows, use _putenv_s
+    if (_putenv_s(var.c_str(), value.c_str()) != 0) {
+        LOG_ERROR("Utils", "Failed to set GST_DEBUG_DUMP_DOT_DIR environment variable.");
+    }
+#else
+    // On Unix-like systems, use setenv
+    if (setenv(var.c_str(), value.c_str(), 1) != 0) {
+        LOG_ERROR("Utils", "Failed to set GST_DEBUG_DUMP_DOT_DIR environment variable.");
+    }
+#endif
+    }
+
 std::string Utils::getFileName(const std::string& filePath) {
     return std::filesystem::path(filePath).filename().string();
 }
