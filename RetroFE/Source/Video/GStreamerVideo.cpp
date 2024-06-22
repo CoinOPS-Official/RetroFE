@@ -34,8 +34,7 @@
 #include <vector>
 
 // Definition of static members
-std::atomic<bool> GStreamerVideo::initialized_{false};
-std::once_flag GStreamerVideo::initFlag_;
+bool GStreamerVideo::initialized_ = false;
 
 GStreamerVideo::GStreamerVideo(int monitor)
 
@@ -76,21 +75,28 @@ SDL_Texture *GStreamerVideo::getTexture() const
 
 bool GStreamerVideo::initialize()
 {
-    std::call_once(initFlag_, [&]() {
-        if (!gst_is_initialized())
-        {
-            LOG_DEBUG("GStreamer", "Initializing in instance");
-            gst_init(nullptr, nullptr);
-            std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
-#ifdef WIN32
-            GstRegistry *registry = gst_registry_get();
-            gst_registry_scan_path(registry, path.c_str());
-#endif
-        }
-        initialized_.store(true, std::memory_order_release);
-    });
+    if (initialized_)
+    {
+        initialized_ = true;
+        paused_ = false;
+        return true;
+    }
 
-    return initialized_.load(std::memory_order_acquire);
+    if (!gst_is_initialized())
+    {
+        LOG_DEBUG("GStreamer", "Initializing in instance");
+        gst_init(nullptr, nullptr);
+        std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
+#ifdef WIN32
+        GstRegistry *registry = gst_registry_get();
+        gst_registry_scan_path(registry, path.c_str());
+#endif
+    }
+
+    initialized_ = true;
+    paused_ = false;
+
+    return true;
 }
 
 bool GStreamerVideo::deInitialize()
@@ -103,7 +109,7 @@ bool GStreamerVideo::deInitialize()
 
 bool GStreamerVideo::stop()
 {
-    if (!initialized_.load(std::memory_order_acquire))
+    if (!initialized_)
     {
         return false;
     }
@@ -347,6 +353,7 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad *pad, GstPadProbeInfo 
     }
     return GST_PAD_PROBE_OK;
 }
+
 void GStreamerVideo::createSdlTexture()
 {
     LOG_DEBUG("GStreamerVideo", "Creating SDL texture with width: " + std::to_string(width_) +
@@ -474,6 +481,9 @@ void GStreamerVideo::update(float /* dt */)
         return;
     }
 
+    if (!texture_ && width_ > 0 && height_ > 0)
+        createSdlTexture();
+
     GstBuffer *localBuffer = nullptr;
 
     {
@@ -493,10 +503,7 @@ void GStreamerVideo::update(float /* dt */)
         }
     }
 
-    if (!texture_ && width_ > 0 && height_ > 0)
-        createSdlTexture();
-
-    if (localBuffer)
+    if (localBuffer && texture_)
     {
         GstVideoFrame vframe;
         auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
@@ -504,11 +511,12 @@ void GStreamerVideo::update(float /* dt */)
         {
             LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
 
-            std::scoped_lock lock(syncMutex_);
             if (texture_)
             {
                 if (sdlFormat_ == SDL_PIXELFORMAT_NV12)
                 {
+                    std::scoped_lock lock(syncMutex_);
+
                     if (SDL_UpdateNVTexture(texture_, nullptr,
                                             static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
                                             GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
@@ -520,6 +528,8 @@ void GStreamerVideo::update(float /* dt */)
                 }
                 else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV)
                 {
+                    std::scoped_lock lock(syncMutex_);
+
                     if (SDL_UpdateYUVTexture(texture_, nullptr,
                                              static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
                                              GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),

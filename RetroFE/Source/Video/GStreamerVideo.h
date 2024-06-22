@@ -88,8 +88,7 @@ class GStreamerVideo final : public IVideo
 
     // Atomic flags
     std::atomic<bool> isPlaying_ = false;
-    static std::atomic<bool> initialized_;
-    static std::once_flag initFlag_;
+    static bool initialized_;
     std::atomic<bool> paused_ = false;
     std::atomic<bool> frameReady_ = false;
     std::atomic<bool> bufferQueueEmpty_ = true;
