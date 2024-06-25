@@ -219,7 +219,7 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
         return false;
     }
 
-    playbin_ = gst_element_factory_make("playbin3", "player");
+    playbin_ = gst_element_factory_make("playbin", "player");
     GstElement *capsFilter = gst_element_factory_make("capsfilter", "caps_filter");
     GstElement *videoBin = gst_bin_new("SinkBin");
     videoSink_ = gst_element_factory_make("fakesink", "video_sink");
@@ -235,7 +235,7 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
     if (Configuration::HardwareVideoAccel)
     {
         videoConvertCaps = gst_caps_from_string(
-            "video/x-raw(memory:D3D11Memory),format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+            "video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
         sdlFormat_ = SDL_PIXELFORMAT_NV12;
         LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_NV12. HarwareVideoAccel:true");
     }
@@ -342,6 +342,8 @@ void GStreamerVideo::createSdlTexture()
     LOG_DEBUG("GStreamerVideo", "Creating SDL texture with width: " + std::to_string(width_) +
                                     ", height: " + std::to_string(height_) + ", format: " + std::to_string(sdlFormat_));
 
+    SDL_LockMutex(SDL::getMutex());
+
     texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), sdlFormat_, SDL_TEXTUREACCESS_STREAMING, width_, height_);
 
     if (!texture_)
@@ -357,6 +359,7 @@ void GStreamerVideo::createSdlTexture()
         texture_ = nullptr;
         return;
     }
+    SDL_UnlockMutex(SDL::getMutex());
 
     LOG_DEBUG("GStreamerVideo", "SDL texture created and blend mode set successfully. Texture pointer: " +
                                     std::to_string(reinterpret_cast<std::uintptr_t>(texture_)));
@@ -439,7 +442,7 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuff
     if (video && !video->frameReady_.load(std::memory_order_acquire))
     {
         // Lock the mutex to protect shared resources
-        std::scoped_lock lock(video->bufferMutex_);
+        //std::scoped_lock lock(video->syncMutex_);
 
         // Clear the oldest buffer if the queue has reached its limit
         if (video->bufferQueue_.size() >= 15)
@@ -468,13 +471,8 @@ void GStreamerVideo::update(float /* dt */)
     GstBuffer *localBuffer = nullptr;
 
     {
-        std::unique_lock lock(syncMutex_); // Single mutex lock
+        //std::unique_lock lock(syncMutex_); // Single mutex lock
 
-        if (bufferQueue_.empty())
-        {
-            bufferQueueEmpty_.store(true, std::memory_order_release);
-            return;
-        }
 
         gst_buffer_replace(&localBuffer, bufferQueue_.front());
         gst_clear_buffer(&bufferQueue_.front());
@@ -486,6 +484,11 @@ void GStreamerVideo::update(float /* dt */)
         }
     }
 
+    if (!texture_ && width_ != 0 && height_ != 0)
+        createSdlTexture();
+    
+    std::unique_lock lock(syncMutex_); // Lock again before accessing texture
+
     if (localBuffer)
     {
         GstVideoFrame vframe;
@@ -494,11 +497,11 @@ void GStreamerVideo::update(float /* dt */)
         {
             LOG_DEBUG("Video", "Video frame mapped successfully. Updating texture...");
             {
-                std::unique_lock lock(syncMutex_); // Lock again before accessing texture
                 if (texture_)
                 {
                     if (sdlFormat_ == SDL_PIXELFORMAT_NV12)
                     {
+                        SDL_LockMutex(SDL::getMutex());
                         if (SDL_UpdateNVTexture(texture_, nullptr,
                                                 static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
                                                 GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
@@ -507,9 +510,11 @@ void GStreamerVideo::update(float /* dt */)
                         {
                             LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
                         }
+                        SDL_UnlockMutex(SDL::getMutex());
                     }
                     else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV)
                     {
+                        SDL_LockMutex(SDL::getMutex());
                         if (SDL_UpdateYUVTexture(texture_, nullptr,
                                                  static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
                                                  GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
@@ -520,6 +525,7 @@ void GStreamerVideo::update(float /* dt */)
                         {
                             LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
                         }
+                        SDL_UnlockMutex(SDL::getMutex());
                     }
                     else
                     {
@@ -529,7 +535,6 @@ void GStreamerVideo::update(float /* dt */)
             }
             gst_video_frame_unmap(&vframe);
         }
-
         gst_clear_buffer(&localBuffer);
     }
 }
