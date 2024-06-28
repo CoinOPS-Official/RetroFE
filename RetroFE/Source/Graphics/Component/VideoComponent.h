@@ -52,5 +52,4 @@ private:
     int numLoops_;
     int monitor_;
     Page* currentPage_{ nullptr };
-    bool textureInitialized_{ false }; // New member variable
 };

@@ -139,9 +139,9 @@ void VideoComponent::freeGraphicsMemory()
 void VideoComponent::draw()
 {
 
-	if (videoInst_ && baseViewInfo.Alpha > 0.0f && videoInst_->isPlaying())
+	if (videoInst_)
 	{
-		videoInst_->draw();
+		//videoInst_->draw();
 		if (SDL_Texture* texture = videoInst_->getTexture())
 		{
 			SDL_Rect rect = { static_cast<int>(baseViewInfo.XRelativeToOrigin()),
@@ -153,10 +153,6 @@ void VideoComponent::draw()
 			SDL::renderCopy(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
 				page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
 				page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-		}
-		else
-		{
-			LOG_ERROR("VideoComponent", "Texture is null. Cannot render.");
 		}
 	}
 }

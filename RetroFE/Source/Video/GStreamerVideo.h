@@ -81,7 +81,6 @@ class GStreamerVideo final : public IVideo
     GstElement *videoSink_{nullptr};
     GstBus *videoBus_{nullptr};
     GstVideoInfo videoInfo_;
-    bool videoInfoSet_{false};
     SDL_Texture *texture_{nullptr};
     SDL_PixelFormatEnum sdlFormat_{SDL_PIXELFORMAT_UNKNOWN};
     guint elementSetupHandlerId_{0};
@@ -101,11 +100,8 @@ class GStreamerVideo final : public IVideo
     bool paused_{false};
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
-    std::mutex bufferMutex_; // Mutex to protect videoBuffer_
-    std::atomic<bool> frameReady_{false};
     std::atomic<bool> bufferQueueEmpty_{true};
     std::atomic<bool> stopping_{false};
-    std::mutex syncMutex_;
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };
