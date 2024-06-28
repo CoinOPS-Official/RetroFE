@@ -186,7 +186,11 @@ int main(int argc, char** argv)
             Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", Configuration::absolutePath);
             config.debugDotEnabled = true;
             std::string path =
-                Utils::combinePath(Configuration::absolutePath, "retrofe");
+#ifdef WIN32
+            Utils::combinePath(Configuration::absolutePath, "retrofe");
+#else
+            Configuration::absolutePath
+#endif
             Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", path);
         }
         else if (param == "-showconfig" ||
