@@ -37,6 +37,17 @@ extern "C"
 #endif
 }
 
+struct GstVideoFrameDeleter {
+    void operator()(GstVideoFrame* vframe) const {
+        if (vframe) {
+            gst_video_frame_unmap(vframe);
+            delete vframe;
+        }
+    }
+};
+
+using GstVideoFramePtr = std::unique_ptr<GstVideoFrame, GstVideoFrameDeleter>;
+
 class GStreamerVideo final : public IVideo
 {
   public:
@@ -75,6 +86,7 @@ class GStreamerVideo final : public IVideo
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
+    static void buffer_destroy_notify(gpointer data);
     bool initializeGstElements(const std::string &file);
     void createSdlTexture();
     GstElement *playbin_{nullptr};
@@ -86,9 +98,10 @@ class GStreamerVideo final : public IVideo
     guint elementSetupHandlerId_{0};
     guint handoffHandlerId_{0};
     guint padProbeId_{0};
+    guint prerollHandlerId_{ 0 };
     gint height_{0};
     gint width_{0};
-    std::queue<GstBuffer *> bufferQueue_;
+    GAsyncQueue* bufferQueue_;
     bool isPlaying_{false};
     static bool initialized_;
     int playCount_{0};
@@ -100,7 +113,6 @@ class GStreamerVideo final : public IVideo
     bool paused_{false};
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
-    std::atomic<bool> bufferQueueEmpty_{true};
     std::atomic<bool> stopping_{false};
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
