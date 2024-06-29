@@ -87,6 +87,10 @@ class GStreamerVideo final : public IVideo
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
     static void buffer_destroy_notify(gpointer data);
+    static void async_set_state_null(GstElement *element, gpointer user_data);
+    static void async_set_state_paused(GstElement *element, gpointer user_data);
+    static void async_set_state_playing(GstElement *element, gpointer user_data);
+    static void async_seek_to_start(GstElement *element, gpointer user_data);
     bool initializeGstElements(const std::string &file);
     void createSdlTexture();
     GstElement *playbin_{nullptr};
