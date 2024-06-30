@@ -285,7 +285,7 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
     GstElement *videoBin = gst_bin_new("SinkBin");
     videoSink_ = gst_element_factory_make("fakesink", "video_sink");
 
-    if (!playbin_ || !videoBin || !videoSink_ || !capsFilter || !queue)
+    if (!playbin_ || !videoBin || !videoSink_ || !capsFilter)
     {
         LOG_DEBUG("Video", "Could not create GStreamer elements");
         g_free(uriFile);
