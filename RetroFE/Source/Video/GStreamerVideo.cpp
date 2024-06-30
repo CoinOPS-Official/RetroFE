@@ -313,15 +313,15 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
     // Set properties for the queue to limit the buffer size or time
     g_object_set(queue, "max-size-buffers", 15, nullptr);
 
-    gst_bin_add_many(GST_BIN(videoBin), queue, capsFilter, videoSink_, nullptr);
-    if (!gst_element_link_many(queue, capsFilter, videoSink_, nullptr))
+    gst_bin_add_many(GST_BIN(videoBin),  capsFilter, videoSink_, nullptr);
+    if (!gst_element_link_many( capsFilter, videoSink_, nullptr))
     {
         LOG_DEBUG("Video", "Could not link video processing elements");
         g_free(uriFile);
         return false;
     }
 
-    GstPad *sinkPad = gst_element_get_static_pad(queue, "sink");
+    GstPad *sinkPad = gst_element_get_static_pad(capsFilter, "sink");
     GstPad *ghostPad = gst_ghost_pad_new("sink", sinkPad);
     gst_element_add_pad(videoBin, ghostPad);
     gst_object_unref(sinkPad);
