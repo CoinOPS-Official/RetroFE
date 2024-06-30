@@ -41,25 +41,12 @@ GStreamerVideo::GStreamerVideo(int monitor)
 
 {
     gst_video_info_init(&videoInfo_);
-    bufferQueue_ = g_async_queue_new_full(buffer_destroy_notify);
+    bufferQueue_ = g_async_queue_new();
 }
 
 GStreamerVideo::~GStreamerVideo()
 {
     GStreamerVideo::stop();
-}
-
-void GStreamerVideo::buffer_destroy_notify(gpointer data)
-{
-    auto* bufferFrame = static_cast<BufferFrame*>(data);
-    if (bufferFrame->vframe) {
-        gst_video_frame_unmap(bufferFrame->vframe);
-        delete bufferFrame->vframe;
-    }
-    if (bufferFrame->buffer) {
-        gst_buffer_unref(bufferFrame->buffer);
-    }
-    delete bufferFrame;
 }
 
 void GStreamerVideo::async_set_state_null(GstElement *element, gpointer user_data)
@@ -177,6 +164,15 @@ bool GStreamerVideo::stop()
     if (playbin_)
     {
         gst_element_call_async(playbin_, async_set_state_null, nullptr, nullptr);
+    }
+
+    while (g_async_queue_length(bufferQueue_) > 0)
+    {
+        auto bufferFrame = static_cast<BufferFrame*>(g_async_queue_try_pop(bufferQueue_));
+        if (bufferFrame)
+        {
+            BufferFramePtr framePtr(bufferFrame);  // This will automatically unmap and delete the frame and buffer.
+        }
     }
 
     if (bufferQueue_)

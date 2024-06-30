@@ -51,7 +51,7 @@ struct BufferFrameDeleter {
             delete bf->vframe;
         }
         if (bf->buffer) {
-            gst_buffer_unref(bf->buffer);
+            gst_clear_buffer(&bf->buffer);
         }
         delete bf;
     }
@@ -97,7 +97,6 @@ class GStreamerVideo final : public IVideo
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
-    static void buffer_destroy_notify(gpointer data);
     static void async_set_state_null(GstElement *element, gpointer user_data);
     static void async_set_state_paused(GstElement *element, gpointer user_data);
     static void async_set_state_playing(GstElement *element, gpointer user_data);
