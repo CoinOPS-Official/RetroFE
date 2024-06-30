@@ -516,7 +516,7 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuff
 
         auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
         auto vframe = std::unique_ptr<GstVideoFrame>(new GstVideoFrame{ GST_VIDEO_FRAME_INIT });
-        if (gst_video_frame_map(vframe.get(), &video->videoInfo_, buf, map_flags))
+        if (gst_video_frame_map(vframe.get(), &video->videoInfo_, gst_buffer_copy(buf), map_flags))
         {
             g_async_queue_push(video->bufferQueue_, vframe.release());
             int queue_size = g_async_queue_length(video->bufferQueue_);
