@@ -51,8 +51,15 @@ GStreamerVideo::~GStreamerVideo()
 
 void GStreamerVideo::buffer_destroy_notify(gpointer data)
 {
-    auto *vframe = static_cast<GstVideoFrame *>(data);
-    GstVideoFramePtr framePtr(vframe); // This will automatically unmap and delete the frame.
+    auto* bufferFrame = static_cast<BufferFrame*>(data);
+    if (bufferFrame->vframe) {
+        gst_video_frame_unmap(bufferFrame->vframe);
+        delete bufferFrame->vframe;
+    }
+    if (bufferFrame->buffer) {
+        gst_buffer_unref(bufferFrame->buffer);
+    }
+    delete bufferFrame;
 }
 
 void GStreamerVideo::async_set_state_null(GstElement *element, gpointer user_data)
@@ -498,35 +505,36 @@ int GStreamerVideo::getWidth()
     return width_;
 }
 
-void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad,
-                                      gpointer userdata)
+void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata)
 {
-    auto *video = static_cast<GStreamerVideo *>(userdata);
+    auto* video = static_cast<GStreamerVideo*>(userdata);
     if (video && !video->stopping_.load(std::memory_order_acquire))
     {
         if (g_async_queue_length(video->bufferQueue_) >= 20)
         {
-            auto oldFrame = static_cast<GstVideoFrame *>(g_async_queue_try_pop(video->bufferQueue_));
+            auto oldFrame = static_cast<BufferFrame*>(g_async_queue_pop(video->bufferQueue_));
             if (oldFrame)
             {
-                GstVideoFramePtr framePtr(oldFrame);
+                BufferFramePtr framePtr(oldFrame);
                 LOG_DEBUG("Video", "Buffer queue limit reached. Oldest buffer removed.");
             }
         }
 
+        GstBuffer* copied_buf = gst_buffer_copy(buf);
+        auto vframe = new GstVideoFrame{ GST_VIDEO_FRAME_INIT };
         auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
-        auto vframe = std::unique_ptr<GstVideoFrame>(new GstVideoFrame{ GST_VIDEO_FRAME_INIT });
-        if (gst_video_frame_map(vframe.get(), &video->videoInfo_, buf, map_flags))
+        if (gst_video_frame_map(vframe, &video->videoInfo_, copied_buf, map_flags))
         {
-            g_async_queue_push(video->bufferQueue_, vframe.release());
+            BufferFramePtr bufferFramePtr(new BufferFrame(copied_buf, vframe));
+            g_async_queue_push(video->bufferQueue_, bufferFramePtr.release());
             int queue_size = g_async_queue_length(video->bufferQueue_);
-            LOG_DEBUG("Video", "Buffer received, mapped, and added to queue. "
-                               "Current queue size: " +
-                                   std::to_string(queue_size));
+            LOG_DEBUG("Video", "Buffer received, copied, mapped, and added to queue. "
+                "Current queue size: " + std::to_string(queue_size));
         }
         else
         {
-            gst_buffer_unref(buf);
+            delete vframe;
+            gst_buffer_unref(copied_buf);
         }
     }
 }
@@ -538,13 +546,13 @@ void GStreamerVideo::update(float /* dt */)
         return;
     }
 
-    auto vframe = static_cast<GstVideoFrame *>(g_async_queue_try_pop(bufferQueue_));
-    if (!vframe)
+    auto bufferFrame = static_cast<BufferFrame*>(g_async_queue_try_pop(bufferQueue_));
+    if (!bufferFrame)
     {
         return;
     }
 
-    GstVideoFramePtr framePtr(vframe);
+    BufferFramePtr framePtr(bufferFrame);
 
     if (!texture_ && width_ != 0 && height_ != 0)
     {
@@ -555,13 +563,14 @@ void GStreamerVideo::update(float /* dt */)
     {
         SDL_LockMutex(SDL::getMutex());
 
+        GstVideoFrame* vframe = framePtr->vframe;
         if (sdlFormat_ == SDL_PIXELFORMAT_NV12)
         {
             if (SDL_UpdateNVTexture(texture_, nullptr,
-                                    static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 0)),
-                                    GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 0),
-                                    static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 1)),
-                                    GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 1)) != 0)
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 0)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 0),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 1)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 1)) != 0)
             {
                 LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
             }
@@ -569,12 +578,12 @@ void GStreamerVideo::update(float /* dt */)
         else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV)
         {
             if (SDL_UpdateYUVTexture(texture_, nullptr,
-                                     static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 0)),
-                                     GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 0),
-                                     static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 1)),
-                                     GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 1),
-                                     static_cast<const Uint8 *>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 2)),
-                                     GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 2)) != 0)
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 0)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 0),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 1)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 1),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 2)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 2)) != 0)
             {
                 LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
             }
@@ -583,6 +592,7 @@ void GStreamerVideo::update(float /* dt */)
         {
             LOG_ERROR("Video", "Unsupported format or fallback handling required.");
         }
+
         SDL_UnlockMutex(SDL::getMutex());
     }
 }

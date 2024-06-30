@@ -37,16 +37,27 @@ extern "C"
 #endif
 }
 
-struct GstVideoFrameDeleter {
-    void operator()(GstVideoFrame* vframe) const {
-        if (vframe) {
-            gst_video_frame_unmap(vframe);
-            delete vframe;
+struct BufferFrame {
+    GstBuffer* buffer;
+    GstVideoFrame* vframe;
+
+    BufferFrame(GstBuffer* buf, GstVideoFrame* vfrm) : buffer(buf), vframe(vfrm) {}
+};
+
+struct BufferFrameDeleter {
+    void operator()(BufferFrame* bf) const {
+        if (bf->vframe) {
+            gst_video_frame_unmap(bf->vframe);
+            delete bf->vframe;
         }
+        if (bf->buffer) {
+            gst_buffer_unref(bf->buffer);
+        }
+        delete bf;
     }
 };
 
-using GstVideoFramePtr = std::unique_ptr<GstVideoFrame, GstVideoFrameDeleter>;
+using BufferFramePtr = std::unique_ptr<BufferFrame, BufferFrameDeleter>;
 
 class GStreamerVideo final : public IVideo
 {
