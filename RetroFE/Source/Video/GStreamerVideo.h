@@ -37,17 +37,6 @@ extern "C"
 #endif
 }
 
-struct GstBufferDeleter {
-    void operator()(GstBuffer* buffer) const {
-        if (buffer) {
-            gst_clear_buffer(&buffer);
-        }
-    }
-};
-
-using GstBufferPtr = std::unique_ptr<GstBuffer, GstBufferDeleter>;
-
-
 class GStreamerVideo final : public IVideo
 {
   public:

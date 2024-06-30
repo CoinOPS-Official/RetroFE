@@ -173,7 +173,7 @@ bool GStreamerVideo::stop() {
     while (g_async_queue_length(bufferQueue_) > 0) {
         auto buffer = static_cast<GstBuffer*>(g_async_queue_pop(bufferQueue_));
         if (buffer) {
-            GstBufferPtr bufferPtr(buffer);  // This will automatically unmap and delete the frame and buffer.
+            gst_clear_buffer(&buffer);
         }
     }
 
@@ -502,7 +502,7 @@ int GStreamerVideo::getWidth()
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, const GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
     auto* video = static_cast<GStreamerVideo*>(userdata);
     if (video && !video->stopping_.load(std::memory_order_acquire)) {
-        if (g_async_queue_length(video->bufferQueue_) >= 20) {
+        if (g_async_queue_length(video->bufferQueue_) >= 5) {
             auto oldBuffer = static_cast<GstBuffer*>(g_async_queue_pop(video->bufferQueue_));
             if (oldBuffer) {
                 gst_clear_buffer(&oldBuffer);
@@ -527,14 +527,12 @@ void GStreamerVideo::update(float /* dt */) {
         return;
     }
 
-    GstBufferPtr bufferPtr(buffer);
-
     if (!texture_ && width_ != 0 && height_ != 0) {
         createSdlTexture();
     }
 
     if (texture_) {
-        GstVideoFrame vframe;
+        GstVideoFrame vframe{ GST_VIDEO_FRAME_INIT };
         auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
         if (gst_video_frame_map(&vframe, &videoInfo_, buffer, map_flags)) {
             SDL_LockMutex(SDL::getMutex());
@@ -566,6 +564,7 @@ void GStreamerVideo::update(float /* dt */) {
             SDL_UnlockMutex(SDL::getMutex());
             gst_video_frame_unmap(&vframe);
         }
+        gst_clear_buffer(&buffer);
     }
 }
 
