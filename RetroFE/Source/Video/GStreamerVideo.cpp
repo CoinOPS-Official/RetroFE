@@ -161,25 +161,32 @@ bool GStreamerVideo::stop()
     }
 
     // Initiate the transition of playbin to GST_STATE_NULL without waiting
-    if (playbin_)
-    {
-        gst_element_call_async(playbin_, async_set_state_null, nullptr, nullptr);
-    }
+    if (playbin_) {
+        gst_element_set_state(playbin_, GST_STATE_NULL);
 
-    while (g_async_queue_length(bufferQueue_) > 0)
-    {
-        auto bufferFrame = static_cast<BufferFrame*>(g_async_queue_try_pop(bufferQueue_));
-        if (bufferFrame)
-        {
-            BufferFramePtr framePtr(bufferFrame);  // This will automatically unmap and delete the frame and buffer.
+        // Optionally perform a quick, non-blocking state check
+        GstStateChangeReturn ret = gst_element_get_state(playbin_, nullptr, nullptr, 0);
+        if (ret != GST_STATE_CHANGE_SUCCESS && ret != GST_STATE_CHANGE_ASYNC) {
+            LOG_ERROR("Video", "Unexpected state change result when stopping playback");
         }
+        g_object_unref(playbin_);
     }
 
     if (bufferQueue_)
     {
+        while (g_async_queue_length(bufferQueue_) > 0)
+        {
+            auto bufferFrame = static_cast<BufferFrame*>(g_async_queue_pop(bufferQueue_));
+            if (bufferFrame)
+            {
+                BufferFramePtr framePtr(bufferFrame);  // This will automatically unmap and delete the frame and buffer.
+            }
+        }
+
         g_async_queue_unref(bufferQueue_);
         bufferQueue_ = nullptr;
     }
+
 
     // Release SDL Texture
     if (texture_)
@@ -242,8 +249,13 @@ bool GStreamerVideo::play(const std::string &file)
     if (!initializeGstElements(file))
         return false;
     // Start playing
-    gst_element_call_async(playbin_, async_set_state_playing, this, nullptr);
-
+    // Start playing
+    if (GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING); playState != GST_STATE_CHANGE_ASYNC) {
+        isPlaying_ = false;
+        LOG_ERROR("Video", "Unable to set the pipeline to the playing state.");
+        stop();
+        return false;
+    }
     paused_ = false;
     isPlaying_ = true;
     // Set the volume to zero and mute the video
@@ -498,7 +510,7 @@ int GStreamerVideo::getWidth()
     return width_;
 }
 
-void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata)
+void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, const GstBuffer* buf, GstPad* new_pad, gpointer userdata)
 {
     auto* video = static_cast<GStreamerVideo*>(userdata);
     if (video && !video->stopping_.load(std::memory_order_acquire))
@@ -514,11 +526,11 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
         }
 
         GstBuffer* copied_buf = gst_buffer_copy(buf);
-        auto vframe = new GstVideoFrame{ GST_VIDEO_FRAME_INIT };
+        auto vframe = std::make_unique<GstVideoFrame>();
         auto map_flags = static_cast<GstMapFlags>(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF);
-        if (gst_video_frame_map(vframe, &video->videoInfo_, copied_buf, map_flags))
+        if (gst_video_frame_map(vframe.get(), &video->videoInfo_, copied_buf, map_flags))
         {
-            BufferFramePtr bufferFramePtr(new BufferFrame(copied_buf, vframe));
+            BufferFramePtr bufferFramePtr(new BufferFrame(copied_buf, vframe.release()));
             g_async_queue_push(video->bufferQueue_, bufferFramePtr.release());
             int queue_size = g_async_queue_length(video->bufferQueue_);
             LOG_DEBUG("Video", "Buffer received, copied, mapped, and added to queue. "
@@ -526,7 +538,6 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
         }
         else
         {
-            delete vframe;
             gst_clear_buffer(&copied_buf);
         }
     }
@@ -545,7 +556,7 @@ void GStreamerVideo::update(float /* dt */)
         return;
     }
 
-    BufferFramePtr framePtr(bufferFrame);
+    BufferFramePtr framePtr(bufferFrame);  // Use smart pointer for automatic cleanup
 
     if (!texture_ && width_ != 0 && height_ != 0)
     {
@@ -556,14 +567,13 @@ void GStreamerVideo::update(float /* dt */)
     {
         SDL_LockMutex(SDL::getMutex());
 
-        GstVideoFrame* vframe = framePtr->vframe;
         if (sdlFormat_ == SDL_PIXELFORMAT_NV12)
         {
             if (SDL_UpdateNVTexture(texture_, nullptr,
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 0)),
-                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 0),
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 1)),
-                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 1)) != 0)
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(framePtr->vframe, 0)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(framePtr->vframe, 0),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(framePtr->vframe, 1)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(framePtr->vframe, 1)) != 0)
             {
                 LOG_ERROR("Video", "SDL_UpdateNVTexture failed: " + std::string(SDL_GetError()));
             }
@@ -571,12 +581,12 @@ void GStreamerVideo::update(float /* dt */)
         else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV)
         {
             if (SDL_UpdateYUVTexture(texture_, nullptr,
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 0)),
-                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 0),
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 1)),
-                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 1),
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(vframe, 2)),
-                GST_VIDEO_FRAME_PLANE_STRIDE(vframe, 2)) != 0)
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(framePtr->vframe, 0)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(framePtr->vframe, 0),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(framePtr->vframe, 1)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(framePtr->vframe, 1),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(framePtr->vframe, 2)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(framePtr->vframe, 2)) != 0)
             {
                 LOG_ERROR("Video", "SDL_UpdateYUVTexture failed: " + std::string(SDL_GetError()));
             }
@@ -589,6 +599,7 @@ void GStreamerVideo::update(float /* dt */)
         SDL_UnlockMutex(SDL::getMutex());
     }
 }
+
 
 void GStreamerVideo::draw()
 {

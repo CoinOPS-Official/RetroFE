@@ -59,6 +59,7 @@ struct BufferFrameDeleter {
 
 using BufferFramePtr = std::unique_ptr<BufferFrame, BufferFrameDeleter>;
 
+
 class GStreamerVideo final : public IVideo
 {
   public:
@@ -91,7 +92,7 @@ class GStreamerVideo final : public IVideo
     bool isPaused() override;
 
   private:
-    static void processNewBuffer(GstElement const * /* fakesink */, GstBuffer *buf, GstPad *new_pad, gpointer userdata);
+    static void processNewBuffer(GstElement const * /* fakesink */, const GstBuffer *buf, GstPad *new_pad, gpointer userdata);
     static void elementSetupCallback([[maybe_unused]] const GstElement& playbin, GstElement* element,
         [[maybe_unused]] GStreamerVideo* video);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
