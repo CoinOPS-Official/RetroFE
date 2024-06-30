@@ -281,7 +281,6 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
 
     playbin_ = gst_element_factory_make("playbin", "player");
     GstElement *capsFilter = gst_element_factory_make("capsfilter", "caps_filter");
-    GstElement *queue = gst_element_factory_make("queue", "queue");
     GstElement *videoBin = gst_bin_new("SinkBin");
     videoSink_ = gst_element_factory_make("fakesink", "video_sink");
 
@@ -310,8 +309,6 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
     g_object_set(capsFilter, "caps", videoConvertCaps, nullptr);
     gst_caps_unref(videoConvertCaps);
 
-    // Set properties for the queue to limit the buffer size or time
-    g_object_set(queue, "max-size-buffers", 15, nullptr);
 
     gst_bin_add_many(GST_BIN(videoBin),  capsFilter, videoSink_, nullptr);
     if (!gst_element_link_many( capsFilter, videoSink_, nullptr))
@@ -530,7 +527,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
         else
         {
             delete vframe;
-            gst_buffer_unref(copied_buf);
+            gst_clear_buffer(&copied_buf);
         }
     }
 }
@@ -555,7 +552,7 @@ void GStreamerVideo::update(float /* dt */)
         createSdlTexture();
     }
 
-    if (texture_)
+    if (texture_ && framePtr->vframe)
     {
         SDL_LockMutex(SDL::getMutex());
 
