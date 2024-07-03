@@ -232,7 +232,7 @@ bool SDL::initialize( Configuration &config )
             }
 			
 #ifdef WIN32
-			std::string SDLRenderDriver = "direct3d";
+			std::string SDLRenderDriver = "direct3d11";
 			config.getProperty(OPTION_SDLRENDERDRIVER, SDLRenderDriver);
 			if ( SDL_SetHint(SDL_HINT_RENDER_DRIVER, SDLRenderDriver.c_str()) != SDL_TRUE ) {
 				LOG_ERROR("SDL", "Error setting renderer to" + SDLRenderDriver + ". Available direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software");

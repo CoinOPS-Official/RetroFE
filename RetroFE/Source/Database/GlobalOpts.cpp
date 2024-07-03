@@ -64,7 +64,7 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_HARDWAREVIDEOACCEL,       "false",    global_options::option_type::BOOLEAN,  "Hardware decoding" },
     { OPTION_AVDECMAXTHREADS,          "2",        global_options::option_type::INTEGER,  "Number of threads for avdec software decoding" },
     { OPTION_MUTEVIDEO,                "false",    global_options::option_type::BOOLEAN,  "Video playback is muted" },
-    { OPTION_SDLRENDERDRIVER,          "direct3d", global_options::option_type::STRING,   "Set renderer (direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software)" },
+    { OPTION_SDLRENDERDRIVER,          "direct3d11", global_options::option_type::STRING, "Set renderer (direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software)" },
     { OPTION_SCALEQUALITY,             "1",        global_options::option_type::INTEGER,  "Scaling quality (0, 1, 2)" },
     { OPTION_HIGHPRIORITY,             "false",    global_options::option_type::BOOLEAN,  "RetroFE Windows process priority" },
     { OPTION_UNLOADSDL,                "false",    global_options::option_type::BOOLEAN,  "Close SDL when launching a game, MUST be true for RPI" },
