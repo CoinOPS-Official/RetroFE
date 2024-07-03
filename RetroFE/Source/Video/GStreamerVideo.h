@@ -51,7 +51,6 @@ class GStreamerVideo final : public IVideo
     SDL_Texture *getTexture() const override;
     void loopHandler() override;
     void volumeUpdate() override;
-    void update(float dt) override;
     void draw() override;
     void setNumLoops(int n);
     int getHeight() override;
@@ -67,18 +66,16 @@ class GStreamerVideo final : public IVideo
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
+    static void enablePlugin(const std::string &pluginName);
+    static void disablePlugin(const std::string &pluginName);
 
   private:
-    static void processNewBuffer(GstElement const * /* fakesink */, const GstBuffer *buf, GstPad *new_pad, gpointer userdata);
-    static void elementSetupCallback([[maybe_unused]] const GstElement& playbin, GstElement* element,
-        [[maybe_unused]] GStreamerVideo* video);
-    static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static void enablePlugin(const std::string& pluginName);
-    static void disablePlugin(const std::string& pluginName);
-    static void async_set_state_null(GstElement *element, gpointer user_data);
-    static void async_set_state_paused(GstElement *element, gpointer user_data);
-    static void async_set_state_playing(GstElement *element, gpointer user_data);
-    static void async_seek_to_start(GstElement *element, gpointer user_data);
+    static void processNewBuffer(GstElement const * /* fakesink */, const GstBuffer *buf, GstPad *new_pad,
+                                 gpointer userdata);
+    static void elementSetupCallback([[maybe_unused]] const GstElement &playbin, GstElement *element,
+                                     [[maybe_unused]] GStreamerVideo *video);
+    static GstPadProbeReturn padProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
+    static void initializePlugins();
     bool initializeGstElements(const std::string &file);
     void createSdlTexture();
     GstElement *playbin_{nullptr};
@@ -90,10 +87,10 @@ class GStreamerVideo final : public IVideo
     guint elementSetupHandlerId_{0};
     guint handoffHandlerId_{0};
     guint padProbeId_{0};
-    guint prerollHandlerId_{ 0 };
+    guint prerollHandlerId_{0};
     gint height_{0};
     gint width_{0};
-    GAsyncQueue* bufferQueue_;
+    GAsyncQueue *bufferQueue_;
     bool isPlaying_{false};
     static bool initialized_;
     int playCount_{0};
@@ -106,6 +103,8 @@ class GStreamerVideo final : public IVideo
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
     std::atomic<bool> stopping_{false};
+
+    static bool pluginsInitialized_;
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
 };
