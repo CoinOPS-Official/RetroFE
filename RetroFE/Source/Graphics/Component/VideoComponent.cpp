@@ -102,21 +102,13 @@ bool VideoComponent::update(float dt)
 
 void VideoComponent::allocateGraphicsMemory()
 {
-    if (videoInst_)
-    {
-        return;
-    }
-    else
-    {
-        Component::allocateGraphicsMemory();
-        if (!videoInst_ && !videoFile_.empty())
-        {
+    Component::allocateGraphicsMemory();
+
+    if (!isPlaying_) {
+        if (!videoInst_) {
             videoInst_ = VideoFactory::createVideo(monitor_, numLoops_);
-            if (!videoInst_)
-            {
-                LOG_ERROR("VideoComponent", "Failed to create video instance");
-                return;
-            }
+        }
+        if (videoFile_ != "") {
             isPlaying_ = videoInst_->play(videoFile_);
         }
     }
@@ -124,15 +116,18 @@ void VideoComponent::allocateGraphicsMemory()
 
 void VideoComponent::freeGraphicsMemory()
 {
-    if (videoInst_)
-    {
-        Component::freeGraphicsMemory();
-        isPlaying_ = false;
+    Component::freeGraphicsMemory();
+    if (Logger::isLevelEnabled("DEBUG"))
+        LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
+
+    if (videoInst_) {
         videoInst_->stop();
         delete videoInst_;
+        isPlaying_ = false;
         if (Logger::isLevelEnabled("DEBUG"))
             LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
         videoInst_ = nullptr;
+
     }
 }
 
@@ -141,7 +136,8 @@ void VideoComponent::draw()
 
     if (videoInst_)
     {
-        videoInst_->draw();
+        if (videoInst_->isPlaying() && isPlaying_)
+            videoInst_->draw();
         if (SDL_Texture *texture = videoInst_->getTexture())
         {
             SDL_Rect rect = {

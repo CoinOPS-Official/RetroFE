@@ -24,10 +24,17 @@ VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, 
     VideoComponent *component = nullptr;
     
     // Declare the extensions vector as static so it's only initialized once.
+#ifdef WIN32
     static std::vector<std::string> extensions = {
-        "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
-        "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
+        "mp4", "avi", "mkv",
+        "mp3", "wav", "flac"
     };
+#else
+    static std::vector<std::string> extensions = {
+    "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
+    "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
+    };
+#endif
 
     std::string prefix = Utils::combinePath(path, name);
 

@@ -171,7 +171,6 @@ bool GStreamerVideo::stop()
         if (ret != GST_STATE_CHANGE_SUCCESS)
         {
             LOG_ERROR("Video", "Failed to change playbin state to NULL");
-            return false; // Or handle the error as appropriate
         }
 
         // Disconnect signal handlers
