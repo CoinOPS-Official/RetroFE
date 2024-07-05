@@ -42,12 +42,12 @@ VideoComponent::~VideoComponent()
 
 bool VideoComponent::update(float dt)
 {
-    if (!videoInst_ || !isPlaying_)
+    if (!videoInst_ || !videoInst_->isPlaying())
     {
         return Component::update(dt);
     }
 
-    if (isPlaying_)
+    if (isPlaying_ && videoInst_->isPlaying())
     {
         videoInst_->setVolume(baseViewInfo.Volume);
         // videoInst_->update(dt);

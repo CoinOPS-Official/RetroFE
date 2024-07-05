@@ -72,19 +72,22 @@ class GStreamerVideo final : public IVideo
   private:
     static void processNewBuffer(GstElement const * /* fakesink */, const GstBuffer *buf, GstPad *new_pad,
                                  gpointer userdata);
-    static void elementSetupCallback([[maybe_unused]] const GstElement &playbin, GstElement *element,
-                                     [[maybe_unused]] GStreamerVideo *video);
+    static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
+    static void sourceSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstPadProbeReturn padProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer user_data);
     static void initializePlugins();
     bool initializeGstElements(const std::string &file);
     void createSdlTexture();
     GstElement *playbin_{nullptr};
     GstElement *videoSink_{nullptr};
+    GstElement* videoBin_{ nullptr };
+    GstElement* capsFilter_{ nullptr };
     GstBus *videoBus_{nullptr};
     GstVideoInfo videoInfo_;
     SDL_Texture *texture_{nullptr};
     SDL_PixelFormatEnum sdlFormat_{SDL_PIXELFORMAT_UNKNOWN};
     guint elementSetupHandlerId_{0};
+    guint sourceSetupHandlerId_{ 0 };
     guint handoffHandlerId_{0};
     guint padProbeId_{0};
     guint prerollHandlerId_{0};
@@ -103,7 +106,7 @@ class GStreamerVideo final : public IVideo
     double lastSetVolume_{0.0};
     bool lastSetMuteState_{false};
     std::atomic<bool> stopping_{false};
-
+    std::shared_mutex stopMutex_;
     static bool pluginsInitialized_;
 
     std::string generateDotFileName(const std::string &prefix, const std::string &videoFilePath) const;
