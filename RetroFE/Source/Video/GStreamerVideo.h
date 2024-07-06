@@ -83,7 +83,7 @@ class GStreamerVideo final : public IVideo
     GstElement* videoBin_{ nullptr };
     GstElement* capsFilter_{ nullptr };
     GstBus *videoBus_{nullptr};
-    GstVideoInfo videoInfo_;
+    GstVideoInfo* videoInfo_{ gst_video_info_new() };
     SDL_Texture *texture_{nullptr};
     SDL_PixelFormatEnum sdlFormat_{SDL_PIXELFORMAT_UNKNOWN};
     guint elementSetupHandlerId_{0};

@@ -47,7 +47,6 @@ GStreamerVideo::GStreamerVideo(int monitor)
     : monitor_(monitor)
 
 {
-    gst_video_info_init(&videoInfo_);
     bufferQueue_ = g_async_queue_new_full((GDestroyNotify)gst_buffer_unref);
     initializePlugins();
 }
@@ -155,6 +154,10 @@ bool GStreamerVideo::stop()
 
     std::unique_lock lock(stopMutex_);
 
+    if (videoInfo_)
+        gst_video_info_free(videoInfo_);
+    
+    
     if (bufferQueue_)
     {
         g_async_queue_unref(bufferQueue_);
@@ -437,10 +440,10 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad *pad, GstPadProbeInfo 
         gst_event_parse_caps(event, &caps);
         if (caps)
         {
-            if (gst_video_info_from_caps(&video->videoInfo_, caps))
+            if (gst_video_info_from_caps(video->videoInfo_, caps))
             {
-                video->width_ = video->videoInfo_.width;
-                video->height_ = video->videoInfo_.height;
+                video->width_ = video->videoInfo_->width;
+                video->height_ = video->videoInfo_->height;
                 LOG_DEBUG("GStreamerVideo", "Video dimensions: width = " + std::to_string(video->width_) +
                                                 ", height = " + std::to_string(video->height_));
 
@@ -600,7 +603,7 @@ void GStreamerVideo::draw()
     if (texture_)
     {
         GstVideoFrame vframe(GST_VIDEO_FRAME_INIT);
-        if (gst_video_frame_map(&vframe, &videoInfo_, buffer,
+        if (gst_video_frame_map(&vframe, videoInfo_, buffer,
             (GstMapFlags)(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF)))
         {
             if (sdlFormat_ == SDL_PIXELFORMAT_NV12)
