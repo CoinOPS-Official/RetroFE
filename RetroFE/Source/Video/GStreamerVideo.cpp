@@ -160,7 +160,7 @@ bool GStreamerVideo::stop()
     if (videoInfo_)
         gst_video_info_free(videoInfo_);
     
-    
+    g_async_queue_lock(bufferQueue_);
     if (bufferQueue_)
     {
         g_async_queue_unref(bufferQueue_);
@@ -562,7 +562,8 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, const G
     std::shared_lock lock(video->stopMutex_);
     if (video && !video->stopping_.load(std::memory_order_acquire))
     {
-        if (g_async_queue_length(video->bufferQueue_) >= 15)
+        g_async_queue_lock(video->bufferQueue_);
+        if (g_async_queue_length_unlocked(video->bufferQueue_) >= 15)
         {
             auto oldBuffer = static_cast<GstBuffer *>(g_async_queue_pop(video->bufferQueue_));
             if (oldBuffer)
@@ -573,10 +574,8 @@ void GStreamerVideo::processNewBuffer(GstElement const * /* fakesink */, const G
         }
 
         GstBuffer *copied_buf = gst_buffer_copy(buf);
-        g_async_queue_push(video->bufferQueue_, copied_buf);
-        int queue_size = g_async_queue_length(video->bufferQueue_);
-        LOG_DEBUG("Video",
-                  "Buffer received, copied, and added to queue. Current queue size: " + std::to_string(queue_size));
+        g_async_queue_push_unlocked(video->bufferQueue_, copied_buf);
+        g_async_queue_unlock(video->bufferQueue_);
     }
 }
 
