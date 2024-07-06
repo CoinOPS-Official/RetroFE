@@ -300,7 +300,7 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
     flags |= GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO;
     g_object_set(playbin_, "flags", flags, nullptr);
 
-    GstCaps *videoConvertCaps = nullptr;
+    GstCaps *videoConvertCaps = gst_caps_new_empty();
     if (Configuration::HardwareVideoAccel)
     {
         videoConvertCaps = gst_caps_from_string(
