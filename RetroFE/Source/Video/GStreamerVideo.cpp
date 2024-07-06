@@ -105,9 +105,12 @@ void GStreamerVideo::setNumLoops(int n)
         numLoops_ = n;
 }
 
-SDL_Texture *GStreamerVideo::getTexture() const
+SDL_Texture* GStreamerVideo::getTexture() const
 {
-    return texture_;
+    SDL_LockMutex(SDL::getMutex());
+    SDL_Texture* texture = texture_;
+    SDL_UnlockMutex(SDL::getMutex());
+    return texture;
 }
 
 bool GStreamerVideo::initialize()
