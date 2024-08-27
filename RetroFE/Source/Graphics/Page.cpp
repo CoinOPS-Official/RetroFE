@@ -1484,11 +1484,10 @@ void Page::allocateGraphicsMemory()
     if (highlightSoundChunk_) highlightSoundChunk_->allocate();
     if (selectSoundChunk_) selectSoundChunk_->allocate();
 
-    // Free graphics memory for all components in each layer
     for (const auto& layerComponents : LayerComponents_) {
         for (Component* component : layerComponents) {
             if (component) {
-                component->freeGraphicsMemory();
+                component->allocateGraphicsMemory();
             }
         }
     }
