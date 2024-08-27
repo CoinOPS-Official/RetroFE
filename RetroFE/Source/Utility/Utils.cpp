@@ -154,7 +154,7 @@ bool Utils::isFileCachePopulated(const std::filesystem::path& baseDir) {
 bool Utils::findMatchingFile(const std::string& path) {
     namespace fs = std::filesystem;
 
-    fs::path absolutePath = path;  // Assume path is already an absolute or correctly formed relative path
+    fs::path absolutePath = Utils::combinePath(Configuration::absolutePath, path);
     fs::path baseDir = absolutePath.parent_path();
 
     // Check if the directory is known to not exist
