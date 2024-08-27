@@ -24,8 +24,8 @@
 #endif
 #include <string_view>
 
-Image::Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive, int scaleMode)
-    : Component(p), file_(file), altFile_(altFile), scaleMode_(scaleMode)
+Image::Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive)
+    : Component(p), file_(file), altFile_(altFile)
 {
     baseViewInfo.Monitor = monitor;
     baseViewInfo.Additive = additive;
@@ -63,6 +63,7 @@ void Image::freeGraphicsMemory() {
 
 void Image::allocateGraphicsMemory() {
     if (!texture_ && frameTextures_.empty()) {
+
         auto endsWith = [](std::string_view str, std::string_view suffix) {
             return str.size() >= suffix.size() &&
                 str.compare(str.size() - suffix.size(), suffix.size(), suffix) == 0;
@@ -112,25 +113,6 @@ void Image::allocateGraphicsMemory() {
                 SDL_QueryTexture(texture_, nullptr, nullptr, &width, &height);
                 baseViewInfo.ImageWidth = static_cast<float>(width);
                 baseViewInfo.ImageHeight = static_cast<float>(height);
-
-                // Apply the scale mode
-                SDL_ScaleMode sdlScaleMode;
-                switch (scaleMode_) {
-                case 1:
-                    sdlScaleMode = SDL_ScaleModeNearest;
-                    break;
-                case 2:
-                    sdlScaleMode = SDL_ScaleModeLinear;
-                    break;
-                case 3:
-                    sdlScaleMode = SDL_ScaleModeBest;
-                    break;
-                default:
-                    sdlScaleMode = SDL_ScaleModeLinear; // Default to linear if an invalid value is provided
-                    break;
-                }
-                SDL_SetTextureScaleMode(texture_, sdlScaleMode);
-
             }
             else {
                 LOG_ERROR("Image", "Failed to load image: " + std::string(IMG_GetError()));

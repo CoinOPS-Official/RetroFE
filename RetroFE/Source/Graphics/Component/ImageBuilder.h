@@ -24,5 +24,5 @@
 class ImageBuilder
 {
 public:
-    Image * CreateImage(const std::string& path, const std::string& altPath, Page &p, const std::string& name, int monitor, bool additive, int scaleMode = 2);
+    Image * CreateImage(const std::string& path, const std::string& altPath, Page &p, const std::string& name, int monitor, bool additive);
 };

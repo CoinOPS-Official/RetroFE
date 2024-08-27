@@ -24,7 +24,7 @@
 
 class Image : public Component {
 public:
-    Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive, int scaleMode);
+    Image(const std::string& file, const std::string& altFile, Page &p, int monitor, bool additive);
     ~Image() override;
 
     void allocateGraphicsMemory() override;
@@ -42,6 +42,5 @@ private:
     std::vector<SDL_Texture*> frameTextures_;  // Store textures for each frame
     int currentFrame_ = 0;                // Current frame in the animation
     Uint32 lastFrameTime_ = 0;            // Time when the last frame was updated
-    int scaleMode_;
 };
 

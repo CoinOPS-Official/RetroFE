@@ -477,7 +477,6 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         xml_attribute<> const *idXml      = componentXml->first_attribute("id");
         xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
         xml_attribute<> const* additiveXml = componentXml->first_attribute("additive");
-        xml_attribute<> const* scaleModeXml = componentXml->first_attribute("scalemode");
         ImageBuilder imageBuild{};
         int id = -1;
         if (idXml) {
@@ -523,8 +522,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
             std::string altImagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, std::string(src->value()));
 
             bool additive = additiveXml ? bool(additiveXml->value()) : false;
-            int scaleMode = scaleModeXml ? Utils::convertInt(scaleModeXml->value()) : 2; // Default to SDL_ScaleModeLinear
-            auto* c = imageBuild.CreateImage(imagePath, altImagePath, *page, "", imageMonitor, additive, scaleMode);
+            auto* c = imageBuild.CreateImage(imagePath, altImagePath, *page, "", imageMonitor, additive);
             if (c) {
                 c->allocateGraphicsMemory();
                 c->setId(id);
