@@ -151,40 +151,6 @@ bool Utils::isFileCachePopulated(const std::filesystem::path& baseDir) {
     return fileCache.find(baseDir) != fileCache.end();
 }
 
-bool Utils::findMatchingFile(const std::string& path) {
-    namespace fs = std::filesystem;
-
-    fs::path absolutePath = Utils::combinePath(Configuration::absolutePath, path);
-    fs::path baseDir = absolutePath.parent_path();
-
-    // Check if the directory is known to not exist
-    if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
-        LOG_FILECACHE("Skip", "Skipping non-existing directory: " + removeAbsolutePath(baseDir.string()));
-        return false; // Directory was previously found not to exist
-    }
-
-    // Early exit if the directory doesn't exist
-    if (!fs::is_directory(baseDir)) {
-        nonExistingDirectories.insert(baseDir); // Add to non-existing directories cache
-        return false;
-    }
-
-    // Ensure the cache is populated
-    if (!isFileCachePopulated(baseDir)) {
-        populateCache(baseDir);
-    }
-
-    // Check if the exact file exists in the cache
-    if (isFileInCache(baseDir, absolutePath.filename().string())) {
-        return true; // File found
-    }
-
-    // Log cache miss if the file was not found
-    LOG_FILECACHE("Miss", removeAbsolutePath(baseDir.string()) + " does not contain file '" + absolutePath.filename().string() + "'");
-    return false; // No matching file found
-}
-
-
 bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file) {
     namespace fs = std::filesystem;
 

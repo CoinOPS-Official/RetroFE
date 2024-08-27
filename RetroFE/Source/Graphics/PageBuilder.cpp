@@ -18,7 +18,7 @@
 #include "Page.h"
 #include "ViewInfo.h"
 #include "Component/Container.h"
-#include "Component/ImageBuilder.h"
+#include "Component/Image.h"
 #include "Component/Text.h"
 #include "Component/ReloadableText.h"
 #include "Component/ReloadableMedia.h"
@@ -477,7 +477,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
         xml_attribute<> const *idXml      = componentXml->first_attribute("id");
         xml_attribute<> const *monitorXml = componentXml->first_attribute("monitor");
         xml_attribute<> const* additiveXml = componentXml->first_attribute("additive");
-        ImageBuilder imageBuild{};
+
         int id = -1;
         if (idXml) {
             id = Utils::convertInt(idXml->value());
@@ -522,24 +522,22 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
             std::string altImagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, std::string(src->value()));
 
             bool additive = additiveXml ? bool(additiveXml->value()) : false;
-            auto* c = imageBuild.CreateImage(imagePath, altImagePath, *page, "", imageMonitor, additive);
-            if (c) {
-                c->allocateGraphicsMemory();
-                c->setId(id);
+            auto* c = new Image(imagePath, altImagePath, *page, imageMonitor, additive);
+            c->allocateGraphicsMemory();
+            c->setId(id);
 
-                if (auto const* menuScrollReload = componentXml->first_attribute("menuScrollReload");
-                    menuScrollReload && (Utils::toLower(menuScrollReload->value()) == "true" || Utils::toLower(menuScrollReload->value()) == "yes")) {
-                    c->setMenuScrollReload(true);
-                }
-
-                // Explicitly set the monitor and layout
-                c->baseViewInfo.Monitor = monitorXml ? Utils::convertInt(monitorXml->value()) : layoutMonitor;
-                c->baseViewInfo.Layout = page->getCurrentLayout();
-
-                buildViewInfo(componentXml, c->baseViewInfo);
-                loadTweens(c, componentXml);
-                page->addComponent(c);
+            if (auto const* menuScrollReload = componentXml->first_attribute("menuScrollReload");
+                menuScrollReload && (Utils::toLower(menuScrollReload->value()) == "true" || Utils::toLower(menuScrollReload->value()) == "yes")) {
+                c->setMenuScrollReload(true);
             }
+
+            // Explicitly set the monitor and layout
+            c->baseViewInfo.Monitor = monitorXml ? Utils::convertInt(monitorXml->value()) : layoutMonitor;
+            c->baseViewInfo.Layout = page->getCurrentLayout();
+
+            buildViewInfo(componentXml, c->baseViewInfo);
+            loadTweens(c, componentXml);
+            page->addComponent(c);
         }
     }
 

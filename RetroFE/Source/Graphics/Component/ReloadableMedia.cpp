@@ -479,7 +479,7 @@ Component* ReloadableMedia::findComponent(
             component = videoBuild.createVideo(imagePath, page, basename, baseViewInfo.Monitor);
     }
     else {
-        component = imageBuild.CreateImage(imagePath, "", page, basename, baseViewInfo.Monitor, baseViewInfo.Additive);
+        component = imageBuild.CreateImage(imagePath, page, basename, baseViewInfo.Monitor, baseViewInfo.Additive);
     }
 
     return component;

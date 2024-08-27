@@ -777,7 +777,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
             }
             else {
                 std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
-                t = imageBuild.CreateImage(imagePath, "", page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
             }
         }
 
@@ -801,7 +801,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
                 }
                 else {
                     std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
-                    t = imageBuild.CreateImage(imagePath, "", page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+                    t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
                 }
             }
         }
@@ -837,10 +837,10 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
         else {
             name = imageType_;
             if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(imagePath, "", page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
             }
             if (!t) {
-                t = imageBuild.CreateImage(imagePath, "", page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
             }
         }
     }
@@ -853,10 +853,10 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
         else {
             name = imageType_;
             if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(item->filepath, "", page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(item->filepath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
             }
             if (!t) {
-                t = imageBuild.CreateImage(item->filepath, "", page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(item->filepath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
             }
         }
     }
@@ -884,7 +884,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
             // Try to create image
             std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
-            t = imageBuild.CreateImage(imagePath, "", page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+            t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
 
             // Check sub-collection path for art if needed
             if (!t && !commonMode_) {
@@ -899,7 +899,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
                 // Try to create image again
                 imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
-                t = imageBuild.CreateImage(imagePath, "", page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
             }
         }
 
@@ -924,10 +924,10 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
             if ( !t ) {
                 name = imageType_;
                 if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, "", page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
                 }
                 if (!t) {
-                    t = imageBuild.CreateImage(imagePath, "", page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
                 }
             }
         }
@@ -935,10 +935,10 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
         if ( !t ) {
             name = imageType_;
             if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(item->filepath, "", page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(item->filepath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
             }
             if (!t) {
-                t = imageBuild.CreateImage(item->filepath, "", page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(item->filepath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
             }
         }
 
