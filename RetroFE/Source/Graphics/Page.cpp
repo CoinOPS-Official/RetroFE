@@ -51,6 +51,7 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , minShowTime_(0)
     , jukebox_(false)
     , useThreading_(SDL::getRendererBackend(0) != "opengl")
+    // , useThreading_(false)
 {
 
     for (int i = 0; i < MAX_LAYOUTS; i++) {
@@ -82,12 +83,15 @@ void Page::deInitialize()
     }
     menus_.clear();
 
-    // Deinitialize and clear LayerComponents
-    for (Component* component : LayerComponents) {
-        component->freeGraphicsMemory();
-        delete component;
+    // Deinitialize and clear LayerComponents_
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            component->freeGraphicsMemory();
+            delete component;
+        }
+        layer.clear();
     }
-    LayerComponents.clear();
+    LayerComponents_.clear();
 
     // Delete sound chunks and reset pointers
     if (loadSoundChunk_) {
@@ -188,9 +192,12 @@ void Page::onNewItemSelected()
         }
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it)
-    {
-        (*it)->setNewItemSelected();
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            if (component) {
+                component->setNewItemSelected();
+            }
+        }
     }
 }
 
@@ -225,8 +232,12 @@ void Page::onNewScrollItemSelected()
 {
     if(!getAnActiveMenu()) return;
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->setNewScrollItemSelected();
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            if (component) {
+                component->setNewScrollItemSelected();
+            }
+        }
     }
 
 }
@@ -239,8 +250,12 @@ void Page::highlightLoadArt()
     // loading new items art
     setSelectedItem();
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->setNewItemSelected();
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            if (component) {
+                component->setNewItemSelected();
+            }
+        }
     }
 
 }
@@ -275,21 +290,23 @@ void Page::setStatusTextComponent(Text *t)
 }
 
 
-bool Page::addComponent(Component *c)
+bool Page::addComponent(Component* c)
 {
-    bool retVal = false;
-
-    if(c->baseViewInfo.Layer < NUM_LAYERS) {
-        LayerComponents.push_back(c);
-        retVal = true;
+    if (c->baseViewInfo.Layer < NUM_LAYERS) {
+        // Ensure that the vector for the specific layer exists
+        if (LayerComponents_.size() <= c->baseViewInfo.Layer) {
+            LayerComponents_.resize(NUM_LAYERS);
+        }
+        // Add the component to the appropriate layer vector
+        LayerComponents_[c->baseViewInfo.Layer].push_back(c);
+        return true;
     }
     else {
         std::stringstream ss;
-        ss << "Component layer too large Layer: " << c->baseViewInfo.Layer;
+        ss << "Component layer too large. Layer: " << c->baseViewInfo.Layer;
         LOG_ERROR("Page", ss.str());
+        return false;
     }
-
-    return retVal;
 }
 
 
@@ -315,29 +332,38 @@ bool Page::isIdle()
 {
     bool idle = isMenuIdle();
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end() && idle; ++it) {
-        idle = (*it)->isIdle();
+    // Iterate from the highest layer to the lowest
+    for (auto it = LayerComponents_.rbegin(); it != LayerComponents_.rend() && idle; ++it) {
+        for (const Component* component : *it) {
+            if (!component->isIdle()) {
+                idle = false;
+                break;  // Exit inner loop early if a component is not idle
+            }
+        }
     }
 
     return idle;
 }
 
 
+
 bool Page::isAttractIdle()
 {
-    for(auto it = menus_.begin(); it != menus_.end(); ++it) {
-        for(auto it2 = it->begin(); it2 != it->end(); ++it2) {
-            ScrollingList const *menu = *it2;
-
-            if(!menu->isAttractIdle()) {
+    // Check if any menu is not attract idle
+    for (const auto& menuVector : menus_) {
+        for (const ScrollingList* menu : menuVector) {
+            if (!menu->isAttractIdle()) {
                 return false;
             }
         }
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        if (!(*it)->isAttractIdle()) {
-            return false;
+    // Iterate from the highest layer to the lowest
+    for (auto it = LayerComponents_.rbegin(); it != LayerComponents_.rend(); ++it) {
+        for (const Component* component : *it) {
+            if (!component->isAttractIdle()) {
+                return false;
+            }
         }
     }
 
@@ -345,11 +371,15 @@ bool Page::isAttractIdle()
 }
 
 
+
 bool Page::isGraphicsIdle()
 {
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        if (!(*it)->isIdle()) {
-            return false;
+    // Iterate from the highest layer to the lowest
+    for (auto it = LayerComponents_.rbegin(); it != LayerComponents_.rend(); ++it) {
+        for (const Component* component : *it) {
+            if (!component->isIdle()) {
+                return false;
+            }
         }
     }
 
@@ -371,8 +401,11 @@ void Page::start()
         loadSoundChunk_->play();
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->triggerEvent( "enter" );
+    // Trigger "enter" events for all components, iterating from lowest to highest layer
+    for (const auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            component->triggerEvent("enter");
+        }
     }
 }
 
@@ -391,8 +424,11 @@ void Page::stop()
         unloadSoundChunk_->play();
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->triggerEvent( "exit" );
+    // Trigger "exit" events for all components, iterating from highest to lowest layer
+    for (auto it = LayerComponents_.rbegin(); it != LayerComponents_.rend(); ++it) {
+        for (Component* component : *it) {
+            component->triggerEvent("exit");
+        }
     }
 }
 
@@ -492,8 +528,11 @@ void Page::playlistChange()
             menu->setPlaylist(getPlaylistName());
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->setPlaylist(getPlaylistName());
+    // Update the playlist for all components, layer by layer
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            component->setPlaylist(getPlaylistName());
+        }
     }
 
     updatePlaylistMenuPosition();
@@ -504,8 +543,10 @@ void Page::menuScroll()
     if (Item const* item = selectedItem_; !item)
         return;
 
-    for (auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->triggerEvent("menuScroll", menuDepth_ - 1);
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            component->triggerEvent("menuScroll", menuDepth_ - 1);
+        }
     }
 }
 
@@ -514,8 +555,10 @@ void Page::playlistScroll()
     if (Item const* item = selectedItem_; !item)
         return;
 
-    for (auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->triggerEvent("playlistScroll", menuDepth_ - 1);
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            component->triggerEvent("playlistScroll", menuDepth_ - 1);
+        }
     }
 }
 
@@ -645,26 +688,34 @@ void Page::triggerEventOnAllMenus(const std::string& event)
     }
 
     unsigned int index = depth;
-    for (Component* component : LayerComponents) {
-        if (component)
-            component->triggerEvent(event, index);
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            if (component)
+                component->triggerEvent(event, index);
+        }
     }
 }
 
 
 
-void Page::triggerEvent( const std::string& action )
+void Page::triggerEvent(const std::string& action)
 {
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->triggerEvent( action );
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            if (component)
+                component->triggerEvent(action);
+        }
     }
 }
 
 
-void Page::setText( const std::string& text, int id )
+void Page::setText(const std::string& text, int id)
 {
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->setText( text, id );
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            if (component)
+                component->setText(text, id);
+        }
     }
 }
 
@@ -837,37 +888,35 @@ size_t Page::getSelectedIndex()
 }
 
 
-bool Page::pushCollection(CollectionInfo *collection)
+bool Page::pushCollection(CollectionInfo* collection)
 {
     if (!collection) {
         return false;
     }
 
-    // grow the menu as needed
-    if(menus_.size() <= menuDepth_ && getAnActiveMenu()) {
-        for(auto it = activeMenu_.begin(); it != activeMenu_.end(); it++)
-        {
-            ScrollingList const *menu    = *it;
-            auto *newMenu = new ScrollingList(*menu);
+    // Grow the menu as needed
+    if (menus_.size() <= menuDepth_ && getAnActiveMenu()) {
+        for (ScrollingList const* menu : activeMenu_) {
+            auto* newMenu = new ScrollingList(*menu);
             if (newMenu->isPlaylist()) {
                 playlistMenu_ = newMenu;
             }
             pushMenu(newMenu, menuDepth_);
         }
     }
-    if (menus_.size()) {
+
+    if (!menus_.empty()) {
         activeMenu_ = menus_[menuDepth_];
         anActiveMenu_ = nullptr;
         selectedItem_ = nullptr;
-        for (auto it = activeMenu_.begin(); it != activeMenu_.end(); it++) {
-            ScrollingList* menu = *it;
+        for (ScrollingList* menu : activeMenu_) {
             menu->collectionName = collection->name;
-            // add playlist menu items
-            if (menu->isPlaylist() && collection->playlistItems.size()) {
+            // Add playlist menu items
+            if (menu->isPlaylist() && !collection->playlistItems.empty()) {
                 menu->setItems(&collection->playlistItems);
             }
             else {
-                // add item collection menu
+                // Add item collection menu
                 menu->setItems(&collection->items);
             }
         }
@@ -876,7 +925,7 @@ bool Page::pushCollection(CollectionInfo *collection)
         LOG_WARNING("RetroFE", "layout.xml doesn't have any menus");
     }
 
-    // build the collection info instance
+    // Build the collection info instance
     MenuInfo_S info;
     info.collection = collection;
     info.playlist = collection->playlists.begin();
@@ -885,12 +934,15 @@ bool Page::pushCollection(CollectionInfo *collection)
 
     playlist_ = info.playlist;
     playlistChange();
-    if(menuDepth_ < menus_.size()) {
+    if (menuDepth_ < menus_.size()) {
         menuDepth_++;
     }
 
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->collectionName = collection->name;
+    // Update collection name for all LayerComponents
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            component->collectionName = collection->name;
+        }
     }
 
     return true;
@@ -899,21 +951,21 @@ bool Page::pushCollection(CollectionInfo *collection)
 
 bool Page::popCollection()
 {
-    if (!getAnActiveMenu()) return false;
-    if(menuDepth_ <= 1) return false;
-    if(collections_.size() <= 1) return false;
+    if (!getAnActiveMenu() || menuDepth_ <= 1 || collections_.size() <= 1) {
+        return false;
+    }
 
-    // queue the collection for deletion
-    MenuInfo_S *info = &collections_.back();
+    // Queue the collection for deletion
+    MenuInfo_S* info = &collections_.back();
     info->queueDelete = true;
     deleteCollections_.push_back(*info);
 
-    // get the next collection off of the stack
+    // Get the next collection off of the stack
     collections_.pop_back();
     info = &collections_.back();
 
-    // build playlist menu
-    if (playlistMenu_ && info->collection->playlistItems.size()) {
+    // Build playlist menu
+    if (playlistMenu_ && !info->collection->playlistItems.empty()) {
         playlistMenu_->setItems(&info->collection->playlistItems);
     }
 
@@ -924,8 +976,12 @@ bool Page::popCollection()
     activeMenu_ = menus_[menuDepth_ - 1];
     anActiveMenu_ = nullptr;
     selectedItem_ = nullptr;
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->collectionName = info->collection->name;
+
+    // Update collection name for all LayerComponents
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            component->collectionName = info->collection->name;
+        }
     }
 
     return true;
@@ -1174,20 +1230,22 @@ void Page::update(float dt) {
 
         // Future for asynchronous update of LayerComponents
         auto layerUpdateFuture = pool_.enqueue([this, dt, playlistName]() {
-            for (auto it = LayerComponents.begin(); it != LayerComponents.end();) {
-                if (*it) {
-                    (*it)->playlistName = playlistName;
-                    if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
-                        (*it)->freeGraphicsMemory();
-                        delete* it;
-                        it = LayerComponents.erase(it);
+            for (auto& layer : LayerComponents_) {
+                for (auto it = layer.begin(); it != layer.end();) {
+                    if (*it) {
+                        (*it)->playlistName = playlistName;
+                        if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
+                            (*it)->freeGraphicsMemory();
+                            delete* it;
+                            it = layer.erase(it);
+                        }
+                        else {
+                            ++it;
+                        }
                     }
                     else {
                         ++it;
                     }
-                }
-                else {
-                    ++it;
                 }
             }
             });
@@ -1206,20 +1264,22 @@ void Page::update(float dt) {
             }
         }
 
-        for (auto it = LayerComponents.begin(); it != LayerComponents.end();) {
-            if (*it) {
-                (*it)->playlistName = playlistName;
-                if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
-                    (*it)->freeGraphicsMemory();
-                    delete* it;
-                    it = LayerComponents.erase(it);
+        for (auto& layer : LayerComponents_) {
+            for (auto it = layer.begin(); it != layer.end();) {
+                if (*it) {
+                    (*it)->playlistName = playlistName;
+                    if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
+                        (*it)->freeGraphicsMemory();
+                        delete* it;
+                        it = layer.erase(it);
+                    }
+                    else {
+                        ++it;
+                    }
                 }
                 else {
                     ++it;
                 }
-            }
-            else {
-                ++it;
             }
         }
     }
@@ -1235,9 +1295,11 @@ void Page::update(float dt) {
 
 void Page::updateReloadables(float dt)
 {
-    for (auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        if (*it) {
-            (*it)->update(dt);
+    for (auto& layer : LayerComponents_) {
+        for (Component* component : layer) {
+            if (component) {
+                component->update(dt);
+            }
         }
     }
 }
@@ -1266,24 +1328,31 @@ void Page::cleanup()
 }
 
 
-void Page::draw()
-{
-    for(unsigned int i = 0; i < NUM_LAYERS; ++i) {
-        // Drawing Components based on their layer
-        for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-            if(*it && (*it)->baseViewInfo.Layer == i)
-                (*it)->draw();
+void Page::draw() {
+    for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
+        // Draw all components associated with the current layer
+        for (Component* component : LayerComponents_[i]) {
+            if (component) {
+                component->draw();
+            }
         }
 
-        // Drawing Menus
-        for(auto it = menus_.begin(); it != menus_.end(); ++it) {
-            for(auto it2 = it->begin(); it2 != it->end(); ++it2) {
-                ScrollingList *menu = *it2;
-                menu->draw(i);
+        // Draw all menus associated with the current layer
+        for (const auto& menuList : menus_) {
+            for (ScrollingList* const menu : menuList) {
+                if (menu) {
+                    // Draw only the components within the menu that belong to the current layer
+                    for (Component* c : menu->getComponents()) {
+                        if (c && c->baseViewInfo.Layer == i) {
+                            c->draw();
+                        }
+                    }
+                }
             }
         }
     }
 }
+
 
 
 void Page::removePlaylist()
@@ -1389,8 +1458,11 @@ void Page::freeGraphicsMemory()
     if (highlightSoundChunk_) highlightSoundChunk_->free();
     if (selectSoundChunk_) selectSoundChunk_->free();
 
-    for (Component* component : LayerComponents) {
-        component->freeGraphicsMemory();
+    // Free graphics memory for all components across layers
+    for (const auto& layerComponents : LayerComponents_) {
+        for (Component* component : layerComponents) {
+            component->freeGraphicsMemory();
+        }
     }
 }
 
@@ -1416,9 +1488,11 @@ void Page::allocateGraphicsMemory()
     if (highlightSoundChunk_) highlightSoundChunk_->allocate();
     if (selectSoundChunk_) selectSoundChunk_->allocate();
 
-    for (auto& component : LayerComponents) {
-        if (component) {
-            component->allocateGraphicsMemory();
+    for (const auto& layerComponents : LayerComponents_) {
+        for (Component* component : layerComponents) {
+            if (component) {
+                component->allocateGraphicsMemory();
+            }
         }
     }
     LOG_DEBUG("Page", "Allocate graphics memory complete");
@@ -1433,8 +1507,13 @@ void Page::deInitializeFonts() const
         }
     }
 
-    for (Component* component : LayerComponents) {
-        component->deInitializeFonts();
+    // Free graphics memory for all components in each layer
+    for (const auto& layerComponents : LayerComponents_) {
+        for (Component* component : layerComponents) {
+            if (component) {
+                component->deInitializeFonts();
+            }
+        }
     }
 }
 
@@ -1446,8 +1525,13 @@ void Page::initializeFonts() const
         }
     }
 
-    for (Component* component : LayerComponents) {
-        component->initializeFonts();
+    // Free graphics memory for all components in each layer
+    for (const auto& layerComponents : LayerComponents_) {
+        for (Component* component : layerComponents) {
+            if (component) {
+                component->initializeFonts();
+            }
+        }
     }
 }
 
@@ -1497,9 +1581,11 @@ bool Page::isGamesScrolling() const
 
 bool Page::isPlaying() const
 {
-    for(auto& component : LayerComponents) {
-        if (component->baseViewInfo.Monitor == 0 && component->isPlaying()) {
-            return true;
+    for (const auto& layerComponents : LayerComponents_) {
+        for (const auto& component : layerComponents) {
+            if (component->baseViewInfo.Monitor == 0 && component->isPlaying()) {
+                return true;
+            }
         }
     }
     return false;
@@ -1541,7 +1627,7 @@ void Page::scroll(bool forward, bool playlist) {
         // Asynchronous version
         auto scrollFuture = pool_.enqueue([this, forward, playlist]() {
             for (auto& menu : activeMenu_) {
-                if (menu && (playlist && menu->isPlaylist() || !playlist && !menu->isPlaylist())) {
+                if (menu && ((playlist && menu->isPlaylist()) || (!playlist && !menu->isPlaylist()))) {
                     menu->scroll(forward);
                 }
             }
@@ -1559,7 +1645,7 @@ void Page::scroll(bool forward, bool playlist) {
     else {
         // Synchronous version
         for (auto& menu : activeMenu_) {
-            if (menu && (playlist && menu->isPlaylist() || !playlist && !menu->isPlaylist())) {
+            if (menu && ((playlist && menu->isPlaylist()) || (!playlist && !menu->isPlaylist()))) {
                 menu->scroll(forward);
             }
         }
@@ -1661,94 +1747,102 @@ bool Page::isJukebox() const
 
 bool Page::isJukeboxPlaying()
 {
-
     bool retVal = false;
-
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        retVal |= (*it)->isJukeboxPlaying();
+    for (const auto& layerComponents : LayerComponents_) {
+        for (const auto& component : layerComponents) {
+            retVal |= component->isJukeboxPlaying();
+        }
     }
-
     return retVal;
-
 }
 
-
-void Page::skipForward( )
+void Page::skipForward()
 {
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->skipForward( );
+    for (auto& layerComponents : LayerComponents_) {
+        for (auto& component : layerComponents) {
+            component->skipForward();
+        }
     }
 }
 
-
-void Page::skipBackward( )
+void Page::skipBackward()
 {
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->skipBackward( );
+    for (auto& layerComponents : LayerComponents_) {
+        for (auto& component : layerComponents) {
+            component->skipBackward();
+        }
     }
 }
 
-
-void Page::skipForwardp( )
+void Page::skipForwardp()
 {
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->skipForwardp( );
+    for (auto& layerComponents : LayerComponents_) {
+        for (auto& component : layerComponents) {
+            component->skipForwardp();
+        }
     }
 }
 
-
-void Page::skipBackwardp( )
+void Page::skipBackwardp()
 {
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->skipBackwardp( );
+    for (auto& layerComponents : LayerComponents_) {
+        for (auto& component : layerComponents) {
+            component->skipBackwardp();
+        }
     }
 }
 
-
-void Page::pause( )
+void Page::pause()
 {
-    for (auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->pause();
+    for (auto& layerComponents : LayerComponents_) {
+        for (auto& component : layerComponents) {
+            component->pause();
+        }
     }
 }
 
-
-void Page::restart( )
+void Page::restart()
 {
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        (*it)->restart( );
+    for (auto& layerComponents : LayerComponents_) {
+        for (auto& component : layerComponents) {
+            component->restart();
+        }
     }
 }
 
-
-unsigned long long Page::getCurrent( )
+unsigned long long Page::getCurrent()
 {
     unsigned long long ret = 0;
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        ret += (*it)->getCurrent( );
+    for (const auto& layerComponents : LayerComponents_) {
+        for (const auto& component : layerComponents) {
+            ret += component->getCurrent();
+        }
     }
     return ret;
 }
 
-
-unsigned long long Page::getDuration( )
+unsigned long long Page::getDuration()
 {
     unsigned long long ret = 0;
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        ret += (*it)->getDuration( );
+    for (const auto& layerComponents : LayerComponents_) {
+        for (const auto& component : layerComponents) {
+            ret += component->getDuration();
+        }
     }
     return ret;
 }
 
-
-bool Page::isPaused( )
+bool Page::isPaused()
 {
     bool ret = false;
-    for(auto it = LayerComponents.begin(); it != LayerComponents.end(); ++it) {
-        ret |= (*it)->isPaused( );
+    for (const auto& layerComponents : LayerComponents_) {
+        for (const auto& component : layerComponents) {
+            ret |= component->isPaused();
+        }
     }
     return ret;
 }
+
 
 void Page::setLocked(bool locked)
 {

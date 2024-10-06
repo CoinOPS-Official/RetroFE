@@ -23,7 +23,7 @@ class FontCache
 {
 public:
     FontCache();
-    void initialize();
+    bool initialize() const;
     void deInitialize();
     bool loadFont(std::string font, int fontSize, SDL_Color color, int monitor);
     Font *getFont(std::string font, int fontSize, SDL_Color color);

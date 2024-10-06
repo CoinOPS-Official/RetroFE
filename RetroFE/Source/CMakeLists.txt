@@ -45,7 +45,11 @@ endif()
 
 	set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x64" CACHE STRING "location of where your gstreamer include and lib folders reside")
 	set(GLIB2_ROOT "${GSTREAMER_ROOT}")
-  
+
+	# Set PacDrive paths
+	set(PACDRIVE_ROOT "${RETROFE_THIRD_PARTY_DIR}/PacDrive")
+	include_directories("${PACDRIVE_ROOT}")
+
 endif()
 
 if(WIN32)
@@ -88,6 +92,7 @@ set(RETROFE_INCLUDE_DIRS
 	"${ZLIB_INCLUDE_DIRS}"
 	"${SQLITE3_ROOT}"
 	"${RAPIDXML_ROOT}"
+	"${PACDRIVE_ROOT}"
 	"/opt/homebrew/lib/glib-2.0/include"
 )
 
@@ -100,6 +105,11 @@ set(RETROFE_LIBRARIES
 	${SDL2_TTF_LIBRARIES}
 	${ZLIB_LIBRARIES}
 )
+
+# Link PacDrive library if on Windows
+if(WIN32)
+	list(APPEND RETROFE_LIBRARIES "${PACDRIVE_ROOT}/PacDrive64.lib")
+endif()
 
 if(NOT WIN32)
 	LIST(APPEND RETROFE_LIBRARIES ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT})
@@ -157,6 +167,7 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/RetroFE.h"
 	"${RETROFE_DIR}/Source/SDL.h"
 	"${RETROFE_DIR}/Source/Version.h"
+    "${SQLITE3_ROOT}/sqlite3.h"
 )
 
 set(RETROFE_SOURCES

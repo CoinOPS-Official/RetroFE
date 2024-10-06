@@ -50,6 +50,7 @@ ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool la
 
 ReloadableMedia::~ReloadableMedia()
 {
+    Component::freeGraphicsMemory();
     if (loadedComponent_ != nullptr) {
         delete loadedComponent_;
         loadedComponent_ = nullptr;
@@ -129,8 +130,6 @@ Component *ReloadableMedia::reloadTexture()
 
     if(!selectedItem) return nullptr;
 
-    config_.getProperty("currentCollection", currentCollection_);
-
     // build clone list
     std::vector<std::string> names;
 
@@ -148,6 +147,19 @@ Component *ReloadableMedia::reloadTexture()
             names.emplace_back("no");
         }
     }
+    if (typeLC == "islastplayed") {
+        // Get the current collection from the page
+        CollectionInfo* currentCollection = page.getCollection();
+
+        // Check if the selected item is in the lastplayed playlist of the current collection
+        if (currentCollection && currentCollection->isItemInLastPlayed(selectedItem)) {
+            names.emplace_back("yes");
+        }
+        else {
+            names.emplace_back("no");
+        }
+    }
+
     if (typeLC == "ispaused") {
         if (page.isPaused()) {
             names.emplace_back("yes");
@@ -413,7 +425,7 @@ Component* ReloadableMedia::findComponent(
     const std::string& collection,
     const std::string& type,
     const std::string& basename,
-    std::string_view filepath, // pass by const reference
+    std::string_view filepath,
     bool systemMode,
     bool isVideo) 
 {

@@ -60,7 +60,6 @@ private:
     Font* FfntInst_;
     bool textFallback_{ false };
     std::string type_;
-    std::string currentCollection_;
     int displayOffset_;
     std::string imageType_;
     bool jukebox_;
@@ -69,9 +68,9 @@ private:
     
     static inline const std::vector<std::string> imageExtensions = {
 #ifdef WIN32
-        "png", "jpg", "jpeg"
+        "png", "gif", "jpg", "jpeg"
 #else
-        "png", "PNG", "jpg", "JPG", "jpeg", "JPEG",
+        "png", "PNG", "gif", "GIF", "jpg", "JPG", "jpeg", "JPEG",
 #endif
     };
 
