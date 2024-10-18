@@ -31,7 +31,9 @@ Text::Text( const std::string& text, Page &p, Font *font, int monitor )
     baseViewInfo.Layout = page.getCurrentLayout();
 }
 
-Text::~Text() = default;
+Text::~Text() { Component::freeGraphicsMemory(); }
+
+
 
 void Text::deInitializeFonts( )
 {

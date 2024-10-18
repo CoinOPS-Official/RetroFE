@@ -25,6 +25,7 @@
 #include <filesystem>
 #include <unordered_set>
 #include <unordered_map>
+#include <codecvt>
 #ifndef __APPLE__
     #include <charconv>
 #endif
@@ -58,6 +59,17 @@ void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lP
 	if (hwnd != NULL) {
         PostMessage(hwnd, Msg, wParam, lParam);
     }
+}
+
+// Utility function to convert std::wstring to std::string
+std::string Utils::wstringToString(const std::wstring& wstr) {
+    if (wstr.empty()) {
+        return std::string();
+    }
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
+    std::string strTo(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), &strTo[0], size_needed, NULL, NULL);
+    return strTo;
 }
 #endif
 
@@ -140,49 +152,43 @@ bool Utils::isFileCachePopulated(const std::filesystem::path& baseDir) {
 }
 
 bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file) {
+    namespace fs = std::filesystem;
 
-        namespace fs = std::filesystem;
+    fs::path absolutePath = Utils::combinePath(Configuration::absolutePath, prefix);
+    fs::path baseDir = absolutePath.parent_path();
 
-        fs::path absolutePath = Utils::combinePath(Configuration::absolutePath, prefix);
-        fs::path baseDir = absolutePath.parent_path();
+    // Check if the directory is known to not exist
+    if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
+        LOG_FILECACHE("Skip", "Skipping non-existing directory: " + removeAbsolutePath(baseDir.string()));
+        return false; // Directory was previously found not to exist
+    }
 
-        // Check if the directory is known to not exist
-        if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
-            LOG_FILECACHE("Skip", "Skipping non-existing directory: " + removeAbsolutePath(baseDir.string()));
-            return false; // Directory was previously found not to exist
+    // Early exit if the directory doesn't exist
+    if (!fs::is_directory(baseDir)) {
+        nonExistingDirectories.insert(baseDir); // Add to non-existing directories cache
+        return false;
+    }
+
+    std::string baseFileName = absolutePath.filename().string();
+
+    // Ensure the cache is populated
+    if (!isFileCachePopulated(baseDir)) {
+        populateCache(baseDir);
+    }
+
+    // Check for the file with each extension in the cache
+    for (const auto& ext : extensions) {
+        std::string tempFileName = baseFileName + "." + ext;
+        if (isFileInCache(baseDir, tempFileName)) {
+            file = (baseDir / tempFileName).string();
+            return true; // File found
         }
+    }
 
-        if (!fs::is_directory(baseDir)) {
-            // Handle the case where baseDir is not a directory
-            nonExistingDirectories.insert(baseDir); // Add to non-existing directories cache
-            return false;
-        }
-
-        std::string baseFileName = absolutePath.filename().string();
-
-        if (!isFileCachePopulated(baseDir)) {
-            populateCache(baseDir);
-        }
-
-        bool foundInCache = false;
-        for (const auto& ext : extensions) {
-            std::string tempFileName = baseFileName + "." + ext;
-            if (isFileInCache(baseDir, tempFileName)) {
-                file = (baseDir / tempFileName).string();
-                foundInCache = true;
-                break;
-            }
-        }
-
-        if (!foundInCache) {
-            // Log cache miss only once per directory after checking all extensions
-            LOG_FILECACHE("Miss", removeAbsolutePath(baseDir.string()) + " does not contain file '" + baseFileName + "'");
-        }
-
-        return foundInCache;
-
+    // Log cache miss after checking all extensions
+    LOG_FILECACHE("Miss", removeAbsolutePath(baseDir.string()) + " does not contain file '" + baseFileName + "'");
+    return false; // No matching file found
 }
-
 
 
 std::string Utils::replace(
@@ -279,6 +285,20 @@ std::string Utils::getEnvVar(std::string const& key)
     char const* val = std::getenv(key.c_str());
 
     return val == NULL ? std::string() : std::string(val);
+}
+
+void Utils::setEnvVar(const std::string& var, const std::string& value) {
+#ifdef _WIN32
+    // On Windows, use _putenv_s
+    if (_putenv_s(var.c_str(), value.c_str()) != 0) {
+        LOG_ERROR("Utils", "Failed to set GST_DEBUG_DUMP_DOT_DIR environment variable.");
+    }
+#else
+    // On Unix-like systems, use setenv
+    if (setenv(var.c_str(), value.c_str(), 1) != 0) {
+        LOG_ERROR("Utils", "Failed to set GST_DEBUG_DUMP_DOT_DIR environment variable.");
+    }
+#endif
 }
 
 std::string Utils::getFileName(const std::string& filePath) {

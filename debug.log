@@ -1,0 +1,251 @@
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+0:00:01.097388589 [36m29117[00m 0x507000083880 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:01.097430342 [36m29117[00m 0x507000083880 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:01.162518173 [36m29117[00m 0x507000083c70 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:01.162551452 [36m29117[00m 0x507000083c70 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:01.162580849 [36m29117[00m 0x507000083b20 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:01.162600937 [36m29117[00m 0x507000083b20 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:01.164311881 [36m29117[00m 0x507000083b90 [33;01mWARN   [00m [00m           h264parse gsth264parse.c:2201:gst_h264_parse_update_src_caps:<h264parse1>[00m VUI framerate 90000.0 exceeds allowed maximum 30.1
+libpng warning: iCCP: known incorrect sRGB profile
+0:00:01.165173134 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:01.165202554 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:01.165390433 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m           h264parse gsth264parse.c:2201:gst_h264_parse_update_src_caps:<h264parse3>[00m VUI framerate 90000.0 exceeds allowed maximum 30.1
+0:00:01.167269097 [36m29117[00m 0x507000083d50 [33;01mWARN   [00m [00m           h264parse gsth264parse.c:2201:gst_h264_parse_update_src_caps:<h264parse2>[00m VUI framerate 90000.0 exceeds allowed maximum 30.1
+0:00:01.168555672 [36m29117[00m 0x507000083b90 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec2>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:01.168633732 [36m29117[00m 0x507000083b90 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec2>[00m Sub-class should implement drain()
+0:00:01.168922367 [36m29117[00m 0x507000083b90 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec2>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)main, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, colorimetry=(string)bt709, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:01.168953719 [36m29117[00m 0x5070000838f0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec0>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:01.168964165 [36m29117[00m 0x507000083b90 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec2>[00m Sub-class should implement drain()
+0:00:01.168967422 [36m29117[00m 0x507000083dc0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec1>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:01.169019746 [36m29117[00m 0x5070000838f0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec0>[00m Sub-class should implement drain()
+libpng warning: iCCP: known incorrect sRGB profile
+0:00:01.169023659 [36m29117[00m 0x507000083dc0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec1>[00m Sub-class should implement drain()
+0:00:01.169269277 [36m29117[00m 0x5070000838f0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec0>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)high, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:01.169291142 [36m29117[00m 0x507000083dc0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec1>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)main, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, colorimetry=(string)bt709, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:01.169315663 [36m29117[00m 0x5070000838f0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec0>[00m Sub-class should implement drain()
+0:00:01.169335159 [36m29117[00m 0x507000083dc0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec1>[00m Sub-class should implement drain()
+0:00:01.169649527 [36m29117[00m 0x507000083d50 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec3>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:01.169682674 [36m29117[00m 0x507000083d50 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec3>[00m Sub-class should implement drain()
+0:00:01.169888163 [36m29117[00m 0x507000083d50 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec3>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)main, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, colorimetry=(string)bt709, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:01.169915845 [36m29117[00m 0x507000083d50 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec3>[00m Sub-class should implement drain()
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+0:00:01.289993678 [36m29117[00m 0x507000084060 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1460:gst_audio_base_sink_skew_slaving:<alsasink2>[00m correct clock skew +0:00:00.032521671 > +0:00:00.020000000
+0:00:01.509792709 [36m29117[00m 0x507000084060 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink2>[00m correct clock skew -0:00:00.022404463 < -+0:00:00.020000000
+0:00:01.659933189 [36m29117[00m 0x507000084060 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink2>[00m correct clock skew -0:00:00.022020565 < -+0:00:00.020000000
+0:00:01.859929878 [36m29117[00m 0x507000084060 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink2>[00m correct clock skew -0:00:00.021991969 < -+0:00:00.020000000
+0:00:02.109714732 [36m29117[00m 0x507000084060 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink2>[00m correct clock skew -0:00:00.021063944 < -+0:00:00.020000000
+0:00:02.530150852 [36m29117[00m 0x507000084060 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink2>[00m correct clock skew -0:00:00.020569038 < -+0:00:00.020000000
+libpng warning: iCCP: known incorrect sRGB profile
+0:00:03.062308309 [36m29117[00m 0x5070000840d0 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.062350223 [36m29117[00m 0x5070000840d0 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.066327814 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m           h264parse gsth264parse.c:2201:gst_h264_parse_update_src_caps:<h264parse4>[00m VUI framerate 90000.0 exceeds allowed maximum 30.1
+0:00:03.069941076 [36m29117[00m 0x507000083dc0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec4>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:03.069992473 [36m29117[00m 0x507000083dc0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec4>[00m Sub-class should implement drain()
+0:00:03.070174075 [36m29117[00m 0x507000083dc0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec4>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)main, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, colorimetry=(string)bt709, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:03.070203417 [36m29117[00m 0x507000083dc0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec4>[00m Sub-class should implement drain()
+0:00:03.364745851 [36m29117[00m 0x507000083f80 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1460:gst_audio_base_sink_skew_slaving:<alsasink3>[00m correct clock skew +0:00:00.188228383 > +0:00:00.020000000
+libpng warning: iCCP: known incorrect sRGB profile
+0:00:03.838742281 [36m29117[00m 0x507000083f80 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.838780289 [36m29117[00m 0x507000083f80 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.840280172 [36m29117[00m 0x507000083d50 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.840330036 [36m29117[00m 0x507000083d50 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.840578174 [36m29117[00m 0x507000083f80 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.840604098 [36m29117[00m 0x507000083f80 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.841929326 [36m29117[00m 0x507000083d50 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.841955751 [36m29117[00m 0x507000083d50 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.842424340 [36m29117[00m 0x507000083a40 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec5>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:03.842473071 [36m29117[00m 0x507000083a40 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec5>[00m Sub-class should implement drain()
+0:00:03.842626032 [36m29117[00m 0x507000083a40 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec5>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)high, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:03.842652209 [36m29117[00m 0x507000083a40 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec5>[00m Sub-class should implement drain()
+0:00:03.843795879 [36m29117[00m 0x507000083f10 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec6>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:03.843843033 [36m29117[00m 0x507000083f10 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec6>[00m Sub-class should implement drain()
+0:00:03.843996559 [36m29117[00m 0x507000083f10 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec6>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)high, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:03.844025831 [36m29117[00m 0x507000083f10 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec6>[00m Sub-class should implement drain()
+0:00:03.847188117 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.847216950 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.849337657 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.849366736 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:03.851837768 [36m29117[00m 0x507000083ab0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec7>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:03.851916015 [36m29117[00m 0x507000083ab0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec7>[00m Sub-class should implement drain()
+0:00:03.852172765 [36m29117[00m 0x507000083ab0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec7>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)high, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:03.852218699 [36m29117[00m 0x507000083ab0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec7>[00m Sub-class should implement drain()
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+libpng warning: iCCP: known incorrect sRGB profile
+0:00:04.269669942 [36m29117[00m 0x507000083e30 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink8>[00m correct clock skew -0:00:00.022376424 < -+0:00:00.020000000
+0:00:04.558663958 [36m29117[00m 0x507000083e30 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink8>[00m correct clock skew -0:00:00.021355458 < -+0:00:00.020000000
+0:00:04.702169039 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:04.702312691 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:04.704752311 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa conf.c:5694:snd_config_expand:[00m alsalib error: Unknown parameters {AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:04.704783719 [36m29117[00m 0x507000083c00 [33;01mWARN   [00m [00m                alsa pcm.c:2721:snd_pcm_open_noupdate:[00m alsalib error: Unknown PCM default:{AES0 0x02 AES1 0x82 AES2 0x00 AES3 0x02}
+0:00:04.706572809 [36m29117[00m 0x507000083ab0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:191:gst_openh264dec_start:<openh264dec8>[00m openh264_dec_start called, openh264dec initialized OK!
+0:00:04.706613814 [36m29117[00m 0x507000083ab0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec8>[00m Sub-class should implement drain()
+0:00:04.706760138 [36m29117[00m 0x507000083ab0 [37mDEBUG  [00m [00m         openh264dec gstopenh264dec.cpp:224:gst_openh264dec_set_format:<openh264dec8>[00m input caps: video/x-h264, stream-format=(string)byte-stream, alignment=(string)au, level=(string)4, profile=(string)high, width=(int)1920, height=(int)1080, framerate=(fraction)30/1, pixel-aspect-ratio=(fraction)1/1, coded-picture-structure=(string)frame, chroma-format=(string)4:2:0, bit-depth-luma=(uint)8, bit-depth-chroma=(uint)8, parsed=(boolean)true
+0:00:04.706794972 [36m29117[00m 0x507000083ab0 [32;01mFIXME  [00m [00m        videodecoder gstvideodecoder.c:1193:gst_video_decoder_drain_out:<openh264dec8>[00m Sub-class should implement drain()
+0:00:04.858712119 [36m29117[00m 0x507000083e30 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink8>[00m correct clock skew -0:00:00.020484844 < -+0:00:00.020000000
+0:00:05.012109295 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1460:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew +0:00:00.196136268 > +0:00:00.020000000
+0:00:05.434504928 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.021421942 < -+0:00:00.020000000
+0:00:05.534113979 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.027179821 < -+0:00:00.020000000
+0:00:05.558324564 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.022147177 < -+0:00:00.020000000
+0:00:05.634536908 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.020483057 < -+0:00:00.020000000
+0:00:05.709097931 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.024447246 < -+0:00:00.020000000
+0:00:05.809090050 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.021528277 < -+0:00:00.020000000
+0:00:05.884142606 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.023337540 < -+0:00:00.020000000
+0:00:06.059195635 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.023528851 < -+0:00:00.020000000
+0:00:06.183422331 [36m29117[00m 0x507000083dc0 [33;01mWARN   [00m [00m       audiobasesink gstaudiobasesink.c:1491:gst_audio_base_sink_skew_slaving:<alsasink7>[00m correct clock skew -0:00:00.022345326 < -+0:00:00.020000000
+xbindkeys: no process found
+mpv: no process found
+0:00:06.420308194 [36m29117[00m 0x507000083a40 [31;01mERROR  [00m [00m         openh264dec gstopenh264dec.cpp:362:gst_openh264dec_handle_frame:<openh264dec5>[00m Failed to negotiate with downstream elements
+
+=================================================================
+==29117==ERROR: LeakSanitizer: detected memory leaks
+
+Direct leak of 329312 byte(s) in 502 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd157a52b in CollectionInfoBuilder::ImportBasicList(CollectionInfo*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::vector<Item*, std::allocator<Item*> >&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:293
+    #2 0x63abd159384b in CollectionInfoBuilder::loadPlaylistItems(CollectionInfo*, std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, Item*, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, Item*> > >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:581
+    #3 0x63abd1597501 in CollectionInfoBuilder::addPlaylists(CollectionInfo*) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:460
+    #4 0x63abd184b042 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:3005
+    #5 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #6 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #7 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #8 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #9 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+Direct leak of 19680 byte(s) in 30 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd15938fb in CollectionInfoBuilder::loadPlaylistItems(CollectionInfo*, std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, Item*, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, Item*> > >*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:585
+    #2 0x63abd1597501 in CollectionInfoBuilder::addPlaylists(CollectionInfo*) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:460
+    #3 0x63abd184b042 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:3005
+    #4 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #5 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #6 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #7 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #8 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+Direct leak of 12672 byte(s) in 36 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd15907f4 in CollectionInfoBuilder::buildCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:232
+    #2 0x63abd18461b9 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:2948
+    #3 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #4 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #5 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #6 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #7 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+Direct leak of 656 byte(s) in 1 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd15823b5 in CollectionInfoBuilder::ImportBasicList(CollectionInfo*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, Item*, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, Item*> > >&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:255
+    #2 0x63abd15961a2 in CollectionInfoBuilder::addPlaylists(CollectionInfo*) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:422
+    #3 0x63abd184b042 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:3005
+    #4 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #5 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #6 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #7 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #8 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+Indirect leak of 3340 byte(s) in 106 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x7e012bd62e2e in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_assign(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) (/lib/x86_64-linux-gnu/libstdc++.so.6+0x162e2e) (BuildId: 40b9b0d17fdeebfb57331304da2b7f85e1396ef2)
+
+Indirect leak of 1827 byte(s) in 36 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd1567408 in void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) /usr/include/c++/13/bits/basic_string.tcc:229
+    #2 0x63abd15585c6 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /usr/include/c++/13/bits/basic_string.h:551
+    #3 0x63abd15585c6 in CollectionInfo::CollectionInfo(Configuration&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfo.cpp:46
+    #4 0x63abd15908a6 in CollectionInfoBuilder::buildCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:232
+    #5 0x63abd18461b9 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:2948
+    #6 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #7 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #8 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #9 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #10 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+Indirect leak of 608 byte(s) in 6 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd156c15e in std::__new_allocator<Item*>::allocate(unsigned long, void const*) /usr/include/c++/13/bits/new_allocator.h:151
+    #2 0x63abd156c15e in std::allocator_traits<std::allocator<Item*> >::allocate(std::allocator<Item*>&, unsigned long) /usr/include/c++/13/bits/alloc_traits.h:482
+    #3 0x63abd156c15e in std::_Vector_base<Item*, std::allocator<Item*> >::_M_allocate(unsigned long) /usr/include/c++/13/bits/stl_vector.h:381
+    #4 0x63abd156c15e in void std::vector<Item*, std::allocator<Item*> >::_M_realloc_insert<Item* const&>(__gnu_cxx::__normal_iterator<Item**, std::vector<Item*, std::allocator<Item*> > >, Item* const&) /usr/include/c++/13/bits/vector.tcc:459
+    #5 0x63abd15b5b7d in std::vector<Item*, std::allocator<Item*> >::push_back(Item* const&) /usr/include/c++/13/bits/stl_vector.h:1292
+    #6 0x63abd158922d in CollectionInfoBuilder::ImportRomDirectory(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, CollectionInfo*, std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, Item*, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, Item*> > >, std::map<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >, Item*, std::less<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > >, std::allocator<std::pair<std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const, Item*> > >, bool, bool) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:920
+    #7 0x63abd158c408 in CollectionInfoBuilder::ImportDirectory(CollectionInfo*, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:364
+    #8 0x63abd1590a0e in CollectionInfoBuilder::buildCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:236
+    #9 0x63abd18461b9 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:2948
+    #10 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #11 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #12 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #13 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #14 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+Indirect leak of 106 byte(s) in 5 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd1567408 in void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) /usr/include/c++/13/bits/basic_string.tcc:229
+    #2 0x63abd15586cc in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /usr/include/c++/13/bits/basic_string.h:551
+    #3 0x63abd15586cc in CollectionInfo::CollectionInfo(Configuration&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfo.cpp:48
+    #4 0x63abd15908a6 in CollectionInfoBuilder::buildCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:232
+    #5 0x63abd18461b9 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:2948
+    #6 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #7 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #8 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #9 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #10 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+Indirect leak of 106 byte(s) in 5 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd1567408 in void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) /usr/include/c++/13/bits/basic_string.tcc:229
+    #2 0x63abd1558534 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /usr/include/c++/13/bits/basic_string.h:551
+    #3 0x63abd1558534 in CollectionInfo::CollectionInfo(Configuration&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfo.cpp:45
+    #4 0x63abd15908a6 in CollectionInfoBuilder::buildCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:232
+    #5 0x63abd18461b9 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:2948
+    #6 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #7 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #8 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #9 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #10 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+Indirect leak of 89 byte(s) in 3 object(s) allocated from:
+    #0 0x7e012c6fc698 in operator new(unsigned long) ../../../../src/libsanitizer/asan/asan_new_delete.cpp:95
+    #1 0x63abd1567408 in void std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::_M_construct<char*>(char*, char*, std::forward_iterator_tag) /usr/include/c++/13/bits/basic_string.tcc:229
+    #2 0x63abd1558cb0 in std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> >::basic_string(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /usr/include/c++/13/bits/basic_string.h:551
+    #3 0x63abd1558cb0 in CollectionInfo::CollectionInfo(Configuration&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfo.cpp:55
+    #4 0x63abd15908a6 in CollectionInfoBuilder::buildCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&, std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/Collection/CollectionInfoBuilder.cpp:232
+    #5 0x63abd18461b9 in RetroFE::getCollection(std::__cxx11::basic_string<char, std::char_traits<char>, std::allocator<char> > const&) /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:2948
+    #6 0x63abd185200c in RetroFE::run() /home/arcade/devel/RetroFE/RetroFE/Source/RetroFE.cpp:582
+    #7 0x63abd1820d9f in main /home/arcade/devel/RetroFE/RetroFE/Source/Main.cpp:333
+    #8 0x7e012b82a1c9 in __libc_start_call_main ../sysdeps/nptl/libc_start_call_main.h:58
+    #9 0x7e012b82a28a in __libc_start_main_impl ../csu/libc-start.c:360
+    #10 0x63abd15511d4 in _start (/home/arcade/CoinOPS/retrofe-652+0x5d1d4) (BuildId: 6db9049d54c5f3553a55d7df2d536377d4f335a2)
+
+SUMMARY: AddressSanitizer: 368396 byte(s) leaked in 730 allocation(s).
