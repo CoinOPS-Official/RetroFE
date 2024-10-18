@@ -19,12 +19,13 @@
 #include <SDL2/SDL.h>
 #include <vector>
 #include <string>
+#include <filesystem>
 
 
 class ReloadableScrollingText : public Component
 {
 public:
-    ReloadableScrollingText(Configuration &config, bool systemMode, bool layoutMode, bool menuMode, std::string type, std::string textFormat, std::string singlePrefix, std::string singlePostfix, std::string pluralPrefix, std::string pluralPostfix, std::string alignment, Page &page, int displayOffset, Font *font, std::string direction, float scrollingSpeed, float startPosition, float startTime, float endTime );
+    ReloadableScrollingText(Configuration& config, bool systemMode, bool layoutMode, bool menuMode, std::string type, std::string textFormat, std::string singlePrefix, std::string singlePostfix, std::string pluralPrefix, std::string pluralPostfix, std::string alignment, Page& p, int displayOffset, Font* font, std::string direction, float scrollingSpeed, float startPosition, float startTime, float endTime, std::string location);
     virtual ~ReloadableScrollingText( );
     bool     update(float dt);
     void     draw( );
@@ -33,8 +34,10 @@ public:
     void     deInitializeFonts();
     void     initializeFonts();
 
+
 private:
-    void reloadTexture( );
+    bool loadFileText(const std::string& filePath);
+    void reloadTexture(bool resetScroll = true);
     void loadText( std::string collection, std::string type, std::string basename, std::string filepath, bool systemMode );
     Configuration           &config_;
     bool                     systemMode_;
@@ -49,6 +52,7 @@ private:
     std::string              alignment_;
     std::vector<std::string> text_;
     std::string              direction_;
+	std::string              location_; 
     float                    scrollingSpeed_;
     float                    startPosition_;
     float                    currentPosition_;
@@ -59,4 +63,5 @@ private:
     std::string              currentCollection_;
     int                      displayOffset_;
     int                      textWidth_;
+    std::filesystem::file_time_type lastWriteTime_;
 };

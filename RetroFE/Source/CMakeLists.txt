@@ -5,7 +5,6 @@ project (retrofe)
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
-# set(CMAKE_FIND_FRAMEWORK LAST)
 set(RETROFE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(RETROFE_THIRD_PARTY_DIR "${RETROFE_DIR}/ThirdParty")
 list(APPEND CMAKE_MODULE_PATH "${RETROFE_DIR}/CMake")
@@ -29,80 +28,145 @@ set(SQLITE3_ROOT "${RETROFE_THIRD_PARTY_DIR}/sqlite3")
 set(RAPIDXML_ROOT "${RETROFE_THIRD_PARTY_DIR}/rapidxml-1.13")
 
 if(WIN32)
-if(MSVC)
-	set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-2.30.0")
- 	set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.8.2")
- 	set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.6.3")
- 	set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.20.2")
-elseif(MINGW)
- 	set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-2.30.0-mingw/x86_64-w64-mingw32")
- 	set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.8.2-mingw/x86_64-w64-mingw32")
-	set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.6.3-mingw/x86_64-w64-mingw32")
-	set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.20.2-mingw/x86_64-w64-mingw32")
-endif()
+    if(MSVC)
+        set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-2.30.0")
+        set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.8.2")
+        set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.6.3")
+        set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.20.2")
+    elseif(MINGW)
+        set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-2.30.0-mingw/x86_64-w64-mingw32")
+        set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.8.2-mingw/x86_64-w64-mingw32")
+        set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.6.3-mingw/x86_64-w64-mingw32")
+        set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.20.2-mingw/x86_64-w64-mingw32")
+    endif()
 
-	set(ZLIB_ROOT "${RETROFE_THIRD_PARTY_DIR}/zlib13-dll")
+    set(ZLIB_ROOT "${RETROFE_THIRD_PARTY_DIR}/zlib13-dll")
+    set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x64" CACHE STRING "location of where your gstreamer include and lib folders reside")
+    set(GLIB2_ROOT "${GSTREAMER_ROOT}")
 
-	set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x64" CACHE STRING "location of where your gstreamer include and lib folders reside")
-	set(GLIB2_ROOT "${GSTREAMER_ROOT}")
-  
+    # Set PacDrive paths
+    set(PACDRIVE_ROOT "${RETROFE_THIRD_PARTY_DIR}/PacDrive")
+    include_directories("${PACDRIVE_ROOT}")
+    
+    # Set paths for libwebp on Windows
+    set(WEBP_ROOT "${RETROFE_THIRD_PARTY_DIR}/libwebp")
+    set(WEBP_LIB "${WEBP_ROOT}/lib/libwebp.lib")
+    include_directories("${WEBP_ROOT}/include")
+
 endif()
 
 if(WIN32)
-	find_package(Glib2 REQUIRED)
-	find_package(GStreamer REQUIRED)
-	find_package(SDL2 REQUIRED)
-	find_package(SDL2_image REQUIRED)
-	find_package(SDL2_mixer REQUIRED)
-	find_package(SDL2_ttf REQUIRED)
-	find_package(ZLIB REQUIRED)
+    find_package(Glib2 REQUIRED)
+    find_package(GStreamer REQUIRED)
+    find_package(SDL2 REQUIRED)
+    find_package(SDL2_image REQUIRED)
+    find_package(SDL2_mixer REQUIRED)
+    find_package(SDL2_ttf REQUIRED)
+    find_package(ZLIB REQUIRED)
 
 elseif(APPLE)
-	find_package(Glib2 REQUIRED)
-	find_package(GStreamer REQUIRED)
-	find_package(SDL2 REQUIRED)
-	find_package(SDL2_image REQUIRED)
-	find_package(SDL2_mixer REQUIRED)
-	find_package(SDL2_ttf REQUIRED)
-	find_package(ZLIB REQUIRED)
-	
+    find_package(Glib2 REQUIRED)
+    find_package(GStreamer REQUIRED)
+    find_package(SDL2 REQUIRED)
+    find_package(SDL2_image REQUIRED)
+    find_package(SDL2_mixer REQUIRED)
+    find_package(SDL2_ttf REQUIRED)
+    find_package(ZLIB REQUIRED)
+    
 else()
-	include(FindPkgConfig)
-	pkg_search_module(SDL2 REQUIRED sdl2)
-	pkg_search_module(SDL2_IMAGE REQUIRED SDL2_image)
-	pkg_search_module(SDL2_MIXER REQUIRED SDL2_mixer)
-	pkg_search_module(SDL2_TTF REQUIRED SDL2_ttf)
-	pkg_search_module(ZLIB REQUIRED zlib)
-	pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-app-1.0)
-	pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
-	find_package(Threads REQUIRED)
+    include(FindPkgConfig)
+    
+    # Find necessary libraries using pkg-config
+    pkg_search_module(SDL2 REQUIRED sdl2)
+    pkg_search_module(SDL2_IMAGE REQUIRED SDL2_image)
+    pkg_search_module(SDL2_MIXER REQUIRED SDL2_mixer)
+    pkg_search_module(SDL2_TTF REQUIRED SDL2_ttf)
+    pkg_search_module(ZLIB REQUIRED zlib)
+    pkg_search_module(WEBP REQUIRED libwebp)
+    pkg_check_modules(WEBP_DEMUX REQUIRED libwebpdemux)
+    pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-app-1.0)
+    pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
+    find_package(Threads REQUIRED)
+    
+    # Include directories for all found libraries
+    include_directories(
+        ${SDL2_INCLUDE_DIRS}
+        ${SDL2_IMAGE_INCLUDE_DIRS}
+        ${SDL2_MIXER_INCLUDE_DIRS}
+        ${SDL2_TTF_INCLUDE_DIRS}
+        ${ZLIB_INCLUDE_DIRS}
+        ${WEBP_INCLUDE_DIRS}
+        ${GSTREAMER_INCLUDE_DIRS}
+        ${GLIB2_INCLUDE_DIRS}
+        ${Threads_INCLUDE_DIRS}
+    )
+    
+    # Link directories (optional, mostly handled by pkg-config)
+    link_directories(
+        ${SDL2_LIBRARY_DIRS}
+        ${SDL2_IMAGE_LIBRARY_DIRS}
+        ${SDL2_MIXER_LIBRARY_DIRS}
+        ${SDL2_TTF_LIBRARY_DIRS}
+        ${ZLIB_LIBRARY_DIRS}
+        ${WEBP_LIBRARY_DIRS}
+        ${GSTREAMER_LIBRARY_DIRS}
+        ${GLIB2_LIBRARY_DIRS}
+    )
+    
+    # Append the necessary libraries to be linked
+    list(APPEND RETROFE_LIBRARIES
+        ${SDL2_LIBRARIES}
+        ${SDL2_IMAGE_LIBRARIES}
+        ${SDL2_MIXER_LIBRARIES}
+        ${SDL2_TTF_LIBRARIES}
+        ${ZLIB_LIBRARIES}
+        ${WEBP_LIBRARIES}
+        ${WEBP_DEMUX_LIBRARIES}
+        ${GSTREAMER_LIBRARIES}
+        ${GLIB2_LIBRARIES}
+        ${CMAKE_DL_LIBS}
+        ${CMAKE_THREAD_LIBS_INIT}
+    )
 endif()
 
 set(RETROFE_INCLUDE_DIRS
-	"${GLIB2_INCLUDE_DIRS}"
-	"${GSTREAMER_INCLUDE_DIRS}"
-	"${SDL2_INCLUDE_DIRS}"
-	"${SDL2_IMAGE_INCLUDE_DIRS}"
-	"${SDL2_MIXER_INCLUDE_DIRS}"
-	"${SDL2_TTF_INCLUDE_DIRS}"
-	"${ZLIB_INCLUDE_DIRS}"
-	"${SQLITE3_ROOT}"
-	"${RAPIDXML_ROOT}"
-	"/opt/homebrew/lib/glib-2.0/include"
+    "${GLIB2_INCLUDE_DIRS}"
+    "${GSTREAMER_INCLUDE_DIRS}"
+    "${SDL2_INCLUDE_DIRS}"
+    "${SDL2_IMAGE_INCLUDE_DIRS}"
+    "${SDL2_MIXER_INCLUDE_DIRS}"
+    "${SDL2_TTF_INCLUDE_DIRS}"
+    "${ZLIB_INCLUDE_DIRS}"
+    "${WEBP_INCLUDE_DIRS}"
+    "${SQLITE3_ROOT}"
+    "${RAPIDXML_ROOT}"
+    "${PACDRIVE_ROOT}"
+    "/opt/homebrew/lib/glib-2.0/include"
 )
 
 set(RETROFE_LIBRARIES
-	${GLIB2_LIBRARIES}
-	${GSTREAMER_LIBRARIES}
-	${SDL2_LIBRARIES}
-	${SDL2_IMAGE_LIBRARIES}
-	${SDL2_MIXER_LIBRARIES}
-	${SDL2_TTF_LIBRARIES}
-	${ZLIB_LIBRARIES}
+    ${GLIB2_LIBRARIES}
+    ${GSTREAMER_LIBRARIES}
+    ${SDL2_LIBRARIES}
+    ${SDL2_IMAGE_LIBRARIES}
+    ${SDL2_MIXER_LIBRARIES}
+    ${SDL2_TTF_LIBRARIES}
+    ${ZLIB_LIBRARIES}
 )
 
+# Link PacDrive library if on Windows
+if(WIN32)
+    list(APPEND RETROFE_LIBRARIES "${PACDRIVE_ROOT}/PacDrive64.lib")
+	    # Add libwebp, libwebpdecoder, and libwebpdemux to the libraries to be linked on Windows
+    list(APPEND RETROFE_LIBRARIES 
+        "${WEBP_LIB}"
+        "${WEBP_ROOT}/lib/libwebpdecoder.lib"
+        "${WEBP_ROOT}/lib/libwebpdemux.lib"
+    )
+endif()
+
 if(NOT WIN32)
-	LIST(APPEND RETROFE_LIBRARIES ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT})
+    LIST(APPEND RETROFE_LIBRARIES ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT})
 endif()
 
 set(RETROFE_HEADERS
@@ -157,6 +221,7 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/RetroFE.h"
 	"${RETROFE_DIR}/Source/SDL.h"
 	"${RETROFE_DIR}/Source/Version.h"
+    "${SQLITE3_ROOT}/sqlite3.h"
 )
 
 set(RETROFE_SOURCES
@@ -212,57 +277,29 @@ set(RETROFE_SOURCES
 	"${SQLITE3_ROOT}/sqlite3.c"
 )
 
-
 set(EXECUTABLE_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORCE)
 set(LIBRARY_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORCE)
-
 
 include_directories(${RETROFE_INCLUDE_DIRS})
 add_executable(retrofe  ${RETROFE_SOURCES} ${RETROFE_HEADERS})
 
 if(NOT APPLE)
-	target_link_libraries(retrofe ${RETROFE_LIBRARIES})
+    target_link_libraries(retrofe 
+        ${RETROFE_LIBRARIES}
+        webpdemux
+	webp
+    )
 endif()
 
+
 if(APPLE)
-	# Get the current dir then go to package contents
-	get_filename_component(DIR_ABOVE ../../Package/Environment/Common ABSOLUTE)
-	# set as var
-	set(RETROFE_PACKAGE_DIR ${DIR_ABOVE})
-
-	# Set the output directory for the executable inside the app bundle
-	set_target_properties(retrofe PROPERTIES
-		MACOSX_BUNDLE TRUE
-		MACOSX_BUNDLE_BUNDLE_NAME "RetroFE"
-		MACOSX_BUNDLE_BUNDLE_VERSION "0.10.34.3"
-		MACOSX_BUNDLE_COPYRIGHT "CoinOPS Project 2023, ported to Apple Silicon by aidenjbass, Program originally by the RetroFE team"
-		MACOSX_BUNDLE_ICON_FILE "RetroFE.png"
-	)
-	# Copy necessary resources into the app bundle
-		# List of resource files to be copied into the bundle
-	set(APP_RESOURCES
-		${RETROFE_PACKAGE_DIR}/RetroFE.png
-	)
-	# Create folder
-	add_custom_command(TARGET retrofe POST_BUILD
-		COMMAND ${CMAKE_COMMAND} -E make_directory $<TARGET_FILE_DIR:retrofe>/../Resources 
-	)
-	foreach(RESOURCE ${APP_RESOURCES})
-		message("COPYING RESOURCE ${RESOURCE} TO BUNDLE")
-		add_custom_command(TARGET retrofe POST_BUILD
-			COMMAND ${CMAKE_COMMAND} -E copy ${RESOURCE} $<TARGET_FILE_DIR:retrofe>/../Resources
-		)
-	endforeach()
-
-	target_link_libraries(retrofe ${RETROFE_LIBRARIES})
-
-else()
-	set_target_properties(retrofe PROPERTIES OUTPUT_NAME "retrofe-${GIT_COMMIT_NO}")
-	set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
+    # Set up macOS-specific properties
+    set_target_properties(retrofe PROPERTIES OUTPUT_NAME "retrofe-${GIT_COMMIT_NO}")
+    set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
 endif()
 
 if(MINGW)
-  set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++ -lmingw32 -mwindows")
+    set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++ -lmingw32 -mwindows")
 endif()
 
 add_definitions(-DRETROFE_VERSION_MAJOR=${VERSION_MAJOR})
@@ -270,16 +307,15 @@ add_definitions(-DRETROFE_VERSION_MINOR=${VERSION_MINOR})
 add_definitions(-DRETROFE_VERSION_BUILD=${VERSION_BUILD})
 
 if(MSVC)
-	set(CMAKE_DEBUG_POSTFIX "d")
-	add_definitions(-D_CRT_SECURE_NO_DEPRECATE)
-	add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
-	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /WX /MT")
-	set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP /WX /MT")
-
-	set_target_properties(retrofe PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
+    set(CMAKE_DEBUG_POSTFIX "d")
+    add_definitions(-D_CRT_SECURE_NO_DEPRECATE)
+    add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /WX /MT")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP /WX /MT")
+    set_target_properties(retrofe PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
 else()
-  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -ggdb")
-  set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -ggdb")
-  set(CMAKE_C_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -ffast-math -Wall -funroll-loops")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -ffast-math -Wall -Wno-reorder -funroll-loops")
+    set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -Wall -ggdb")
+    set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -Wall -ggdb")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O3 -march=native -ffast-math -Wall -funroll-loops")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O3 -march=native -ffast-math -Wall -Wno-reorder -funroll-loops")
 endif()
