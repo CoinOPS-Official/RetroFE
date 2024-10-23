@@ -15,20 +15,18 @@
  */
 
 #include "FontCache.h"
-#include "Font.h"
-#include "../Utility/Log.h"
 #include "../SDL.h"
+#include "../Utility/Log.h"
+#include "Font.h"
 #if (__APPLE__)
-    #include <SDL2_ttf/SDL_ttf.h>
+#include <SDL2_ttf/SDL_ttf.h>
 #else
-    #include <SDL2/SDL_ttf.h>
+#include <SDL2/SDL_ttf.h>
 #endif
 #include <sstream>
 
-//todo: memory leak when launching games
-FontCache::FontCache()
-{
-}
+// todo: memory leak when launching games
+FontCache::FontCache() = default;
 
 FontCache::~FontCache()
 {
@@ -37,34 +35,40 @@ FontCache::~FontCache()
 
 void FontCache::deInitialize()
 {
-    std::map<std::string, Font *>::iterator it = fontFaceMap_.begin();
-    while(it != fontFaceMap_.end()) {
+    for (auto it = fontFaceMap_.begin(); it != fontFaceMap_.end(); /* no increment */)
+    {
         delete it->second;
-        fontFaceMap_.erase(it);
-        it = fontFaceMap_.begin();
+        it = fontFaceMap_.erase(it);
     }
     SDL_LockMutex(SDL::getMutex());
     TTF_Quit();
     SDL_UnlockMutex(SDL::getMutex());
 }
 
-
-void FontCache::initialize()
+bool FontCache::initialize() const
 {
-    //todo: make bool
-    TTF_Init();
+    if (TTF_Init() == 0)
+    {
+        return true;
+    }
+    else
+    {
+        LOG_WARNING("FontCache", "TTF_Init failed: " + std::string(TTF_GetError()));
+        return false;
+    }
 }
+
 Font *FontCache::getFont(std::string fontPath, int fontSize, SDL_Color color)
 {
-    Font *t = NULL;
+    std::string key = buildFontKey(fontPath, fontSize, color);
+    auto it = fontFaceMap_.find(key);
 
-    std::map<std::string, Font *>::iterator it = fontFaceMap_.find(buildFontKey(fontPath, fontSize, color));
-
-    if(it != fontFaceMap_.end()) {
-        t = it->second;
+    if (it != fontFaceMap_.end())
+    {
+        return it->second;
     }
 
-    return t;
+    return nullptr;
 }
 
 std::string FontCache::buildFontKey(std::string font, int fontSize, SDL_Color color)
@@ -78,14 +82,21 @@ std::string FontCache::buildFontKey(std::string font, int fontSize, SDL_Color co
 bool FontCache::loadFont(std::string fontPath, int fontSize, SDL_Color color, int monitor)
 {
     std::string key = buildFontKey(fontPath, fontSize, color);
-    std::map<std::string, Font *>::iterator it = fontFaceMap_.find(key);
+    auto it = fontFaceMap_.find(key);
 
-    if(it == fontFaceMap_.end()) {
+    if (it == fontFaceMap_.end())
+    {
         Font *f = new Font(fontPath, fontSize, color, monitor);
-        f->initialize();
-        fontFaceMap_[key] = f;
+        if (f->initialize())
+        {
+            fontFaceMap_[key] = f;
+        }
+        else
+        {
+            delete f;
+            return false;
+        }
     }
 
     return true;
 }
-

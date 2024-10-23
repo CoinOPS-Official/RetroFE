@@ -214,7 +214,7 @@ private:
     CollectionVector_T deleteCollections_;
 
     static const unsigned int NUM_LAYERS = 20;
-    std::vector<Component *> LayerComponents;
+    std::vector<std::vector<Component*>> LayerComponents_; // Grouped by layer
     std::list<ScrollingList *> deleteMenuList_;
     std::list<CollectionInfo *> deleteCollectionList_;
     std::map<std::string, size_t> lastPlaylistOffsets_;

@@ -42,7 +42,8 @@ public:
         Font* font,
         const std::string& layoutKey,
         const std::string& imageType,
-        const std::string& videoType);
+        const std::string& videoType,
+        bool useTextureCaching);
 
     ~ScrollingList() override;
     const std::vector<Item*>& getItems() const;
@@ -80,7 +81,7 @@ public:
     void selectItemByName(std::string_view name);
     std::string getSelectedItemName();
     void destroyItems();
-    void setPoints(std::vector<ViewInfo*>* scrollPoints, std::vector<AnimationEvents*>* tweenPoints);
+    void setPoints(std::vector<ViewInfo*>* points, std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints);
     size_t getSelectedIndex() const;
     void setSelectedIndex(unsigned int index);
     size_t getSize() const;
@@ -107,7 +108,7 @@ public:
     void allocateGraphicsMemory() override;
     void freeGraphicsMemory() override;
     bool update(float dt) override;
-    void draw(unsigned int layer);
+    const std::vector<Component*>& getComponents() const;
     void setScrollAcceleration(float value);
     void setStartScrollTime(float value);
     void setMinScrollTime(float value);
@@ -122,7 +123,10 @@ public:
     bool isPlaylist() const;
 private:
 
-    void resetTweens(Component* c, AnimationEvents* sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const;
+    void clearPoints();
+    void clearTweenPoints();
+    
+    void resetTweens(Component* c, std::shared_ptr<AnimationEvents> sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const;
     inline size_t loopIncrement(size_t offset, size_t index, size_t size) const;
     inline size_t loopDecrement(size_t offset, size_t index, size_t size) const;
 
@@ -134,7 +138,7 @@ private:
 
     std::vector<Component*>* spriteList_{ nullptr };
     std::vector<ViewInfo*>* scrollPoints_{ nullptr };
-    std::vector<AnimationEvents*>* tweenPoints_{ nullptr };
+    std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints_;
 
     size_t itemIndex_{ 0 };
     size_t selectedOffsetIndex_{ 0 };
@@ -152,5 +156,7 @@ private:
 
     std::vector<Item*>* items_{ nullptr };
     std::vector<Component*> components_;
+
+    bool useTextureCaching_{ false };
 
 };

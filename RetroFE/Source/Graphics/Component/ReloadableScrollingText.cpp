@@ -29,7 +29,7 @@
 #include <algorithm>
 
 
-ReloadableScrollingText::ReloadableScrollingText(Configuration &config, bool systemMode, bool layoutMode, bool menuMode, std::string type, std::string textFormat, std::string singlePrefix, std::string singlePostfix, std::string pluralPrefix, std::string pluralPostfix, std::string alignment, Page &p, int displayOffset, Font *font, std::string direction, float scrollingSpeed, float startPosition, float startTime, float endTime )
+ReloadableScrollingText::ReloadableScrollingText(Configuration &config, bool systemMode, bool layoutMode, bool menuMode, std::string type, std::string textFormat, std::string singlePrefix, std::string singlePostfix, std::string pluralPrefix, std::string pluralPostfix, std::string alignment, Page &p, int displayOffset, Font *font, std::string direction, float scrollingSpeed, float startPosition, float startTime, float endTime, std::string location)
     : Component(p)
     , config_(config)
     , systemMode_(systemMode)
@@ -53,8 +53,10 @@ ReloadableScrollingText::ReloadableScrollingText(Configuration &config, bool sys
     , currentCollection_("")
     , displayOffset_(displayOffset)
     , textWidth_(0)
+    , location_(location)
 {
     text_.clear( );
+    lastWriteTime_ = std::filesystem::file_time_type::min();  // Initialize to the earliest possible time
 }
 
 
@@ -62,10 +64,67 @@ ReloadableScrollingText::~ReloadableScrollingText( )
 {
 }
 
+bool ReloadableScrollingText::loadFileText(const std::string& filePath) {
+    std::string absolutePath = Utils::combinePath(Configuration::absolutePath, filePath);
+    std::filesystem::path file(absolutePath);
+    std::filesystem::file_time_type currentWriteTime;
 
-bool ReloadableScrollingText::update(float dt)
-{
+    // Lambda to round the file time to the nearest second
+    auto roundToNearestSecond = [](std::filesystem::file_time_type ftt) {
+        return std::chrono::time_point_cast<std::chrono::seconds>(ftt);
+        };
 
+    try {
+        currentWriteTime = std::filesystem::last_write_time(file);
+        currentWriteTime = roundToNearestSecond(currentWriteTime);  // Round to nearest second
+    }
+    catch (const std::filesystem::filesystem_error& e) {
+        LOG_ERROR("ReloadableScrollingText", "Failed to retrieve file modification time: " + std::string(e.what()));
+        return false;  // Return false if there is an error
+    }
+
+    // Check if the file has been modified since the last read
+    if (currentWriteTime == lastWriteTime_ && !text_.empty()) {
+        // No change in file, skip update
+        return false;  // File has not changed
+    }
+
+    // Store the current modification time
+    lastWriteTime_ = currentWriteTime;
+
+    // Reload the text from the file
+    std::ifstream fileStream(absolutePath);
+    if (!fileStream.is_open()) {
+        LOG_ERROR("ReloadableScrollingText", "Failed to open file: " + absolutePath);
+        return false;  // Return false if the file could not be opened
+    }
+
+    std::string line;
+    text_.clear();  // Clear previous content
+
+    while (std::getline(fileStream, line)) {
+        if (direction_ == "horizontal" && !text_.empty()) {
+            line = " " + line;  // Add space between lines for horizontal scrolling
+        }
+
+        // Apply text formatting (uppercase/lowercase)
+        if (textFormat_ == "uppercase") {
+            std::transform(line.begin(), line.end(), line.begin(), ::toupper);
+        }
+        else if (textFormat_ == "lowercase") {
+            std::transform(line.begin(), line.end(), line.begin(), ::tolower);
+        }
+
+        text_.push_back(line);  // Add the line to the scrolling text vector
+    }
+
+    fileStream.close();
+
+    return true;  // File was modified, return true
+}
+
+
+bool ReloadableScrollingText::update(float dt) {
     if (waitEndTime_ > 0) {
         waitEndTime_ -= dt;
     }
@@ -75,23 +134,27 @@ bool ReloadableScrollingText::update(float dt)
     else {
         if (direction_ == "horizontal") {
             currentPosition_ += scrollingSpeed_ * dt;
-            // Do not scroll if text fits within the size of the display and starting position is 0
-            if ( startPosition_ == 0.0f && textWidth_ <= baseViewInfo.Width )
+            if (startPosition_ == 0.0f && textWidth_ <= baseViewInfo.Width) {
                 currentPosition_ = 0.0f;
+            }
         }
         else if (direction_ == "vertical") {
             currentPosition_ += scrollingSpeed_ * dt;
         }
     }
 
-    if (newItemSelected ||
-       (newScrollItemSelected && getMenuScrollReload())) {
-        reloadTexture( );
+    // If the type is "file", always reload the text
+    if (type_ == "file") {
+        reloadTexture();
+    }
+    // For non-file types, use the default behavior
+    else if (newItemSelected || (newScrollItemSelected && getMenuScrollReload())) {
+        reloadTexture();  // Reset scroll position as usual for non-file types
         newItemSelected = false;
     }
+
     return Component::update(dt);
 }
-
 
 void ReloadableScrollingText::allocateGraphicsMemory( )
 {
@@ -119,19 +182,41 @@ void ReloadableScrollingText::initializeFonts( )
 }
 
 
-void ReloadableScrollingText::reloadTexture( )
-{
+void ReloadableScrollingText::reloadTexture(bool resetScroll) {
+    // If the type is "file", check if the file has changed
+    if (type_ == "file" && !location_.empty()) {
+        bool fileChanged = loadFileText(location_);  // Load text and check if file changed
 
-    if (direction_ == "horizontal") {
-        currentPosition_ = -startPosition_;
+        // Reset the scroll only if the file has changed
+        if (fileChanged) {
+            resetScroll = true;
+        }
+        else {
+            resetScroll = false;
+        }
     }
-    else if (direction_ == "vertical") {
-        currentPosition_ = -startPosition_;
-    }
-    waitStartTime_   = startTime_;
-    waitEndTime_     = 0.0f;
 
-    text_.clear( );
+    if (resetScroll) {
+        // Reset scroll position
+        if (direction_ == "horizontal") {
+            currentPosition_ = -startPosition_;
+        }
+        else if (direction_ == "vertical") {
+            currentPosition_ = -startPosition_;
+        }
+
+        // Reset start and end times to ensure proper wait timing after reload
+        waitStartTime_ = startTime_;
+        waitEndTime_ = 0.0f;  // Reset to zero when scroll restarts
+    }
+
+    text_.clear();
+
+    // Load the appropriate text content
+    if (type_ == "file" && !location_.empty()) {
+        loadFileText(location_);  // Load the text from the file, but don't reset scroll
+        return;  // Since it's file-based, just return after loading the text
+    }
 
     Item *selectedItem = page.getSelectedItem( displayOffset_ );
     if (!selectedItem) {

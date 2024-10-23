@@ -26,8 +26,8 @@
 class VideoComponent : public Component
 {
 public:
-    VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
-    virtual ~VideoComponent();
+    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay);
+    ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
     void freeGraphicsMemory() override;
@@ -46,11 +46,15 @@ public:
 
 private:
     std::string videoFile_;
-    std::string name_;
     IVideo* videoInst_{ nullptr };
     bool isPlaying_{ false };
     bool hasBeenOnScreen_{ false };
+    bool softOverlay_;
     int numLoops_;
     int monitor_;
     Page* currentPage_{ nullptr };
+    GstClockTime previousTime_ = 0;
+    GstClockTime previousPTS_ = 0;
+    gdouble cumulativeProportion_ = 0.0;
+    guint64 proportionSampleCount_ = 0;
 };

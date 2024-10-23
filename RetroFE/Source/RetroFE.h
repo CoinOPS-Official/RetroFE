@@ -61,6 +61,8 @@ public:
     std::vector<std::string>     getPlaylistCycle();
     void selectRandomOnFirstCycle();
     bool getAttractModeCyclePlaylist();
+    MetadataDatabase* getMetaDb();
+
 
 
 private:
@@ -113,6 +115,8 @@ private:
         RETROFE_COLLECTION_DOWN_ENTER,
         RETROFE_COLLECTION_DOWN_SCROLL,
         RETROFE_HANDLE_MENUENTRY,
+        RETROFE_ATTRACT_LAUNCH_ENTER,
+        RETROFE_ATTRACT_LAUNCH_REQUEST,        
         RETROFE_LAUNCH_ENTER,
         RETROFE_LAUNCH_REQUEST,
         RETROFE_LAUNCH_EXIT,
@@ -162,7 +166,6 @@ private:
 	void            saveRetroFEState( ) const;
     std::string getLayoutFileName();
     void resetInfoToggle();
-
 
     Configuration     &config_;
     DB                *db_;
