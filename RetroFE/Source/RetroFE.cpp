@@ -329,6 +329,7 @@ bool RetroFE::run()
     SDL_RestoreWindow(SDL::getWindow(0));
     SDL_RaiseWindow(SDL::getWindow(0));
     SDL_SetWindowGrab(SDL::getWindow(0), SDL_TRUE);
+    SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0) / 2, SDL::getWindowHeight(0) / 2);
 #ifdef WIN32
     bool highPriority = false;
     config_.getProperty(OPTION_HIGHPRIORITY, highPriority);
@@ -2193,7 +2194,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page *page)
     {
         // some how !SDL_KEYUP prevents double action
         input_.update(e);
-        if (e.type == SDL_POLLSENTINEL || (screensaver && ssExitInputs[e.type]))
+        if (e.type == SDL_POLLSENTINEL || e.type == SDL_MOUSEMOTION || (screensaver && ssExitInputs[e.type]))
         {
             break;
         }
