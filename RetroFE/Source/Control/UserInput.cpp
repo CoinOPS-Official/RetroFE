@@ -24,6 +24,7 @@
 #include "JoyHatHandler.h"
 #include "KeyboardHandler.h"
 #include "MouseButtonHandler.h"
+#include "MouseMovementHandler.h"
 
 UserInput::UserInput(Configuration &c)
     : config_(c)
@@ -167,9 +168,9 @@ bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, cons
 
         if (tokenLowered.find("mouse") == 0) {
             std::string mousedesc = Utils::replace(Utils::toLower(token), "mouse", "");
+            int button = 0;
+            std::stringstream ss;
             if (mousedesc.find("button") == 0) {
-                int button = 0;
-                std::stringstream ss;
                 mousedesc = Utils::replace(mousedesc, "button", "");
                 if (mousedesc == "left") button = SDL_BUTTON_LEFT;
                 else if (mousedesc == "middle") button = SDL_BUTTON_MIDDLE;
@@ -177,9 +178,25 @@ bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, cons
                 else if (mousedesc == "x1") button = SDL_BUTTON_X1;
                 else if (mousedesc == "x2") button = SDL_BUTTON_X2;
 
-                keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new MouseButtonHandler(button), key));
-                LOG_INFO("Input", "Binding mouse button " + ss.str());
-                found = true;
+                if (button) {
+                    keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new MouseButtonHandler(button), key));
+                    LOG_INFO("Input", "Binding mouse button " + ss.str());
+                    found = true;
+                }
+            }
+            else {
+                //todo replace numbers wit enum
+                // mousexleft
+                if (mousedesc == "xleft") button = 61;
+                else if (mousedesc == "xright") button = 62;
+                else if (mousedesc == "yup") button = 71;
+                else if (mousedesc == "ydown") button = 72;
+
+                if (button) {
+                    keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(new MouseMovementHandler(button), key));
+                    LOG_INFO("Input", "Binding mouse movement " + ss.str());
+                    found = true;
+                }
             }
         }
         else if (tokenLowered.find("joy") == 0) {
