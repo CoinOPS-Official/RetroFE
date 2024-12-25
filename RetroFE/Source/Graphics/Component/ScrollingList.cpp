@@ -45,30 +45,29 @@
 #include <iomanip>
 #include <algorithm>
 
-ScrollingList::ScrollingList(Configuration& c,
-    Page& p,
-    bool           layoutMode,
-    bool           commonMode,
-    bool          playlistType,
-    bool          selectedImage,
-    FontManager* font,
-    const std::string& layoutKey,
-    const std::string& imageType,
-    const std::string& videoType,
-    bool          useTextureCaching)
-    : Component(p)
-    , layoutMode_(layoutMode)
-    , commonMode_(commonMode)
-    , playlistType_(playlistType)
-    , selectedImage_(selectedImage)
-    , config_(c)
-    , fontInst_(font)
-    , layoutKey_(layoutKey)
-    , imageType_(imageType)
-    , videoType_(videoType)
-    , useTextureCaching_(useTextureCaching)
+ScrollingList::ScrollingList( Configuration &c,
+                              Page          &p,
+                              bool           layoutMode,
+                              bool           commonMode,
+                              bool          playlistType,
+                              bool          selectedImage,
+                              FontManager          *font,
+                              const std::string    &layoutKey,
+                              const std::string    &imageType,
+                              const std::string    &videoType,
+                              bool          useTextureCaching)
+    : Component( p )
+    , layoutMode_( layoutMode )
+    , commonMode_( commonMode )
+    , playlistType_( playlistType )
+    , selectedImage_( selectedImage)
+    , config_( c )
+    , fontInst_( font )
+    , layoutKey_( layoutKey )
+    , imageType_( imageType )
+    , videoType_( videoType )
+	, useTextureCaching_(useTextureCaching)
     , components_()
-    , layerIndex_(0)
  {
 }
 
@@ -97,16 +96,6 @@ void ScrollingList::clearTweenPoints() {
 const std::vector<Item*>& ScrollingList::getItems() const
 {
     return *items_;
-}
-
-void ScrollingList::setLayerIndex(size_t layer)
-{
-    layerIndex_ = layer;
-}
-
-size_t ScrollingList::getLayerIndex()
-{
-	return layerIndex_;
 }
 
 void ScrollingList::setItems( std::vector<Item *> *items )

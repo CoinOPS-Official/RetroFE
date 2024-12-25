@@ -1365,7 +1365,11 @@ void Page::cleanup()
 
 
 void Page::draw() {
-    for (size_t i = 0; i < NUM_LAYERS; ++i) {
+    LOG_DEBUG("Page::draw", "Starting draw process.");
+    LOG_DEBUG("Page::draw", "LayerComponents_ size: " + std::to_string(LayerComponents_.size()));
+    LOG_DEBUG("Page::draw", "menus_ size: " + std::to_string(menus_.size()));
+
+    for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
         // Check for out-of-bounds access
         if (i >= LayerComponents_.size()) {
             LOG_ERROR("Page::draw", "Layer index out of bounds: " + std::to_string(i));
@@ -1395,14 +1399,12 @@ void Page::draw() {
                     continue;
                 }
 
-                // Check if the menu's layer index matches the current layer
-                if (menu->getLayerIndex() == i) {
-                    // Draw all components in the menu
-                    for (Component* c : menu->getComponents()) {
-                        if (!c) {
-                            LOG_WARNING("Page::draw", "Null component in menu->getComponents().");
-                            continue;
-                        }
+                for (Component* c : menu->getComponents()) {
+                    if (!c) {
+                        LOG_WARNING("Page::draw", "Null component in menu->getComponents().");
+                        continue;
+                    }
+                    if (c->baseViewInfo.Layer == i) {
                         c->draw();
                     }
                 }

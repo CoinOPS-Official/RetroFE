@@ -1176,13 +1176,6 @@ ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monit
 
 	buildViewInfo(menuXml, menu->baseViewInfo);
 
-	// Extract the layer index from the <itemDefaults> tag
-	xml_attribute<> const* layerXml = itemDefaults->first_attribute("layer");
-	if (layerXml) {
-		size_t layerIndex = Utils::convertInt(layerXml->value());
-		menu->setLayerIndex(layerIndex);
-	}
-
 	if (menuType == "custom") {
 		buildCustomMenu(menu, menuXml, itemDefaults);
 	}
