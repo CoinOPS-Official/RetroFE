@@ -125,7 +125,7 @@ void RetroFE::render()
 		SDL_SetRenderDrawColor(SDL::getRenderer(i), 0x0, 0x0, 0x0, 0xFF);
 		SDL_RenderClear(SDL::getRenderer(i));
 
-		// 2. Draw the current page onto this screen’s texture
+		// 2. Draw the current page onto this screenï¿½s texture
 		if (currentPage_)
 		{
 			// If currentPage_->draw() doesn't currently take a screen index,
