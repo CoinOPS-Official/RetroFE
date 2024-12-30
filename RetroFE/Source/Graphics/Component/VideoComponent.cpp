@@ -110,7 +110,7 @@ bool VideoComponent::update(float dt)
                 videoInst_->pause();
 
             // Wait until the current frame is processed before restarting (if needed)
-            if (!videoInst_->isNewFrameAvailable()) {
+            if (!videoInst_->isNewFrameAvailable() && videoInst_->getCurrent() > 1000000) {
                 videoInst_->restart();
                 baseViewInfo.Restart = false;
                 LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));

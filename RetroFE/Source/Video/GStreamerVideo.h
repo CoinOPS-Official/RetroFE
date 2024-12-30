@@ -97,6 +97,32 @@ public:
         return true;
     }
 
+    bool pushWithRef(T item) {
+        // First take the reference before any queue operations
+        gst_buffer_ref(item);  // Increment reference count
+
+        size_t currentTail = tail.load(std::memory_order_relaxed);
+        size_t nextTail = (currentTail + 1) & (N - 1);
+
+        if (nextTail == head.load(std::memory_order_acquire)) {
+            // Queue is full, we need to drop the oldest item.
+            size_t currentHead = head.load(std::memory_order_relaxed);
+            T& oldestItem = storage[currentHead];
+
+            // Unref or clear the buffer if needed.
+            gst_clear_buffer(&oldestItem);  // Ensure proper cleanup of the dropped buffer
+
+            // Advance the head to effectively "remove" the oldest item.
+            head.store((currentHead + 1) & (N - 1), std::memory_order_release);
+        }
+
+        // Store the new item (which now has an extra reference) in the queue
+        storage[currentTail] = item;
+        tail.store(nextTail, std::memory_order_release);  // Commit the write
+
+        return true;
+    }
+
     // Pop an item from the queue (Non-blocking)
     std::optional<T> pop() {
         size_t currentHead = head.load(std::memory_order_relaxed);
@@ -172,6 +198,45 @@ public:
     void setSoftOverlay(bool value);
 
 private:
+
+    // Scoped RAII wrapper for GstBuffer
+    class ScopedBuffer {
+    public:
+        explicit ScopedBuffer(GstBuffer* buf) : buffer_(buf) {}
+        ~ScopedBuffer() {
+            if (buffer_) {
+                gst_buffer_unref(buffer_);
+            }
+        }
+        GstBuffer* get() const { return buffer_ ? buffer_ : nullptr; }        // Prevent copying
+        ScopedBuffer(const ScopedBuffer&) = delete;
+        ScopedBuffer& operator=(const ScopedBuffer&) = delete;
+    private:
+        GstBuffer* buffer_;
+    };
+
+    // Scoped RAII wrapper for GstVideoFrame
+    class ScopedVideoFrame {
+    public:
+        ScopedVideoFrame(GstVideoInfo* info, GstBuffer* buffer) : frame_() {
+            mapped_ = gst_video_frame_map(&frame_, info, buffer, 
+                (GstMapFlags)(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF));
+        }
+        ~ScopedVideoFrame() {
+            if (mapped_) {
+                gst_video_frame_unmap(&frame_);
+            }
+        }
+        bool isMapped() const { return mapped_; }
+        const GstVideoFrame* get() const { return &frame_; }
+        // Prevent copying
+        ScopedVideoFrame(const ScopedVideoFrame&) = delete;
+        ScopedVideoFrame& operator=(const ScopedVideoFrame&) = delete;
+    private:
+        GstVideoFrame frame_;
+        bool mapped_;
+    };
+
     static void processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad,
         gpointer userdata);
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);

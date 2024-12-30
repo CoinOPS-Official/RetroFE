@@ -59,7 +59,9 @@ GStreamerVideo::GStreamerVideo(int monitor)
     initializePlugins();
 }
 
-GStreamerVideo::~GStreamerVideo() = default;
+
+    GStreamerVideo::~GStreamerVideo() = default;
+
 
 void GStreamerVideo::initializePlugins()
 {
@@ -418,27 +420,38 @@ void GStreamerVideo::createSdlTexture()
     }
 }
 
-void GStreamerVideo::loopHandler()
-{
-    if (videoBus_)
-    {
-        GstMessage *msg = gst_bus_pop_filtered(videoBus_, GST_MESSAGE_EOS);
-        if (msg)
-        {
+void GStreamerVideo::loopHandler() {
+    if (!videoBus_ || !isPlaying_)
+        return;
+
+    // Process all pending messages
+    GstMessage* msg;
+    while ((msg = gst_bus_pop_filtered(videoBus_, 
+        static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR)))) {
+
+        switch (GST_MESSAGE_TYPE(msg)) {
+        case GST_MESSAGE_EOS:
             playCount_++;
-            // If the number of loops is 0 or greater than the current playCount_,
-            // seek the playback to the beginning.
-            if (!numLoops_ || numLoops_ > playCount_)
-            {
-                gst_element_seek(playbin_, 1.0, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH, GST_SEEK_TYPE_SET, 0,
-                    GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
-            }
-            else
-            {
+            if (!numLoops_ || numLoops_ > playCount_) {
+                restart();
+            } else {
                 stop();
             }
-            gst_message_unref(msg);
+            break;
+
+        case GST_MESSAGE_ERROR:
+            GError *err;
+            gchar *debug_info;
+            gst_message_parse_error(msg, &err, &debug_info);
+            LOG_ERROR("GStreamerVideo", "Error received from element " + 
+                std::string(GST_OBJECT_NAME(msg->src)) + ": " + 
+                std::string(err->message));
+            g_clear_error(&err);
+            g_free(debug_info);
+            break;
         }
+
+        gst_message_unref(msg);
     }
 }
 
@@ -558,9 +571,11 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
         return;
     }
 
-    gst_buffer_ref(buf);  // Copy the buffer for independent lifecycle management
-    if (!video->bufferQueue_.push(buf)) {
-        gst_buffer_unref(buf);  // Unref the buffer if it could not be pushed
+    // No need for separate ref/unref operations
+    if (!video->bufferQueue_.pushWithRef(buf)) {
+        // If push fails (shouldn't happen with current implementation)
+        // No need to unref as we never incremented the reference
+        return;
     }
 }
 
@@ -571,57 +586,53 @@ void GStreamerVideo::draw() {
 
     auto bufferOpt = bufferQueue_.pop();
     if (!bufferOpt.has_value()) {
-        return;  // No buffer available
+        return;
     }
 
-    GstBuffer* buffer = *bufferOpt;
+    ScopedBuffer scopedBuffer(*bufferOpt);
 
     if (!texture_ && width_ != 0 && height_ != 0) {
-        createSdlTexture();  // Create the SDL texture if it doesn't exist
+        createSdlTexture();
     }
 
     if (texture_) {
-        GstVideoFrame vframe;
-        if (gst_video_frame_map(&vframe, &videoInfo_, buffer, (GstMapFlags)(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF))) {
+        ScopedVideoFrame videoFrame(&videoInfo_, scopedBuffer.get());
+
+        if (videoFrame.isMapped()) {
             SDL_LockMutex(SDL::getMutex());
+
             if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
                 if (SDL_UpdateNVTexture(texture_, nullptr,
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1)) != 0) {
+                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 0)),
+                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 0),
+                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 1)),
+                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 1)) != 0) {
                     LOG_ERROR("GStreamerVideo", "Unable to update NV texture.");
                 }
             }
             else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
                 if (SDL_UpdateYUVTexture(texture_, nullptr,
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 0)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 0),
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 1)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 1),
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&vframe, 2)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(&vframe, 2)) != 0) {
+                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 0)),
+                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 0),
+                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 1)),
+                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 1),
+                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 2)),
+                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 2)) != 0) {
                     LOG_ERROR("GStreamerVideo", "Unable to update YUV texture.");
                 }
             }
+
             SDL_UnlockMutex(SDL::getMutex());
-            gst_video_frame_unmap(&vframe);  // Unmap the video frame after processing
 
-            // Inform GStreamer about buffer processing
-            GstClockTime pts = GST_BUFFER_PTS(buffer);
-            if (!GST_CLOCK_TIME_IS_VALID(pts)) {
+            GstClockTime pts = GST_BUFFER_PTS(scopedBuffer.get());
+            if (GST_CLOCK_TIME_IS_VALID(pts)) {
+                lastPTS_.store(pts, std::memory_order_release);
+                newFrameAvailable_.store(true, std::memory_order_release);
+            } else {
                 LOG_DEBUG("GStreamerVideo", "Invalid PTS: Skipping QOS event for this buffer.");
-                gst_buffer_unref(buffer);
-                return;
             }
-
-            // Store the PTS for later use
-            lastPTS_.store(pts, std::memory_order_release);
-            // Mark the new frame as available
-            newFrameAvailable_.store(true, std::memory_order_release);
         }
     }
-    gst_buffer_unref(buffer);  // Release the buffer after use
 }
 
 bool GStreamerVideo::isPlaying()
@@ -728,18 +739,22 @@ void GStreamerVideo::restart()
     if (!isPlaying_)
         return;
 
-    // Clear the buffer queue to avoid old buffers being processed after the restart
+    // Clear buffered frames
     bufferQueue_.clear();
 
-    // Reset flags related to new frames or QoS state
+    // Reset state flags
     newFrameAvailable_.store(false, std::memory_order_release);
-
-    // Perform the seek operation to restart playback
-    gst_element_seek_simple(playbin_, GST_FORMAT_TIME, GstSeekFlags(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT), 0);
-
-    // Reset the internal timing for QoS calculation (e.g., PTS tracking)
     lastPTS_.store(GST_CLOCK_TIME_NONE, std::memory_order_release);
+
+    // Use same seeking method consistently
+    if (!gst_element_seek(playbin_, 1.0, GST_FORMAT_TIME, 
+        GST_SEEK_FLAG_FLUSH,
+        GST_SEEK_TYPE_SET, 0,
+        GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE)) {
+        LOG_ERROR("GStreamerVideo", "Failed to seek to start");
+    }
 }
+
 
 unsigned long long GStreamerVideo::getCurrent()
 {

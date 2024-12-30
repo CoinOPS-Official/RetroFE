@@ -53,7 +53,7 @@ ReloadableText::~ReloadableText()
 bool ReloadableText::update(float dt)
 {
     if (newItemSelected || (newScrollItemSelected && getMenuScrollReload()) || type_ == "time" || type_ == "current" ||
-        type_ == "duration" || type_ == "isPaused")
+        type_ == "duration" || type_ == "isPaused" || type_ == "timeSpent")
     {
         ReloadTexture();
         newItemSelected = false;
