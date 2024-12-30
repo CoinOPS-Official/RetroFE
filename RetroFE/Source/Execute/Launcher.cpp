@@ -41,7 +41,7 @@
 #include "StdAfx.h"
 #include <tlhelp32.h>
 #endif
-#ifdef __linux
+#if defined(__linux__) || defined(__APPLE__)
 #include <libusb-1.0/libusb.h>
 #include <libevdev-1.0/libevdev/libevdev.h>
 #include <libevdev-1.0/libevdev/libevdev-uinput.h>
@@ -65,7 +65,7 @@ Launcher::Launcher(Configuration& c, RetroFE& retroFe)
 {
 }
 
-#if defined(__linux)
+#if defined(__linux__) || defined(__APPLE__)
 
 // Function to set ServoStik mode
 bool SetServoStikMode(bool fourWay) {

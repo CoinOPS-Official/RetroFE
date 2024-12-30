@@ -19,7 +19,11 @@
 #include <string>
 #include "Component.h"
 #include <SDL2/SDL.h>
-#include <SDL2/SDL_image.h>
+#ifdef __APPLE__
+#include <SDL2_image/SDL_image.h>
+#else
+#include <SDL_image.h>
+#endif
 #include <unordered_map>
 #include <shared_mutex>
 #include <vector>

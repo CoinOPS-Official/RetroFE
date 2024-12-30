@@ -590,6 +590,7 @@
 					"$(PROJECT_DIR)/../ThirdParty/sqlite3",
 					"$(PROJECT_DIR)/../ThirdParty/rapidxml-1.13",
 					"$(PROJECT_DIR)/../ThirdPartyMac/GStreamer.framework/Headers",
+					/usr/local/include,
 				);
 				INFOPLIST_FILE = "$(PROJECT_DIR)/../xcode/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = RetroFE;
@@ -601,6 +602,7 @@
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/../ThirdPartyMac/GStreamer.framework/Libraries",
+					/usr/local/lib,
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
 				MARKETING_VERSION = 0.10.34.5;
@@ -642,6 +644,7 @@
 					"$(PROJECT_DIR)/../ThirdParty/sqlite3",
 					"$(PROJECT_DIR)/../ThirdParty/rapidxml-1.13",
 					"$(PROJECT_DIR)/../ThirdPartyMac/GStreamer.framework/Headers",
+					/usr/local/include,
 				);
 				INFOPLIST_FILE = "$(PROJECT_DIR)/../xcode/Info.plist";
 				INFOPLIST_KEY_CFBundleDisplayName = RetroFE;
@@ -653,6 +656,7 @@
 				LIBRARY_SEARCH_PATHS = (
 					"$(inherited)",
 					"$(PROJECT_DIR)/../ThirdPartyMac/GStreamer.framework/Libraries",
+					/usr/local/lib,
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
 				MARKETING_VERSION = 0.10.34.5;
