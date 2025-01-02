@@ -269,7 +269,7 @@ private:
     int monitor_;
     bool paused_{ false };
     double lastSetVolume_{ 0.0 };
-    bool lastSetMuteState_{ false };
+    bool lastSetMuteState_{ true };
     std::atomic<bool> stopping_{ false };
     std::shared_mutex stopMutex_;
     static bool pluginsInitialized_;
