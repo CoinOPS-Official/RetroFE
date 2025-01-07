@@ -94,7 +94,8 @@ void GStreamerVideo::initializePlugins()
         //     enablePlugin("vah265dec");
         // }
 #else
-        //enablePlugin("alsasink");
+		enablePlugin("pipewiresink");
+        disablePlugin("alsasink");
         disablePlugin("pulsesink");
         if (Configuration::HardwareVideoAccel)
         {
