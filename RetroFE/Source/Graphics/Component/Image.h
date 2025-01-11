@@ -28,18 +28,6 @@
 #include <unordered_set>
 #include <shared_mutex>
 #include <vector>
-#include <memory>    // For std::align and alignment requirements
-
-// Platform-specific aligned allocation
-#if defined(_MSC_VER)
-#include <malloc.h>
-#define ALIGNED_MALLOC(size, alignment) _aligned_malloc(size, alignment)
-#define ALIGNED_FREE(ptr) _aligned_free(ptr)
-#else
-#include <cstdlib>
-#define ALIGNED_MALLOC(size, alignment) aligned_alloc(alignment, size)
-#define ALIGNED_FREE(ptr) free(ptr)
-#endif
 
 class Image : public Component {
 public:
@@ -91,55 +79,6 @@ public:
     static void cleanupTextureCache();
 
 private:
-    static constexpr size_t ALIGNMENT = 32;  // AVX-256 alignment
-
-    template<typename T>
-    class AlignedAllocator {
-    public:
-        static constexpr size_t alignment = ALIGNMENT;
-
-        using value_type = T;
-        using pointer = T*;
-        using const_pointer = const T*;
-        using reference = T&;
-        using const_reference = const T&;
-        using size_type = std::size_t;
-        using difference_type = std::ptrdiff_t;
-        using propagate_on_container_move_assignment = std::true_type;
-        using propagate_on_container_copy_assignment = std::false_type;
-        using propagate_on_container_swap = std::false_type;
-        using is_always_equal = std::true_type;
-
-        template<typename U>
-        struct rebind { using other = AlignedAllocator<U>; };
-
-        AlignedAllocator() noexcept = default;
-        template<typename U>
-        explicit AlignedAllocator(const AlignedAllocator<U>&) noexcept {}
-
-        [[nodiscard]] pointer allocate(size_type n) {
-            if (n == 0) return nullptr;
-            constexpr size_type align_mask = alignment - 1;
-            const size_type alignedSize = ((n * sizeof(T)) + align_mask) & ~align_mask;
-
-            void* ptr = ALIGNED_MALLOC(alignedSize, alignment);
-            if (!ptr) throw std::bad_alloc();
-            return static_cast<T*>(ptr);
-        }
-
-        void deallocate(pointer p, size_type) noexcept {
-            ALIGNED_FREE(p);
-        }
-
-        template<typename U>
-        bool operator==(const AlignedAllocator<U>&) const noexcept { return true; }
-
-        template<typename U>
-        bool operator!=(const AlignedAllocator<U>&) const noexcept { return false; }
-    };
-
-
-
     class PathCache {
     public:
         struct CacheKey {
@@ -149,8 +88,8 @@ private:
 
             // Required for use as unordered_map key
             bool operator==(const CacheKey& other) const {
-                return monitor == other.monitor &&
-                    directory == other.directory &&
+                return monitor == other.monitor && 
+                    directory == other.directory && 
                     filename == other.filename;
             }
         };
@@ -172,7 +111,7 @@ private:
     public:
         /**
         * @brief Creates or retrieves a cached key for the given path.
-        *
+        * 
         * @param filePath Full path to the image file
         * @param monitor Monitor index
         * @return CacheKey Structure containing references to cached path components
@@ -198,7 +137,7 @@ private:
     * @return true    If the file was loaded successfully.
     * @return false   If the file could not be loaded.
     */
-    bool loadFileToBuffer(const std::string& filePath);
+    bool loadFileToBuffer(const std::string& filePath, std::vector<uint8_t>& outBuffer);
 
     /**
     * @brief Checks if a buffer contains GIF data based on magic numbers.
@@ -207,7 +146,7 @@ private:
     * @return true  If the buffer represents a GIF image.
     * @return false Otherwise.
     */
-    static bool isAnimatedGIF(const std::vector<uint8_t, AlignedAllocator<uint8_t>>& buffer);
+    static bool isAnimatedGIF(const std::vector<uint8_t>& buffer);
 
     /**
     * @brief Checks if a buffer contains WebP data based on magic numbers.
@@ -216,7 +155,7 @@ private:
     * @return true  If the buffer represents a WebP image.
     * @return false Otherwise.
     */
-    static bool isAnimatedWebP(const std::vector<uint8_t, AlignedAllocator<uint8_t>>& buffer);
+    static bool isAnimatedWebP(const std::vector<uint8_t>& buffer);
 
     // Member variables
     std::string file_;                                      // Primary file path
@@ -228,8 +167,4 @@ private:
     int frameDelay_ = 0;                                    // Delay time for the current frame 
     bool textureIsUncached_ = false;                        // Flag indicating if texture is uncached
     bool useTextureCaching_ = false;                        // Flag indicating if texture caching should be used
-    std::vector<uint8_t, AlignedAllocator<uint8_t>> buffer_; // Aligned buffer for image data
 };
-
-#undef ALIGNED_MALLOC
-#undef ALIGNED_FREE

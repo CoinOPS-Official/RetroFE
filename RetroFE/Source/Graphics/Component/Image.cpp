@@ -79,115 +79,90 @@ Image::PathCache::CacheKey Image::PathCache::getKey(const std::string& filePath,
     return { *dirIt, *fileIt, monitor };
 }
 
-bool Image::loadFileToBuffer(const std::string& filePath) {
-    static constexpr std::streamsize MAX_IMAGE_SIZE = 50 * 1024 * 1024;  // 50MB max for single image
-    static constexpr std::streamsize MIN_IMAGE_SIZE = 64;                 // Minimum valid image size
-    static constexpr size_t READ_BUFFER_SIZE = 64 * 1024;                // 64KB read buffer
+bool Image::loadFileToBuffer(const std::string& filePath, std::vector<uint8_t>& outBuffer) 
+{
+    LOG_INFO("Image", "Attempting to load file into buffer: " + filePath);
 
-    // RAII file handling
+    // Open the file in binary mode and move the cursor to the end to determine the size
     std::ifstream file(filePath, std::ios::binary | std::ios::ate);
     if (!file) {
-        LOG_ERROR("Image", "Failed to open: " + filePath);
+        LOG_ERROR("Image", "Failed to open file: " + filePath);
         return false;
     }
 
-    // Get and validate file size
-    const std::streamsize fileSize = file.tellg();
-    if (fileSize < MIN_IMAGE_SIZE || fileSize > MAX_IMAGE_SIZE) {
-        LOG_ERROR("Image", "Invalid file size (" + std::to_string(fileSize) + " bytes): " + filePath);
+    // Get the file size
+    std::streamsize size = file.tellg();
+    LOG_INFO("Image", "File size: " + std::to_string(size) + " bytes");
+    if (size <= 0) {
+        LOG_ERROR("Image", "File is empty or invalid: " + filePath);
         return false;
     }
 
-    try {
-        // Calculate aligned size (using our ALIGNMENT constant)
-        constexpr size_t align_mask = ALIGNMENT - 1;
-        const size_t alignedSize = (static_cast<size_t>(fileSize) + align_mask) & ~align_mask;
+    // Seek back to the beginning of the file
+    file.seekg(0, std::ios::beg);
 
-        // Allocate aligned buffer
-        buffer_.reserve(alignedSize);  // Reserve aligned size
-        buffer_.resize(static_cast<size_t>(fileSize));  // Resize to actual file size
+    // Resize the outBuffer to fit the file data
+    outBuffer.resize(static_cast<size_t>(size));
 
-        // Create aligned read buffer for better IO performance
-        std::vector<char, AlignedAllocator<char>> readBuffer(READ_BUFFER_SIZE);
-        file.rdbuf()->pubsetbuf(readBuffer.data(), readBuffer.size());
-
-        // Seek to start and read
-        file.seekg(0);
-        if (!file.read(reinterpret_cast<char*>(buffer_.data()), fileSize)) {
-            buffer_.clear();
-            LOG_ERROR("Image", "Failed reading file: " + filePath + 
-                " (Read " + std::to_string(file.gcount()) + "/" + 
-                std::to_string(fileSize) + " bytes)");
-            return false;
-        }
-
-        // Verify read size
-        if (file.gcount() != fileSize) {
-            buffer_.clear();
-            LOG_ERROR("Image", "Incomplete read: " + filePath + 
-                " (Read " + std::to_string(file.gcount()) + "/" + 
-                std::to_string(fileSize) + " bytes)");
-            return false;
-        }
-
-        LOG_INFO("Image", "Successfully loaded " + std::to_string(buffer_.size()) + 
-            " bytes (aligned to " + std::to_string(alignedSize) + "): " + filePath);
-        return true;
-
-    } catch (const std::bad_alloc& e) {
-        buffer_.clear();
-        LOG_ERROR("Image", "Memory allocation failed: " + filePath + " (" + e.what() + ")");
-        return false;
-    } catch (const std::exception& e) {
-        buffer_.clear();
-        LOG_ERROR("Image", "Unexpected error: " + filePath + " (" + e.what() + ")");
+    // Read the file data directly into the outBuffer
+    if (!file.read(reinterpret_cast<char*>(outBuffer.data()), size)) {
+        LOG_ERROR("Image", "Failed to read file: " + filePath);
+        outBuffer.clear(); // Ensure the buffer is empty on failure
         return false;
     }
+
+    LOG_INFO("Image", "Successfully loaded file into buffer: " + filePath);
+    return true;
 }
 
-bool Image::isAnimatedGIF(const std::vector<uint8_t, AlignedAllocator<uint8_t>>& buffer) {
+bool Image::isAnimatedGIF(const std::vector<uint8_t>& buffer) {
+	// Early exit for small files
+	if (buffer.size() < 10) return false;
 
-    // Look for the GIF89a or GIF87a signature to ensure it's a valid GIF
-    if (!(std::memcmp(buffer.data(), "GIF87a", 6) == 0 || std::memcmp(buffer.data(), "GIF89a", 6) == 0)) {
-        return false;
-    }
+	// Look for the GIF89a or GIF87a signature to ensure it's a valid GIF
+	if (!(std::memcmp(buffer.data(), "GIF87a", 6) == 0 || std::memcmp(buffer.data(), "GIF89a", 6) == 0)) {
+		return false;
+	}
 
-    // Search through the file to see if there are more than one frame separator (0x21, 0xF9)
-    size_t frameCount = 0;
-    for (size_t i = 0; i < buffer.size() - 1; ++i) {
-        if (buffer[i] == 0x21 && buffer[i + 1] == 0xF9) {
-            frameCount++;
-            if (frameCount > 1) {
-                return true; // Animated if more than one frame is found
-            }
-        }
-    }
-    return false;
+	// Search through the file to see if there are more than one frame separator (0x21, 0xF9)
+	size_t frameCount = 0;
+	for (size_t i = 0; i < buffer.size() - 1; ++i) {
+		if (buffer[i] == 0x21 && buffer[i + 1] == 0xF9) {
+			frameCount++;
+			if (frameCount > 1) {
+				return true; // Animated if more than one frame is found
+			}
+		}
+	}
+	return false;
 }
 
-bool Image::isAnimatedWebP(const std::vector<uint8_t, AlignedAllocator<uint8_t>>& buffer) {
 
-    // Ensure it is a valid WebP file
-    if (!(std::memcmp(buffer.data(), "RIFF", 4) == 0 && std::memcmp(buffer.data() + 8, "WEBP", 4) == 0)) {
-        return false;
-    }
+bool Image::isAnimatedWebP(const std::vector<uint8_t>& buffer) {
+	// Early exit for small files
+	if (buffer.size() < 12) return false;
 
-    // Set up WebP data structure
-    WebPData webpData = { buffer.data(), buffer.size() };
+	// Ensure it is a valid WebP file
+	if (!(std::memcmp(buffer.data(), "RIFF", 4) == 0 && std::memcmp(buffer.data() + 8, "WEBP", 4) == 0)) {
+		return false;
+	}
 
-    // Create the WebP demuxer to inspect the file's structure
-    WebPDemuxer* demux = WebPDemux(&webpData);
-    if (!demux) {
-        LOG_ERROR("Image", "Failed to create WebPDemuxer.");
-        return false;
-    }
+	// Set up WebP data structure
+	WebPData webpData = { buffer.data(), buffer.size() };
 
-    // Check the number of frames in the WebP animation
-    int frameCount = WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT);
-    WebPDemuxDelete(demux);
+	// Create the WebP demuxer to inspect the file's structure
+	WebPDemuxer* demux = WebPDemux(&webpData);
+	if (!demux) {
+		LOG_ERROR("Image", "Failed to create WebPDemuxer.");
+		return false;
+	}
 
-    // If there is more than one frame, the WebP is animated
-    return frameCount > 1;
+	// Check the number of frames in the WebP animation
+	int frameCount = WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT);
+	WebPDemuxDelete(demux);
+
+	// If there is more than one frame, the WebP is animated
+	return frameCount > 1;
 }
 
 
@@ -273,48 +248,38 @@ void Image::allocateGraphicsMemory() {
             }
         }
 
+        std::vector<uint8_t> localBuffer;
         // If not using cache or not found in cache, proceed to load from file
-        if (!loadFileToBuffer(filePath)) {
+        if (!loadFileToBuffer(filePath, localBuffer)) {
             LOG_ERROR("Image", "Failed to load file into buffer: " + filePath);
-            buffer_.clear();
-            buffer_.shrink_to_fit();
             return false;
         }
 
-        SDL_RWops* rw = SDL_RWFromConstMem(buffer_.data(), static_cast<int>(buffer_.size()));
+        SDL_RWops* rw = SDL_RWFromConstMem(localBuffer.data(), static_cast<int>(localBuffer.size()));
         if (!rw) {
             LOG_ERROR("Image", "Failed to create RWops from buffer: " + std::string(SDL_GetError()));
-            buffer_.clear();
-            buffer_.shrink_to_fit();
             return false;
         }
-
-        buffer_.clear();
-        buffer_.shrink_to_fit();
 
         CachedImage newCachedImage;
         bool isAnimated = false;
-        bool animatedGif = isAnimatedGIF(buffer_);
-        bool animatedWebP = isAnimatedWebP(buffer_);
+        bool animatedGif = isAnimatedGIF(localBuffer);
+        bool animatedWebP = isAnimatedWebP(localBuffer);
 
         if (animatedWebP) {
             IMG_Animation* animation = IMG_LoadWEBPAnimation_RW(rw);
             if (!animation) {
                 LOG_ERROR("Image", "Failed to load WebP animation: " + std::string(IMG_GetError()));
                 SDL_RWclose(rw);
-                buffer_.clear();
-                buffer_.shrink_to_fit();
                 return false;
             }
 
-            WebPData webpData = { buffer_.data(), buffer_.size() };
+            WebPData webpData = { localBuffer.data(), localBuffer.size() };
             WebPDemuxer* demux = WebPDemux(&webpData);
             if (!demux) {
                 LOG_ERROR("Image", "Failed to initialize WebP demuxer.");
                 IMG_FreeAnimation(animation);
                 SDL_RWclose(rw);
-                buffer_.clear();
-                buffer_.shrink_to_fit();
                 return false;
             }
 
@@ -324,8 +289,6 @@ void Image::allocateGraphicsMemory() {
                 WebPDemuxDelete(demux);
                 IMG_FreeAnimation(animation);
                 SDL_RWclose(rw);
-                buffer_.clear();
-                buffer_.shrink_to_fit();
                 return false;
             }
 
@@ -342,8 +305,6 @@ void Image::allocateGraphicsMemory() {
                 IMG_FreeAnimation(animation);
                 SDL_UnlockMutex(SDL::getMutex());
                 SDL_RWclose(rw);
-                buffer_.clear();
-                buffer_.shrink_to_fit();
                 return false;
             }
 
@@ -404,8 +365,6 @@ void Image::allocateGraphicsMemory() {
                 LOG_ERROR("Image", "No frame textures were created for WebP animated image.");
                 IMG_FreeAnimation(animation);
                 SDL_RWclose(rw);
-                buffer_.clear();
-                buffer_.shrink_to_fit();
                 return false;
             }
 
@@ -421,8 +380,6 @@ void Image::allocateGraphicsMemory() {
 
             IMG_FreeAnimation(animation);
             SDL_RWclose(rw);
-            buffer_.clear();
-            buffer_.shrink_to_fit();
             isAnimated = true;
 
             LOG_INFO("Image", "Loaded WebP animated texture.");
@@ -460,8 +417,6 @@ void Image::allocateGraphicsMemory() {
                     LOG_ERROR("Image", "No frame textures were created for GIF animated image: " + filePath);
                     IMG_FreeAnimation(animation);
                     SDL_RWclose(rw);
-                    buffer_.clear();
-                    buffer_.shrink_to_fit();
                     return false;
                 }
 
@@ -475,8 +430,6 @@ void Image::allocateGraphicsMemory() {
             } else {
                 LOG_ERROR("Image", "Failed to load GIF animation: " + std::string(IMG_GetError()));
                 SDL_RWclose(rw);
-                buffer_.clear();
-                buffer_.shrink_to_fit();
                 return false;
             }
         }
