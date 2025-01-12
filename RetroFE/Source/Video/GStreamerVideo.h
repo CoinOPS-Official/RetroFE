@@ -163,6 +163,8 @@ public:
     GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo() override;
     bool initialize() override;
+    bool unload();
+    bool createPipelineIfNeeded();
     bool play(const std::string& file) override;
     bool stop() override;
     bool deInitialize() override;

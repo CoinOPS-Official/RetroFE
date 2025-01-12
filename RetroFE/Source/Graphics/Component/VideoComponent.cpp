@@ -37,6 +37,7 @@
 #include "SDL_render.h"
 #endif
 #include <gst/video/video.h>
+#include "../../Video/VideoPool.h"
 
 
 VideoComponent::VideoComponent(Page &p, const std::string &videoFile, int monitor, int numLoops, bool softOverlay)
@@ -136,17 +137,24 @@ void VideoComponent::allocateGraphicsMemory()
 void VideoComponent::freeGraphicsMemory()
 {
     Component::freeGraphicsMemory();
+
     if (Logger::isLevelEnabled("DEBUG"))
         LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
 
+    // If we have a video instance, release it back to the pool
     if (videoInst_) {
-        videoInst_->stop();
-        delete videoInst_;
-        isPlaying_ = false;
-        if (Logger::isLevelEnabled("DEBUG"))
-            LOG_DEBUG("VideoComponent", "Deleted " + Utils::getFileName(videoFile_));
-        videoInst_ = nullptr;
+        // Now that we're sure it's always GStreamerVideo:
+        GStreamerVideo* gstreamerVideo = static_cast<GStreamerVideo*>(videoInst_);
 
+        // Put it back into the pool
+        VideoPool::releaseVideo(gstreamerVideo);
+
+        if (Logger::isLevelEnabled("DEBUG"))
+            LOG_DEBUG("VideoComponent", "Released " + Utils::getFileName(videoFile_) + " back to the pool");
+
+        // Mark as no longer playing and null out the pointer
+        isPlaying_ = false;
+        videoInst_ = nullptr;
     }
 }
 

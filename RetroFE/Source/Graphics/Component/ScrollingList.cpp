@@ -1035,33 +1035,40 @@ bool ScrollingList::isFastScrolling() const
 
 void ScrollingList::scroll(bool forward)
 {
-    // Exit conditions
+    // Exit conditions: if no items or scroll points, return.
     if (!items_ || items_->empty() || !scrollPoints_ || scrollPoints_->empty())
         return;
 
+    // Ensure that scrollPeriod is not below the minimum.
     if (scrollPeriod_ < minScrollTime_)
         scrollPeriod_ = minScrollTime_;
 
     size_t itemsSize = items_->size();
     size_t scrollPointsSize = scrollPoints_->size();
 
-    // Replace the item that's scrolled out
-    Item const* itemToScroll;
+    // Determine which component is exiting based on the logical order.
+    size_t exitIndex = forward ? 0 : scrollPoints_->size() - 1;
+
+    // Determine the new item to load into the exiting slot.
+    Item const* itemToScroll = nullptr;
     if (forward) {
-        itemToScroll = (*items_)[loopIncrement(itemIndex_, scrollPointsSize, itemsSize)];
+        // Use loopIncrement to get the item that follows the currently visible block.
+        itemToScroll = (*items_)[ loopIncrement(itemIndex_, scrollPointsSize, itemsSize) ];
+        // Advance the index.
         itemIndex_ = loopIncrement(itemIndex_, 1, itemsSize);
-        deallocateTexture(0);
-        allocateTexture(0, itemToScroll);
     }
     else {
-        itemToScroll = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
+        itemToScroll = (*items_)[ loopDecrement(itemIndex_, 1, itemsSize) ];
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
-        deallocateTexture(loopDecrement(0, 1, scrollPointsSize));
-        allocateTexture(loopDecrement(0, 1, scrollPointsSize), itemToScroll);
     }
 
-    // Set the animations
-    for (size_t index = 0; index < scrollPointsSize; ++index)  // Renamed from 'i' to 'index'
+    // Only deallocate (i.e. reset/recycle) the component that is exiting.
+    deallocateTexture(exitIndex);
+    // Then allocate new media (video or image) into that slot.
+    allocateTexture(exitIndex, itemToScroll);
+
+    // Update the animations (tweening) for each visible component.
+    for (size_t index = 0; index < scrollPointsSize; ++index)
     {
         size_t nextIndex;
         if (forward) {
@@ -1071,11 +1078,11 @@ void ScrollingList::scroll(bool forward)
             nextIndex = (index == scrollPointsSize - 1) ? 0 : index + 1;
         }
 
-        Component* component = components_[index];  // Renamed from 'c' to 'component' for clarity
+        Component* component = components_[index];  // components_ operator[] gives the logical ordering.
         if (component) {
-            auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
+            auto& nextTweenPoint     = (*tweenPoints_)[nextIndex];
             auto& currentScrollPoint = (*scrollPoints_)[index];
-            auto& nextScrollPoint = (*scrollPoints_)[nextIndex];
+            auto& nextScrollPoint    = (*scrollPoints_)[nextIndex];
 
             component->allocateGraphicsMemory();
             resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
@@ -1084,9 +1091,8 @@ void ScrollingList::scroll(bool forward)
         }
     }
 
-	components_.rotate(forward);
-
-    return;
+    // Rotate the RotatableView so that the logical order is updated.
+    components_.rotate(forward);
 }
 
 bool ScrollingList::isPlaylist() const

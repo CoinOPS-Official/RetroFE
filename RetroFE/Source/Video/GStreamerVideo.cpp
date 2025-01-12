@@ -225,48 +225,195 @@ bool GStreamerVideo::stop()
     return true;
 }
 
+
+bool GStreamerVideo::unload()
+{
+    // If we never created playbin_, nothing to unload
+    if (!playbin_) {
+        return false;
+    }
+
+    // We’re no longer “playing”
+    isPlaying_ = false;
+
+    // Optionally mark it as “stopping” so other threads know not to process more buffers
+    stopping_.store(true, std::memory_order_release);
+
+    // Set pipeline to GST_STATE_READY (instead of GST_STATE_NULL) so we can reuse it later
+    GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
+    if (ret == GST_STATE_CHANGE_FAILURE) {
+        LOG_ERROR("GStreamerVideo", "Failed to set pipeline to READY during unload.");
+        return false;
+    }
+
+    // Optionally wait for the state change to complete 
+    // (if you want to be certain it reached READY before continuing)
+    GstState newState;
+    ret = gst_element_get_state(playbin_, &newState, nullptr, GST_SECOND);
+    if (ret == GST_STATE_CHANGE_FAILURE || newState != GST_STATE_READY) {
+        LOG_ERROR("GStreamerVideo", "Pipeline did not reach READY state during unload.");
+    }
+
+    // Clear any queued buffers
+    bufferQueue_.clear();
+
+    // Destroy the existing SDL texture (dimensions may change next time)
+    SDL_LockMutex(SDL::getMutex());
+    if (texture_) {
+        SDL_DestroyTexture(texture_);
+        texture_ = nullptr;
+    }
+    SDL_UnlockMutex(SDL::getMutex());
+
+    // Reset flags used for timing, volume, etc.
+    newFrameAvailable_.store(false, std::memory_order_release);
+    lastPTS_.store(GST_CLOCK_TIME_NONE, std::memory_order_release);
+    paused_ = false;
+    currentVolume_ = 0.0f;
+    lastSetVolume_ = 0.0f;
+    lastSetMuteState_ = true;  // or false, depending on your default
+    volume_ = 0.0f;            // reset to default
+    width_ = 0;
+    height_ = 0;
+
+    // If you previously disconnected handoff signals, you might need to 
+    // reconnect them next time you "loadNewFile". For a simple approach, you 
+    // can leave them connected if you plan to re-use the same pipeline logic.
+
+    // Let future calls proceed
+    stopping_.store(false, std::memory_order_release);
+
+    LOG_DEBUG("GStreamerVideo", "Pipeline unloaded, now in READY state. Texture cleared.");
+
+    return true;
+}
+
+bool GStreamerVideo::createPipelineIfNeeded()
+{
+    // If we already have a playbin_, just return true
+    if (playbin_) {
+        return true;
+    }
+
+    // Otherwise, create playbin, set up caps, videoSink, etc.
+    playbin_   = gst_element_factory_make("playbin", "player");
+    capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
+    videoBin_  = gst_bin_new("SinkBin");
+    videoSink_ = gst_element_factory_make("fakesink", "video_sink");
+
+    if (!playbin_ || !videoBin_ || !videoSink_ || !capsFilter_) {
+        LOG_DEBUG("Video", "Could not create GStreamer elements");
+        return false;
+    }
+
+    gint flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO;
+    g_object_set(playbin_, "flags", flags, nullptr);
+
+    // Configure caps (hardware accel or software)
+    GstCaps *videoConvertCaps;
+    if (Configuration::HardwareVideoAccel) {
+        videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+        sdlFormat_ = SDL_PIXELFORMAT_NV12;
+        LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_NV12 (HW accel: true)");
+    } else {
+        videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
+        elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
+        sdlFormat_ = SDL_PIXELFORMAT_IYUV;
+        LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_IYUV (HW accel: false)");
+    }
+
+    g_object_set(capsFilter_, "caps", videoConvertCaps, nullptr);
+    gst_caps_unref(videoConvertCaps);
+
+    gst_bin_add_many(GST_BIN(videoBin_), capsFilter_, videoSink_, nullptr);
+    if (!gst_element_link_many(capsFilter_, videoSink_, nullptr)) {
+        LOG_DEBUG("Video", "Could not link video processing elements");
+        return false;
+    }
+
+    GstPad *sinkPad   = gst_element_get_static_pad(capsFilter_, "sink");
+    GstPad *ghostPad  = gst_ghost_pad_new("sink", sinkPad);
+    gst_element_add_pad(videoBin_, ghostPad);
+    gst_object_unref(sinkPad);
+
+    // We haven't set URI yet; just attach the videoBin as playbin's video-sink
+    g_object_set(playbin_, "video-sink", videoBin_, nullptr);
+
+    // Setup clock
+    GstClock *clock = gst_system_clock_obtain();
+    g_object_set(clock, "clock-type", GST_CLOCK_TYPE_MONOTONIC, nullptr);
+    gst_pipeline_use_clock(GST_PIPELINE(playbin_), clock);
+    gst_object_unref(clock);
+
+    if (GstPad *pad = gst_element_get_static_pad(videoSink_, "sink")) {
+        padProbeId_ = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, padProbeCallback, this, nullptr);
+        gst_object_unref(pad);
+    }
+
+    videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+    gst_object_unref(videoBus_);
+
+    g_object_set(videoSink_, "sync", TRUE, "enable-last-sample", FALSE, nullptr);
+    bufferDisconnected_ = true;
+
+    handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
+
+    return true;
+}
+
+
 bool GStreamerVideo::play(const std::string &file)
 {
     playCount_ = 0;
-    if (!initialized_)
+    if (!initialized_) {
         return false;
+    }
 
-    currentFile_ = file;
-    if (!initializeGstElements(file))
+    // 1. Create the pipeline if we haven’t already
+    if (!createPipelineIfNeeded()) {
+        LOG_ERROR("Video", "Failed to create GStreamer pipeline");
         return false;
-    // Start playing
-    if (GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-        playState != GST_STATE_CHANGE_ASYNC)
-    {
+    }
+
+    // 2. Move pipeline to READY (so we can safely change URI)
+    gst_element_set_state(playbin_, GST_STATE_READY);
+
+    // 3. Convert file path to URI
+    gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
+    if (!uriFile) {
+        LOG_DEBUG("Video", "Failed to convert filename to URI");
+        return false;
+    }
+
+    // 4. Update the existing playbin with the new URI
+    g_object_set(playbin_, "uri", uriFile, nullptr);
+    g_free(uriFile);
+
+    // 5. Start playing
+    GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
+    if (playState != GST_STATE_CHANGE_ASYNC && playState != GST_STATE_CHANGE_SUCCESS) {
         isPlaying_ = false;
-        LOG_ERROR("Video", "Unable to set the pipeline to the playing state.");
-        stop();
+        LOG_ERROR("Video", "Unable to set pipeline to the playing state.");
+        stop(); // or unload(), if you want to drop back to READY
         return false;
     }
-    baseTime_ = gst_element_get_base_time(GST_ELEMENT(playbin_));
-    paused_ = false;
-    isPlaying_ = true;
-    
-    //Set the volume to zero and mute the video
-    gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
-    gst_stream_volume_set_mute( GST_STREAM_VOLUME( playbin_ ), true );
 
-    if (Configuration::debugDotEnabled)
-    {
-        // Environment variable is set, proceed with dot file generation
-        GstState state;
-        GstState pending;
-        // Wait up to 5 seconds for the state change to complete
-        GstClockTime timeout = 5 * GST_SECOND; // Define your timeout
-        GstStateChangeReturn ret = gst_element_get_state(GST_ELEMENT(playbin_), &state, &pending, timeout);
-        if (ret == GST_STATE_CHANGE_SUCCESS && state == GST_STATE_PLAYING)
-        {
-            // The pipeline is in the playing state, proceed with dot file generation
-            // Generate dot file for playbin_
-            std::string playbinDotFileName = generateDotFileName("playbin", currentFile_);
-            GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, playbinDotFileName.c_str());
-        }
+    baseTime_ = gst_element_get_base_time(GST_ELEMENT(playbin_));
+    paused_   = false;
+    isPlaying_= true;
+    currentFile_ = file;
+
+    // Mute and volume to 0 by default
+    gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
+    gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), true);
+    lastSetMuteState_ = true;
+
+    // Optionally wait for PLAYING state if you want to confirm it's active
+    if (Configuration::debugDotEnabled) {
+        // ...
     }
+
+    LOG_DEBUG("GStreamerVideo", "Playing file: " + file);
     return true;
 }
 
@@ -387,10 +534,6 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad *pad, GstPadProbeInfo 
                 video->height_ = video->videoInfo_.height;
                 LOG_DEBUG("GStreamerVideo", "Video dimensions: width = " + std::to_string(video->width_) +
                     ", height = " + std::to_string(video->height_));
-
-                // Remove the pad probe after getting the video dimensions
-                gst_pad_remove_probe(pad, video->padProbeId_);
-                video->padProbeId_ = 0;
             }
         }
     }
