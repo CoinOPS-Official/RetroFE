@@ -94,9 +94,9 @@ void GStreamerVideo::initializePlugins()
         //     enablePlugin("vah265dec");
         // }
 #else
-		enablePlugin("pipewiresink");
-        disablePlugin("alsasink");
-        disablePlugin("pulsesink");
+		//enablePlugin("pipewiresink");
+        //disablePlugin("alsasink");
+        //disablePlugin("pulsesink");
         if (Configuration::HardwareVideoAccel)
         {
             enablePlugin("vah264dec");
@@ -273,6 +273,8 @@ bool GStreamerVideo::unload()
     lastSetVolume_ = 0.0f;
     lastSetMuteState_ = true;  // or false, depending on your default
     volume_ = 0.0f;            // reset to default
+    
+    gst_video_info_init(&videoInfo_);
     width_ = 0;
     height_ = 0;
 
@@ -505,15 +507,12 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
 void GStreamerVideo::elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data)
 {
     // Check if the element is a video decoder
-    if (GST_IS_VIDEO_DECODER(element))
+    if (!Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element))
     {
-        if (!Configuration::HardwareVideoAccel && Utils::getOSType() != "linux")
-        {
             // Configure the video decoder
             g_object_set(element, "thread-type", Configuration::AvdecThreadType,
                 "max-threads", Configuration::AvdecMaxThreads,
                 "direct-rendering", FALSE, nullptr);
-        }
     }
 }
 
@@ -701,6 +700,9 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 }
 
 void GStreamerVideo::draw() {
+    if (!isPlaying_)
+        return;
+
     if (stopping_.load(std::memory_order_acquire)) {
         return;
     }
