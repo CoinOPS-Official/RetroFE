@@ -233,11 +233,10 @@ bool GStreamerVideo::unload()
         return false;
     }
 
-    // We’re no longer “playing”
-    isPlaying_ = false;
-
     // Optionally mark it as “stopping” so other threads know not to process more buffers
     stopping_.store(true, std::memory_order_release);
+
+    bufferDisconnect(true);
 
     // Set pipeline to GST_STATE_READY (instead of GST_STATE_NULL) so we can reuse it later
     GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
@@ -253,6 +252,9 @@ bool GStreamerVideo::unload()
     if (ret == GST_STATE_CHANGE_FAILURE || newState != GST_STATE_READY) {
         LOG_ERROR("GStreamerVideo", "Pipeline did not reach READY state during unload.");
     }
+
+    // We’re no longer “playing”
+    isPlaying_ = false;
 
     // Clear any queued buffers
     bufferQueue_.clear();
@@ -277,6 +279,8 @@ bool GStreamerVideo::unload()
     gst_video_info_init(&videoInfo_);
     width_ = 0;
     height_ = 0;
+    playCount_ = 0;
+    numLoops_ = 0;
 
     // If you previously disconnected handoff signals, you might need to 
     // reconnect them next time you "loadNewFile". For a simple approach, you 
@@ -347,11 +351,6 @@ bool GStreamerVideo::createPipelineIfNeeded()
     gst_pipeline_use_clock(GST_PIPELINE(playbin_), clock);
     gst_object_unref(clock);
 
-    if (GstPad *pad = gst_element_get_static_pad(videoSink_, "sink")) {
-        padProbeId_ = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, padProbeCallback, this, nullptr);
-        gst_object_unref(pad);
-    }
-
     videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
     gst_object_unref(videoBus_);
 
@@ -377,8 +376,20 @@ bool GStreamerVideo::play(const std::string &file)
         return false;
     }
 
+    // reconnect the pad probe if it's not connected.
+    if (GstPad* pad = gst_element_get_static_pad(videoSink_, "sink")) {
+        // If padProbeId_ is non-zero, you may want to remove the old probe first.
+        if (padProbeId_ != 0) {
+            gst_pad_remove_probe(pad, padProbeId_);
+            padProbeId_ = 0;
+        }
+        padProbeId_ = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+            padProbeCallback, this, nullptr);
+        gst_object_unref(pad);
+    }
+
     // 2. Move pipeline to READY (so we can safely change URI)
-    gst_element_set_state(playbin_, GST_STATE_READY);
+    //gst_element_set_state(playbin_, GST_STATE_READY);
 
     // 3. Convert file path to URI
     gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
@@ -529,49 +540,105 @@ void GStreamerVideo::elementSetupCallback(GstElement* playbin, GstElement* eleme
     }
 }
 
-GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad *pad, GstPadProbeInfo *info, gpointer user_data)
+GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
 {
-    auto *video = static_cast<GStreamerVideo *>(user_data);
+    auto* video = static_cast<GStreamerVideo*>(user_data);
 
-    auto *event = GST_PAD_PROBE_INFO_EVENT(info);
+    auto* event = GST_PAD_PROBE_INFO_EVENT(info);
     if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS)
     {
-        GstCaps *caps = nullptr;
+        GstCaps* caps = nullptr;
         gst_event_parse_caps(event, &caps);
         if (caps)
         {
             if (gst_video_info_from_caps(&video->videoInfo_, caps))
             {
-                video->width_ = video->videoInfo_.width;
-                video->height_ = video->videoInfo_.height;
-                LOG_DEBUG("GStreamerVideo", "Video dimensions: width = " + std::to_string(video->width_) +
-                    ", height = " + std::to_string(video->height_));
+                int newWidth = video->videoInfo_.width;
+                int newHeight = video->videoInfo_.height;
+                // Optionally, you can check if these are nonzero before proceeding.
+                if (newWidth > 0 && newHeight > 0) {
+                    video->width_.store(newWidth, std::memory_order_release);
+                    video->height_.store(newHeight, std::memory_order_release);
+                    LOG_DEBUG("GStreamerVideo", "Caps received, video dimensions: "
+                        + std::to_string(newWidth) + "x" + std::to_string(newHeight));
+                }
+                else {
+                    LOG_DEBUG("GStreamerVideo", "Received caps with invalid dimensions.");
+                }
             }
         }
+        // Now remove the probe so that this callback is not triggered again for this video.
+        gst_pad_remove_probe(pad, video->padProbeId_);
+        video->padProbeId_ = 0;  // reset the probe id for future use
     }
     return GST_PAD_PROBE_OK;
 }
 
+
 void GStreamerVideo::createSdlTexture()
 {
-    texture_ = SDL_CreateTexture(SDL::getRenderer(monitor_), sdlFormat_, SDL_TEXTUREACCESS_STREAMING, width_, height_);
+    // Load the desired dimensions using atomic loads.
+    int newWidth = width_.load(std::memory_order_acquire);
+    int newHeight = height_.load(std::memory_order_acquire);
 
-    if (!texture_)
-    {
+    // If the dimensions are invalid, log an error and return.
+    if (newWidth <= 0 || newHeight <= 0) {
+        LOG_ERROR("GStreamerVideo", "Invalid dimensions for texture creation ("
+            + std::to_string(newWidth) + "x" + std::to_string(newHeight) + ").");
+        return;
+    }
+
+    // Lock the mutex to inspect the current texture safely.
+    SDL_LockMutex(SDL::getMutex());
+    if (texture_) {
+        int currentWidth = 0, currentHeight = 0;
+        // Query the texture for its current dimensions.
+        if (SDL_QueryTexture(texture_, nullptr, nullptr, &currentWidth, &currentHeight) == 0) {
+            if (currentWidth == newWidth && currentHeight == newHeight) {
+                // Dimensions match — we can reuse the existing texture.
+                LOG_DEBUG("GStreamerVideo", "Reusing existing SDL texture (" +
+                    std::to_string(currentWidth) + "x" + std::to_string(currentHeight) + ").");
+                SDL_UnlockMutex(SDL::getMutex());
+                return;
+            }
+            else {
+                // Dimensions do not match: destroy the old texture.
+                SDL_DestroyTexture(texture_);
+                texture_ = nullptr;
+            }
+        }
+        else {
+            // Query failed; log the error and destroy the texture as a precaution.
+            LOG_ERROR("GStreamerVideo", "SDL_QueryTexture failed: " + std::string(SDL_GetError()));
+            SDL_DestroyTexture(texture_);
+            texture_ = nullptr;
+        }
+    }
+    SDL_UnlockMutex(SDL::getMutex());
+
+    // Create a new texture using the new dimensions.
+    SDL_Texture* newTexture = SDL_CreateTexture(SDL::getRenderer(monitor_), sdlFormat_,
+        SDL_TEXTUREACCESS_STREAMING, newWidth, newHeight);
+    if (!newTexture) {
         LOG_ERROR("GStreamerVideo", "SDL_CreateTexture failed: " + std::string(SDL_GetError()));
         return;
     }
 
-    // Check if softOverlay_ is true and set the blend mode accordingly
+    // Set the blend mode based on whether softOverlay is enabled.
     SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
-
-    if (SDL_SetTextureBlendMode(texture_, blendMode) != 0)
-    {
+    if (SDL_SetTextureBlendMode(newTexture, blendMode) != 0) {
         LOG_ERROR("GStreamerVideo", "SDL_SetTextureBlendMode failed: " + std::string(SDL_GetError()));
-        SDL_DestroyTexture(texture_);
-        texture_ = nullptr;
+        SDL_DestroyTexture(newTexture);
         return;
     }
+
+    // Store the new texture safely.
+    SDL_LockMutex(SDL::getMutex());
+    texture_ = newTexture;
+    SDL_UnlockMutex(SDL::getMutex());
+
+    LOG_DEBUG("GStreamerVideo", "Created new SDL texture with dimensions (" +
+        std::to_string(newWidth) + " x " + std::to_string(newHeight) + ").");
 }
 
 void GStreamerVideo::loopHandler() {
@@ -713,6 +780,7 @@ void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffe
 }
 
 void GStreamerVideo::draw() {
+    // Only draw if isPlaying_ is true. (Assuming isPlaying_ is now atomic.)
     if (!isPlaying_)
         return;
 
@@ -725,9 +793,11 @@ void GStreamerVideo::draw() {
         return;
     }
 
+    // Scope the buffer using RAII
     ScopedBuffer scopedBuffer(*bufferOpt);
 
-    if (!texture_ && width_ != 0 && height_ != 0) {
+    // Ensure we have a texture before updating it.
+    if (!texture_ && width_.load(std::memory_order_acquire) != 0 && height_.load(std::memory_order_acquire) != 0) {
         createSdlTexture();
     }
 
@@ -743,7 +813,7 @@ void GStreamerVideo::draw() {
                     GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 0),
                     static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 1)),
                     GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 1)) != 0) {
-                    LOG_ERROR("GStreamerVideo", "Unable to update NV texture.");
+                    LOG_ERROR("GStreamerVideo", "Unable to update NV texture: " + std::string(SDL_GetError()));
                 }
             }
             else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
@@ -754,7 +824,7 @@ void GStreamerVideo::draw() {
                     GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 1),
                     static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 2)),
                     GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 2)) != 0) {
-                    LOG_ERROR("GStreamerVideo", "Unable to update YUV texture.");
+                    LOG_ERROR("GStreamerVideo", "Unable to update YUV texture: " + std::string(SDL_GetError()));
                 }
             }
 
@@ -764,7 +834,8 @@ void GStreamerVideo::draw() {
             if (GST_CLOCK_TIME_IS_VALID(pts)) {
                 lastPTS_.store(pts, std::memory_order_release);
                 newFrameAvailable_.store(true, std::memory_order_release);
-            } else {
+            }
+            else {
                 LOG_DEBUG("GStreamerVideo", "Invalid PTS: Skipping QOS event for this buffer.");
             }
         }

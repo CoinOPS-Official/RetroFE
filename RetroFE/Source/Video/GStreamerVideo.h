@@ -258,10 +258,10 @@ private:
     guint elementSetupHandlerId_{ 0 };
     guint handoffHandlerId_{ 0 };
     guint padProbeId_{ 0 };
-    gint height_{ 0 };
-    gint width_{ 0 };
+    std::atomic<int> width_{ 0 };
+    std::atomic<int> height_{ 0 };
     TNQueue<GstBuffer*, 8> bufferQueue_; // Using TNQueue to hold a maximum of 8 buffers
-    bool isPlaying_{ false };
+    std::atomic<bool> isPlaying_{ false };
     static bool initialized_;
     int playCount_{ 0 };
     std::string currentFile_{};
