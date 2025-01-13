@@ -147,7 +147,7 @@ void VideoComponent::freeGraphicsMemory()
         GStreamerVideo* gstreamerVideo = static_cast<GStreamerVideo*>(videoInst_);
 
         // Put it back into the pool
-        VideoPool::releaseVideo(gstreamerVideo);
+        VideoPool::releaseVideo(gstreamerVideo, monitor_);
 
         if (Logger::isLevelEnabled("DEBUG"))
             LOG_DEBUG("VideoComponent", "Released " + Utils::getFileName(videoFile_) + " back to the pool");

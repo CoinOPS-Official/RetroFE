@@ -5,64 +5,72 @@
 #include "../Database/Configuration.h" // if needed, depends on your usage
 
 // Define the static member 'pool_'
-std::vector<GStreamerVideo*> VideoPool::pool_;
+std::unordered_map<int, std::vector<GStreamerVideo*>> VideoPool::pools_;
 
 GStreamerVideo* VideoPool::acquireVideo(int monitor, bool softOverlay)
 {
     // Optional: lock a mutex here if multi-threaded
 
-    // 1. If there's an idle instance in 'pool_', return it.
-    if (!pool_.empty())
-    {
-        GStreamerVideo* vid = pool_.back();
-        pool_.pop_back();
-        LOG_DEBUG("VideoPool", "Reusing a GStreamerVideo from the pool");
+    // 1. Access the pool for the specified monitor
+    auto& pool = pools_[monitor]; // This creates an empty vector if no pool exists for the monitor
 
-        // Because we may have previously called 'unload()' or changed states,
-        // re-initialize if needed.
+    // 2. If there's an idle instance in the monitor's pool, return it.
+    if (!pool.empty())
+    {
+        GStreamerVideo* vid = pool.back();
+        pool.pop_back();
+        LOG_DEBUG("VideoPool", "Reusing a GStreamerVideo from the pool for monitor " + std::to_string(monitor));
+
+        // Reinitialize the video instance if needed
         if (!vid->initialize()) {
-            // If initialization fails for some reason, destroy it and create a fresh one
             LOG_ERROR("VideoPool", "Failed to re-initialize GStreamerVideo from pool. Creating new instance.");
             delete vid;
             return new GStreamerVideo(monitor);
         }
 
-        // Update the monitor, softOverlay, etc. if needed
+        // Update the softOverlay flag
         vid->setSoftOverlay(softOverlay);
 
         return vid;
     }
 
-    // 2. If no idle instance is available, create a brand new one.
-    LOG_DEBUG("VideoPool", "No idle GStreamerVideo in the pool; creating a new one");
+    // 3. If no idle instance is available, create a new one for this monitor.
+    LOG_DEBUG("VideoPool", "No idle GStreamerVideo in the pool for monitor " + std::to_string(monitor) + "; creating a new one");
     return new GStreamerVideo(monitor);
 }
 
-void VideoPool::releaseVideo(GStreamerVideo* vid)
+void VideoPool::releaseVideo(GStreamerVideo* vid, int monitor)
 {
     if (!vid) return;
 
     // Optional: lock a mutex here if multi-threaded
 
-    // Move pipeline to a non-playing state but do NOT unref or set pipeline to NULL
-    // We'll rely on the 'unload()' method in GStreamerVideo to handle that logic:
-    vid->unload();  
+    // 1. Move the video instance to an "unloaded" state
+    vid->unload();
 
-    // Now that it’s “unloaded,” push it back into the pool for reuse
-    pool_.push_back(vid);
+    // 2. Add it back to the pool for the corresponding monitor
+    pools_[monitor].push_back(vid);
 
-    LOG_DEBUG("VideoPool", "GStreamerVideo returned to the pool, current size = " + std::to_string(pool_.size()));
+    LOG_DEBUG("VideoPool", "GStreamerVideo returned to the pool for monitor " + std::to_string(monitor) +
+        ", current pool size = " + std::to_string(pools_[monitor].size()));
 }
+
 
 void VideoPool::shutdown()
 {
-    // If you want a clean shutdown, do it here
-    for (auto* vid : pool_)
+    // Optional: lock a mutex here if multi-threaded
+
+    // Destroy all video instances in all monitor-specific pools
+    for (auto& [monitor, pool] : pools_)
     {
-        // Move pipeline fully to NULL, unref, free memory, etc.
-        vid->stop();    // or a specialized teardown that sets GST_STATE_NULL
-        delete vid;
+        for (auto* vid : pool)
+        {
+            vid->stop();    // Fully stop and release resources
+            delete vid;
+        }
+        pool.clear();
     }
-    pool_.clear();
+    pools_.clear();
+
     LOG_DEBUG("VideoPool", "VideoPool shutdown complete, all pooled videos destroyed.");
 }
