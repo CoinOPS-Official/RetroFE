@@ -411,8 +411,21 @@ bool GStreamerVideo::play(const std::string &file)
     lastSetMuteState_ = true;
 
     // Optionally wait for PLAYING state if you want to confirm it's active
-    if (Configuration::debugDotEnabled) {
-        // ...
+    if (Configuration::debugDotEnabled)
+    {
+        // Environment variable is set, proceed with dot file generation
+        GstState state;
+        GstState pending;
+        // Wait up to 5 seconds for the state change to complete
+        GstClockTime timeout = 5 * GST_SECOND; // Define your timeout
+        GstStateChangeReturn ret = gst_element_get_state(GST_ELEMENT(playbin_), &state, &pending, timeout);
+        if (ret == GST_STATE_CHANGE_SUCCESS && state == GST_STATE_PLAYING)
+        {
+            // The pipeline is in the playing state, proceed with dot file generation
+            // Generate dot file for playbin_
+            std::string playbinDotFileName = generateDotFileName("playbin", currentFile_);
+            GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, playbinDotFileName.c_str());
+        }
     }
 
     LOG_DEBUG("GStreamerVideo", "Playing file: " + file);
