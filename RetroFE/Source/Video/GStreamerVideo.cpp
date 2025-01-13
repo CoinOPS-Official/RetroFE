@@ -272,8 +272,8 @@ bool GStreamerVideo::unload()
     lastPTS_.store(GST_CLOCK_TIME_NONE, std::memory_order_release);
     paused_ = false;
     currentVolume_ = 0.0f;
-    lastSetVolume_ = 0.0f;
-    lastSetMuteState_ = true;  // or false, depending on your default
+    lastSetVolume_ = -1.0f;
+    lastSetMuteState_ = false;
     volume_ = 0.0f;            // reset to default
     
     gst_video_info_init(&videoInfo_);
