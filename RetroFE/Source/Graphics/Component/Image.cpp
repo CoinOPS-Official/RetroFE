@@ -310,7 +310,7 @@ void Image::allocateGraphicsMemory() {
 
             SDL_FillRect(canvasSurface, nullptr, SDL_MapRGBA(canvasSurface->format, 0, 0, 0, 0));
 
-            std::vector<SDL_Texture*>& targetTextures = useTextureCaching_ ? 
+            std::vector<SDL_Texture*>& targetTextures = useTextureCaching_ ?
                 newCachedImage.frameTextures : frameTextures_;
 
             do {
@@ -320,7 +320,7 @@ void Image::allocateGraphicsMemory() {
                     continue;
                 }
 
-                uint8_t const* ret = WebPDecodeRGBAInto(iter.fragment.bytes, iter.fragment.size, 
+                uint8_t const* ret = WebPDecodeRGBAInto(iter.fragment.bytes, iter.fragment.size,
                     (uint8_t*)frameSurface->pixels, frameSurface->pitch * frameSurface->h, frameSurface->pitch);
                 if (!ret) {
                     LOG_ERROR("Image", "Failed to decode WebP frame: " + std::to_string(iter.frame_num));
@@ -347,12 +347,13 @@ void Image::allocateGraphicsMemory() {
                 if (frameTexture) {
                     SDL_SetTextureBlendMode(frameTexture, SDL_BLENDMODE_BLEND);
                     targetTextures.push_back(frameTexture);
-                } else {
-                    LOG_ERROR("Image", "Failed to create texture from WebP frame: " + std::string(SDL_GetError()));
-                    continue;
                 }
-                LOG_INFO("Image", "Processing frame " + std::to_string(iter.frame_num) + ": offset (" + 
-                    std::to_string(iter.x_offset) + ", " + std::to_string(iter.y_offset) + "), size (" + 
+                else {
+                    LOG_ERROR("Image", "Failed to create texture from WebP frame: " + std::string(SDL_GetError()));
+                }
+
+                LOG_INFO("Image", "Processing frame " + std::to_string(iter.frame_num) + ": offset (" +
+                    std::to_string(iter.x_offset) + ", " + std::to_string(iter.y_offset) + "), size (" +
                     std::to_string(iter.width) + "x" + std::to_string(iter.height) + ")");
             } while (WebPDemuxNextFrame(&iter));
 
@@ -374,7 +375,8 @@ void Image::allocateGraphicsMemory() {
 
             if (useTextureCaching_) {
                 newCachedImage.frameDelay = iter.duration;
-            } else {
+            }
+            else {
                 frameDelay_ = iter.duration;
             }
 
@@ -384,56 +386,97 @@ void Image::allocateGraphicsMemory() {
 
             LOG_INFO("Image", "Loaded WebP animated texture.");
         }
-        else if (animatedGif) {
-            IMG_Animation* animation = IMG_LoadAnimation_RW(rw, 0);
-            if (animation) {
-                SDL_LockMutex(SDL::getMutex());
+else if (animatedGif) {
+    IMG_Animation* animation = IMG_LoadAnimation_RW(rw, 0);
+    if (!animation) {
+        LOG_ERROR("Image", "Failed to load GIF animation: " + std::string(IMG_GetError()));
+        SDL_RWclose(rw);
+        return false;
+    }
 
-                // Change from pointer to reference
-                std::vector<SDL_Texture*>& targetTextures = useTextureCaching_ ? 
-                    newCachedImage.frameTextures : frameTextures_;
+    // Validate animation data
+    if (animation->count <= 0 || !animation->frames || !animation->delays) {
+        LOG_ERROR("Image", "Invalid GIF animation data");
+        IMG_FreeAnimation(animation);
+        SDL_RWclose(rw);
+        return false;
+    }
 
-                for (int i = 0; i < animation->count; ++i) {
-                    SDL_Texture* frameTexture = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), 
-                        animation->frames[i]);
-                    if (frameTexture) {
-                        // Change from pointer operator -> to dot operator .
-                        targetTextures.push_back(frameTexture);
-                    } else {
-                        LOG_ERROR("Image", "Failed to create texture from GIF animation frame: " + 
-                            std::string(SDL_GetError()));
-                    }
-                }
+    SDL_LockMutex(SDL::getMutex());
 
-                if (useTextureCaching_) {
-                    newCachedImage.frameDelay = animation->delays[0];
-                } else {
-                    frameDelay_ = animation->delays[0];
-                }
+    std::vector<SDL_Texture*>& targetTextures = useTextureCaching_ ?
+        newCachedImage.frameTextures : frameTextures_;
 
-                SDL_UnlockMutex(SDL::getMutex());
-
-                if (targetTextures.empty()) {
-                    LOG_ERROR("Image", "No frame textures were created for GIF animated image: " + filePath);
-                    IMG_FreeAnimation(animation);
-                    SDL_RWclose(rw);
-                    return false;
-                }
-
-                baseViewInfo.ImageWidth = static_cast<float>(animation->w);
-                baseViewInfo.ImageHeight = static_cast<float>(animation->h);
-                lastFrameTime_ = SDL_GetTicks();
-                IMG_FreeAnimation(animation);
-                isAnimated = true;
-
-                LOG_INFO("Image", "Loaded GIF animated texture: " + filePath);
-            } else {
-                LOG_ERROR("Image", "Failed to load GIF animation: " + std::string(IMG_GetError()));
-                SDL_RWclose(rw);
-                return false;
-            }
+    bool hasError = false;
+    for (int i = 0; i < animation->count; ++i) {
+        if (!animation->frames[i]) {
+            LOG_ERROR("Image", "Invalid frame at index " + std::to_string(i));
+            continue;
         }
 
+        SDL_Texture* frameTexture = SDL_CreateTextureFromSurface(
+            SDL::getRenderer(baseViewInfo.Monitor),
+            animation->frames[i]
+        );
+
+        if (frameTexture) {
+            SDL_SetTextureBlendMode(frameTexture, SDL_BLENDMODE_BLEND);  // Added blend mode setting
+            targetTextures.push_back(frameTexture);
+        }
+        else {
+            LOG_ERROR("Image", "Failed to create texture from GIF animation frame " +
+                std::to_string(i) + ": " + std::string(SDL_GetError()));
+            hasError = true;
+        }
+    }
+
+    SDL_UnlockMutex(SDL::getMutex());
+
+    if (targetTextures.empty()) {
+        LOG_ERROR("Image", "No frame textures were created for GIF animated image: " + filePath);
+        IMG_FreeAnimation(animation);
+        SDL_RWclose(rw);
+        return false;
+    }
+
+    // Set dimensions before potential early returns
+    baseViewInfo.ImageWidth = static_cast<float>(animation->w);
+    baseViewInfo.ImageHeight = static_cast<float>(animation->h);
+
+    // Set timing information
+    if (animation->delays && animation->count > 0) {
+        if (useTextureCaching_) {
+            newCachedImage.frameDelay = animation->delays[0];
+        }
+        else {
+            frameDelay_ = animation->delays[0];
+        }
+    }
+    else {
+        // Default delay if none provided
+        int defaultDelay = 100; // 100ms default
+        if (useTextureCaching_) {
+            newCachedImage.frameDelay = defaultDelay;
+        }
+        else {
+            frameDelay_ = defaultDelay;
+        }
+        LOG_WARNING("Image", "No delay information found, using default delay: " + filePath);
+    }
+
+    lastFrameTime_ = SDL_GetTicks();
+    isAnimated = true;
+
+    // Log warning if some frames failed but we still have valid textures
+    if (hasError && !targetTextures.empty()) {
+        LOG_WARNING("Image", "Loaded GIF animation with some frame errors: " + filePath);
+    }
+    else {
+        LOG_INFO("Image", "Loaded GIF animated texture: " + filePath);
+    }
+
+    IMG_FreeAnimation(animation);
+}
         // Handle static images
         if (!isAnimated) {
             SDL_Texture* newTexture = IMG_LoadTexture_RW(SDL::getRenderer(baseViewInfo.Monitor), rw, 0);
