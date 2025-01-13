@@ -235,6 +235,7 @@ bool GStreamerVideo::unload()
 
     // Optionally mark it as “stopping” so other threads know not to process more buffers
     stopping_.store(true, std::memory_order_release);
+    newFrameAvailable_.store(false, std::memory_order_release);
 
     bufferDisconnect(true);
 
@@ -259,16 +260,7 @@ bool GStreamerVideo::unload()
     // Clear any queued buffers
     bufferQueue_.clear();
 
-    // Destroy the existing SDL texture (dimensions may change next time)
-    SDL_LockMutex(SDL::getMutex());
-    if (texture_) {
-        SDL_DestroyTexture(texture_);
-        texture_ = nullptr;
-    }
-    SDL_UnlockMutex(SDL::getMutex());
-
     // Reset flags used for timing, volume, etc.
-    newFrameAvailable_.store(false, std::memory_order_release);
     lastPTS_.store(GST_CLOCK_TIME_NONE, std::memory_order_release);
     paused_ = false;
     currentVolume_ = 0.0f;
@@ -797,7 +789,7 @@ void GStreamerVideo::draw() {
     ScopedBuffer scopedBuffer(*bufferOpt);
 
     // Ensure we have a texture before updating it.
-    if (!texture_ && width_.load(std::memory_order_acquire) != 0 && height_.load(std::memory_order_acquire) != 0) {
+    if (width_.load(std::memory_order_acquire) != 0 && height_.load(std::memory_order_acquire) != 0) {
         createSdlTexture();
     }
 
