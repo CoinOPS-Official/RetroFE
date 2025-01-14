@@ -45,6 +45,8 @@
 #include <iomanip>
 #include <algorithm>
 
+int ScrollingList::nextListId = 0;
+
 ScrollingList::ScrollingList( Configuration &c,
                               Page          &p,
                               bool           layoutMode,
@@ -69,12 +71,17 @@ ScrollingList::ScrollingList( Configuration &c,
 	, useTextureCaching_(useTextureCaching)
     , components_()
  {
+    listId_ = nextListId++;
 }
 
 
 ScrollingList::~ScrollingList() {
     clearPoints();
     destroyItems();
+}
+
+int ScrollingList::getListId() const {
+    return listId_;
 }
 
 void ScrollingList::clearPoints() {
@@ -782,7 +789,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
         // Create video or image
         if (!t) {
             if (videoType_ != "null") {
-                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
+                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1, false, listId_);
             }
             else {
                 std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
@@ -806,7 +813,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
             if (!t) {
                 if (videoType_ != "null") {
-                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
+                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1,  false, listId_);
                 }
                 else {
                     std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
@@ -841,7 +848,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
             }
         }
         if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor);
+            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_);
         }
         else {
             name = imageType_;
@@ -857,7 +864,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
     // check rom directory path for art
     if ( !t ) {
         if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor);
+            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_);
         }
         else {
             name = imageType_;

@@ -247,7 +247,6 @@ bool GStreamerVideo::unload()
     }
 
     // Optionally wait for the state change to complete 
-    // (if you want to be certain it reached READY before continuing)
     GstState newState;
     ret = gst_element_get_state(playbin_, &newState, nullptr, GST_SECOND);
     if (ret == GST_STATE_CHANGE_FAILURE || newState != GST_STATE_READY) {
@@ -273,10 +272,6 @@ bool GStreamerVideo::unload()
     height_ = 0;
     playCount_ = 0;
     numLoops_ = 0;
-
-    // If you previously disconnected handoff signals, you might need to 
-    // reconnect them next time you "loadNewFile". For a simple approach, you 
-    // can leave them connected if you plan to re-use the same pipeline logic.
 
     // Let future calls proceed
     stopping_.store(false, std::memory_order_release);

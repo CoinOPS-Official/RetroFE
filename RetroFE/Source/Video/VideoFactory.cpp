@@ -25,14 +25,14 @@
 bool VideoFactory::enabled_ = true;
 int VideoFactory::numLoops_ = 0;
 
-IVideo* VideoFactory::createVideo(int monitor, int numLoops, bool softOverlay)
+IVideo* VideoFactory::createVideo(int monitor, int numLoops, bool softOverlay, int listId)
 {
     if (!enabled_) {
         return nullptr; // Early return if not enabled
     }
 
     // Acquire from the VideoPool instead of directly creating a new GStreamerVideo
-    GStreamerVideo* instance = VideoPool::acquireVideo(monitor, softOverlay);
+    GStreamerVideo* instance = VideoPool::acquireVideo(monitor, listId, softOverlay);
     if (!instance) {
         // Safety check in case acquireVideo somehow returned null
         LOG_ERROR("VideoFactory", "VideoPool failed to provide a GStreamerVideo instance.");

@@ -1365,10 +1365,7 @@ void Page::cleanup()
 
 
 void Page::draw() {
-    LOG_DEBUG("Page::draw", "Starting draw process.");
-    LOG_DEBUG("Page::draw", "LayerComponents_ size: " + std::to_string(LayerComponents_.size()));
-    LOG_DEBUG("Page::draw", "menus_ size: " + std::to_string(menus_.size()));
-
+ 
     for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
         // Check for out-of-bounds access
         if (i >= LayerComponents_.size()) {
@@ -1378,7 +1375,6 @@ void Page::draw() {
 
         // Skip layers with no components or menus
         if (LayerComponents_[i].empty() && menus_.empty()) {
-            LOG_DEBUG("Page::draw", "Skipping layer " + std::to_string(i) + " (no components or menus).");
             continue;
         }
 

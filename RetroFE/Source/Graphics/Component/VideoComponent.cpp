@@ -40,8 +40,8 @@
 #include "../../Video/VideoPool.h"
 
 
-VideoComponent::VideoComponent(Page &p, const std::string &videoFile, int monitor, int numLoops, bool softOverlay)
-    : Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), currentPage_(&p)
+VideoComponent::VideoComponent(Page &p, const std::string &videoFile, int monitor, int numLoops, bool softOverlay, int listId)
+	: Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), currentPage_(&p), listId_(listId)
 {
 }
 
@@ -128,7 +128,7 @@ void VideoComponent::allocateGraphicsMemory()
 
     if (!isPlaying_) {
         if (!videoInst_ && videoFile_ != "") {
-            videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_);
+            videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_);
             isPlaying_ = videoInst_->play(videoFile_);
         }
     }
@@ -147,7 +147,7 @@ void VideoComponent::freeGraphicsMemory()
         GStreamerVideo* gstreamerVideo = static_cast<GStreamerVideo*>(videoInst_);
 
         // Put it back into the pool
-        VideoPool::releaseVideo(gstreamerVideo, monitor_);
+        VideoPool::releaseVideo(gstreamerVideo, monitor_, listId_);
 
         if (Logger::isLevelEnabled("DEBUG"))
             LOG_DEBUG("VideoComponent", "Released " + Utils::getFileName(videoFile_) + " back to the pool");

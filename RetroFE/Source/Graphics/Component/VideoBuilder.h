@@ -27,5 +27,5 @@ class VideoComponent;
 class VideoBuilder
 {
 public:
-    VideoComponent * createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops = -1, bool softOverlay = false);
+    static VideoComponent* createVideo(const std::string& path, Page& page, const std::string& name, int monitor, int numLoops = -1, bool softOverlay = false, int listId = -1);
 };

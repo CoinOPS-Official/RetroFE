@@ -26,7 +26,7 @@
 class VideoComponent : public Component
 {
 public:
-    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay);
+    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listID);
     ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
@@ -52,6 +52,7 @@ private:
     bool softOverlay_;
     int numLoops_;
     int monitor_;
+    int listId_;
     Page* currentPage_{ nullptr };
     GstClockTime previousTime_ = 0;
     GstClockTime previousPTS_ = 0;

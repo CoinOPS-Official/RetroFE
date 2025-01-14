@@ -32,6 +32,7 @@
 #include "Utility/Log.h"
 #include "Utility/Utils.h"
 #include "Video/VideoFactory.h"
+#include "Video/VideoPool.h"
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -350,6 +351,7 @@ bool RetroFE::deInitialize()
 	{
 		LOG_INFO("RetroFE", "Exiting");
 		SDL::deInitialize();
+		VideoPool::shutdown();
 		gst_deinit();
 	}
 

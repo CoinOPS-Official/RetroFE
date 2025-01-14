@@ -104,6 +104,8 @@ public:
     ~ScrollingList() override;
     const std::vector<Item*>& getItems() const;
     
+    int getListId() const;
+
     void triggerEnterEvent();
     void triggerExitEvent();
     void triggerMenuEnterEvent(int menuIndex = -1);
@@ -176,6 +178,9 @@ public:
     void scroll(bool forward);
     bool isPlaylist() const;
 private:
+
+    static int nextListId;
+    int listId_;
 
     void clearPoints();
     void clearTweenPoints();

@@ -20,7 +20,7 @@ class IVideo;
 class VideoFactory
 {
 public:
-    static IVideo *createVideo( int monitor, int numLoops = -1, bool softOverlay = false);
+    static IVideo *createVideo( int monitor, int numLoops = -1, bool softOverlay = false, int listID = -1);
     static void    setEnabled(bool enabled);
     static void    setNumLoops(int numLoops);
 
