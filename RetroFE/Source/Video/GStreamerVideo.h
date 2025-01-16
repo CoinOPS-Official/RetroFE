@@ -260,6 +260,9 @@ private:
     guint padProbeId_{ 0 };
     std::atomic<int> width_{ 0 };
     std::atomic<int> height_{ 0 };
+	int textureWidth_{ -1 };
+	int textureHeight_{ -1 };
+	bool textureValid_{ false };
     TNQueue<GstBuffer*, 8> bufferQueue_; // Using TNQueue to hold a maximum of 8 buffers
     std::atomic<bool> isPlaying_{ false };
     static bool initialized_;
