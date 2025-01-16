@@ -47,11 +47,4 @@ class IVideo
     virtual void bufferDisconnect(bool disconnect) = 0;
     virtual bool isBufferDisconnected() = 0;
 
-    virtual GstClockTime getLastPTS() const = 0;
-    virtual GstClockTime getExpectedTime() const = 0;
-    virtual bool isNewFrameAvailable() const = 0;
-    virtual void resetNewFrameFlag() = 0;
-    virtual GstElement* getPipeline() const = 0;
-    virtual GstElement* getVideoSink() const = 0;
-
 };

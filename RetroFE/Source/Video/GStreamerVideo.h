@@ -188,12 +188,6 @@ public:
     bool isPaused() override;
     void bufferDisconnect(bool disconnect) override;
     bool isBufferDisconnected() override;
-    GstClockTime getLastPTS() const override;
-    GstClockTime getExpectedTime() const override;
-    bool isNewFrameAvailable() const override;
-    void resetNewFrameFlag() override;
-    GstElement* getPipeline() const override;
-    GstElement* getVideoSink() const override;
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
 
@@ -276,12 +270,8 @@ private:
     double lastSetVolume_{ -1.0 };
     bool lastSetMuteState_{ false };
     std::atomic<bool> stopping_{ false };
-    std::shared_mutex stopMutex_;
     static bool pluginsInitialized_;
     bool bufferDisconnected_{ true };
-    std::atomic<GstClockTime> lastPTS_{GST_CLOCK_TIME_NONE};
-    GstClockTime expectedTime_;
-    std::atomic<bool> newFrameAvailable_{false};  // Define newFrameAvailable_ as atomic
     bool softOverlay_;
 
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;

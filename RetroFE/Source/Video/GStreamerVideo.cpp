@@ -168,8 +168,6 @@ bool GStreamerVideo::stop()
 
     g_object_set(videoSink_, "signal-handoffs", FALSE, nullptr);
 
-    newFrameAvailable_ = false;
-
     isPlaying_ = false;
 
     if (playbin_)
@@ -235,7 +233,6 @@ bool GStreamerVideo::unload()
 
     // Optionally mark it as “stopping” so other threads know not to process more buffers
     stopping_.store(true, std::memory_order_release);
-    newFrameAvailable_.store(false, std::memory_order_release);
 
     bufferDisconnect(true);
 
@@ -260,7 +257,6 @@ bool GStreamerVideo::unload()
     bufferQueue_.clear();
 
     // Reset flags used for timing, volume, etc.
-    lastPTS_.store(GST_CLOCK_TIME_NONE, std::memory_order_release);
     paused_ = false;
     currentVolume_ = 0.0f;
     lastSetVolume_ = -1.0f;
@@ -729,30 +725,6 @@ int GStreamerVideo::getWidth()
     return width_;
 }
 
-GstClockTime GStreamerVideo::getLastPTS() const {
-    return lastPTS_.load(std::memory_order_acquire);
-}
-
-GstClockTime GStreamerVideo::getExpectedTime() const {
-    return expectedTime_;
-}
-
-bool GStreamerVideo::isNewFrameAvailable() const {
-    return newFrameAvailable_.load(std::memory_order_acquire);  // Load the atomic value
-}
-
-void GStreamerVideo::resetNewFrameFlag() {
-    newFrameAvailable_ = false;
-}
-
-GstElement* GStreamerVideo::getPipeline() const {
-    return playbin_;
-}
-
-GstElement* GStreamerVideo::getVideoSink() const {
-    return videoSink_;
-}
-
 void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
     auto* video = static_cast<GStreamerVideo*>(userdata);
 
@@ -820,15 +792,6 @@ void GStreamerVideo::draw() {
             }
 
             SDL_UnlockMutex(SDL::getMutex());
-
-            GstClockTime pts = GST_BUFFER_PTS(scopedBuffer.get());
-            if (GST_CLOCK_TIME_IS_VALID(pts)) {
-                lastPTS_.store(pts, std::memory_order_release);
-                newFrameAvailable_.store(true, std::memory_order_release);
-            }
-            else {
-                LOG_DEBUG("GStreamerVideo", "Invalid PTS: Skipping QOS event for this buffer.");
-            }
         }
     }
 }
@@ -940,9 +903,6 @@ void GStreamerVideo::restart()
     // Clear buffered frames
     bufferQueue_.clear();
 
-    // Reset state flags
-    newFrameAvailable_.store(false, std::memory_order_release);
-    lastPTS_.store(GST_CLOCK_TIME_NONE, std::memory_order_release);
 
     // Use same seeking method consistently
     if (!gst_element_seek(playbin_, 1.0, GST_FORMAT_TIME, 

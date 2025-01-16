@@ -111,7 +111,7 @@ bool VideoComponent::update(float dt)
                 videoInst_->pause();
 
             // Wait until the current frame is processed before restarting (if needed)
-            if (!videoInst_->isNewFrameAvailable() && videoInst_->getCurrent() > 1000000) {
+            if (videoInst_->getCurrent() > 1000000) {
                 videoInst_->restart();
                 baseViewInfo.Restart = false;
                 LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
@@ -172,78 +172,6 @@ void VideoComponent::draw() {
             SDL::renderCopyF(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
                 page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
                 page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-
-            if (videoInst_->isNewFrameAvailable()) {
-                // Get the current clock and base time
-                GstClock* clock = gst_pipeline_get_clock(GST_PIPELINE(videoInst_->getPipeline()));
-                GstClockTime currentTime = gst_clock_get_time(clock);
-                GstClockTime baseTime = gst_element_get_base_time(GST_ELEMENT(videoInst_->getPipeline()));
-                gst_object_unref(clock);
-
-                // Calculate the actual presentation time based on the base time and PTS
-                GstClockTime pts = videoInst_->getLastPTS();
-                GstClockTime expectedTime = baseTime + pts;
-
-                // Calculate jitter as a GstClockTimeDiff
-                GstClockTimeDiff jitter = currentTime - expectedTime;
-                gdouble jitterSeconds = static_cast<gdouble>(jitter) / GST_SECOND;
-
-                // Use ostringstream for precise conversion and formatting
-                std::ostringstream jitterStream;
-                jitterStream << std::fixed << std::setprecision(6) << jitterSeconds;
-
-                // Initialize averageProportion to 1.0 by default
-                gdouble averageProportion = 1.0;
-
-                // Calculate the proportion based on the difference in time and PTS if it's not the first frame
-                if (previousPTS_ != 0 && previousTime_ != 0) {
-                    gdouble proportion = static_cast<gdouble>(currentTime - previousTime_) /
-                        static_cast<gdouble>(pts - previousPTS_);
-
-                    // Update running average of proportion
-                    cumulativeProportion_ += proportion;
-                    proportionSampleCount_++;
-
-                    // Calculate the average proportion
-                    averageProportion = cumulativeProportion_ / static_cast<gdouble>(proportionSampleCount_);
-                }
-
-                LOG_DEBUG("VideoComponent", "Buffer drawn for: " + videoFile_);
-                LOG_DEBUG("VideoComponent", "Buffer PTS: " + std::to_string(GST_TIME_AS_MSECONDS(pts)) + " ms");
-                LOG_DEBUG("VideoComponent", "Current Time: " + std::to_string(GST_TIME_AS_MSECONDS(currentTime)) + " ms");
-                LOG_DEBUG("VideoComponent", "Expected Time: " + std::to_string(GST_TIME_AS_MSECONDS(expectedTime)) + " ms");
-                LOG_DEBUG("VideoComponent", "Jitter: " + jitterStream.str() + " seconds");
-                LOG_DEBUG("VideoComponent", "Average Proportion: " + std::to_string(averageProportion));
-
-                // Determine the QOS type based on the jitter value
-                GstQOSType qosType = (jitter < 0) ? GST_QOS_TYPE_UNDERFLOW : GST_QOS_TYPE_OVERFLOW;
-
-                // Create a QOS event using the calculated average proportion
-                GstEvent* qosEvent = gst_event_new_qos(
-                    qosType,                // The type of QOS (UNDERFLOW or OVERFLOW)
-                    averageProportion,      // Proportion of real-time performance based on average or default 1.0
-                    jitter,                 // The time difference of the last clock sync (GstClockTimeDiff)
-                    pts                     // The timestamp of the buffer
-                );
-
-                if (qosEvent) {
-                    GstPad* sinkPad = gst_element_get_static_pad(videoInst_->getVideoSink(), "sink");
-                    if (sinkPad) {
-                        gst_pad_push_event(sinkPad, qosEvent);
-                        gst_object_unref(sinkPad);
-                    }
-                }
-                else {
-                    LOG_DEBUG("VideoComponent", "Failed to create QOS event.");
-                }
-
-                // Update the previous values for the next calculation
-                previousTime_ = currentTime;
-                previousPTS_ = pts;
-
-                // Reset the new frame flag
-                videoInst_->resetNewFrameFlag();
-            }
         }
     }
 }
