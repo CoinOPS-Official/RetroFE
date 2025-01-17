@@ -88,6 +88,7 @@ public:
         KeyCodeToggleCollectionInfo,
         KeyCodeToggleBuildInfo,
         KeyCodeSettings,
+        KeyCodeQuickList,
         // leave KeyCodeMax at the end
         KeyCodeMax,
     };

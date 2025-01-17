@@ -77,6 +77,8 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_RANDOMLAYOUT,             "",         global_options::option_type::MSTRING,  "Randomly choose a layout on launch, CSV list of layout names" },
     { OPTION_FIRSTPLAYLIST,            "arcades",  global_options::option_type::STRING,   "Start on this playlist if available" },
     { OPTION_AUTOPLAYLIST,             "all",      global_options::option_type::STRING,   "Start on this playlist when entering a collection if available" },
+    { OPTION_QUICKLISTCOLLECTIONPLAYLIST,                
+                                       "",         global_options::option_type::STRING,  "Jump to playlist by way of quickList key" },
     { OPTION_CYCLEPLAYLIST,            "",         global_options::option_type::MSTRING,  "Set of playlists that can be cycled through, CSV list of playlist names" },
     { OPTION_FIRSTCOLLECTION,          "",         global_options::option_type::STRING,   "Start on this collection if available" },
     { OPTION_CYCLECOLLECTION,          "",         global_options::option_type::MSTRING,  "Set of collections that can be cycled through, CSV list of collection names" },

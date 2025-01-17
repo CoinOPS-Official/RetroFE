@@ -82,6 +82,7 @@ bool UserInput::initialize()
     MapKey("toggleCollectionInfo", KeyCodeToggleCollectionInfo, false);
     MapKey("toggleBuildInfo", KeyCodeToggleBuildInfo, false);
     MapKey("settings", KeyCodeSettings, false);
+	MapKey("quickPlaylist", KeyCodeQuickList, false);
     
     std::string jbKey;
     if(config_.getProperty(OPTION_JUKEBOX, jbKey)) {
