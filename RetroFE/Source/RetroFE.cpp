@@ -1124,7 +1124,10 @@ bool RetroFE::run()
 			{
 				std::string collectionName = currentPage_->getCollectionName();
 				lastMenuOffsets_[collectionName] = currentPage_->getScrollOffsetIndex();
-				lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
+				if (currentPage_->getPlaylistName() != settingsCollectionPlaylist)
+				{
+					lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
+				}
 				config_.setProperty("lastCollection", collectionName);
 				
 				state = RETROFE_PLAYLIST_REQUEST;
@@ -1209,7 +1212,10 @@ bool RetroFE::run()
 			{
 				std::string collectionName = currentPage_->getCollectionName();
 				lastMenuOffsets_[collectionName] = currentPage_->getScrollOffsetIndex();
-				lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
+				if (currentPage_->getPlaylistName() != quickListCollectionPlaylist)
+				{
+					lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
+				}
 				config_.setProperty("lastCollection", collectionName);
 				state = RETROFE_PLAYLIST_REQUEST;
 				if (settingsCollection != "" && settingsCollection != collectionName)
