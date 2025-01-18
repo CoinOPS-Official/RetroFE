@@ -300,9 +300,8 @@ bool GStreamerVideo::createPipelineIfNeeded()
     gint flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO;
     g_object_set(playbin_, "flags", flags, nullptr);
 
-    // Check if instant-uri is supported
 
-        g_object_set(playbin_, "instant-uri", TRUE, nullptr);
+    g_object_set(playbin_, "instant-uri", TRUE, nullptr);
 
 
     // Configure caps (hardware accel or software)
@@ -335,12 +334,6 @@ bool GStreamerVideo::createPipelineIfNeeded()
     // We haven't set URI yet; just attach the videoBin as playbin's video-sink
     g_object_set(playbin_, "video-sink", videoBin_, nullptr);
 
-    // Setup clock
-    GstClock *clock = gst_system_clock_obtain();
-    g_object_set(clock, "clock-type", GST_CLOCK_TYPE_MONOTONIC, nullptr);
-    gst_pipeline_use_clock(GST_PIPELINE(playbin_), clock);
-    gst_object_unref(clock);
-
     videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
     gst_object_unref(videoBus_);
 
@@ -348,7 +341,6 @@ bool GStreamerVideo::createPipelineIfNeeded()
     bufferDisconnected_ = true;
 
     handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
-
 
 
     return true;
@@ -407,7 +399,6 @@ bool GStreamerVideo::play(const std::string &file)
         }
     }
 
-    baseTime_ = gst_element_get_base_time(GST_ELEMENT(playbin_));
     paused_   = false;
     isPlaying_= true;
     currentFile_ = file;
