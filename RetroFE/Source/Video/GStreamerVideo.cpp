@@ -515,7 +515,7 @@ bool GStreamerVideo::initializeGstElements(const std::string &file)
     return true;
 }
 
-void GStreamerVideo::elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data)
+void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, GstElement* element, [[maybe_unused]] gpointer data)
 {
     // Check if the element is a video decoder
     if (!Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element))
@@ -623,7 +623,7 @@ void GStreamerVideo::loopHandler() {
 
     // Process all pending messages
     GstMessage* msg;
-    while ((msg = gst_bus_pop_filtered(videoBus_, 
+    while ((msg = gst_bus_pop_filtered(videoBus_,
         static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR)))) {
 
         switch (GST_MESSAGE_TYPE(msg)) {
@@ -631,20 +631,26 @@ void GStreamerVideo::loopHandler() {
             playCount_++;
             if (!numLoops_ || numLoops_ > playCount_) {
                 restart();
-            } else {
+            }
+            else {
                 stop();
             }
             break;
 
         case GST_MESSAGE_ERROR:
-            GError *err;
-            gchar *debug_info;
+            GError* err;
+            gchar* debug_info;
             gst_message_parse_error(msg, &err, &debug_info);
-            LOG_ERROR("GStreamerVideo", "Error received from element " + 
-                std::string(GST_OBJECT_NAME(msg->src)) + ": " + 
+            LOG_ERROR("GStreamerVideo", "Error received from element " +
+                std::string(GST_OBJECT_NAME(msg->src)) + ": " +
                 std::string(err->message));
             g_clear_error(&err);
             g_free(debug_info);
+            break;
+        
+
+        default:
+            // Ignore other message types
             break;
         }
 
@@ -716,7 +722,7 @@ int GStreamerVideo::getWidth()
     return width_;
 }
 
-void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad, gpointer userdata) {
+void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, [[maybe_unused]] GstPad* new_pad, gpointer userdata) {
     auto* video = static_cast<GStreamerVideo*>(userdata);
 
     if (video->stopping_.load(std::memory_order_acquire)) {
