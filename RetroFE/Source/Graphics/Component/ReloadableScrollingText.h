@@ -45,6 +45,7 @@ private:
     bool loadFileText(const std::string& filePath);
     void reloadTexture(bool resetScroll = true);
     void loadText( std::string collection, std::string type, std::string basename, std::string filepath, bool systemMode );
+    bool createIntermediateTexture(SDL_Renderer* renderer, int width, int height);
     void updateGlyphCache();
     Configuration           &config_;
     bool                     systemMode_;
@@ -77,4 +78,6 @@ private:
     float lastImageMaxWidth_;
     float lastImageMaxHeight_;
     std::filesystem::file_time_type lastWriteTime_;
+    SDL_Texture* intermediateTexture_;
+    bool needsTextureUpdate_;
 };

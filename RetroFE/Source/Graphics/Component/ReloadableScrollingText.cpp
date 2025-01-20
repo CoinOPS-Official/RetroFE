@@ -1,19 +1,3 @@
-/* This file is part of RetroFE.
-*
-* RetroFE is free software: you can redistribute it and/or modify
-* it under the terms of the GNU General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* RetroFE is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License
-* along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
-*/
-
 #include "ReloadableScrollingText.h"
 #include "../ViewInfo.h"
 #include "../../Database/Configuration.h"
@@ -59,77 +43,65 @@ ReloadableScrollingText::ReloadableScrollingText(Configuration& config, bool sys
     , lastImageMaxWidth_(0.0f)
     , lastImageMaxHeight_(0.0f)
     , lastWriteTime_(std::filesystem::file_time_type::min())
+    , intermediateTexture_(nullptr)
+    , needsTextureUpdate_(true)
 {
 }
 
-
-
-ReloadableScrollingText::~ReloadableScrollingText( ) = default;
+ReloadableScrollingText::~ReloadableScrollingText() = default;
 
 bool ReloadableScrollingText::loadFileText(const std::string& filePath) {
     std::string absolutePath = Utils::combinePath(Configuration::absolutePath, filePath);
     std::filesystem::path file(absolutePath);
     std::filesystem::file_time_type currentWriteTime;
 
-    // Lambda to round the file time to the nearest second
     auto roundToNearestSecond = [](std::filesystem::file_time_type ftt) {
         return std::chrono::time_point_cast<std::chrono::seconds>(ftt);
         };
 
     try {
         currentWriteTime = std::filesystem::last_write_time(file);
-        currentWriteTime = roundToNearestSecond(currentWriteTime);  // Round to nearest second
+        currentWriteTime = roundToNearestSecond(currentWriteTime);
     }
     catch (const std::filesystem::filesystem_error& e) {
         LOG_ERROR("ReloadableScrollingText", "Failed to retrieve file modification time: " + std::string(e.what()));
-        return false;  // Return false if there is an error
+        return false;
     }
 
-    // Check if the file has been modified since the last read
     if (currentWriteTime == lastWriteTime_ && !text_.empty()) {
-        // No change in file, skip update
-        return false;  // File has not changed
+        return false;
     }
 
-    // Store the current modification time
     lastWriteTime_ = currentWriteTime;
 
-    // Reload the text from the file
     std::ifstream fileStream(absolutePath);
     if (!fileStream.is_open()) {
         LOG_ERROR("ReloadableScrollingText", "Failed to open file: " + absolutePath);
-        return false;  // Return false if the file could not be opened
+        return false;
     }
 
     std::string line;
-    text_.clear();  // Clear previous content
+    text_.clear();
 
     while (std::getline(fileStream, line)) {
         if (direction_ == "horizontal" && !text_.empty()) {
-            line = " " + line;  // Add space between lines for horizontal scrolling
+            line = " " + line;
         }
 
-        // Apply text formatting (uppercase/lowercase)
-        if (textFormat_ == "uppercase" || textFormat_ == "lowercase") {
-            // Only perform transformations, don't modify text_
-            if (textFormat_ == "uppercase") {
-                std::transform(line.begin(), line.end(), line.begin(), ::toupper);
-            }
-            else {
-                std::transform(line.begin(), line.end(), line.begin(), ::tolower);
-            }
+        if (textFormat_ == "uppercase") {
+            std::transform(line.begin(), line.end(), line.begin(), ::toupper);
+        }
+        else if (textFormat_ == "lowercase") {
+            std::transform(line.begin(), line.end(), line.begin(), ::tolower);
         }
 
-        text_.push_back(line);  // Add the line to the scrolling text vector
+        text_.push_back(line);
     }
 
     fileStream.close();
 
-    needsUpdate_ = true;
-
-    return true;  // File was modified, return true
+    return true;
 }
-
 
 bool ReloadableScrollingText::update(float dt) {
     if (waitEndTime_ > 0) {
@@ -150,51 +122,56 @@ bool ReloadableScrollingText::update(float dt) {
         }
     }
 
-    // If the type is "file", always reload the text
     if (type_ == "file") {
         reloadTexture();
     }
-    // For non-file types, use the default behavior
     else if (newItemSelected || (newScrollItemSelected && getMenuScrollReload())) {
-        reloadTexture();  // Reset scroll position as usual for non-file types
+        reloadTexture();
         newItemSelected = false;
     }
 
     return Component::update(dt);
 }
 
-void ReloadableScrollingText::allocateGraphicsMemory( )
-{
-    Component::allocateGraphicsMemory( );
-    reloadTexture( );
+void ReloadableScrollingText::allocateGraphicsMemory() {
+    Component::allocateGraphicsMemory();
+
+    // Create intermediate texture after base allocation
+    SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+    if (renderer) {
+        float imageMaxWidth = (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
+            ? baseViewInfo.Width : baseViewInfo.MaxWidth;
+        float imageMaxHeight = (baseViewInfo.Height < baseViewInfo.MaxHeight && baseViewInfo.Height > 0)
+            ? baseViewInfo.Height : baseViewInfo.MaxHeight;
+
+        createIntermediateTexture(renderer, 
+            static_cast<int>(std::ceil(imageMaxWidth)),
+            static_cast<int>(std::ceil(imageMaxHeight)));
+    }
+
+    reloadTexture();
 }
 
-
-void ReloadableScrollingText::freeGraphicsMemory( )
-{
-    Component::freeGraphicsMemory( );
-    text_.clear( );
+void ReloadableScrollingText::freeGraphicsMemory() {
+    if (intermediateTexture_) {
+        SDL_DestroyTexture(intermediateTexture_);
+        intermediateTexture_ = nullptr;
+    }
+    Component::freeGraphicsMemory();
+    text_.clear();
 }
 
-
-void ReloadableScrollingText::deInitializeFonts( )
-{
-    fontInst_->deInitialize( );
+void ReloadableScrollingText::deInitializeFonts() {
+    fontInst_->deInitialize();
 }
 
-
-void ReloadableScrollingText::initializeFonts( )
-{
-    fontInst_->initialize( );
+void ReloadableScrollingText::initializeFonts() {
+    fontInst_->initialize();
 }
-
 
 void ReloadableScrollingText::reloadTexture(bool resetScroll) {
-    // If the type is "file", check if the file has changed
     if (type_ == "file" && !location_.empty()) {
-        bool fileChanged = loadFileText(location_);  // Load text and check if file changed
-
-        // Reset the scroll only if the file has changed
+        bool fileChanged = loadFileText(location_);
         if (fileChanged) {
             resetScroll = true;
         }
@@ -204,7 +181,6 @@ void ReloadableScrollingText::reloadTexture(bool resetScroll) {
     }
 
     if (resetScroll) {
-        // Reset scroll position
         if (direction_ == "horizontal") {
             currentPosition_ = -startPosition_;
         }
@@ -212,92 +188,66 @@ void ReloadableScrollingText::reloadTexture(bool resetScroll) {
             currentPosition_ = -startPosition_;
         }
 
-        // Reset start and end times to ensure proper wait timing after reload
         waitStartTime_ = startTime_;
-        waitEndTime_ = 0.0f;  // Reset to zero when scroll restarts
+        waitEndTime_ = 0.0f;
     }
 
     text_.clear();
 
-    // Load the appropriate text content
     if (type_ == "file" && !location_.empty()) {
-        loadFileText(location_);  // Load the text from the file, but don't reset scroll
-        return;  // Since it's file-based, just return after loading the text
+        loadFileText(location_);
+        return;
     }
 
-    Item *selectedItem = page.getSelectedItem( displayOffset_ );
+    Item* selectedItem = page.getSelectedItem(displayOffset_);
     if (!selectedItem) {
         return;
     }
 
-    config_.getProperty( "currentCollection", currentCollection_ );
+    config_.getProperty("currentCollection", currentCollection_);
 
-    // build clone list
     std::vector<std::string> names;
 
-    names.push_back( selectedItem->name );
-    names.push_back( selectedItem->fullTitle );
+    names.push_back(selectedItem->name);
+    names.push_back(selectedItem->fullTitle);
 
-    if (selectedItem->cloneof.length( ) > 0) {
-        names.push_back( selectedItem->cloneof );
+    if (!selectedItem->cloneof.empty()) {
+        names.push_back(selectedItem->cloneof);
     }
 
-    // Check for corresponding .txt files
-    for (unsigned int n = 0; n < names.size( ) && text_.empty( ); ++n) {
-
+    for (unsigned int n = 0; n < names.size() && text_.empty(); ++n) {
         std::string basename = names[n];
-
-        Utils::replaceSlashesWithUnderscores( basename );
+        Utils::replaceSlashesWithUnderscores(basename);
 
         if (systemMode_) {
-
-            // check the master collection for the system artifact 
-            loadText( collectionName, type_, type_, "", true );
-
-            // check collection for the system artifact
-            if (text_.empty( )) {
-                loadText( selectedItem->collectionInfo->name, type_, type_, "", true );
+            loadText(collectionName, type_, type_, "", true);
+            if (text_.empty()) {
+                loadText(selectedItem->collectionInfo->name, type_, type_, "", true);
             }
-
         }
         else {
-            // are we looking at a leaf or a submenu
-            if (selectedItem->leaf) // item is a leaf
-            {
-
-                // check the master collection for the artifact 
-                loadText( collectionName, type_, basename, "", false );
-
-                // check the collection for the artifact
-                if (text_.empty( )) {
-                    loadText( selectedItem->collectionInfo->name, type_, basename, "", false );
+            if (selectedItem->leaf) {
+                loadText(collectionName, type_, basename, "", false);
+                if (text_.empty()) {
+                    loadText(selectedItem->collectionInfo->name, type_, basename, "", false);
                 }
             }
-            else // item is a submenu
-            {
-
-                // check the master collection for the artifact
-                loadText( collectionName, type_, basename, "", false );
-
-                // check the collection for the artifact
-                if (text_.empty( )) {
-                    loadText( selectedItem->collectionInfo->name, type_, basename, "", false );
+            else {
+                loadText(collectionName, type_, basename, "", false);
+                if (text_.empty()) {
+                    loadText(selectedItem->collectionInfo->name, type_, basename, "", false);
                 }
-
-                // check the submenu collection for the system artifact
-                if (text_.empty( )) {
-                    loadText( selectedItem->name, type_, type_, "", true );
+                if (text_.empty()) {
+                    loadText(selectedItem->name, type_, type_, "", true);
                 }
             }
         }
     }
 
-    // Check for text in the roms directory
-    if ( text_.empty( ))
-        loadText( selectedItem->filepath, type_, type_, selectedItem->filepath, false );
+    if (text_.empty())
+        loadText(selectedItem->filepath, type_, type_, selectedItem->filepath, false);
 
-    // Check for supported fields if text is still empty
-    if (text_.empty( )) {
+    if (text_.empty()) {
         std::stringstream ss;
         std::string text = "";
         if (type_ == "numberButtons") {
@@ -319,34 +269,33 @@ void ReloadableScrollingText::reloadTexture(bool resetScroll) {
             text = selectedItem->score;
         }
         else if (type_ == "year") {
-            if (selectedItem->leaf) // item is a leaf
+            if (selectedItem->leaf)
                 text = selectedItem->year;
-            else // item is a collection
-                (void)config_.getProperty("collections." + selectedItem->name + ".year", text );
+            else
+                (void)config_.getProperty("collections." + selectedItem->name + ".year", text);
         }
         else if (type_ == "title") {
             text = selectedItem->title;
         }
-        else if(type_ == "developer") {
+        else if (type_ == "developer") {
             text = selectedItem->developer;
-            // Overwrite in case developer has not been specified
-            if (text == "") {
+            if (text.empty()) {
                 text = selectedItem->manufacturer;
             }
         }
         else if (type_ == "manufacturer") {
-            if (selectedItem->leaf) // item is a leaf
+            if (selectedItem->leaf)
                 text = selectedItem->manufacturer;
-            else // item is a collection
-                (void)config_.getProperty("collections." + selectedItem->name + ".manufacturer", text );
+            else
+                (void)config_.getProperty("collections." + selectedItem->name + ".manufacturer", text);
         }
         else if (type_ == "genre") {
-            if (selectedItem->leaf) // item is a leaf
+            if (selectedItem->leaf)
                 text = selectedItem->genre;
-            else // item is a collection
-                (void)config_.getProperty("collections." + selectedItem->name + ".genre", text );
+            else
+                (void)config_.getProperty("collections." + selectedItem->name + ".genre", text);
         }
-        else if (type_.rfind( "playlist", 0 ) == 0) {
+        else if (type_.rfind("playlist", 0) == 0) {
             text = playlistName;
         }
         else if (type_ == "firstLetter") {
@@ -368,29 +317,28 @@ void ReloadableScrollingText::reloadTexture(bool resetScroll) {
         }
         else if (type_ == "collectionIndex") {
             if (page.getSelectedIndex() == 0) {
-                ss << singlePrefix_ << (page.getSelectedIndex()+1) << pluralPostfix_;
+                ss << singlePrefix_ << (page.getSelectedIndex() + 1) << pluralPostfix_;
             }
             else if (page.getSelectedIndex() == 1) {
-                ss << singlePrefix_ << (page.getSelectedIndex()+1) << singlePostfix_;
+                ss << singlePrefix_ << (page.getSelectedIndex() + 1) << singlePostfix_;
             }
             else {
-                ss << pluralPrefix_ << (page.getSelectedIndex()+1) << pluralPostfix_;
+                ss << pluralPrefix_ << (page.getSelectedIndex() + 1) << pluralPostfix_;
             }
         }
         else if (type_ == "collectionIndexSize") {
             if (page.getSelectedIndex() == 0) {
-                ss << singlePrefix_ << (page.getSelectedIndex()+1) << "/" << page.getCollectionSize() << pluralPostfix_;
+                ss << singlePrefix_ << (page.getSelectedIndex() + 1) << "/" << page.getCollectionSize() << pluralPostfix_;
             }
             else if (page.getSelectedIndex() == 1) {
-                ss << singlePrefix_ << (page.getSelectedIndex()+1) << "/" << page.getCollectionSize() << singlePostfix_;
+                ss << singlePrefix_ << (page.getSelectedIndex() + 1) << "/" << page.getCollectionSize() << singlePostfix_;
             }
             else {
-                ss << pluralPrefix_ << (page.getSelectedIndex()+1) << "/" << page.getCollectionSize() << pluralPostfix_;
+                ss << pluralPrefix_ << (page.getSelectedIndex() + 1) << "/" << page.getCollectionSize() << pluralPostfix_;
             }
         }
-        else if (!selectedItem->leaf) // item is not a leaf
-        {
-            (void)config_.getProperty("collections." + selectedItem->name + "." + type_, text );
+        else if (!selectedItem->leaf) {
+            (void)config_.getProperty("collections." + selectedItem->name + "." + type_, text);
         }
 
         if (text == "0") {
@@ -399,39 +347,31 @@ void ReloadableScrollingText::reloadTexture(bool resetScroll) {
         else if (text == "1") {
             text = singlePrefix_ + text + singlePostfix_;
         }
-        else if (text != "") {
+        else if (!text.empty()) {
             text = pluralPrefix_ + text + pluralPostfix_;
         }
 
         if (!text.empty()) {
-            // Apply text formatting (uppercase/lowercase) safely
-            if (textFormat_ == "uppercase" || textFormat_ == "lowercase") {
-                if (textFormat_ == "uppercase") {
-                    std::transform(text.begin(), text.end(), text.begin(), ::toupper);
-                }
-                else {
-                    std::transform(text.begin(), text.end(), text.begin(), ::tolower);
-                }
+            if (textFormat_ == "uppercase") {
+                std::transform(text.begin(), text.end(), text.begin(), ::toupper);
+            }
+            if (textFormat_ == "lowercase") {
+                std::transform(text.begin(), text.end(), text.begin(), ::tolower);
             }
             ss << text;
             text_.push_back(ss.str());
         }
     }
-    needsUpdate_ = true;
+    //needsUpdate_ = true;
 }
 
-
-void ReloadableScrollingText::loadText( std::string collection, std::string type, std::string basename, std::string filepath, bool systemMode )
-{
-
+void ReloadableScrollingText::loadText(std::string collection, std::string type, std::string basename, std::string filepath, bool systemMode) {
     std::string textPath = "";
 
-    // check the system folder
     if (layoutMode_) {
-        // check if collection's assets are in a different theme
         std::string layoutName;
         config_.getProperty("collections." + collection + ".layout", layoutName);
-        if (layoutName == "") {
+        if (layoutName.empty()) {
             config_.getProperty(OPTION_LAYOUT, layoutName);
         }
         textPath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", collection);
@@ -441,31 +381,27 @@ void ReloadableScrollingText::loadText( std::string collection, std::string type
             textPath = Utils::combinePath(textPath, "medium_artwork", type);
     }
     else {
-        config_.getMediaPropertyAbsolutePath( collection, type, systemMode, textPath );
+        config_.getMediaPropertyAbsolutePath(collection, type, systemMode, textPath);
     }
-    if ( filepath != "" )
+    if (!filepath.empty())
         textPath = filepath;
 
-    textPath = Utils::combinePath( textPath, basename );
-
+    textPath = Utils::combinePath(textPath, basename);
     textPath += ".txt";
 
-    std::ifstream includeStream( textPath.c_str( ) );
+    std::ifstream includeStream(textPath.c_str());
 
-    if (!includeStream.good( )) {
+    if (!includeStream.good()) {
         return;
     }
 
-    std::string line; 
+    std::string line;
 
-    while(std::getline(includeStream, line)) {
-
-        // In horizontal scrolling direction, add a space before every line except the first.
-        if (direction_ == "horizontal" && !text_.empty( )) {
+    while (std::getline(includeStream, line)) {
+        if (direction_ == "horizontal" && !text_.empty()) {
             line = " " + line;
         }
 
-        // Reformat lines to uppercase or lowercase
         if (textFormat_ == "uppercase") {
             std::transform(line.begin(), line.end(), line.begin(), ::toupper);
         }
@@ -473,12 +409,8 @@ void ReloadableScrollingText::loadText( std::string collection, std::string type
             std::transform(line.begin(), line.end(), line.begin(), ::tolower);
         }
 
-        text_.push_back( line );
-
+        text_.push_back(line);
     }
-
-    return;
-
 }
 
 void ReloadableScrollingText::draw() {
@@ -489,9 +421,9 @@ void ReloadableScrollingText::draw() {
     }
 
     FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
-    SDL_Texture* texture = font ? font->getTexture() : nullptr;
+    SDL_Texture* fontTexture = font ? font->getTexture() : nullptr;
 
-    if (!texture) {
+    if (!fontTexture) {
         return;
     }
 
@@ -501,76 +433,73 @@ void ReloadableScrollingText::draw() {
     float imageMaxHeight = (baseViewInfo.Height < baseViewInfo.MaxHeight && baseViewInfo.Height > 0)
         ? baseViewInfo.Height : baseViewInfo.MaxHeight;
 
+    // Check if we need to update our cache and possibly recreate the intermediate texture
+    if (needsUpdate_ || lastScale_ != scale || lastImageMaxWidth_ != imageMaxWidth || lastImageMaxHeight_ != imageMaxHeight) {
+        updateGlyphCache();
+
+        // Recreate intermediate texture if dimensions changed
+        SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+        if (renderer) {
+            int texWidth = direction_ == "horizontal" 
+                ? static_cast<int>(std::ceil(std::max(imageMaxWidth, textWidth_)))
+                : static_cast<int>(std::ceil(imageMaxWidth));
+            int texHeight = direction_ == "vertical"
+                ? static_cast<int>(std::ceil(std::max(imageMaxHeight, textHeight_)))
+                : static_cast<int>(std::ceil(imageMaxHeight));
+
+            createIntermediateTexture(renderer, texWidth, texHeight);
+            needsTextureUpdate_ = true;
+        }
+    }
+
+    // If texture needs updating, render all glyphs to it
+    if (needsTextureUpdate_ && intermediateTexture_) {
+        SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+        SDL_Texture* originalTarget = SDL_GetRenderTarget(renderer);
+
+        // Set intermediate texture as render target
+        SDL_SetRenderTarget(renderer, intermediateTexture_);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        SDL_RenderClear(renderer);
+
+        // Render all cached glyphs to the intermediate texture
+        for (const auto& glyph : cachedGlyphs_) {
+            SDL_FRect destRect = glyph.destRect;  // Use the cached positions directly
+            SDL_RenderCopyF(renderer, fontTexture, &glyph.sourceRect, &destRect);
+        }
+
+        SDL_SetRenderTarget(renderer, originalTarget);
+        needsTextureUpdate_ = false;
+    }
+
+    // Now handle the scrolling and display of the intermediate texture
     float xOrigin = baseViewInfo.XRelativeToOrigin();
     float yOrigin = baseViewInfo.YRelativeToOrigin();
 
-    // Update glyph cache if needed
-    if (needsUpdate_ || lastScale_ != scale || lastImageMaxWidth_ != imageMaxWidth || lastImageMaxHeight_ != imageMaxHeight) {
-        updateGlyphCache();
-    }
-
+    SDL_Rect srcRect;
     SDL_FRect destRect;
+    destRect.x = xOrigin;
     destRect.y = yOrigin;
+    destRect.w = imageMaxWidth;
+    destRect.h = imageMaxHeight;
 
     if (direction_ == "horizontal") {
         float scrollPosition = currentPosition_;
 
-        // Adjust for negative scroll position
-        if (scrollPosition < 0.0f) {
-            destRect.x = xOrigin - scrollPosition;
-        }
-        else {
-            destRect.x = xOrigin;
-        }
+        // Calculate source rectangle based on scroll position
+        srcRect.x = scrollPosition < 0.0f ? 0 : static_cast<int>(scrollPosition);
+        srcRect.y = 0;
+        srcRect.w = static_cast<int>(imageMaxWidth);
+        srcRect.h = static_cast<int>(imageMaxHeight);
 
-        // Do not scroll if the text fits within the available width
         if (textWidth_ <= imageMaxWidth && startPosition_ == 0.0f) {
             currentPosition_ = 0.0f;
+            srcRect.x = 0;
             waitStartTime_ = 0.0f;
             waitEndTime_ = 0.0f;
         }
 
-        for (const auto& glyph : cachedGlyphs_) {
-            // Calculate the glyph's position with scrolling
-            destRect.x = xOrigin + glyph.destRect.x - scrollPosition;
-            destRect.y = yOrigin + glyph.destRect.y;
-            destRect.w = glyph.destRect.w;
-            destRect.h = glyph.destRect.h;
-
-            // Skip glyphs outside the visible area
-            if ((destRect.x + destRect.w) <= xOrigin || destRect.x >= (xOrigin + imageMaxWidth)) {
-                continue;
-            }
-
-            // Adjust destRect and srcRect for clipping at edges
-            SDL_Rect srcRect = glyph.sourceRect;
-
-            // Left clipping
-            if (destRect.x < xOrigin) {
-                float clipAmount = xOrigin - destRect.x;
-                destRect.x = xOrigin;
-                destRect.w -= clipAmount;
-                srcRect.x += static_cast<int>(clipAmount / scale);
-                srcRect.w -= static_cast<int>(clipAmount / scale);
-            }
-
-            // Right clipping
-            if ((destRect.x + destRect.w) > (xOrigin + imageMaxWidth)) {
-                float clipAmount = (destRect.x + destRect.w) - (xOrigin + imageMaxWidth);
-                destRect.w -= clipAmount;
-                srcRect.w -= static_cast<int>(clipAmount / scale);
-            }
-
-            if (destRect.w <= 0) {
-                continue;
-            }
-
-            SDL::renderCopyF(texture, baseViewInfo.Alpha, &srcRect, &destRect, baseViewInfo,
-                page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-                page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-        }
-
-        // Update scrolling position
+        // Handle scroll reset
         if (currentPosition_ > textWidth_) {
             waitStartTime_ = startTime_;
             waitEndTime_ = endTime_;
@@ -580,68 +509,66 @@ void ReloadableScrollingText::draw() {
     else if (direction_ == "vertical") {
         float scrollPosition = currentPosition_;
 
-        // Adjust for negative scroll position
-        if (scrollPosition < 0.0f) {
-            destRect.y = yOrigin - scrollPosition;
-        }
-        else {
-            destRect.y = yOrigin;
-        }
+        // Calculate source rectangle based on scroll position
+        srcRect.x = 0;
+        srcRect.y = scrollPosition < 0.0f ? 0 : static_cast<int>(scrollPosition);
+        srcRect.w = static_cast<int>(imageMaxWidth);
+        srcRect.h = static_cast<int>(imageMaxHeight);
 
-        // Do not scroll if the text fits within the available height
         if (textHeight_ <= imageMaxHeight && startPosition_ == 0.0f) {
             currentPosition_ = 0.0f;
+            srcRect.y = 0;
             waitStartTime_ = 0.0f;
             waitEndTime_ = 0.0f;
         }
 
-        for (const auto& glyph : cachedGlyphs_) {
-            // Calculate the glyph's position with scrolling
-            destRect.x = xOrigin + glyph.destRect.x;
-            destRect.y = yOrigin + glyph.destRect.y - scrollPosition;
-            destRect.w = glyph.destRect.w;
-            destRect.h = glyph.destRect.h;
-
-            // Skip glyphs outside the visible area
-            if ((destRect.y + destRect.h) <= yOrigin || destRect.y >= (yOrigin + imageMaxHeight)) {
-                continue;
-            }
-
-            // Adjust destRect and srcRect for clipping at edges
-            SDL_Rect srcRect = glyph.sourceRect;
-
-            // Top clipping
-            if (destRect.y < yOrigin) {
-                float clipAmount = yOrigin - destRect.y;
-                destRect.y = yOrigin;
-                destRect.h -= clipAmount;
-                srcRect.y += static_cast<int>(clipAmount / scale);
-                srcRect.h -= static_cast<int>(clipAmount / scale);
-            }
-
-            // Bottom clipping
-            if ((destRect.y + destRect.h) > (yOrigin + imageMaxHeight)) {
-                float clipAmount = (destRect.y + destRect.h) - (yOrigin + imageMaxHeight);
-                destRect.h -= clipAmount;
-                srcRect.h -= static_cast<int>(clipAmount / scale);
-            }
-
-            if (destRect.h <= 0) {
-                continue;
-            }
-
-            SDL::renderCopyF(texture, baseViewInfo.Alpha, &srcRect, &destRect, baseViewInfo,
-                page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-                page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-        }
-
-        // Update scrolling position
+        // Handle scroll reset
         if (currentPosition_ > textHeight_) {
             waitStartTime_ = startTime_;
             waitEndTime_ = endTime_;
             currentPosition_ = -startPosition_;
         }
     }
+
+    // Render the intermediate texture with proper clipping
+    SDL::renderCopyF(intermediateTexture_, baseViewInfo.Alpha, &srcRect, &destRect, baseViewInfo,
+        page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+        page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+
+    // Debug visualization
+    //SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+    //SDL_Rect debugRect = { static_cast<int>(destRect.x), static_cast<int>(destRect.y),
+    //    static_cast<int>(destRect.w), static_cast<int>(destRect.h) };
+    //SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+    //SDL_RenderDrawRect(renderer, &debugRect);
+}
+bool ReloadableScrollingText::createIntermediateTexture(SDL_Renderer* renderer, int width, int height) {
+    if (intermediateTexture_) {
+        SDL_DestroyTexture(intermediateTexture_);
+        intermediateTexture_ = nullptr;
+    }
+
+    intermediateTexture_ = SDL_CreateTexture(
+        renderer,
+        SDL_PIXELFORMAT_RGBA8888,
+        SDL_TEXTUREACCESS_TARGET,
+        width,
+        height
+    );
+
+    if (!intermediateTexture_) {
+        LOG_ERROR("ReloadableScrollingText", "Failed to create intermediate texture: " + std::string(SDL_GetError()));
+        return false;
+    }
+
+    if (SDL_SetTextureBlendMode(intermediateTexture_, SDL_BLENDMODE_BLEND) != 0) {
+        LOG_ERROR("ReloadableScrollingText", "Failed to set blend mode: " + std::string(SDL_GetError()));
+        SDL_DestroyTexture(intermediateTexture_);
+        intermediateTexture_ = nullptr;
+        return false;
+    }
+
+    return true;
 }
 
 void ReloadableScrollingText::updateGlyphCache() {
@@ -660,12 +587,10 @@ void ReloadableScrollingText::updateGlyphCache() {
     float imageMaxHeight = (baseViewInfo.Height < baseViewInfo.MaxHeight && baseViewInfo.Height > 0)
         ? baseViewInfo.Height : baseViewInfo.MaxHeight;
 
-    // Update last known values
     lastScale_ = scale;
     lastImageMaxWidth_ = imageMaxWidth;
     lastImageMaxHeight_ = imageMaxHeight;
 
-    // Position trackers
     float xPos = 0.0f;
     float yPos = 0.0f;
 
@@ -677,7 +602,7 @@ void ReloadableScrollingText::updateGlyphCache() {
                     CachedGlyph cachedGlyph;
                     cachedGlyph.sourceRect = glyph.rect;
                     cachedGlyph.destRect.x = xPos;
-                    cachedGlyph.destRect.y = 0;  // Adjusted later
+                    cachedGlyph.destRect.y = 0;
                     cachedGlyph.destRect.w = static_cast<float>(glyph.rect.w) * scale;
                     cachedGlyph.destRect.h = static_cast<float>(glyph.rect.h) * scale;
                     cachedGlyph.advance = static_cast<float>(glyph.advance) * scale;
@@ -689,12 +614,9 @@ void ReloadableScrollingText::updateGlyphCache() {
             }
         }
         textWidth_ = xPos;
-    }
-    else if (direction_ == "vertical") {
-        // For vertical scrolling, we need to handle word wrapping based on imageMaxWidth
+    } else if (direction_ == "vertical") {
         std::vector<std::string> wrappedLines;
 
-        // First, wrap the text to fit within imageMaxWidth
         for (const auto& line : text_) {
             std::istringstream iss(line);
             std::string word;
@@ -702,7 +624,6 @@ void ReloadableScrollingText::updateGlyphCache() {
             float currentLineWidth = 0.0f;
 
             while (iss >> word) {
-                // Calculate the width of the word
                 float wordWidth = 0.0f;
                 for (char c : word) {
                     FontManager::GlyphInfo glyph;
@@ -710,22 +631,17 @@ void ReloadableScrollingText::updateGlyphCache() {
                         wordWidth += static_cast<float>(glyph.advance) * scale;
                     }
                 }
-                // Add space width if this is not the first word on the line
                 if (!currentLine.empty()) {
                     FontManager::GlyphInfo spaceGlyph;
                     if (font->getRect(' ', spaceGlyph)) {
                         wordWidth += static_cast<float>(spaceGlyph.advance) * scale;
                     }
                 }
-                // Check if the word fits on the current line
                 if (currentLineWidth + wordWidth > imageMaxWidth && !currentLine.empty()) {
-                    // Line is full, add it to wrappedLines
                     wrappedLines.push_back(currentLine);
                     currentLine = word;
                     currentLineWidth = wordWidth;
-                }
-                else {
-                    // Add the word to the current line
+                } else {
                     if (!currentLine.empty()) {
                         currentLine += ' ';
                     }
@@ -733,17 +649,13 @@ void ReloadableScrollingText::updateGlyphCache() {
                     currentLineWidth += wordWidth;
                 }
             }
-            // Add any remaining text in currentLine
             if (!currentLine.empty()) {
                 wrappedLines.push_back(currentLine);
             }
         }
 
-        // Now, cache the glyphs for the wrapped lines
         for (const auto& line : wrappedLines) {
-            xPos = 0.0f;
-
-            // Calculate line width for alignment
+            // Calculate line width first - this is needed for all alignment types
             float lineWidth = 0.0f;
             for (char c : line) {
                 FontManager::GlyphInfo glyph;
@@ -752,35 +664,72 @@ void ReloadableScrollingText::updateGlyphCache() {
                 }
             }
 
-            // Adjust xPos based on alignment
+            // Set initial xPos based on alignment type
             if (alignment_ == "right") {
                 xPos = imageMaxWidth - lineWidth;
-            }
-            else if (alignment_ == "centered") {
+            } else if (alignment_ == "centered") {
                 xPos = (imageMaxWidth - lineWidth) / 2.0f;
+            } else {
+                // Left alignment or first position for justified
+                xPos = 0.0f;
             }
 
-            for (char c : line) {
-                FontManager::GlyphInfo glyph;
-                if (font->getRect(c, glyph) && glyph.rect.h > 0) {
-                    CachedGlyph cachedGlyph;
-                    cachedGlyph.sourceRect = glyph.rect;
-                    cachedGlyph.destRect.x = xPos;
-                    cachedGlyph.destRect.y = yPos;
-                    cachedGlyph.destRect.w = static_cast<float>(glyph.rect.w) * scale;
-                    cachedGlyph.destRect.h = static_cast<float>(glyph.rect.h) * scale;
-                    cachedGlyph.advance = static_cast<float>(glyph.advance) * scale;
+            // Handle justified text specially
+            if (alignment_ == "justified" && line != wrappedLines.back()) {
+                float extraSpace = imageMaxWidth - lineWidth;
+                std::string::size_type spaceCount = std::count(line.begin(), line.end(), ' ');
+                float spaceWidth = (spaceCount > 0) ? extraSpace / spaceCount : 0.0f;
+                size_t spaceIndex = 0;
 
-                    cachedGlyphs_.push_back(cachedGlyph);
+                // Process each character in justified mode
+                for (size_t i = 0; i < line.size(); ++i) {
+                    FontManager::GlyphInfo glyph;
+                    if (font->getRect(line[i], glyph) && glyph.rect.h > 0) {
+                        CachedGlyph cachedGlyph;
+                        cachedGlyph.sourceRect = glyph.rect;
+                        cachedGlyph.destRect.x = xPos;
+                        cachedGlyph.destRect.y = yPos;
+                        cachedGlyph.destRect.w = static_cast<float>(glyph.rect.w) * scale;
+                        cachedGlyph.destRect.h = static_cast<float>(glyph.rect.h) * scale;
+                        cachedGlyph.advance = static_cast<float>(glyph.advance) * scale;
 
-                    xPos += static_cast<float>(glyph.advance) * scale;
+                        cachedGlyphs_.push_back(cachedGlyph);
+
+                        xPos += static_cast<float>(glyph.advance) * scale;
+
+                        // Add extra space after spaces in justified text
+                        if (line[i] == ' ' && spaceIndex < spaceCount) {
+                            xPos += spaceWidth;
+                            ++spaceIndex;
+                        }
+                    }
+                }
+            } else {
+                // Non-justified text (left, right, centered) or last line of justified text
+                for (char c : line) {
+                    FontManager::GlyphInfo glyph;
+                    if (font->getRect(c, glyph) && glyph.rect.h > 0) {
+                        CachedGlyph cachedGlyph;
+                        cachedGlyph.sourceRect = glyph.rect;
+                        cachedGlyph.destRect.x = xPos;
+                        cachedGlyph.destRect.y = yPos;
+                        cachedGlyph.destRect.w = static_cast<float>(glyph.rect.w) * scale;
+                        cachedGlyph.destRect.h = static_cast<float>(glyph.rect.h) * scale;
+                        cachedGlyph.advance = static_cast<float>(glyph.advance) * scale;
+
+                        cachedGlyphs_.push_back(cachedGlyph);
+
+                        xPos += static_cast<float>(glyph.advance) * scale;
+                    }
                 }
             }
 
+            // Move to next line
             yPos += static_cast<float>(font->getHeight()) * scale;
         }
         textHeight_ = yPos;
     }
 
     needsUpdate_ = false;
+    needsTextureUpdate_ = true;  // Signal that the intermediate texture needs updating
 }
