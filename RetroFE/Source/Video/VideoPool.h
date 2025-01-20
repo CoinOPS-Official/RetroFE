@@ -13,4 +13,6 @@ public:
 
 private:
     static std::unordered_map<int, std::unordered_map<int, std::vector<GStreamerVideo*>>> pools_;
+    static std::unordered_map<int, std::unordered_map<int, int>> VideoPool::maxInstances_;
+    static std::unordered_map<int, std::unordered_map<int, bool>> VideoPool::extraInstanceCreated_;
 };

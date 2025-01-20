@@ -56,6 +56,7 @@ GStreamerVideo::GStreamerVideo(int monitor)
 
 {
     gst_video_info_init(&videoInfo_);
+    initialize();
     initializePlugins();
 }
 
