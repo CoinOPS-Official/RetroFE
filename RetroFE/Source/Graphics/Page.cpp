@@ -805,15 +805,18 @@ void Page::selectRandomPlaylist(CollectionInfo* collection, std::vector<std::str
     int i = 0;
     std::string playlistName;
     std::string settingsPlaylist = "settings";
+    std::string quickListPlaylist = "quicklist";
     config_.setProperty("settingsPlaylist", settingsPlaylist);
+    config_.setProperty("quickListPlaylist", quickListPlaylist);
 
     for (auto it = collection->playlists.begin(); it != collection->playlists.end(); it++) {
         if (i == index &&
             it->first != settingsPlaylist && 
+            it->first != quickListPlaylist &&
             it->first != "favorites" &&
             it->first != "lastplayed" &&
             std::find(cycleVector.begin(), cycleVector.end(), it->first) != cycleVector.end()
-        ) {
+            ) {
             playlistName = it->first;
             break;
         }
@@ -1164,7 +1167,9 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
     if (list.empty()) return;
 
     std::string settingsPlaylist = "";
+    std::string quickListPlaylist = "";
     config_.getProperty("settingsPlaylist", settingsPlaylist);
+    config_.getProperty("quickListPlaylist", quickListPlaylist);
 
     auto it = std::find(list.begin(), list.end(), getPlaylistName());
 
@@ -1173,7 +1178,7 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
     std::string nextPlaylist;
     if (it == list.end()) {
         for (auto it2 = list.begin(); it2 != list.end(); ++it2) {
-            if (*it2 != settingsPlaylist && playlistExists(*it2)) {
+            if (*it2 != settingsPlaylist && *it2 != quickListPlaylist && playlistExists(*it2)) {
                 nextPlaylist = *it2;
                 break;
             }
@@ -1182,7 +1187,7 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
         do {
             ++it;
             if (it == list.end()) it = list.begin();
-        } while (*it == settingsPlaylist || !playlistExists(*it));
+        } while (*it == settingsPlaylist || *it == quickListPlaylist || !playlistExists(*it));
         nextPlaylist = *it;
     }
 
@@ -1190,14 +1195,15 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
     selectPlaylist(nextPlaylist);
 }
 
-
 void Page::prevCyclePlaylist(std::vector<std::string> list)
 {
     // Empty list
     if (list.empty()) return;
 
     std::string settingsPlaylist = "";
+    std::string quickListPlaylist = "";
     config_.getProperty("settingsPlaylist", settingsPlaylist);
+    config_.getProperty("quickListPlaylist", quickListPlaylist);
 
     // Find the current playlist in the list
     auto it = std::find(list.begin(), list.end(), getPlaylistName());
@@ -1207,7 +1213,7 @@ void Page::prevCyclePlaylist(std::vector<std::string> list)
     // If current playlist not found, switch to the last playlist in the list
     if (it == list.end()) {
         for (auto it2 = list.rbegin(); it2 != list.rend(); ++it2) {
-            if (*it2 != settingsPlaylist && playlistExists(*it2)) {
+            if (*it2 != settingsPlaylist && *it2 != quickListPlaylist && playlistExists(*it2)) {
                 prevPlaylist = *it2;
                 break;
             }
@@ -1219,7 +1225,7 @@ void Page::prevCyclePlaylist(std::vector<std::string> list)
                 it = list.end(); // wrap
             }
             --it;
-        } while (*it == settingsPlaylist || !playlistExists(*it));
+        } while (*it == settingsPlaylist || *it == quickListPlaylist || !playlistExists(*it));
 
         prevPlaylist = *it;
     }

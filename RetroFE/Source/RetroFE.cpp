@@ -533,6 +533,18 @@ bool RetroFE::run()
 		config_.setProperty("settingsPlaylist", settingsPlaylist);
 	}
 
+	// quickList button
+	std::string quickListCollection = "";
+	std::string quickListPlaylist = "quicklist";
+	std::string quickListCollectionPlaylist;
+	config_.getProperty(OPTION_QUICKLISTCOLLECTIONPLAYLIST, quickListCollectionPlaylist);
+	if (size_t position = quickListCollectionPlaylist.find(":"); position != std::string::npos)
+	{
+		quickListCollection = quickListCollectionPlaylist.substr(0, position);
+		quickListPlaylist = quickListCollectionPlaylist.erase(0, position + 1);
+		config_.setProperty("quickListPlaylist", quickListPlaylist);
+	}
+
 	float lastTime = 0;
 	float deltaTime = 0;
 	float inputUpdateInterval = 0.0333f; // Update every ~33.33ms (~30Hz)
@@ -796,6 +808,75 @@ bool RetroFE::run()
 			}
 			state = RETROFE_IDLE;
 			break;
+		case RETROFE_QUICKLIST_REQUEST:
+			currentPage_->playlistExit();
+			currentPage_->resetScrollPeriod();
+			currentPage_->setScrolling(Page::ScrollDirectionIdle);
+			state = RETROFE_QUICKLIST_PAGE_MENU_EXIT;
+			break;
+		case RETROFE_QUICKLIST_PAGE_MENU_EXIT:
+			if ((quickListCollection == "" || currentPage_->getCollectionName() == quickListCollection) &&
+				(quickListPlaylist == "" || currentPage_->getPlaylistName() == quickListPlaylist))
+			{
+				nextPageItem_ = new Item();
+				config_.getProperty("lastCollection", nextPageItem_->name);
+				if (currentPage_->getCollectionName() != nextPageItem_->name)
+				{
+					state = RETROFE_BACK_MENU_EXIT;
+				}
+				else
+				{
+					state = RETROFE_PLAYLIST_REQUEST;
+					// return to last playlist
+					// todo move to function for re-use
+					bool rememberMenu = false;
+					config_.getProperty(OPTION_REMEMBERMENU, rememberMenu);
+
+					std::string autoPlaylist = "all";
+
+					if (std::string quickListPrefix = "collections." + currentPage_->getCollectionName() + ".";
+						config_.propertyExists(quickListPrefix + OPTION_AUTOPLAYLIST))
+					{
+						config_.getProperty(quickListPrefix + OPTION_AUTOPLAYLIST, autoPlaylist);
+					}
+					else
+					{
+						config_.getProperty(OPTION_AUTOPLAYLIST, autoPlaylist);
+					}
+
+					if (currentPage_->getCollectionName() == "Favorites")
+					{
+						autoPlaylist = "favorites";
+					}
+
+					bool returnToRememberedPlaylist =
+						rememberMenu && lastMenuPlaylists_.find(nextPageItem_->name) != lastMenuPlaylists_.end();
+					if (returnToRememberedPlaylist)
+					{
+						currentPage_->selectPlaylist(
+							lastMenuPlaylists_[nextPageItem_->name]); // Switch to last playlist
+					}
+					else
+					{
+						currentPage_->selectPlaylist(autoPlaylist);
+						if (currentPage_->getPlaylistName() != autoPlaylist)
+							currentPage_->selectPlaylist("all");
+					}
+
+					if (returnToRememberedPlaylist)
+					{
+						if (lastMenuOffsets_.size() &&
+							lastMenuPlaylists_.find(nextPageItem_->name) != lastMenuPlaylists_.end())
+						{
+							currentPage_->setScrollOffsetIndex(lastMenuOffsets_[nextPageItem_->name]);
+						}
+					}
+				}
+				break;
+			}
+			resetInfoToggle();
+			state = RETROFE_QUICKLIST_PAGE_REQUEST;
+			break;
 		case RETROFE_SETTINGS_REQUEST:
 			currentPage_->playlistExit();
 			currentPage_->resetScrollPeriod();
@@ -873,7 +954,6 @@ bool RetroFE::run()
 
 			state = RETROFE_PLAYLIST_REQUEST;
 			break;
-
 		case RETROFE_PLAYLIST_NEXT_CYCLE:
 			currentPage_->nextCyclePlaylist(getPlaylistCycle());
 			// random highlight on first playlist cycle
@@ -1039,12 +1119,103 @@ bool RetroFE::run()
 				state = RETROFE_IDLE;
 			}
 			break;
+		case RETROFE_QUICKLIST_PAGE_REQUEST:
+			if (currentPage_->isIdle() && currentPage_->getCollectionName() != "")
+			{
+				std::string collectionName = currentPage_->getCollectionName();
+				lastMenuOffsets_[collectionName] = currentPage_->getScrollOffsetIndex();
+				if (currentPage_->getPlaylistName() != settingsCollectionPlaylist)
+				{
+					lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
+				}
+				config_.setProperty("lastCollection", collectionName);
+				
+				state = RETROFE_PLAYLIST_REQUEST;
+				if (quickListCollection != "" && quickListCollection != collectionName)
+				{
+					state = RETROFE_NEXT_PAGE_MENU_LOAD_ART;
+
+					// update new current collection
+					cycleVector_.clear();
+					config_.setProperty("currentCollection", quickListCollection);
+
+					// Load new layout if available
+					// check if collection's assets are in a different theme
+					std::string layoutName;
+					config_.getProperty("collections." + quickListCollection + ".layout", layoutName);
+					if (layoutName == "")
+					{
+						config_.getProperty(OPTION_LAYOUT, layoutName);
+					}
+					PageBuilder pb(layoutName, getLayoutFileName(), config_, &fontcache_);
+
+					bool defaultToCurrentLayout = false;
+					if (std::string quickListPrefix = "collections." + currentPage_->getCollectionName() + ".";
+						config_.propertyExists(quickListPrefix + "defaultToCurrentLayout"))
+					{
+						config_.getProperty(quickListPrefix + "defaultToCurrentLayout", defaultToCurrentLayout);
+					}
+
+					// try collection name
+					Page* page = pb.buildPage(quickListCollection, defaultToCurrentLayout);
+					if (page)
+					{
+						if (page->controlsType() != currentPage_->controlsType())
+						{
+							updatePageControls(page->controlsType());
+						}
+						currentPage_->freeGraphicsMemory();
+						pages_.push(currentPage_);
+						currentPage_ = page;
+						currentPage_->setLocked(kioskLock_);
+						CollectionInfo* info = getCollection(quickListCollection);
+						if (info == nullptr)
+						{
+							state = RETROFE_BACK_MENU_LOAD_ART;
+							break;
+						}
+						currentPage_->pushCollection(info);
+						cycleVector_.clear();
+					}
+					else
+					{
+						LOG_ERROR("RetroFE", "Could not create page");
+					}
+					// currentPage_->reallocateMenuSpritePoints(); // update menu
+				}
+				std::string selectPlaylist = quickListPlaylist;
+				if (quickListPlaylist == "")
+				{
+					std::string autoPlaylist = "quicklist";
+					if (std::string quickListPrefix = "collections." + currentPage_->getCollectionName() + ".";
+						config_.propertyExists(quickListPrefix + OPTION_AUTOPLAYLIST))
+					{
+						config_.getProperty(quickListPrefix + OPTION_AUTOPLAYLIST, autoPlaylist);
+					}
+					else
+					{
+						config_.getProperty(OPTION_AUTOPLAYLIST, autoPlaylist);
+					}
+					quickListPlaylist = autoPlaylist;
+				}
+				currentPage_->selectPlaylist(selectPlaylist);
+				currentPage_->onNewItemSelected();
+				// refresh menu if in different collection
+				if (quickListCollection != "" && quickListCollection != collectionName)
+				{
+					currentPage_->reallocateMenuSpritePoints();
+				}
+			}
+			break;
 		case RETROFE_SETTINGS_PAGE_REQUEST:
 			if (currentPage_->isIdle() && currentPage_->getCollectionName() != "")
 			{
 				std::string collectionName = currentPage_->getCollectionName();
 				lastMenuOffsets_[collectionName] = currentPage_->getScrollOffsetIndex();
-				lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
+				if (currentPage_->getPlaylistName() != quickListCollectionPlaylist)
+				{
+					lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
+				}
 				config_.setProperty("lastCollection", collectionName);
 				state = RETROFE_PLAYLIST_REQUEST;
 				if (settingsCollection != "" && settingsCollection != collectionName)
@@ -2543,6 +2714,11 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 				return RETROFE_NEXT_PAGE_REQUEST;
 			}
 			return RETROFE_IDLE;
+		}
+		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodeQuickList))
+		{
+			attract_.reset();
+			state = RETROFE_QUICKLIST_REQUEST;
 		}
 		else if (!kioskLock_ && (input_.keystate(UserInput::KeyCodeCyclePlaylist) ||
 			input_.keystate(UserInput::KeyCodeNextCyclePlaylist)))
