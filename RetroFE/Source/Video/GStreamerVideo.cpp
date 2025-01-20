@@ -272,9 +272,6 @@ bool GStreamerVideo::unload()
     playCount_ = 0;
     numLoops_ = 0;
 
-    // Let future calls proceed
-    stopping_.store(false, std::memory_order_release);
-
     LOG_DEBUG("GStreamerVideo", "Pipeline unloaded, now in READY state. Texture cleared.");
 
     return true;
@@ -355,6 +352,9 @@ bool GStreamerVideo::play(const std::string &file)
         return false;
     }
 
+    // Let future calls proceed
+    stopping_.store(false, std::memory_order_release);
+
     // 1. Create the pipeline if we haven’t already
     if (!createPipelineIfNeeded()) {
         LOG_ERROR("Video", "Failed to create GStreamer pipeline");
@@ -428,91 +428,6 @@ bool GStreamerVideo::play(const std::string &file)
     }
 
     LOG_DEBUG("GStreamerVideo", "Playing file: " + file);
-    return true;
-}
-
-bool GStreamerVideo::initializeGstElements(const std::string &file)
-{
-    gchar *uriFile = gst_filename_to_uri(file.c_str(), nullptr);
-    if (!uriFile)
-    {
-        LOG_DEBUG("Video", "Failed to convert filename to URI");
-        return false;
-    }
-
-    playbin_ = gst_element_factory_make("playbin", "player");
-    capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
-    videoBin_ = gst_bin_new("SinkBin");
-    videoSink_ = gst_element_factory_make("fakesink", "video_sink");
-
-    if (!playbin_ || !videoBin_ || !videoSink_ || !capsFilter_)
-    {
-        LOG_DEBUG("Video", "Could not create GStreamer elements");
-        g_free(uriFile);
-        return false;
-    }
-
-    gint flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO;
-    g_object_set(playbin_, "flags", flags, nullptr);
-
-    GstCaps *videoConvertCaps;
-    if (Configuration::HardwareVideoAccel)
-    {
-        videoConvertCaps = gst_caps_from_string(
-            "video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
-        sdlFormat_ = SDL_PIXELFORMAT_NV12;
-        LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_NV12. HarwareVideoAccel:true");
-    }
-    else
-    {
-        videoConvertCaps = gst_caps_from_string(
-            "video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
-        elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
-        sdlFormat_ = SDL_PIXELFORMAT_IYUV;
-        LOG_DEBUG("GStreamerVideo", "SDL pixel format selected: SDL_PIXELFORMAT_IYUV. HarwareVideoAccel:false");
-    }
-
-    g_object_set(capsFilter_, "caps", videoConvertCaps, nullptr);
-    gst_caps_unref(videoConvertCaps);
-
-    gst_bin_add_many(GST_BIN(videoBin_), capsFilter_, videoSink_, nullptr);
-    if (!gst_element_link_many(capsFilter_, videoSink_, nullptr))
-    {
-        LOG_DEBUG("Video", "Could not link video processing elements");
-        g_free(uriFile);
-        return false;
-    }
-
-    GstPad *sinkPad = gst_element_get_static_pad(capsFilter_, "sink");
-    GstPad *ghostPad = gst_ghost_pad_new("sink", sinkPad);
-    gst_element_add_pad(videoBin_, ghostPad);
-    gst_object_unref(sinkPad);
-
-    g_object_set(playbin_, "uri", uriFile, "video-sink", videoBin_, nullptr);
-    
-    g_free(uriFile);
-
-    GstClock* clock = gst_system_clock_obtain();
-    g_object_set(clock,
-        "clock-type", GST_CLOCK_TYPE_MONOTONIC,
-        nullptr);
-    gst_pipeline_use_clock(GST_PIPELINE(playbin_), clock);
-    gst_object_unref(clock);
-
-    if (GstPad *pad = gst_element_get_static_pad(videoSink_, "sink"))
-    {
-        padProbeId_ = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, padProbeCallback, this, nullptr);
-        gst_object_unref(pad);
-    }
-
-    videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-    gst_object_unref(videoBus_);
-
-    g_object_set(videoSink_, "sync", TRUE, "enable-last-sample", FALSE, nullptr);
-    bufferDisconnected_ = true;
-
-    handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
-
     return true;
 }
 

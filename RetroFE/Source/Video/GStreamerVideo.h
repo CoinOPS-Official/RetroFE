@@ -238,7 +238,6 @@ private:
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
-    bool initializeGstElements(const std::string& file);
     void createSdlTexture();
     GstElement* playbin_{ nullptr };
     GstElement* videoSink_{ nullptr };
