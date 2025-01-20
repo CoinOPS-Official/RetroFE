@@ -24,6 +24,7 @@
 #include "../SDL.h"
 #include "../Database/GlobalOpts.h"
 #include "../Collection/CollectionInfoBuilder.h"
+#include "../Database/HiScores.h"
 #include <cstdlib>
 #include <locale>
 #include <sstream>
@@ -1069,6 +1070,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
 			cib.updateTimeSpent(collectionItem, gameplayDuration);
 		}
+	}
+	if (executable.find("mame") != std::string::npos) {
+		HiScores::getInstance().runHi2TxtAsync(collectionItem->name);
 	}
 
 	LOG_INFO("Launcher", "Completed execution for: " + executionString);

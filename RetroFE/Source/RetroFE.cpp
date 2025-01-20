@@ -213,7 +213,6 @@ void RetroFE::launchEnter()
 // Return from the launch of a game/program
 void RetroFE::launchExit()
 {
-	HiScores::getInstance().runHi2TxtAsync(nextPageItem_->name);
 	// Set up SDL, and load the textures if unloadSDL flag is set
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
