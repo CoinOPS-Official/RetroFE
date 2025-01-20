@@ -1,43 +1,72 @@
-#include <unordered_map>
-#include <vector>
+/* This file is part of RetroFE.
+*
+* RetroFE is free software: you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation, either version 3 of the License, or
+* (at your option) any later version.
+*
+* RetroFE is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
+*/
 #include "VideoPool.h"
 
-// Define static members for multiple pools
-std::unordered_map<int, std::unordered_map<int, std::vector<GStreamerVideo*>>> VideoPool::pools_;
-std::unordered_map<int, std::unordered_map<int, int>> VideoPool::maxInstances_;
-std::unordered_map<int, std::unordered_map<int, bool>> VideoPool::extraInstanceCreated_;
+// Define static member
+VideoPool::PoolMap VideoPool::pools_;
 
 GStreamerVideo* VideoPool::acquireVideo(int monitor, int listId, bool softOverlay) {
     if (listId == -1) {
         return new GStreamerVideo(monitor);
     }
 
-    auto& pool = pools_[monitor][listId];
-    auto& extraCreated = extraInstanceCreated_[monitor][listId];
+    auto& monitorMap = pools_[monitor];
+    auto& poolInfo = monitorMap[listId];
 
-    // Ensure each pool gets one extra instance
-    if (!extraCreated && !pool.empty()) {
-        extraCreated = true;
-        maxInstances_[monitor][listId]++;
-        LOG_DEBUG("VideoPool", "First pool use detected for Monitor: " + std::to_string(monitor) +
-            ", List ID: " + std::to_string(listId) + ", creating an extra instance.");
+    // Case 1: Initial instances or creating extra instance
+    if (!poolInfo.poolInitialized || (poolInfo.poolInitialized && !poolInfo.hasExtraInstance)) {
+        poolInfo.currentActive++;
+        poolInfo.maxRequired = std::max(poolInfo.maxRequired, poolInfo.currentActive);
+
+        // If this is the extra instance (creating after pool initialized)
+        if (poolInfo.poolInitialized) {
+            poolInfo.hasExtraInstance = true;
+            LOG_DEBUG("VideoPool", "Creating extra instance. Monitor: " + 
+                std::to_string(monitor) + ", List ID: " + std::to_string(listId) +
+                ", Active: " + std::to_string(poolInfo.currentActive));
+        } else {
+            LOG_DEBUG("VideoPool", "Creating new instance. Monitor: " + 
+                std::to_string(monitor) + ", List ID: " + std::to_string(listId) +
+                ", Active: " + std::to_string(poolInfo.currentActive));
+        }
         return new GStreamerVideo(monitor);
     }
 
-    if (!pool.empty()) {
-        GStreamerVideo* vid = pool.back();
-        pool.pop_back();
+    // Case 2: After extra instance is created, use pool
+    if (!poolInfo.instances.empty()) {
+        GStreamerVideo* vid = poolInfo.instances.back();
+        poolInfo.instances.pop_back();
         vid->setSoftOverlay(softOverlay);
-        LOG_DEBUG("VideoPool", "Reusing a GStreamerVideo from the pool. Monitor: " +
+        poolInfo.currentActive++;
+        poolInfo.maxRequired = std::max(poolInfo.maxRequired, poolInfo.currentActive);
+
+        LOG_DEBUG("VideoPool", "Reusing instance from pool. Monitor: " + 
             std::to_string(monitor) + ", List ID: " + std::to_string(listId) +
-            ", Remaining instances: " + std::to_string(pool.size()));
+            ", Active: " + std::to_string(poolInfo.currentActive) +
+            ", Available: " + std::to_string(poolInfo.instances.size()));
         return vid;
     }
 
-    // If no video available in pool, create a new one
-    maxInstances_[monitor][listId]++;
-    LOG_DEBUG("VideoPool", "No available video in pool. Creating new instance for Monitor: " +
-        std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+    // Case 3: Pool empty but initialized and has extra, create new
+    poolInfo.currentActive++;
+    poolInfo.maxRequired = std::max(poolInfo.maxRequired, poolInfo.currentActive);
+
+    LOG_DEBUG("VideoPool", "Creating new instance (pool empty). Monitor: " + 
+        std::to_string(monitor) + ", List ID: " + std::to_string(listId) +
+        ", Active: " + std::to_string(poolInfo.currentActive));
     return new GStreamerVideo(monitor);
 }
 
@@ -50,31 +79,42 @@ void VideoPool::releaseVideo(GStreamerVideo* vid, int monitor, int listId) {
         return;
     }
 
+    auto& monitorMap = pools_[monitor];
+    auto& poolInfo = monitorMap[listId];
+
+    // Mark pool as initialized on first release
+    if (!poolInfo.poolInitialized) {
+        poolInfo.poolInitialized = true;
+        LOG_DEBUG("VideoPool", "First release detected for Monitor: " + 
+            std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+    }
+
     vid->unload();
-    auto& pool = pools_[monitor][listId];
+    poolInfo.instances.push_back(vid);
+    poolInfo.currentActive--;
 
-    pool.push_back(vid);
-
-    LOG_DEBUG("VideoPool", "Video instance released to pool. Monitor: " +
+    LOG_DEBUG("VideoPool", "Released to pool. Monitor: " + 
         std::to_string(monitor) + ", List ID: " + std::to_string(listId) +
-        ", Current pool size: " + std::to_string(pool.size()) +
-        ", Max required instances: " + std::to_string(maxInstances_[monitor][listId]));
+        ", Active: " + std::to_string(poolInfo.currentActive) +
+        ", Available: " + std::to_string(poolInfo.instances.size()) +
+        ", Max required: " + std::to_string(poolInfo.maxRequired));
 }
 
 void VideoPool::shutdown() {
     for (auto& [monitor, listPools] : pools_) {
-        for (auto& [listId, pool] : listPools) {
-            for (auto* vid : pool) {
+        for (auto& [listId, poolInfo] : listPools) {
+            for (auto* vid : poolInfo.instances) {
                 vid->stop();
                 delete vid;
             }
-            pool.clear();
+            poolInfo.instances.clear();
+            poolInfo.currentActive = 0;
+            poolInfo.poolInitialized = false;
+            poolInfo.maxRequired = 0;
         }
         listPools.clear();
     }
     pools_.clear();
-    maxInstances_.clear();
-    extraInstanceCreated_.clear();
 
     LOG_DEBUG("VideoPool", "VideoPool shutdown complete, all pooled videos destroyed.");
 }
