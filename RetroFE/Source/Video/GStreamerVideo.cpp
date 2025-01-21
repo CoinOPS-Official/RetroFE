@@ -257,6 +257,41 @@ bool GStreamerVideo::unload()
     // Clear any queued buffers
     bufferQueue_.clear();
 
+    // Lock texture access
+    SDL_LockMutex(SDL::getMutex());
+    if (texture_) {
+        // Allocate temporary black frame data
+        int yPlaneSize = textureWidth_ * textureHeight_;
+        std::vector<uint8_t> yPlane(yPlaneSize, 0);  // Y plane filled with 0 (black)
+
+        if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
+            // For NV12, UV plane is interleaved and half the size
+            std::vector<uint8_t> uvPlane(yPlaneSize / 2, 128);  // UV plane filled with neutral color (128,128)
+
+            if (SDL_UpdateNVTexture(texture_, nullptr,
+                yPlane.data(), textureWidth_,      // Y plane
+                uvPlane.data(), textureWidth_      // UV plane
+            ) != 0) {
+                LOG_ERROR("GStreamerVideo", "Unable to clear NV texture: " + std::string(SDL_GetError()));
+            }
+        }
+        else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
+            // For IYUV/I420, U and V planes are separate and quarter size each
+            std::vector<uint8_t> uPlane(yPlaneSize / 4, 128);  // U plane filled with neutral color
+            std::vector<uint8_t> vPlane(yPlaneSize / 4, 128);  // V plane filled with neutral color
+
+            if (SDL_UpdateYUVTexture(texture_, nullptr,
+                yPlane.data(), textureWidth_,      // Y plane
+                uPlane.data(), textureWidth_ / 2,  // U plane
+                vPlane.data(), textureWidth_ / 2   // V plane
+            ) != 0) {
+                LOG_ERROR("GStreamerVideo", "Unable to clear YUV texture: " + std::string(SDL_GetError()));
+            }
+        }
+        LOG_DEBUG("GStreamerVideo", "Texture data cleared to black during unload");
+    }
+    SDL_UnlockMutex(SDL::getMutex());
+
     // Reset flags used for timing, volume, etc.
     paused_ = false;
     currentVolume_ = 0.0f;
