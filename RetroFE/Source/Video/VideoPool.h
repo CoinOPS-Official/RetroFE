@@ -19,6 +19,7 @@
 #include <vector>
 #include "../Video/IVideo.h"
 #include "../Video/GStreamerVideo.h"
+#include <mutex>
 
 class VideoPool {
 public:
@@ -39,4 +40,5 @@ private:
     // Monitor -> ListId -> Pool mapping
     using PoolMap = std::unordered_map<int, std::unordered_map<int, PoolInfo>>;
     static PoolMap pools_;
+    static std::mutex poolMutex_;  // Mutex to protect the pool
 };

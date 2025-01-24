@@ -17,11 +17,15 @@
 
 // Define static member
 VideoPool::PoolMap VideoPool::pools_;
+std::mutex VideoPool::poolMutex_;
 
 GStreamerVideo* VideoPool::acquireVideo(int monitor, int listId, bool softOverlay) {
+
     if (listId == -1) {
         return new GStreamerVideo(monitor);
     }
+
+    std::lock_guard<std::mutex> lock(poolMutex_);  // Lock the mutex
 
     auto& monitorMap = pools_[monitor];
     auto& poolInfo = monitorMap[listId];
@@ -79,6 +83,8 @@ void VideoPool::releaseVideo(GStreamerVideo* vid, int monitor, int listId) {
         return;
     }
 
+    std::lock_guard<std::mutex> lock(poolMutex_);  // Lock the mutex
+
     auto& monitorMap = pools_[monitor];
     auto& poolInfo = monitorMap[listId];
 
@@ -103,6 +109,8 @@ void VideoPool::releaseVideo(GStreamerVideo* vid, int monitor, int listId) {
 
 void VideoPool::cleanup(int monitor, int listId) {
     if (listId == -1) return;
+   
+    std::lock_guard<std::mutex> lock(poolMutex_);  // Lock the mutex
 
     auto& monitorMap = pools_[monitor];
     auto& poolInfo = monitorMap[listId];
