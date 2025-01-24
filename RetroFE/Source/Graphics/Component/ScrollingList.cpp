@@ -27,6 +27,7 @@
 #include "VideoComponent.h"
 #include "ReloadableMedia.h"
 #include "Text.h"
+#include "../../Video/VideoPool.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
 #include "../../Collection/Item.h"
@@ -68,9 +69,9 @@ ScrollingList::ScrollingList( Configuration &c,
     , layoutKey_( layoutKey )
     , imageType_( imageType )
     , videoType_( videoType )
-	, useTextureCaching_(useTextureCaching)
     , components_()
- {
+    , useTextureCaching_(useTextureCaching)
+{
     listId_ = nextListId++;
 }
 
@@ -213,17 +214,32 @@ void ScrollingList::allocateSpritePoints() {
 
 void ScrollingList::destroyItems()
 {
-    size_t componentSize = components_.size();
+    auto& data = components_.raw();
+    size_t componentSize = data.size();
 
+    // First clean up the pool
+    bool hasVideos = false;
     for (unsigned int i = 0; i < componentSize; ++i) {
-        if (Component* component = components_[i]) {
-            component->freeGraphicsMemory();
-            delete component;
+        if (Component* component = data[i]) {
+            if (typeid(*component) == typeid(VideoComponent)) {
+                hasVideos = true;
+                break;
+            }
         }
-        components_[i] = NULL;
+    }
+
+    if (hasVideos) {
+        VideoPool::cleanup(baseViewInfo.Monitor, listId_);
+    }
+
+    // Then delete components
+    for (unsigned int i = 0; i < componentSize; ++i) {
+        if (Component* component = data[i]) {
+            delete component;
+            data[i] = NULL;
+        }
     }
 }
-
 void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints) {
     clearPoints();

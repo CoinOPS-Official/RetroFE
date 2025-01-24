@@ -100,6 +100,35 @@ void VideoPool::releaseVideo(GStreamerVideo* vid, int monitor, int listId) {
         ", Max required: " + std::to_string(poolInfo.maxRequired));
 }
 
+
+void VideoPool::cleanup(int monitor, int listId) {
+    if (listId == -1) return;
+
+    auto& monitorMap = pools_[monitor];
+    auto& poolInfo = monitorMap[listId];
+
+    // Just stop and delete videos in pool - no need to unload
+    for (auto* vid : poolInfo.instances) {
+        vid->stop();  // Just stop
+        delete vid;   // Then delete
+    }
+
+    // Clear bookkeeping
+    poolInfo.instances.clear();
+    poolInfo.currentActive = 0;
+    poolInfo.poolInitialized = false;
+    poolInfo.hasExtraInstance = false;
+    poolInfo.maxRequired = 0;
+
+    monitorMap.erase(listId);
+    if (monitorMap.empty()) {
+        pools_.erase(monitor);
+    }
+
+    LOG_DEBUG("VideoPool", "Pool cleaned up. Monitor: " + 
+        std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+}
+
 void VideoPool::shutdown() {
     for (auto& [monitor, listPools] : pools_) {
         for (auto& [listId, poolInfo] : listPools) {
