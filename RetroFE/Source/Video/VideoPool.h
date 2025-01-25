@@ -13,13 +13,19 @@
 * You should have received a copy of the GNU General Public License
 * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
 */
+// VideoPool.h
+// VideoPool.h
+// VideoPool.h
 #pragma once
 
 #include <unordered_map>
 #include <vector>
+#include <mutex>
+#include <shared_mutex>
+#include <atomic>
+#include <chrono>
 #include "../Video/IVideo.h"
 #include "../Video/GStreamerVideo.h"
-#include <mutex>
 
 class VideoPool {
 public:
@@ -30,15 +36,25 @@ public:
 
 private:
     struct PoolInfo {
-        std::vector<GStreamerVideo*> instances;  // Pool of available video instances
-        size_t currentActive = 0;                // Number of currently active instances
-        bool poolInitialized = false;            // Whether pool has had its first release
-        bool hasExtraInstance = false;           // Whether the extra instance has been created
-        size_t maxRequired = 0;                  // Maximum number of instances needed
+        std::vector<GStreamerVideo*> instances;
+        std::atomic<size_t> currentActive{0};
+        std::atomic<bool> poolInitialized{false};
+        std::atomic<bool> hasExtraInstance{false};
+        std::atomic<size_t> maxRequired{0};
+        std::timed_mutex poolMutex;  // Changed to timed_mutex
+
+        // Prevent copying of PoolInfo due to mutex
+        PoolInfo() = default;
+        PoolInfo(const PoolInfo&) = delete;
+        PoolInfo& operator=(const PoolInfo&) = delete;
+        PoolInfo(PoolInfo&&) = default;
+        PoolInfo& operator=(PoolInfo&&) = default;
     };
 
-    // Monitor -> ListId -> Pool mapping
     using PoolMap = std::unordered_map<int, std::unordered_map<int, PoolInfo>>;
     static PoolMap pools_;
-    static std::mutex poolMutex_;  // Mutex to protect the pool
+    static std::shared_mutex mapMutex_;
+
+    static PoolInfo* getPoolInfo(int monitor, int listId);
+    static constexpr std::chrono::milliseconds LOCK_TIMEOUT{5};
 };
