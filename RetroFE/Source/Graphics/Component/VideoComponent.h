@@ -22,6 +22,7 @@
 #include "../../Video/VideoFactory.h"
 #include <SDL2/SDL.h>
 #include <string>
+#include <atomic>
 
 class VideoComponent : public Component
 {
@@ -47,7 +48,7 @@ public:
 private:
     std::string videoFile_;
     IVideo* videoInst_{ nullptr };
-    bool isPlaying_{ false };
+    std::atomic<bool> instanceReady_{false};
     bool hasBeenOnScreen_{ false };
     bool softOverlay_;
     int numLoops_;

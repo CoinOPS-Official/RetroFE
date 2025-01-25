@@ -52,7 +52,7 @@ VideoComponent::~VideoComponent()
 
 bool VideoComponent::update(float dt)
 {
-    if (!videoInst_ || !videoInst_->isPlaying())
+    if (!instanceReady_)
     {
         return Component::update(dt);
     }
@@ -126,10 +126,10 @@ void VideoComponent::allocateGraphicsMemory()
 {
     Component::allocateGraphicsMemory();
 
-    if (!isPlaying_) {
+    if (!instanceReady_) {  // Was isPlaying_
         if (!videoInst_ && videoFile_ != "") {
             videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_);
-            isPlaying_ = videoInst_->play(videoFile_);
+            instanceReady_ = videoInst_->play(videoFile_);  // Was isPlaying_
         }
     }
 }
@@ -138,29 +138,17 @@ void VideoComponent::freeGraphicsMemory()
 {
     Component::freeGraphicsMemory();
 
-    if (Logger::isLevelEnabled("DEBUG"))
-        LOG_DEBUG("VideoComponent", "Component Freed " + Utils::getFileName(videoFile_));
-
-    // If we have a video instance, release it back to the pool
     if (videoInst_) {
-        // Now that we're sure it's always GStreamerVideo:
+        instanceReady_ = false;  // Set to false FIRST to prevent updates during release
         GStreamerVideo* gstreamerVideo = static_cast<GStreamerVideo*>(videoInst_);
-
-        // Put it back into the pool
         VideoPool::releaseVideo(gstreamerVideo, monitor_, listId_);
-
-        if (Logger::isLevelEnabled("DEBUG"))
-            LOG_DEBUG("VideoComponent", "Released " + Utils::getFileName(videoFile_) + " back to the pool");
-
-        // Mark as no longer playing and null out the pointer
-        isPlaying_ = false;
         videoInst_ = nullptr;
     }
 }
 
 void VideoComponent::draw() {
-    if (videoInst_) {
-        if (videoInst_->isPlaying() && isPlaying_) {
+    if (videoInst_ && instanceReady_) {
+        if (videoInst_->isPlaying()) {
             videoInst_->draw();
         }
         if (SDL_Texture* texture = videoInst_->getTexture()) {
