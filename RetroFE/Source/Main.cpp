@@ -25,6 +25,7 @@
 #include "RetroFE.h"
 #include "Version.h"
 #include "SDL.h"
+#include "MusicPlayer/Player.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -302,6 +303,8 @@ int main(int argc, char** argv)
     gst_debug_set_default_threshold(GST_LEVEL_ERROR);
 
     gst_init(nullptr, nullptr);
+    
+//    MusicPlayer::MusicPlayer();
 
     try {
         while (true) {

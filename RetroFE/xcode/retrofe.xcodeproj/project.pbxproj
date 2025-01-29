@@ -61,6 +61,7 @@
 		DF07B3E62B2A14CE00B732CF /* GStreamer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DF2B282E2B683F2E00A22011 /* GlobalOpts.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DF2B282C2B683F2E00A22011 /* GlobalOpts.cpp */; };
 		DF87A17A2B152AAB00548E78 /* RetroFE.png in Resources */ = {isa = PBXBuildFile; fileRef = DF87A1792B152AA400548E78 /* RetroFE.png */; };
+		DF9DB7172D4A9606004297C6 /* Player.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DF9DB7162D4A9606004297C6 /* Player.cpp */; };
 		DFF5D9582B6F9EFA005E9600 /* ThreadPool.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DFF5D9572B6F9EFA005E9600 /* ThreadPool.cpp */; };
 		EBC08A29661C4F528F9D6AC9 /* Version.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6896574AEBD347EE888038E9 /* Version.cpp */; };
 		F979BDA3A4184905BFCA0DEA /* Configuration.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 87B7677F57FF454B953BAD59 /* Configuration.cpp */; };
@@ -175,6 +176,8 @@
 		DF2B282C2B683F2E00A22011 /* GlobalOpts.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = GlobalOpts.cpp; path = Database/GlobalOpts.cpp; sourceTree = "<group>"; };
 		DF2B282D2B683F2E00A22011 /* GlobalOpts.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GlobalOpts.h; path = Database/GlobalOpts.h; sourceTree = "<group>"; };
 		DF87A1792B152AA400548E78 /* RetroFE.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = RetroFE.png; path = ../../Package/Environment/Common/RetroFE.png; sourceTree = "<group>"; };
+		DF9DB7162D4A9606004297C6 /* Player.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = Player.cpp; path = MusicPlayer/Player.cpp; sourceTree = "<group>"; };
+		DF9DB71A2D4AA034004297C6 /* Player.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = Player.h; path = MusicPlayer/Player.h; sourceTree = "<group>"; };
 		DFF5D9572B6F9EFA005E9600 /* ThreadPool.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = ThreadPool.cpp; path = Graphics/ThreadPool.cpp; sourceTree = "<group>"; };
 		DFF5D9592B6F9F0F005E9600 /* ThreadPool.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = ThreadPool.h; path = Graphics/ThreadPool.h; sourceTree = "<group>"; };
 		DFF91E9B2B260B5B00507957 /* SDL2_mixer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = SDL2_mixer.framework; path = ../ThirdPartyMac/SDL2_mixer.framework; sourceTree = "<group>"; };
@@ -238,6 +241,7 @@
 		4C418535FD0A487485FDF907 /* Header Files */ = {
 			isa = PBXGroup;
 			children = (
+				DF9DB71A2D4AA034004297C6 /* Player.h */,
 				7FD09C6A782A4B69B37697F1 /* Animation.h */,
 				90AC9A42897248FB8AB8E13D /* AnimationEvents.h */,
 				D32E8F4A73994068B6107132 /* AttractMode.h */,
@@ -329,6 +333,7 @@
 		F1EBF96675C5443E881F32F0 /* Source Files */ = {
 			isa = PBXGroup;
 			children = (
+				DF9DB7162D4A9606004297C6 /* Player.cpp */,
 				265E7B256A954D8793198331 /* Animation.cpp */,
 				F7BFDD750A8D4FD2BD04E3E8 /* AnimationEvents.cpp */,
 				C10786B3822040D9BB915594 /* AttractMode.cpp */,
@@ -488,6 +493,7 @@
 				1CE966382A5748C8AA435694 /* AnimationEvents.cpp in Sources */,
 				FF9D1396B0DD42E4822D0657 /* Tween.cpp in Sources */,
 				DFF5D9582B6F9EFA005E9600 /* ThreadPool.cpp in Sources */,
+				DF9DB7172D4A9606004297C6 /* Player.cpp in Sources */,
 				516567856F9048499ECB7208 /* TweenSet.cpp in Sources */,
 				6EC24D1FB1AA4DD8A981E54A /* Component.cpp in Sources */,
 				B6A3D783C1AF4CD798EBBDDA /* Container.cpp in Sources */,
