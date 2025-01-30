@@ -40,11 +40,10 @@ extern "C" {
 // Define cache line size (common value for x86/x64 architectures)
 constexpr size_t CACHE_LINE_SIZE = 64;
 
-// Define TNQueue using a C-style array with padding
 template<typename T, size_t N>
 class TNQueue {
     // Ensure N is a power of two for efficient bitwise index wrapping
-    static_assert((N& (N - 1)) == 0, "N must be a power of 2");
+    static_assert((N & (N - 1)) == 0, "N must be a power of 2");
 
 protected:
     alignas(CACHE_LINE_SIZE) T storage[N];  // C-style array for holding the buffers
@@ -53,105 +52,56 @@ protected:
 
 public:
     TNQueue() : head(0), tail(0) {
-        // Initialize the storage array to nullptr
         for (size_t i = 0; i < N; ++i) {
-            storage[i] = nullptr;  // For GstBuffer*, initialize to nullptr
+            storage[i] = T{};
         }
     }
-    // Check if the queue is full
+
     bool isFull() const {
         size_t currentTail = tail.load(std::memory_order_acquire);
         size_t currentHead = head.load(std::memory_order_acquire);
-        // Full when advancing tail would equal the head
         return ((currentTail + 1) & (N - 1)) == currentHead;
     }
 
-    // Check if the queue is empty
     bool isEmpty() const {
         size_t currentTail = tail.load(std::memory_order_acquire);
         size_t currentHead = head.load(std::memory_order_acquire);
-        // Empty when head equals tail
         return currentHead == currentTail;
     }
 
-    // Push a new item into the queue (Non-blocking)
-    bool push(T item) {
+    bool push(T&& item) {
         size_t currentTail = tail.load(std::memory_order_relaxed);
         size_t nextTail = (currentTail + 1) & (N - 1);
 
         if (nextTail == head.load(std::memory_order_acquire)) {
-            // Queue is full, we need to drop the oldest item.
+            // Queue is full, drop oldest item
             size_t currentHead = head.load(std::memory_order_relaxed);
-            T& oldestItem = storage[currentHead];
-
-            // Unref or clear the buffer if needed.
-            gst_clear_buffer(&oldestItem);  // Ensure proper cleanup of the dropped buffer
-
-            // Advance the head to effectively "remove" the oldest item.
+            storage[currentHead] = T{};  // Replace with empty item, triggering cleanup
             head.store((currentHead + 1) & (N - 1), std::memory_order_release);
         }
 
-        // Store the new item in the queue.
-        storage[currentTail] = item;
-        tail.store(nextTail, std::memory_order_release);  // Commit the write
+        storage[currentTail] = std::move(item);
+        tail.store(nextTail, std::memory_order_release);
         return true;
     }
 
-    bool pushWithRef(T item) {
-        // First take the reference before any queue operations
-        gst_buffer_ref(item);  // Increment reference count
-
-        size_t currentTail = tail.load(std::memory_order_relaxed);
-        size_t nextTail = (currentTail + 1) & (N - 1);
-
-        if (nextTail == head.load(std::memory_order_acquire)) {
-            // Queue is full, we need to drop the oldest item.
-            size_t currentHead = head.load(std::memory_order_relaxed);
-            T& oldestItem = storage[currentHead];
-
-            // Unref or clear the buffer if needed.
-            gst_clear_buffer(&oldestItem);  // Ensure proper cleanup of the dropped buffer
-
-            // Advance the head to effectively "remove" the oldest item.
-            head.store((currentHead + 1) & (N - 1), std::memory_order_release);
-        }
-
-        // Store the new item (which now has an extra reference) in the queue
-        storage[currentTail] = item;
-        tail.store(nextTail, std::memory_order_release);  // Commit the write
-
-        return true;
-    }
-
-    // Pop an item from the queue (Non-blocking)
     std::optional<T> pop() {
         size_t currentHead = head.load(std::memory_order_relaxed);
 
         if (currentHead == tail.load(std::memory_order_acquire)) {
-            return std::nullopt;  // Queue is empty
+            return std::nullopt;
         }
 
-        T item = storage[currentHead];
-        head.store((currentHead + 1) & (N - 1), std::memory_order_release);  // Commit the read
-        return item;
+        T item = std::move(storage[currentHead]);
+        storage[currentHead] = T{};  // Replace with empty item
+        head.store((currentHead + 1) & (N - 1), std::memory_order_release);
+        return std::move(item);
     }
 
-    // Clear the queue
-    void clear() {
-        while (!isEmpty()) {
-            auto itemOpt = pop();
-            if (itemOpt.has_value()) {
-                // Properly unref or clear the buffer
-                gst_buffer_unref(*itemOpt);
-            }
-        }
-    }
-
-    // Get the current size of the queue (Note: This is not lock-free, just for diagnostics)
     size_t size() const {
         size_t currentHead = head.load(std::memory_order_acquire);
         size_t currentTail = tail.load(std::memory_order_acquire);
-        return (currentTail + N - currentHead) & (N - 1);  // Calculate size based on head/tail positions
+        return (currentTail + N - currentHead) & (N - 1);
     }
 };
 
@@ -195,42 +145,41 @@ public:
 
 private:
 
-    // Scoped RAII wrapper for GstBuffer
-    class ScopedBuffer {
-    public:
-        explicit ScopedBuffer(GstBuffer* buf) : buffer_(buf) {}
-        ~ScopedBuffer() {
-            if (buffer_) {
-                gst_buffer_unref(buffer_);
-            }
-        }
-        GstBuffer* get() const { return buffer_ ? buffer_ : nullptr; }        // Prevent copying
-        ScopedBuffer(const ScopedBuffer&) = delete;
-        ScopedBuffer& operator=(const ScopedBuffer&) = delete;
-    private:
-        GstBuffer* buffer_;
-    };
 
-    // Scoped RAII wrapper for GstVideoFrame
-    class ScopedVideoFrame {
-    public:
-        ScopedVideoFrame(GstVideoInfo* info, GstBuffer* buffer) : frame_() {
-            mapped_ = gst_video_frame_map(&frame_, info, buffer, 
-                (GstMapFlags)(GST_MAP_READ | GST_VIDEO_FRAME_MAP_FLAG_NO_REF));
+    // MappedFrameData implementation (place in GStreamerVideo class private section)
+    struct MappedFrameData {
+        GstVideoFrame frame;  // The actual mapped frame
+        bool is_mapped;       // Track mapping state
+
+        MappedFrameData() : is_mapped(false) {}
+
+        // Move constructor
+        MappedFrameData(MappedFrameData&& other) noexcept 
+            : frame(other.frame), is_mapped(other.is_mapped) {
+            other.is_mapped = false;
         }
-        ~ScopedVideoFrame() {
-            if (mapped_) {
-                gst_video_frame_unmap(&frame_);
+
+        // Move assignment
+        MappedFrameData& operator=(MappedFrameData&& other) noexcept {
+            if (this != &other) {
+                if (is_mapped) {
+                    gst_video_frame_unmap(&frame);
+                }
+                frame = other.frame;
+                is_mapped = other.is_mapped;
+                other.is_mapped = false;
+            }
+            return *this;
+        }
+
+        ~MappedFrameData() {
+            if (is_mapped) {
+                gst_video_frame_unmap(&frame);
             }
         }
-        bool isMapped() const { return mapped_; }
-        const GstVideoFrame* get() const { return &frame_; }
-        // Prevent copying
-        ScopedVideoFrame(const ScopedVideoFrame&) = delete;
-        ScopedVideoFrame& operator=(const ScopedVideoFrame&) = delete;
-    private:
-        GstVideoFrame frame_;
-        bool mapped_;
+
+        MappedFrameData(const MappedFrameData&) = delete;
+        MappedFrameData& operator=(const MappedFrameData&) = delete;
     };
 
     static void processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, GstPad* new_pad,
@@ -255,7 +204,7 @@ private:
 	int textureWidth_{ -1 };
 	int textureHeight_{ -1 };
 	bool textureValid_{ false };
-    TNQueue<GstBuffer*, 8> bufferQueue_; // Using TNQueue to hold a maximum of 8 buffers
+    TNQueue<MappedFrameData, 8> frameQueue_; // Using TNQueue to hold a maximum of 8 buffers
     std::atomic<bool> isPlaying_{ false };
     static bool initialized_;
     int playCount_{ 0 };

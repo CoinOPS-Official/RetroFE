@@ -185,7 +185,7 @@ bool GStreamerVideo::stop()
         }
 
         // Clear the buffer queue
-        bufferQueue_.clear();
+        //bufferQueue_.clear();
 
         // Disconnect signal handlers
         if (elementSetupHandlerId_)
@@ -255,7 +255,7 @@ bool GStreamerVideo::unload()
     isPlaying_ = false;
 
     // Clear any queued buffers
-    bufferQueue_.clear();
+   // bufferQueue_.clear();
 
     // Reset flags used for timing, volume, etc.
     paused_ = false;
@@ -638,75 +638,73 @@ int GStreamerVideo::getWidth()
     return width_;
 }
 
-void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, [[maybe_unused]] GstPad* new_pad, gpointer userdata) {
+void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, 
+    GstPad* new_pad, gpointer userdata) {
     auto* video = static_cast<GStreamerVideo*>(userdata);
 
     if (video->stopping_.load(std::memory_order_acquire)) {
         return;
     }
 
-    // No need for separate ref/unref operations
-    if (!video->bufferQueue_.pushWithRef(buf)) {
-        // If push fails (shouldn't happen with current implementation)
-        // No need to unref as we never incremented the reference
+    MappedFrameData mappedData;
+
+    if (!gst_video_frame_map(&mappedData.frame, &video->videoInfo_, buf, GST_MAP_READ)) {
+        LOG_ERROR("GStreamerVideo", "Failed to map video frame");
         return;
     }
+    mappedData.is_mapped = true;
+
+    video->frameQueue_.push(std::move(mappedData));
 }
 
 void GStreamerVideo::draw() {
-    // Only draw if isPlaying_ is true. (Assuming isPlaying_ is now atomic.)
-    if (!isPlaying_)
-        return;
+    if (!isPlaying_) return;
 
     if (stopping_.load(std::memory_order_acquire)) {
         return;
     }
 
-    auto bufferOpt = bufferQueue_.pop();
-    if (!bufferOpt.has_value()) {
+    auto frameDataOpt = frameQueue_.pop();
+    if (!frameDataOpt.has_value()) {
         return;
     }
 
-    // Scope the buffer using RAII
-    ScopedBuffer scopedBuffer(*bufferOpt);
+    const auto& frameData = *frameDataOpt;
 
-    if (!textureValid_ ||
-        width_.load(std::memory_order_acquire) != textureWidth_ ||
-        height_.load(std::memory_order_acquire) != textureHeight_)
+    if (!textureValid_ || 
+        GST_VIDEO_FRAME_WIDTH(&frameData.frame) != textureWidth_ || 
+        GST_VIDEO_FRAME_HEIGHT(&frameData.frame) != textureHeight_)
     {
         createSdlTexture();
     }
 
     if (texture_) {
-        ScopedVideoFrame videoFrame(&videoInfo_, scopedBuffer.get());
+        SDL_LockMutex(SDL::getMutex());
 
-        if (videoFrame.isMapped()) {
-            SDL_LockMutex(SDL::getMutex());
-
-            if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-                if (SDL_UpdateNVTexture(texture_, nullptr,
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 0)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 0),
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 1)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 1)) != 0) {
-                    LOG_ERROR("GStreamerVideo", "Unable to update NV texture: " + std::string(SDL_GetError()));
-                }
+        if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
+            if (SDL_UpdateNVTexture(texture_, nullptr,
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 0)),  // Y plane
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 0),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 1)),  // UV plane
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 1)) != 0) {
+                LOG_ERROR("GStreamerVideo", "Unable to update NV texture: " + std::string(SDL_GetError()));
             }
-            else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-                if (SDL_UpdateYUVTexture(texture_, nullptr,
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 0)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 0),
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 1)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 1),
-                    static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(videoFrame.get(), 2)),
-                    GST_VIDEO_FRAME_PLANE_STRIDE(videoFrame.get(), 2)) != 0) {
-                    LOG_ERROR("GStreamerVideo", "Unable to update YUV texture: " + std::string(SDL_GetError()));
-                }
-            }
-
-            SDL_UnlockMutex(SDL::getMutex());
         }
+        else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
+            if (SDL_UpdateYUVTexture(texture_, nullptr,
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 0)),  // Y plane
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 0),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 1)),  // U plane
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 1),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 2)),  // V plane
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 2)) != 0) {
+                LOG_ERROR("GStreamerVideo", "Unable to update YUV texture: " + std::string(SDL_GetError()));
+            }
+        }
+
+        SDL_UnlockMutex(SDL::getMutex());
     }
+    // frameData goes out of scope here and automatically unmaps the frame
 }
 
 bool GStreamerVideo::isPlaying()
@@ -814,7 +812,7 @@ void GStreamerVideo::restart()
         return;
 
     // Clear buffered frames
-    bufferQueue_.clear();
+  //  bufferQueue_.clear();
 
 
     // Use same seeking method consistently
