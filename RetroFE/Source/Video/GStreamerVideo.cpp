@@ -168,8 +168,6 @@ bool GStreamerVideo::stop()
 
     stopping_.store(true, std::memory_order_release);
 
-    g_object_set(videoSink_, "signal-handoffs", FALSE, nullptr);
-
     isPlaying_ = false;
 
     if (playbin_)
@@ -694,12 +692,10 @@ void GStreamerVideo::pause()
 
     if (paused_)
     {
-        g_object_set(videoSink_, "signal-handoffs", FALSE, nullptr);
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
     }
     else
     {
-        g_object_set(videoSink_, "signal-handoffs", TRUE, nullptr);
         gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
     }
 }
