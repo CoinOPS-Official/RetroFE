@@ -27,6 +27,7 @@
 #include <gst/audio/audio.h>
 #include <gst/gstdebugutils.h>
 #include <gst/video/video.h>
+#include <gst/app/gstappsink.h>
 #include <sstream>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -184,9 +185,6 @@ bool GStreamerVideo::stop()
             LOG_ERROR("Video", "Failed to change playbin state to NULL");
         }
 
-        // Clear the buffer queue
-        //bufferQueue_.clear();
-
         // Disconnect signal handlers
         if (elementSetupHandlerId_)
         {
@@ -194,23 +192,10 @@ bool GStreamerVideo::stop()
             elementSetupHandlerId_ = 0;
         }
 
-        if (handoffHandlerId_)
-        {
-            g_signal_handler_disconnect(videoSink_, handoffHandlerId_);
-            handoffHandlerId_ = 0;
-        }
-
-
         gst_object_unref(playbin_);
 
         playbin_ = nullptr;
         videoSink_ = nullptr;
-        capsFilter_ = nullptr;
-        videoBin_ = nullptr;
-        videoBus_ = nullptr;
-
-
-
     }
 
     SDL_LockMutex(SDL::getMutex());
@@ -235,7 +220,8 @@ bool GStreamerVideo::unload()
     // Optionally mark it as “stopping” so other threads know not to process more buffers
     stopping_.store(true, std::memory_order_release);
 
-    bufferDisconnect(true);
+    // We’re no longer “playing”
+    isPlaying_ = false;
 
     // Set pipeline to GST_STATE_READY (instead of GST_STATE_NULL) so we can reuse it later
     GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
@@ -250,12 +236,6 @@ bool GStreamerVideo::unload()
     if (ret == GST_STATE_CHANGE_FAILURE || newState != GST_STATE_READY) {
         LOG_ERROR("GStreamerVideo", "Pipeline did not reach READY state during unload.");
     }
-
-    // We’re no longer “playing”
-    isPlaying_ = false;
-
-    // Clear any queued buffers
-   // bufferQueue_.clear();
 
     // Reset flags used for timing, volume, etc.
     paused_ = false;
@@ -272,78 +252,59 @@ bool GStreamerVideo::unload()
     playCount_ = 0;
     numLoops_ = 0;
 
-    LOG_DEBUG("GStreamerVideo", "Pipeline unloaded, now in READY state. Texture cleared.");
+    LOG_DEBUG("GStreamerVideo", "Pipeline unloaded, now in READY state.");
 
     return true;
 }
 
 bool GStreamerVideo::createPipelineIfNeeded()
 {
-    // If we already have a playbin_, just return true
     if (playbin_) {
         return true;
     }
 
-    // Otherwise, create playbin, set up caps, videoSink, etc.
-    playbin_   = gst_element_factory_make("playbin3", "player");
-    capsFilter_ = gst_element_factory_make("capsfilter", "caps_filter");
-    videoBin_  = gst_bin_new("SinkBin");
-    videoSink_ = gst_element_factory_make("fakesink", "video_sink");
+    playbin_ = gst_element_factory_make("playbin3", "player");
+    videoSink_ = gst_element_factory_make("appsink", "video_sink");
 
-    if (!playbin_ || !videoBin_ || !videoSink_ || !capsFilter_) {
+    if (!playbin_ || !videoSink_) {
         LOG_DEBUG("Video", "Could not create GStreamer elements");
         return false;
     }
 
     gint flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO;
-    g_object_set(playbin_, "flags", flags, nullptr);
+    g_object_set(playbin_, "flags", flags, "instant-uri", TRUE, nullptr);
 
+    // Configure appsink
+    g_object_set(videoSink_,
+        "max-buffers", 1,     // Only keep latest buffer
+        "drop", TRUE,         // Drop old buffers
+        "wait-on-eos", FALSE,
+        nullptr);
 
-    g_object_set(playbin_, "instant-uri", TRUE, nullptr);
-
-
-    // Configure caps (hardware accel or software)
-    GstCaps *videoConvertCaps;
+    // Set caps directly on appsink
+    GstCaps *videoCaps;
     if (Configuration::HardwareVideoAccel) {
-        videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+        videoCaps = gst_caps_from_string(
+            "video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
         sdlFormat_ = SDL_PIXELFORMAT_NV12;
         LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_NV12 (HW accel: true)");
     } else {
-        videoConvertCaps = gst_caps_from_string("video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
-        elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", G_CALLBACK(elementSetupCallback), this);
+        videoCaps = gst_caps_from_string(
+            "video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
+        elementSetupHandlerId_ = g_signal_connect(playbin_, "element-setup", 
+            G_CALLBACK(elementSetupCallback), this);
         sdlFormat_ = SDL_PIXELFORMAT_IYUV;
         LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_IYUV (HW accel: false)");
     }
 
-    g_object_set(capsFilter_, "caps", videoConvertCaps, nullptr);
-    gst_caps_unref(videoConvertCaps);
+    gst_app_sink_set_caps(GST_APP_SINK(videoSink_), videoCaps);
+    gst_caps_unref(videoCaps);
 
-    gst_bin_add_many(GST_BIN(videoBin_), capsFilter_, videoSink_, nullptr);
-    if (!gst_element_link_many(capsFilter_, videoSink_, nullptr)) {
-        LOG_DEBUG("Video", "Could not link video processing elements");
-        return false;
-    }
-
-    GstPad *sinkPad   = gst_element_get_static_pad(capsFilter_, "sink");
-    GstPad *ghostPad  = gst_ghost_pad_new("sink", sinkPad);
-    gst_element_add_pad(videoBin_, ghostPad);
-    gst_object_unref(sinkPad);
-
-    // We haven't set URI yet; just attach the videoBin as playbin's video-sink
-    g_object_set(playbin_, "video-sink", videoBin_, nullptr);
-
-    videoBus_ = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-    gst_object_unref(videoBus_);
-
-    g_object_set(videoSink_, "sync", TRUE, "enable-last-sample", FALSE, nullptr);
-    bufferDisconnected_ = true;
-
-    handoffHandlerId_ = g_signal_connect(videoSink_, "handoff", G_CALLBACK(processNewBuffer), this);
-
+    // Set appsink directly as playbin's video-sink
+    g_object_set(playbin_, "video-sink", videoSink_, nullptr);
 
     return true;
 }
-
 
 bool GStreamerVideo::play(const std::string &file)
 {
@@ -373,10 +334,7 @@ bool GStreamerVideo::play(const std::string &file)
         gst_object_unref(pad);
     }
 
-    // 2. Move pipeline to READY (so we can safely change URI)
-    //gst_element_set_state(playbin_, GST_STATE_READY);
-
-    // 3. Convert file path to URI
+    // Convert file path to URI
     gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
     if (!uriFile) {
         LOG_DEBUG("Video", "Failed to convert filename to URI");
@@ -389,18 +347,18 @@ bool GStreamerVideo::play(const std::string &file)
     g_object_set(playbin_, "uri", uriFile, nullptr);
     g_free(uriFile);
 
-    // If we're not already playing, start playback
-    if (current != GST_STATE_PLAYING) {
-        GstStateChangeReturn playState = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
-        if (playState != GST_STATE_CHANGE_ASYNC && playState != GST_STATE_CHANGE_SUCCESS) {
+    if (current != GST_STATE_PAUSED) {
+        GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
+        if (stateRet != GST_STATE_CHANGE_ASYNC && stateRet != GST_STATE_CHANGE_SUCCESS) {
             isPlaying_ = false;
-            LOG_ERROR("Video", "Unable to set pipeline to the playing state.");
             stop();
             return false;
         }
     }
 
-    paused_   = false;
+
+
+    paused_   = true;
     isPlaying_= true;
     currentFile_ = file;
 
@@ -533,65 +491,6 @@ void GStreamerVideo::createSdlTexture() {
         std::to_string(newWidth) + "x" + std::to_string(newHeight) + ").");
 }
 
-void GStreamerVideo::loopHandler() {
-    if (!videoBus_ || !isPlaying_)
-        return;
-
-    // Process all pending messages
-    GstMessage* msg;
-    while ((msg = gst_bus_pop_filtered(videoBus_,
-        static_cast<GstMessageType>(GST_MESSAGE_EOS | GST_MESSAGE_ERROR)))) {
-
-        switch (GST_MESSAGE_TYPE(msg)) {
-        case GST_MESSAGE_EOS:
-            playCount_++;
-            if (!numLoops_ || numLoops_ > playCount_) {
-                restart();
-            }
-            else {
-                stop();
-            }
-            break;
-
-        case GST_MESSAGE_ERROR:
-            GError* err;
-            gchar* debug_info;
-            gst_message_parse_error(msg, &err, &debug_info);
-            LOG_ERROR("GStreamerVideo", "Error received from element " +
-                std::string(GST_OBJECT_NAME(msg->src)) + ": " +
-                std::string(err->message));
-            g_clear_error(&err);
-            g_free(debug_info);
-            break;
-        
-
-        default:
-            // Ignore other message types
-            break;
-        }
-
-        gst_message_unref(msg);
-    }
-}
-
-void GStreamerVideo::bufferDisconnect(bool disconnect)
-{
-    if (disconnect) {
-        g_object_set(videoSink_, "signal-handoffs", FALSE, nullptr);
-        bufferDisconnected_ = true;
-    }
-    else
-    {
-        g_object_set(videoSink_, "signal-handoffs", TRUE, nullptr);
-        bufferDisconnected_ = false;
-    }
-}
-
-bool GStreamerVideo::isBufferDisconnected()
-{
-    return bufferDisconnected_;
-}
-
 void GStreamerVideo::volumeUpdate()
 {
     if (!isPlaying_ || !playbin_)
@@ -638,73 +537,72 @@ int GStreamerVideo::getWidth()
     return width_;
 }
 
-void GStreamerVideo::processNewBuffer(GstElement const* /* fakesink */, GstBuffer* buf, 
-    GstPad* new_pad, gpointer userdata) {
-    auto* video = static_cast<GStreamerVideo*>(userdata);
-
-    if (video->stopping_.load(std::memory_order_acquire)) {
-        return;
-    }
-
-    MappedFrameData mappedData;
-
-    if (!gst_video_frame_map(&mappedData.frame, &video->videoInfo_, buf, GST_MAP_READ)) {
-        LOG_ERROR("GStreamerVideo", "Failed to map video frame");
-        return;
-    }
-    mappedData.is_mapped = true;
-
-    video->frameQueue_.push(std::move(mappedData));
-}
-
 void GStreamerVideo::draw() {
-    if (!isPlaying_) return;
-
-    if (stopping_.load(std::memory_order_acquire)) {
+    if (!isPlaying_ || stopping_.load(std::memory_order_acquire)) {
         return;
     }
 
-    auto frameDataOpt = frameQueue_.pop();
-    if (!frameDataOpt.has_value()) {
+    // Try to pull a sample with a short timeout
+    GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
+    if (!sample) {
+        // Check for EOS
+        if (gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
+            playCount_++;
+            if (!numLoops_ || numLoops_ > playCount_) {
+                restart();
+            } else {
+                stop();
+            }
+            return;
+        }
+        return;  // No new frame available
+    }
+
+    // Get the video buffer
+    GstBuffer* buf = gst_sample_get_buffer(sample);
+
+    // Map the frame
+    GstVideoFrame frame;
+    if (!gst_video_frame_map(&frame, &videoInfo_, buf, GST_MAP_READ)) {
+        gst_sample_unref(sample);
         return;
     }
 
-    const auto& frameData = *frameDataOpt;
-
+    // Create or update texture if needed
     if (!textureValid_ || 
-        GST_VIDEO_FRAME_WIDTH(&frameData.frame) != textureWidth_ || 
-        GST_VIDEO_FRAME_HEIGHT(&frameData.frame) != textureHeight_)
+        GST_VIDEO_FRAME_WIDTH(&frame) != textureWidth_ || 
+        GST_VIDEO_FRAME_HEIGHT(&frame) != textureHeight_)
     {
         createSdlTexture();
     }
 
+    // Update the texture
     if (texture_) {
         SDL_LockMutex(SDL::getMutex());
 
         if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-            if (SDL_UpdateNVTexture(texture_, nullptr,
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 0)),  // Y plane
-                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 0),
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 1)),  // UV plane
-                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 1)) != 0) {
-                LOG_ERROR("GStreamerVideo", "Unable to update NV texture: " + std::string(SDL_GetError()));
-            }
+            SDL_UpdateNVTexture(texture_, nullptr,
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1));
         }
         else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-            if (SDL_UpdateYUVTexture(texture_, nullptr,
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 0)),  // Y plane
-                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 0),
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 1)),  // U plane
-                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 1),
-                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frameData.frame, 2)),  // V plane
-                GST_VIDEO_FRAME_PLANE_STRIDE(&frameData.frame, 2)) != 0) {
-                LOG_ERROR("GStreamerVideo", "Unable to update YUV texture: " + std::string(SDL_GetError()));
-            }
+            SDL_UpdateYUVTexture(texture_, nullptr,
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1),
+                static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 2)),
+                GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 2));
         }
 
         SDL_UnlockMutex(SDL::getMutex());
     }
-    // frameData goes out of scope here and automatically unmaps the frame
+
+    // Clean up
+    gst_video_frame_unmap(&frame);
+    gst_sample_unref(sample);
 }
 
 bool GStreamerVideo::isPlaying()

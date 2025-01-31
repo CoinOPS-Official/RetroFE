@@ -65,7 +65,6 @@ bool VideoComponent::update(float dt)
         {
             videoInst_->volumeUpdate();
         }
-        videoInst_->loopHandler();
 
         if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
         {
@@ -78,17 +77,7 @@ bool VideoComponent::update(float dt)
         if (isCurrentlyVisible)
         {       
             hasBeenOnScreen_ = true;
-            if (videoInst_->isBufferDisconnected())
-                videoInst_->bufferDisconnect(false);
         }
-        else
-        {
-            if (!videoInst_->isBufferDisconnected())
-                videoInst_->bufferDisconnect(true);
-        }
-
-        if (currentPage_->isMenuFastScrolling() && videoInst_->isBufferDisconnected())
-            videoInst_->bufferDisconnect(false);
 
         if (baseViewInfo.PauseOnScroll)
         {
