@@ -543,15 +543,20 @@ void GStreamerVideo::draw() {
     // Try to pull a sample with a short timeout
     GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
     if (!sample) {
-        // Check for EOS
-        if (gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
-            playCount_++;
-            if (!numLoops_ || numLoops_ > playCount_) {
-                restart();
-            } else {
-                stop();
+        // Check for EOS only if the pipeline is in the PLAYING state
+        GstState state;
+        gst_element_get_state(GST_ELEMENT(playbin_), &state, nullptr, 0);
+        if (state == GST_STATE_PLAYING && gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
+            // Check if the video has played for more than a second
+            if (getCurrent() > GST_SECOND) {
+                playCount_++;
+                if (!numLoops_ || numLoops_ > playCount_) {
+                    restart();
+                } else {
+                    stop();
+                }
+                return;
             }
-            return;
         }
         return;  // No new frame available
     }
