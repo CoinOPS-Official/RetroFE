@@ -41,7 +41,7 @@
 
 
 VideoComponent::VideoComponent(Page &p, const std::string &videoFile, int monitor, int numLoops, bool softOverlay, int listId)
-	: Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), currentPage_(&p), listId_(listId)
+	: Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), listId_(listId), currentPage_(&p)
 {
 }
 
@@ -65,6 +65,8 @@ bool VideoComponent::update(float dt)
         {
             videoInst_->volumeUpdate();
         }
+
+		videoInst_->loopHandler();
 
         if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
         {
@@ -145,7 +147,6 @@ void VideoComponent::draw() {
                 baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
                 baseViewInfo.ScaledWidth(), baseViewInfo.ScaledHeight() };
 
-            LOG_DEBUG("VideoComponent", "Drawing texture...");
             SDL::renderCopyF(texture, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
                 page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
                 page.getLayoutHeightByMonitor(baseViewInfo.Monitor));

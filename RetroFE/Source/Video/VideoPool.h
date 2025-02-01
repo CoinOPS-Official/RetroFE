@@ -47,8 +47,8 @@ private:
         PoolInfo() = default;
         PoolInfo(const PoolInfo&) = delete;
         PoolInfo& operator=(const PoolInfo&) = delete;
-        PoolInfo(PoolInfo&&) = default;
-        PoolInfo& operator=(PoolInfo&&) = default;
+        PoolInfo(PoolInfo&&) = delete;
+        PoolInfo& operator=(PoolInfo&&) = delete;
     };
 
     using PoolMap = std::unordered_map<int, std::unordered_map<int, PoolInfo>>;

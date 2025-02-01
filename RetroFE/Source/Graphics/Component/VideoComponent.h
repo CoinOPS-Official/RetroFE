@@ -55,8 +55,4 @@ private:
     int monitor_;
     int listId_;
     Page* currentPage_{ nullptr };
-    GstClockTime previousTime_ = 0;
-    GstClockTime previousPTS_ = 0;
-    gdouble cumulativeProportion_ = 0.0;
-    guint64 proportionSampleCount_ = 0;
 };

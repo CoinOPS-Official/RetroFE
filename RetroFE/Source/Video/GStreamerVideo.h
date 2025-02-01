@@ -42,6 +42,7 @@ public:
     GStreamerVideo(const GStreamerVideo&) = delete;
     GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo() override;
+    void loopHandler() override;
     bool initialize() override;
     bool unload();
     bool createPipelineIfNeeded();

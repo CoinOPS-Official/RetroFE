@@ -62,8 +62,80 @@ GStreamerVideo::GStreamerVideo(int monitor)
 }
 
 
-    GStreamerVideo::~GStreamerVideo() = default;
+GStreamerVideo::~GStreamerVideo() = default;
 
+void GStreamerVideo::loopHandler() {
+    if (!playbin_ || !isPlaying_)
+        return;
+
+    // Get the current time in milliseconds.
+    Uint32 now = SDL_GetTicks();
+
+    // Poll every 100ms.
+    static Uint32 lastPollTime = 0;
+    const Uint32 pollInterval = 100; // 100 ms
+
+    if (now - lastPollTime < pollInterval)
+        return;
+
+    lastPollTime = now;
+
+    GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+    if (!bus)
+        return;
+
+    // Process all pending messages (non-blocking)
+    GstMessage* msg;
+    while ((msg = gst_bus_pop(bus))) {
+        switch (GST_MESSAGE_TYPE(msg)) {
+        case GST_MESSAGE_EOS: {
+            playCount_++;
+            if (!numLoops_ || numLoops_ > playCount_) {
+                restart();
+            } else {
+                stop();
+            }
+            break;
+        }
+        case GST_MESSAGE_ERROR: {
+            GError *err;
+            gchar *debug_info;
+            gst_message_parse_error(msg, &err, &debug_info);
+            LOG_ERROR("GStreamerVideo", "Error received from element " + 
+                std::string(GST_OBJECT_NAME(msg->src)) + ": " + 
+                std::string(err->message));
+            if (debug_info) {
+                LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
+            }
+            g_clear_error(&err);
+            g_free(debug_info);
+            break;
+        }
+        case GST_MESSAGE_WARNING: {
+            GError *err;
+            gchar *debug_info;
+            gst_message_parse_warning(msg, &err, &debug_info);
+            LOG_DEBUG("GStreamerVideo", "Warning: " + std::string(err->message));
+            g_clear_error(&err);
+            g_free(debug_info);
+            break;
+        }
+        case GST_MESSAGE_INFO: {
+            GError *err;
+            gchar *debug_info;
+            gst_message_parse_info(msg, &err, &debug_info);
+            LOG_DEBUG("GStreamerVideo", "Info: " + std::string(err->message));
+            g_clear_error(&err);
+            g_free(debug_info);
+            break;
+        }
+        default:
+            break;
+        }
+        gst_message_unref(msg);
+    }
+    gst_object_unref(bus);
+}
 
 void GStreamerVideo::initializePlugins()
 {
@@ -543,21 +615,6 @@ void GStreamerVideo::draw() {
     // Try to pull a sample with a short timeout
     GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
     if (!sample) {
-        // Check for EOS only if the pipeline is in the PLAYING state
-        GstState state;
-        gst_element_get_state(GST_ELEMENT(playbin_), &state, nullptr, 0);
-        if (state == GST_STATE_PLAYING && gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
-            // Check if the video has played for more than a second
-            if (getCurrent() > GST_SECOND) {
-                playCount_++;
-                if (!numLoops_ || numLoops_ > playCount_) {
-                    restart();
-                } else {
-                    stop();
-                }
-                return;
-            }
-        }
         return;  // No new frame available
     }
 
