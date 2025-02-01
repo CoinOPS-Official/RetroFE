@@ -315,6 +315,8 @@ bool RetroFE::deInitialize()
 	// Free textures
 	freeGraphicsMemory();
 
+	VideoPool::shutdown();
+
 	// Delete page
 	if (currentPage_)
 	{
@@ -345,9 +347,8 @@ bool RetroFE::deInitialize()
 	else
 	{
 		LOG_INFO("RetroFE", "Exiting");
-		SDL::deInitialize();
-		VideoPool::shutdown();
 		gst_deinit();
+		SDL::deInitialize();
 	}
 
 #ifdef WIN32
