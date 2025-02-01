@@ -20,6 +20,7 @@
 
 #include <unordered_map>
 #include <vector>
+#include <deque>
 #include <mutex>
 #include <shared_mutex>
 #include <atomic>
@@ -36,14 +37,13 @@ public:
 
 private:
     struct PoolInfo {
-        std::vector<GStreamerVideo*> instances;
+        std::deque<GStreamerVideo*> instances;  // Changed to deque
         std::atomic<size_t> currentActive{0};
         std::atomic<bool> poolInitialized{false};
         std::atomic<bool> hasExtraInstance{false};
         std::atomic<size_t> maxRequired{0};
-        std::timed_mutex poolMutex;  // Changed to timed_mutex
+        std::timed_mutex poolMutex;
 
-        // Prevent copying of PoolInfo due to mutex
         PoolInfo() = default;
         PoolInfo(const PoolInfo&) = delete;
         PoolInfo& operator=(const PoolInfo&) = delete;
