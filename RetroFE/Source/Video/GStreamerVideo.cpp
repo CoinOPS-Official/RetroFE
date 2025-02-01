@@ -13,6 +13,12 @@
 * You should have received a copy of the GNU General Public License
 * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
 */
+#ifdef WIN32
+#define NOMINMAX
+#include <d3d11.h>
+#include <dxgi.h>
+#include <wrl/client.h>
+#endif
 #include "GStreamerVideo.h"
 #include "../Database/Configuration.h"
 #include "../Graphics/Component/Image.h"
@@ -51,6 +57,29 @@ static SDL_BlendMode softOverlayBlendMode = SDL_ComposeCustomBlendMode(
     SDL_BLENDOPERATION_ADD               // Alpha operation: add alpha values
 );
 
+#ifdef WIN32
+static bool IsIntelGPU()
+{
+    Microsoft::WRL::ComPtr<IDXGIFactory> factory;
+    if (FAILED(CreateDXGIFactory(__uuidof(IDXGIFactory), reinterpret_cast<void**>(factory.GetAddressOf())))) {
+        return false;
+    }
+
+    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+    for (UINT i = 0; factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+        DXGI_ADAPTER_DESC desc;
+        adapter->GetDesc(&desc);
+
+        // Check if the vendor ID matches Intel's vendor ID
+        if (desc.VendorId == 0x8086) { // 0x8086 is the vendor ID for Intel
+            return true;
+        }
+    }
+
+    return false;
+}
+#endif
+
 GStreamerVideo::GStreamerVideo(int monitor)
 
     : monitor_(monitor)
@@ -88,15 +117,6 @@ void GStreamerVideo::loopHandler() {
     GstMessage* msg;
     while ((msg = gst_bus_pop(bus))) {
         switch (GST_MESSAGE_TYPE(msg)) {
-        case GST_MESSAGE_EOS: {
-            playCount_++;
-            if (!numLoops_ || numLoops_ > playCount_) {
-                restart();
-            } else {
-                stop();
-            }
-            break;
-        }
         case GST_MESSAGE_ERROR: {
             GError *err;
             gchar *debug_info;
@@ -146,21 +166,31 @@ void GStreamerVideo::initializePlugins()
 #if defined(WIN32)
         enablePlugin("directsoundsink");
         disablePlugin("mfdeviceprovider");
-        if (!Configuration::HardwareVideoAccel)
+        if (Configuration::HardwareVideoAccel)
         {
-            //enablePlugin("openh264dec");
-            disablePlugin("d3d11h264dec");
-            disablePlugin("d3d11h265dec");
-            disablePlugin("nvh264dec");
-            enablePlugin("avdec_h264");
-            enablePlugin("avdec_h265");
+            if (IsIntelGPU())
+            {
+                enablePlugin("qsvh264dec");
+                disablePlugin("d3d11h264dec");
+                disablePlugin("nvh264dec");
+                LOG_DEBUG("GStreamerVideo", "Using qsvh264dec for Intel GPU");
+            }
+            else
+            {
+                enablePlugin("d3d11h264dec");
+                disablePlugin("qsvh264dec");
+                disablePlugin("nvh264dec");
+                LOG_DEBUG("GStreamerVideo", "Using d3d11h264dec for non-Intel GPU");
+            }
         }
         else
         {
-            enablePlugin("d3d11h264dec");
+            enablePlugin("avdec_h264");
+            enablePlugin("avdec_h265");
+            disablePlugin("d3d11h264dec");
+            disablePlugin("qsvh264dec");
             disablePlugin("nvh264dec");
-            //disablePlugin("d3d11h264dec");
-            //enablePlugin("qsvh264dec");
+            LOG_DEBUG("GStreamerVideo", "Using avdec_h264 and avdec_h265 for software decoding");
         }
 #elif defined(__APPLE__)
         // if (Configuration::HardwareVideoAccel) {
@@ -383,9 +413,6 @@ bool GStreamerVideo::play(const std::string &file)
         return false;
     }
 
-    // Let future calls proceed
-    stopping_.store(false, std::memory_order_release);
-
     // 1. Create the pipeline if we haven’t already
     if (!createPipelineIfNeeded()) {
         LOG_ERROR("Video", "Failed to create GStreamer pipeline");
@@ -426,8 +453,6 @@ bool GStreamerVideo::play(const std::string &file)
         }
     }
 
-
-
     paused_   = true;
     isPlaying_= true;
     currentFile_ = file;
@@ -456,6 +481,10 @@ bool GStreamerVideo::play(const std::string &file)
     }
 
     LOG_DEBUG("GStreamerVideo", "Playing file: " + file);
+
+    // Let future calls proceed
+    stopping_.store(false, std::memory_order_release);
+
     return true;
 }
 
@@ -471,46 +500,46 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, 
     }
 }
 
-GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data)
-{
+GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
     auto* video = static_cast<GStreamerVideo*>(user_data);
 
     auto* event = GST_PAD_PROBE_INFO_EVENT(info);
-    if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS)
-    {
+    if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
         GstCaps* caps = nullptr;
         gst_event_parse_caps(event, &caps);
-        if (caps)
-        {
-            if (gst_video_info_from_caps(&video->videoInfo_, caps))
-            {
+        if (caps) {
+            if (gst_video_info_from_caps(&video->videoInfo_, caps)) {
                 int newWidth = video->videoInfo_.width;
                 int newHeight = video->videoInfo_.height;
-                // Optionally, you can check if these are nonzero before proceeding.
+
                 if (newWidth > 0 && newHeight > 0) {
+                    // Check if dimensions match existing texture
+                    if (video->texture_ && 
+                        video->textureWidth_ == newWidth && 
+                        video->textureHeight_ == newHeight) {
+                        LOG_DEBUG("GStreamerVideo", "Will reuse existing texture for dimensions " +
+                            std::to_string(newWidth) + "x" + std::to_string(newHeight));
+                    } else {
+                        LOG_DEBUG("GStreamerVideo", "Will create new texture for dimensions " +
+                            std::to_string(newWidth) + "x" + std::to_string(newHeight));
+                    }
+
                     video->width_.store(newWidth, std::memory_order_release);
                     video->height_.store(newHeight, std::memory_order_release);
-                    LOG_DEBUG("GStreamerVideo", "Caps received, video dimensions: "
-                        + std::to_string(newWidth) + "x" + std::to_string(newHeight));
-                }
-                else {
-                    LOG_DEBUG("GStreamerVideo", "Received caps with invalid dimensions.");
                 }
             }
         }
-        // Now remove the probe so that this callback is not triggered again for this video.
         gst_pad_remove_probe(pad, video->padProbeId_);
-        video->padProbeId_ = 0;  // reset the probe id for future use
+        video->padProbeId_ = 0;
     }
     return GST_PAD_PROBE_OK;
 }
-
 
 void GStreamerVideo::createSdlTexture() {
     int newWidth = width_.load(std::memory_order_acquire);
     int newHeight = height_.load(std::memory_order_acquire);
 
-    // Validate the new dimensions.
+    // Validate dimensions
     if (newWidth <= 0 || newHeight <= 0) {
         LOG_ERROR("GStreamerVideo", "Invalid dimensions (" +
             std::to_string(newWidth) + "x" + std::to_string(newHeight) + ").");
@@ -518,7 +547,7 @@ void GStreamerVideo::createSdlTexture() {
         return;
     }
 
-    // If we have an existing texture but its dimensions don't match, destroy it.
+    // If we have an existing texture but its dimensions don't match, destroy it
     if (texture_ && (textureWidth_ != newWidth || textureHeight_ != newHeight)) {
         SDL_LockMutex(SDL::getMutex());
         SDL_DestroyTexture(texture_);
@@ -527,7 +556,7 @@ void GStreamerVideo::createSdlTexture() {
         textureValid_ = false;
     }
 
-    // Only create a new texture if we don't have one.
+    // Only create a new texture if we don't have one
     if (!texture_) {
         SDL_Texture* newTexture = SDL_CreateTexture(
             SDL::getRenderer(monitor_), sdlFormat_,
@@ -552,13 +581,9 @@ void GStreamerVideo::createSdlTexture() {
         SDL_UnlockMutex(SDL::getMutex());
     }
 
-    // Update the cached dimensions and mark the texture as valid.
     textureWidth_ = newWidth;
     textureHeight_ = newHeight;
     textureValid_ = true;
-
-    LOG_DEBUG("GStreamerVideo", "Texture created or updated with dimensions (" +
-        std::to_string(newWidth) + "x" + std::to_string(newHeight) + ").");
 }
 
 void GStreamerVideo::volumeUpdate()
@@ -615,6 +640,21 @@ void GStreamerVideo::draw() {
     // Try to pull a sample with a short timeout
     GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
     if (!sample) {
+        // Check for EOS only if the pipeline is in the PLAYING state
+        GstState state;
+        gst_element_get_state(GST_ELEMENT(playbin_), &state, nullptr, 0);
+        if (state == GST_STATE_PLAYING && gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
+            // Check if the video has played for more than a second
+            if (getCurrent() > GST_SECOND) {
+                playCount_++;
+                if (!numLoops_ || numLoops_ > playCount_) {
+                    restart();
+                } else {
+                    stop();
+                }
+                return;
+            }
+        }
         return;  // No new frame available
     }
 
@@ -629,12 +669,8 @@ void GStreamerVideo::draw() {
     }
 
     // Create or update texture if needed
-    if (!textureValid_ || 
-        GST_VIDEO_FRAME_WIDTH(&frame) != textureWidth_ || 
-        GST_VIDEO_FRAME_HEIGHT(&frame) != textureHeight_)
-    {
         createSdlTexture();
-    }
+
 
     // Update the texture
     if (texture_) {

@@ -25,6 +25,7 @@
 #include <string>
 #include <optional>
 
+
 extern "C" {
 #if (__APPLE__)
 #include <GStreamer/gst/gst.h>
@@ -35,6 +36,8 @@ extern "C" {
 #include <gst/video/video.h>
 #endif
 }
+
+
 
 class GStreamerVideo final : public IVideo {
 public:
