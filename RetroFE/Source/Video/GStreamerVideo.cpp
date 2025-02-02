@@ -327,6 +327,40 @@ bool GStreamerVideo::unload()
     // We’re no longer “playing”
     isPlaying_ = false;
 
+    // Lock texture access
+    SDL_LockMutex(SDL::getMutex());
+    if (texture_) {
+        void* pixels;
+        int pitch;
+        if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) == 0) {
+            if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
+                // For NV12: Y plane followed by interleaved UV plane
+                uint8_t* data = static_cast<uint8_t*>(pixels);
+                // Clear Y plane (first plane) to black (0)
+                memset(data, 0, textureHeight_ * pitch);
+                // Clear UV plane (second plane) to neutral color (128)
+                memset(data + (textureHeight_ * pitch), 128, (textureHeight_ / 2) * pitch);
+                LOG_DEBUG("GStreamerVideo", "NV12 texture cleared to black");
+            }
+            else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
+                // For IYUV/I420: Y plane followed by U plane followed by V plane
+                uint8_t* data = static_cast<uint8_t*>(pixels);
+                // Clear Y plane (first plane) to black (0)
+                memset(data, 0, textureHeight_ * pitch);
+                // Clear U plane (second plane) to neutral color (128)
+                memset(data + (textureHeight_ * pitch), 128, (textureHeight_ / 2) * (pitch / 2));
+                // Clear V plane (third plane) to neutral color (128)
+                memset(data + (textureHeight_ * pitch) + ((textureHeight_ / 2) * (pitch / 2)), 
+                    128, (textureHeight_ / 2) * (pitch / 2));
+                LOG_DEBUG("GStreamerVideo", "IYUV texture cleared to black");
+            }
+            SDL_UnlockTexture(texture_);
+        } else {
+            LOG_ERROR("GStreamerVideo", "Failed to lock texture: " + std::string(SDL_GetError()));
+        }
+    }
+    SDL_UnlockMutex(SDL::getMutex());
+
     // Set pipeline to GST_STATE_READY (instead of GST_STATE_NULL) so we can reuse it later
     GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
     if (ret == GST_STATE_CHANGE_FAILURE) {
