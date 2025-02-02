@@ -112,14 +112,12 @@ bool VideoComponent::update(float dt)
 		if (!isCurrentlyVisible && !videoInst_->isPaused() && !currentPage_->isMenuFastScrolling())
 		{
 			videoInst_->pause();
-			if (Logger::isLevelEnabled("DEBUG"))
-				LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+			LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
 		}
 		else if (isCurrentlyVisible && videoInst_->isPaused())
 		{
 			videoInst_->pause();
-			if (Logger::isLevelEnabled("DEBUG"))
-				LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+			LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
 		}
 	}
 

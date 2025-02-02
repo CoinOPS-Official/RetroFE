@@ -59,8 +59,9 @@ void Logger::deInitialize()
 
 void Logger::write(Zone zone, const std::string& component, const std::string& message)
 {
-    std::lock_guard<std::mutex> guard(writeMutex_); // Locks the mutex here
-    std::string zoneStr = zoneToString(zone);
+    std::scoped_lock lock(writeMutex_); // Ensures thread safety
+
+    std::string zoneStr(zoneToString(zone)); // Explicit conversion from string_view to string
 
     std::time_t rawtime = std::time(NULL);
     struct tm const* timeinfo = std::localtime(&rawtime);
@@ -75,8 +76,9 @@ void Logger::write(Zone zone, const std::string& component, const std::string& m
 }
 
 
+
 bool Logger::isLevelEnabled(const std::string& zone) {
-    static bool isInitialized = false;
+    static std::once_flag initFlag;
     static bool isDebugEnabled = false;
     static bool isInfoEnabled = false;
     static bool isNoticeEnabled = false;
@@ -87,9 +89,8 @@ bool Logger::isLevelEnabled(const std::string& zone) {
 
     if (!config_) return false;
 
-    if (!isInitialized) {
+    std::call_once(initFlag, []() {
         Logger::config_->getProperty(OPTION_LOG, level);
-        isInitialized = true;
 
         std::stringstream ss(level);
         std::string token;
@@ -99,7 +100,7 @@ bool Logger::isLevelEnabled(const std::string& zone) {
             else if (token == "NOTICE") isNoticeEnabled = true;
             else if (token == "WARNING") isWarningEnabled = true;
             else if (token == "ERROR") isErrorEnabled = true;
-	    else if (token == "FILECACHE") isFileCacheEnabled = true;
+            else if (token == "FILECACHE") isFileCacheEnabled = true;
             else if (token == "-DEBUG") isDebugEnabled = false;
             else if (token == "-INFO") isInfoEnabled = false;
             else if (token == "-NOTICE") isNoticeEnabled = false;
@@ -110,7 +111,7 @@ bool Logger::isLevelEnabled(const std::string& zone) {
                 isDebugEnabled = isInfoEnabled = isNoticeEnabled = isWarningEnabled = isErrorEnabled = isFileCacheEnabled = true;
             }
         }
-    }
+        });
 
     if (zone == "DEBUG") return isDebugEnabled;
     else if (zone == "INFO") return isInfoEnabled;
@@ -122,22 +123,15 @@ bool Logger::isLevelEnabled(const std::string& zone) {
     return false;
 }
 
-std::string Logger::zoneToString(Zone zone)
+constexpr std::string_view Logger::zoneToString(Zone zone)
 {
     switch (zone) {
-    case ZONE_INFO:
-        return "INFO";
-    case ZONE_DEBUG:
-        return "DEBUG";
-    case ZONE_NOTICE:
-        return "NOTICE";
-    case ZONE_WARNING:
-        return "WARNING";
-    case ZONE_ERROR:
-        return "ERROR";
-    case ZONE_FILECACHE:
-		return "FILECACHE";
-    default:
-        return "UNKNOWN";
+    case ZONE_INFO: return "INFO";
+    case ZONE_DEBUG: return "DEBUG";
+    case ZONE_NOTICE: return "NOTICE";
+    case ZONE_WARNING: return "WARNING";
+    case ZONE_ERROR: return "ERROR";
+    case ZONE_FILECACHE: return "FILECACHE";
+    default: return "UNKNOWN";
     }
 }

@@ -516,9 +516,8 @@ else if (animatedGif) {
             }
         }
 
-        LOG_INFO("Image", useTextureCaching_ ? 
-            "Loaded and cached texture: " + filePath :
-            "Loaded texture without caching: " + filePath);
+        LOG_INFO("Image", "Loaded " << (useTextureCaching_ ? "and cached " : "without caching ") << "texture: " << filePath);
+
         return true;
         };
 
