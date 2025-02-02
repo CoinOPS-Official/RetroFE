@@ -136,6 +136,24 @@ void VideoPool::releaseVideo(GStreamerVideo* vid, int monitor, int listId) {
         ", Available: " + std::to_string(poolInfo->instances.size()));
 }
 
+void VideoPool::destroyVideo(GStreamerVideo* vid, int monitor, int listId) {
+    if (!vid) return;
+
+    PoolInfo* poolInfo = getPoolInfo(monitor, listId);
+
+    if (poolInfo) {
+        // Decrement active count since we're destroying an instance
+        poolInfo->currentActive.fetch_sub(1);
+    }
+
+    // Stop and destroy the video instance
+    vid->stop();
+    delete vid;
+
+    LOG_DEBUG("VideoPool", "Destroyed faulty video instance. Monitor: " + 
+        std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+}
+
 void VideoPool::cleanup(int monitor, int listId) {
     if (listId == -1) return;
 

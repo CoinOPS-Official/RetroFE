@@ -32,6 +32,7 @@ class VideoPool {
 public:
     static GStreamerVideo* acquireVideo(int monitor, int listId, bool softOverlay);
     static void releaseVideo(GStreamerVideo* vid, int monitor, int listId);
+    static void destroyVideo(GStreamerVideo* vid, int monitor, int listId);
     static void cleanup(int monitor, int listId);
     static void shutdown();
 

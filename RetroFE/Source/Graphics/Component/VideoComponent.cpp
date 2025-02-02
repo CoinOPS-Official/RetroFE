@@ -57,15 +57,17 @@ bool VideoComponent::update(float dt)
 		return Component::update(dt);
 	}
 
+	videoInst_->messageHandler();
+
 	// Check for errors first
 	if (videoInst_->hasError()) {
 		LOG_DEBUG("VideoComponent", "Detected error in video instance for " +
-			Utils::getFileName(videoFile_) + ", attempting recovery");
+			Utils::getFileName(videoFile_) + ", destroying and creating new instance");
 
-		// Release the errored instance
+		// Stop and destroy the errored instance through VideoPool
 		instanceReady_ = false;
 		GStreamerVideo* gstreamerVideo = static_cast<GStreamerVideo*>(videoInst_);
-		VideoPool::releaseVideo(gstreamerVideo, monitor_, listId_);
+		VideoPool::destroyVideo(gstreamerVideo, monitor_, listId_);
 		videoInst_ = nullptr;
 
 		// Get new instance
@@ -73,25 +75,24 @@ bool VideoComponent::update(float dt)
 		if (videoInst_) {
 			instanceReady_ = videoInst_->play(videoFile_);
 			if (instanceReady_) {
-				LOG_DEBUG("VideoComponent", "Successfully recovered video playback for " +
+				LOG_DEBUG("VideoComponent", "Successfully created new instance for " +
 					Utils::getFileName(videoFile_));
 			}
 			else {
-				LOG_ERROR("VideoComponent", "Failed to restart video after error: " +
+				LOG_ERROR("VideoComponent", "Failed to start playback with new instance: " +
 					Utils::getFileName(videoFile_));
 			}
 		}
 
 		return Component::update(dt);
 	}
+
 	videoInst_->setVolume(baseViewInfo.Volume);
-	// videoInst_->update(dt);
+
 	if (!currentPage_->isMenuScrolling())
 	{
 		videoInst_->volumeUpdate();
 	}
-
-	videoInst_->loopHandler();
 
 	if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
 	{

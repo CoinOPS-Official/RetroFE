@@ -93,21 +93,9 @@ GStreamerVideo::GStreamerVideo(int monitor)
 
 GStreamerVideo::~GStreamerVideo() = default;
 
-void GStreamerVideo::loopHandler() {
+void GStreamerVideo::messageHandler() {
     if (!playbin_ || !isPlaying_)
         return;
-
-    // Get the current time in milliseconds.
-    Uint32 now = SDL_GetTicks();
-
-    // Poll every 100ms.
-    static Uint32 lastPollTime = 0;
-    const Uint32 pollInterval = 100; // 100 ms
-
-    if (now - lastPollTime < pollInterval)
-        return;
-
-    lastPollTime = now;
 
     GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
     if (!bus)
