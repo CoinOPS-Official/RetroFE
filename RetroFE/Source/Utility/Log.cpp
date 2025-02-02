@@ -77,14 +77,18 @@ void Logger::write(Zone zone, const std::string& component, const std::string& m
 
 
 
-bool Logger::isLevelEnabled(const std::string& zone) {
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+#include <sstream>
+
+bool Logger::isLevelEnabled(const std::string& zone, const std::string& component) {
     static std::once_flag initFlag;
-    static bool isDebugEnabled = false;
-    static bool isInfoEnabled = false;
-    static bool isNoticeEnabled = false;
-    static bool isWarningEnabled = false;
-    static bool isErrorEnabled = false;
-    static bool isFileCacheEnabled = false;
+    static std::unordered_map<std::string, bool> globalFilters;
+    static std::unordered_map<std::string, std::unordered_set<std::string>> categoryFilters;
+    static std::unordered_map<std::string, std::unordered_set<std::string>> excludedFilters;
+    static bool allowAll = false;
+    static bool allowNone = false;
     static std::string level;
 
     if (!config_) return false;
@@ -95,30 +99,89 @@ bool Logger::isLevelEnabled(const std::string& zone) {
         std::stringstream ss(level);
         std::string token;
         while (std::getline(ss, token, ',')) {
-            if (token == "DEBUG") isDebugEnabled = true;
-            else if (token == "INFO") isInfoEnabled = true;
-            else if (token == "NOTICE") isNoticeEnabled = true;
-            else if (token == "WARNING") isWarningEnabled = true;
-            else if (token == "ERROR") isErrorEnabled = true;
-            else if (token == "FILECACHE") isFileCacheEnabled = true;
-            else if (token == "-DEBUG") isDebugEnabled = false;
-            else if (token == "-INFO") isInfoEnabled = false;
-            else if (token == "-NOTICE") isNoticeEnabled = false;
-            else if (token == "-WARNING") isWarningEnabled = false;
-            else if (token == "-ERROR") isErrorEnabled = false;
-            else if (token == "-FILECACHE") isFileCacheEnabled = false;
-            else if (token == "ALL") {
-                isDebugEnabled = isInfoEnabled = isNoticeEnabled = isWarningEnabled = isErrorEnabled = isFileCacheEnabled = true;
+            size_t colonPos = token.find(':');
+
+            if (token == "ALL") {
+                allowAll = true;
+                return;
+            }
+            if (token == "NONE") {
+                allowNone = true;
+                return;
+            }
+
+            bool isExclusion = (token[0] == '-');
+            std::string logLevel = isExclusion ? token.substr(1) : token;
+
+            if (colonPos != std::string::npos) {
+                // Split by `:` to support multiple categories per level
+                std::istringstream categoryStream(token);
+                std::vector<std::string> parts;
+                std::string part;
+
+                while (std::getline(categoryStream, part, ':')) {
+                    parts.push_back(part);
+                }
+
+                if (parts.size() > 1) {
+                    std::string logLevel = parts[0];
+
+                    // Add all categories under this log level
+                    for (size_t i = 1; i < parts.size(); i++) {
+                        if (isExclusion) {
+                            excludedFilters[logLevel].insert(parts[i]); // Exclude this component
+                        } else {
+                            categoryFilters[logLevel].insert(parts[i]); // Enable this component
+                        }
+                    }
+                }
+            } else {
+                // This is a global log level, e.g., "DEBUG", "ERROR"
+                if (isExclusion) {
+                    globalFilters.erase(logLevel); // Remove from global filters
+                } else {
+                    globalFilters[logLevel] = true;
+                }
             }
         }
         });
 
-    if (zone == "DEBUG") return isDebugEnabled;
-    else if (zone == "INFO") return isInfoEnabled;
-    else if (zone == "NOTICE") return isNoticeEnabled;
-    else if (zone == "WARNING") return isWarningEnabled;
-    else if (zone == "ERROR") return isErrorEnabled;
-    else if (zone == "FILECACHE") return isFileCacheEnabled;
+    // If ALL is enabled, always return true unless explicitly excluded
+    if (allowAll) {
+        auto excludedIt = excludedFilters.find(zone);
+        if (excludedIt != excludedFilters.end()) {
+            if (excludedIt->second.find(component) != excludedIt->second.end()) {
+                return false; // Explicitly excluded component
+            }
+        }
+        return true;
+    }
+
+    // If NONE is set, always return false
+    if (allowNone) {
+        return false;
+    }
+
+    // Check if the log level is explicitly disabled for this category
+    auto excludedIt = excludedFilters.find(zone);
+    if (excludedIt != excludedFilters.end()) {
+        if (excludedIt->second.find(component) != excludedIt->second.end()) {
+            return false; // Explicitly disabled
+        }
+    }
+
+    // Check if the log level is globally enabled
+    if (globalFilters.find(zone) != globalFilters.end()) {
+        return true;
+    }
+
+    // Check if the log level is enabled for the specific component
+    auto it = categoryFilters.find(zone);
+    if (it != categoryFilters.end()) {
+        if (it->second.find(component) != it->second.end()) {
+            return true;  // Component-specific log level is enabled
+        }
+    }
 
     return false;
 }

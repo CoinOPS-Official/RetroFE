@@ -37,7 +37,7 @@ public:
     };
     static bool initialize(std::string file, Configuration* config);
     static void write(Zone zone, const std::string& component, const std::string& message);
-    static bool isLevelEnabled(const std::string& zone);
+    static bool isLevelEnabled(const std::string& zone, const std::string& component);
     static constexpr std::string_view zoneToString(Zone zone);
     static void deInitialize();
 private:
@@ -49,43 +49,44 @@ private:
 };
 
 #define LOG_DEBUG(component, message) \
-    if (Logger::isLevelEnabled("DEBUG")) { \
+    if (Logger::isLevelEnabled("DEBUG", component)) { \
         std::ostringstream oss; \
         oss << message; \
         Logger::write(Logger::ZONE_DEBUG, component, oss.str()); \
     }
 
 #define LOG_INFO(component, message) \
-    if (Logger::isLevelEnabled("INFO")) { \
+    if (Logger::isLevelEnabled("INFO", component)) { \
         std::ostringstream oss; \
         oss << message; \
         Logger::write(Logger::ZONE_INFO, component, oss.str()); \
     }
 
 #define LOG_NOTICE(component, message) \
-    if (Logger::isLevelEnabled("NOTICE")) { \
+    if (Logger::isLevelEnabled("NOTICE", component)) { \
         std::ostringstream oss; \
         oss << message; \
         Logger::write(Logger::ZONE_NOTICE, component, oss.str()); \
     }
 
 #define LOG_WARNING(component, message) \
-    if (Logger::isLevelEnabled("WARNING")) { \
+    if (Logger::isLevelEnabled("WARNING", component)) { \
         std::ostringstream oss; \
         oss << message; \
         Logger::write(Logger::ZONE_WARNING, component, oss.str()); \
     }
 
 #define LOG_ERROR(component, message) \
-    if (Logger::isLevelEnabled("ERROR")) { \
+    if (Logger::isLevelEnabled("ERROR", component)) { \
         std::ostringstream oss; \
         oss << message; \
         Logger::write(Logger::ZONE_ERROR, component, oss.str()); \
     }
 
 #define LOG_FILECACHE(component, message) \
-    if (Logger::isLevelEnabled("FILECACHE")) { \
+    if (Logger::isLevelEnabled("FILECACHE", component)) { \
         std::ostringstream oss; \
         oss << message; \
         Logger::write(Logger::ZONE_FILECACHE, component, oss.str()); \
     }
+
