@@ -18,14 +18,17 @@
 #include <iostream>
 #include <sstream>
 #include <ctime>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include "../Database/Configuration.h"
 #include "../Database/GlobalOpts.h"
 
 std::ofstream Logger::writeFileStream_;
-std::streambuf* Logger::cerrStream_ = NULL;
-std::streambuf* Logger::coutStream_ = NULL;
+std::streambuf* Logger::cerrStream_ = nullptr;
+std::streambuf* Logger::coutStream_ = nullptr;
 std::mutex Logger::writeMutex_;
-Configuration* Logger::config_ = NULL;
+Configuration* Logger::config_ = nullptr;
 
 bool Logger::initialize(std::string file, Configuration* config)
 {
@@ -75,18 +78,12 @@ void Logger::write(Zone zone, const std::string& component, const std::string& m
     std::cout.flush();
 }
 
-
-
-#include <unordered_map>
-#include <unordered_set>
-#include <vector>
-#include <sstream>
-
 bool Logger::isLevelEnabled(const std::string& zone, const std::string& component) {
     static std::once_flag initFlag;
     static std::unordered_map<std::string, bool> globalFilters;
     static std::unordered_map<std::string, std::unordered_set<std::string>> categoryFilters;
-    static std::unordered_map<std::string, std::unordered_set<std::string>> excludedFilters;
+    static std::unordered_set<std::string> allEnabledCategories;
+    static std::unordered_set<std::string> allExcludedCategories;
     static bool allowAll = false;
     static bool allowNone = false;
     static std::string level;
@@ -126,17 +123,25 @@ bool Logger::isLevelEnabled(const std::string& zone, const std::string& componen
                 if (parts.size() > 1) {
                     std::string logLevel = parts[0];
 
-                    // Add all categories under this log level
-                    for (size_t i = 1; i < parts.size(); i++) {
-                        if (isExclusion) {
-                            excludedFilters[logLevel].insert(parts[i]); // Exclude this component
-                        } else {
-                            categoryFilters[logLevel].insert(parts[i]); // Enable this component
+                    if (logLevel == "ALL") {
+                        for (size_t i = 1; i < parts.size(); i++) {
+                            if (isExclusion) {
+                                allExcludedCategories.insert(parts[i]); // Exclude all logs from this category
+                            } else {
+                                allEnabledCategories.insert(parts[i]); // Enable all logs for this category
+                            }
+                        }
+                    } else {
+                        for (size_t i = 1; i < parts.size(); i++) {
+                            if (isExclusion) {
+                                categoryFilters["-" + logLevel].insert(parts[i]); // Exclude this category
+                            } else {
+                                categoryFilters[logLevel].insert(parts[i]); // Enable this category
+                            }
                         }
                     }
                 }
             } else {
-                // This is a global log level, e.g., "DEBUG", "ERROR"
                 if (isExclusion) {
                     globalFilters.erase(logLevel); // Remove from global filters
                 } else {
@@ -148,11 +153,8 @@ bool Logger::isLevelEnabled(const std::string& zone, const std::string& componen
 
     // If ALL is enabled, always return true unless explicitly excluded
     if (allowAll) {
-        auto excludedIt = excludedFilters.find(zone);
-        if (excludedIt != excludedFilters.end()) {
-            if (excludedIt->second.find(component) != excludedIt->second.end()) {
-                return false; // Explicitly excluded component
-            }
+        if (allExcludedCategories.find(component) != allExcludedCategories.end()) {
+            return false; // Explicitly excluded component
         }
         return true;
     }
@@ -162,9 +164,14 @@ bool Logger::isLevelEnabled(const std::string& zone, const std::string& componen
         return false;
     }
 
+    // Check if the component is enabled for ALL levels
+    if (allEnabledCategories.find(component) != allEnabledCategories.end()) {
+        return true; // `ALL:component` enabled it
+    }
+
     // Check if the log level is explicitly disabled for this category
-    auto excludedIt = excludedFilters.find(zone);
-    if (excludedIt != excludedFilters.end()) {
+    auto excludedIt = categoryFilters.find("-" + zone);
+    if (excludedIt != categoryFilters.end()) {
         if (excludedIt->second.find(component) != excludedIt->second.end()) {
             return false; // Explicitly disabled
         }
