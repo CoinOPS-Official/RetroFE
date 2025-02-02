@@ -316,48 +316,18 @@ bool GStreamerVideo::stop()
 
 bool GStreamerVideo::unload()
 {
-    // If we never created playbin_, nothing to unload
     if (!playbin_) {
         return false;
     }
 
-    // Optionally mark it as “stopping” so other threads know not to process more buffers
     stopping_.store(true, std::memory_order_release);
-
-    // We’re no longer “playing”
     isPlaying_ = false;
 
-    // Lock texture access
     SDL_LockMutex(SDL::getMutex());
     if (texture_) {
-        void* pixels;
-        int pitch;
-        if (SDL_LockTexture(texture_, nullptr, &pixels, &pitch) == 0) {
-            if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-                // For NV12: Y plane followed by interleaved UV plane
-                uint8_t* data = static_cast<uint8_t*>(pixels);
-                // Clear Y plane (first plane) to black (0)
-                memset(data, 0, textureHeight_ * pitch);
-                // Clear UV plane (second plane) to neutral color (128)
-                memset(data + (textureHeight_ * pitch), 128, (textureHeight_ / 2) * pitch);
-                LOG_DEBUG("GStreamerVideo", "NV12 texture cleared to black");
-            }
-            else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-                // For IYUV/I420: Y plane followed by U plane followed by V plane
-                uint8_t* data = static_cast<uint8_t*>(pixels);
-                // Clear Y plane (first plane) to black (0)
-                memset(data, 0, textureHeight_ * pitch);
-                // Clear U plane (second plane) to neutral color (128)
-                memset(data + (textureHeight_ * pitch), 128, (textureHeight_ / 2) * (pitch / 2));
-                // Clear V plane (third plane) to neutral color (128)
-                memset(data + (textureHeight_ * pitch) + ((textureHeight_ / 2) * (pitch / 2)), 
-                    128, (textureHeight_ / 2) * (pitch / 2));
-                LOG_DEBUG("GStreamerVideo", "IYUV texture cleared to black");
-            }
-            SDL_UnlockTexture(texture_);
-        } else {
-            LOG_ERROR("GStreamerVideo", "Failed to lock texture: " + std::string(SDL_GetError()));
-        }
+        // Set alpha to 0 to make it fully transparent
+        SDL_SetTextureAlphaMod(texture_, 0);
+        LOG_DEBUG("GStreamerVideo", "Texture alpha set to 0 (fully transparent).");
     }
     SDL_UnlockMutex(SDL::getMutex());
 
@@ -381,7 +351,7 @@ bool GStreamerVideo::unload()
     lastSetVolume_ = -1.0f;
     lastSetMuteState_ = false;
     volume_ = 0.0f;            // reset to default
-    
+
     gst_video_info_init(&videoInfo_);
     textureWidth_ = width_;
     textureHeight_ = height_;
@@ -706,7 +676,8 @@ void GStreamerVideo::draw() {
         return;
     }
 
-    // Create or update texture if needed
+    if (!textureValid_)
+        // Create or update texture if needed
         createSdlTexture();
 
 
