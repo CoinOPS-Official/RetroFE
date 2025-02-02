@@ -121,12 +121,16 @@ void GStreamerVideo::loopHandler() {
             GError *err;
             gchar *debug_info;
             gst_message_parse_error(msg, &err, &debug_info);
+
+            // Set error flag and log the error
+            hasError_.store(true, std::memory_order_release);
             LOG_ERROR("GStreamerVideo", "Error received from element " + 
                 std::string(GST_OBJECT_NAME(msg->src)) + ": " + 
                 std::string(err->message));
             if (debug_info) {
                 LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
             }
+
             g_clear_error(&err);
             g_free(debug_info);
             break;
@@ -147,6 +151,18 @@ void GStreamerVideo::loopHandler() {
             LOG_DEBUG("GStreamerVideo", "Info: " + std::string(err->message));
             g_clear_error(&err);
             g_free(debug_info);
+            break;
+        }
+        case GST_MESSAGE_EOS: {
+            // Check for EOS only if more than 1 second has played
+            if (getCurrent() > GST_SECOND) {
+                playCount_++;
+                if (!numLoops_ || numLoops_ > playCount_) {
+                    restart();
+                } else {
+                    stop();
+                }
+            }
             break;
         }
         default:

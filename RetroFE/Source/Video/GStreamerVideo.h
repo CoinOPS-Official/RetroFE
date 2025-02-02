@@ -74,6 +74,10 @@ public:
 
     void setSoftOverlay(bool value);
 
+    bool hasError() const override {
+        return hasError_.load(std::memory_order_acquire);
+    }
+
 private:
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
@@ -105,6 +109,8 @@ private:
     std::atomic<bool> stopping_{ false };
     static bool pluginsInitialized_;
     bool softOverlay_;
+
+    std::atomic<bool> hasError_{false};
 
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
 };
