@@ -88,12 +88,37 @@ GStreamerVideo::GStreamerVideo(int monitor)
     gst_video_info_init(&videoInfo_);
     initialize();
     initializePlugins();
+    createAlphaTexture();
 }
 
 
 GStreamerVideo::~GStreamerVideo() 
 {
     stop();
+}
+
+void GStreamerVideo::createAlphaTexture() {
+    if (alphaTexture_) return;  // Already created
+
+    alphaTexture_ = SDL_CreateTexture(
+        SDL::getRenderer(monitor_), SDL_PIXELFORMAT_RGBA32,
+        SDL_TEXTUREACCESS_STREAMING, ALPHA_TEXTURE_SIZE, ALPHA_TEXTURE_SIZE);
+
+    if (!alphaTexture_) {
+        LOG_ERROR("GStreamerVideo", "Failed to create alpha texture: " + std::string(SDL_GetError()));
+        return;
+    }
+
+    SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
+    SDL_SetTextureBlendMode(alphaTexture_, blendMode);
+
+    // Initialize alpha texture to transparent black
+    void* pixels;
+    int pitch;
+    if (SDL_LockTexture(alphaTexture_, nullptr, &pixels, &pitch) == 0) {
+        SDL_memset(pixels, 0, pitch * ALPHA_TEXTURE_SIZE);
+        SDL_UnlockTexture(alphaTexture_);
+    }
 }
 
 void GStreamerVideo::messageHandler() {
@@ -311,6 +336,16 @@ bool GStreamerVideo::stop()
         SDL_DestroyTexture(texture_);
         texture_ = nullptr;
     }
+	if (videoTexture_ != nullptr)
+	{
+		SDL_DestroyTexture(videoTexture_);
+		videoTexture_ = nullptr;
+	}
+	if (alphaTexture_ != nullptr)
+	{
+		SDL_DestroyTexture(alphaTexture_);
+		alphaTexture_ = nullptr;
+	}
     SDL_UnlockMutex(SDL::getMutex());
 
     return true;
@@ -327,11 +362,7 @@ bool GStreamerVideo::unload()
     isPlaying_ = false;
 
     SDL_LockMutex(SDL::getMutex());
-    if (texture_) {
-        // Set alpha to 0 to make it fully transparent
-        SDL_SetTextureAlphaMod(texture_, 0);
-        LOG_DEBUG("GStreamerVideo", "Texture alpha set to 0 (fully transparent).");
-    }
+    texture_ = alphaTexture_;  // Switch to transparent texture
     SDL_UnlockMutex(SDL::getMutex());
 
     // Set pipeline to GST_STATE_READY (instead of GST_STATE_NULL) so we can reuse it later
@@ -559,37 +590,35 @@ void GStreamerVideo::createSdlTexture() {
         return;
     }
 
-    // If we have an existing texture but its dimensions don't match, destroy it
-    if (texture_ && (textureWidth_ != newWidth || textureHeight_ != newHeight)) {
+    bool needNewTexture = !videoTexture_ || (textureWidth_ != newWidth || textureHeight_ != newHeight);
+
+    // If dimensions changed, we need new video texture
+    if (needNewTexture) {
         SDL_LockMutex(SDL::getMutex());
-        SDL_DestroyTexture(texture_);
-        texture_ = nullptr;
+        if (videoTexture_) {
+            SDL_DestroyTexture(videoTexture_);
+            videoTexture_ = nullptr;
+        }
+        texture_ = nullptr;  // Reset pointer since we destroyed the texture
         SDL_UnlockMutex(SDL::getMutex());
         textureValid_ = false;
-    }
 
-    // Only create a new texture if we don't have one
-    if (!texture_) {
-        SDL_Texture* newTexture = SDL_CreateTexture(
+        // Create YUV texture for video
+        videoTexture_ = SDL_CreateTexture(
             SDL::getRenderer(monitor_), sdlFormat_,
             SDL_TEXTUREACCESS_STREAMING, newWidth, newHeight);
 
-        if (!newTexture) {
+        if (!videoTexture_) {
             LOG_ERROR("GStreamerVideo", "SDL_CreateTexture failed: " + std::string(SDL_GetError()));
             textureValid_ = false;
             return;
         }
 
         SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
-        if (SDL_SetTextureBlendMode(newTexture, blendMode) != 0) {
-            LOG_ERROR("GStreamerVideo", "SDL_SetTextureBlendMode failed: " + std::string(SDL_GetError()));
-            SDL_DestroyTexture(newTexture);
-            textureValid_ = false;
-            return;
-        }
+        SDL_SetTextureBlendMode(videoTexture_, blendMode);
 
         SDL_LockMutex(SDL::getMutex());
-        texture_ = newTexture;
+        texture_ = videoTexture_;  // Start pointing to video texture
         SDL_UnlockMutex(SDL::getMutex());
     }
 
@@ -680,13 +709,14 @@ void GStreamerVideo::draw() {
         return;
     }
 
-    if (!textureValid_)
+    if (!textureValid_) {
         // Create or update texture if needed
         createSdlTexture();
-
+        texture_ = videoTexture_;
+    }
 
     // Update the texture
-    if (texture_) {
+    if (textureValid_) {
         SDL_LockMutex(SDL::getMutex());
 
         if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {

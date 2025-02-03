@@ -79,6 +79,8 @@ public:
     }
 
 private:
+    static constexpr int ALPHA_TEXTURE_SIZE = 4;
+    void createAlphaTexture();
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
@@ -86,7 +88,9 @@ private:
     GstElement* playbin_{ nullptr };          // for playbin3
     GstElement* videoSink_{ nullptr };     // for appsink
     GstVideoInfo videoInfo_;
-    SDL_Texture* texture_{ nullptr };
+    SDL_Texture* videoTexture_ = nullptr;    // YUV texture for video content
+    SDL_Texture* alphaTexture_ = nullptr;    // Transparent texture for transitions
+    SDL_Texture* texture_ = nullptr;         // Points to either videoTexture_ or alphaTexture_
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     guint elementSetupHandlerId_{ 0 };
     guint padProbeId_{ 0 };

@@ -180,9 +180,8 @@ void VideoComponent::freeGraphicsMemory()
 void VideoComponent::draw() {
 	if (!videoInst_ || !instanceReady_) return;
 
-	if (isPlaying()) {
-		videoInst_->draw();
-	}
+	videoInst_->draw();
+
 	if (SDL_Texture* texture = videoInst_->getTexture()) {
 		SDL_FRect rect = {
 			baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),

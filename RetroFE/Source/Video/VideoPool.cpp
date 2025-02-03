@@ -187,8 +187,7 @@ void VideoPool::destroyVideo(GStreamerVideo* vid, int monitor, int listId) {
         poolInfo->currentActive.fetch_sub(1);
     }
 
-    // Stop and destroy the video instance
-    vid->stop();
+    // Destroy the video instance
     delete vid;
 
     LOG_DEBUG("VideoPool", "Destroyed faulty video instance. Monitor: " + 
