@@ -56,6 +56,5 @@ private:
     int numLoops_;
     int monitor_;
     int listId_;
-	bool markedForDeletion_{ false };
     Page* currentPage_{ nullptr };
 };

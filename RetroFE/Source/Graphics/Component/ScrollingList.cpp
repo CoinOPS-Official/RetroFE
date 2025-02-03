@@ -217,29 +217,20 @@ void ScrollingList::destroyItems()
     auto& data = components_.raw();
     size_t componentSize = data.size();
 
-    // First clean up the pool
-    bool hasVideos = false;
-    for (unsigned int i = 0; i < componentSize; ++i) {
-        if (Component* component = data[i]) {
-            if (typeid(*component) == typeid(VideoComponent)) {
-                hasVideos = true;
-                break;
-            }
-        }
-    }
+    // Clean up the pool - listId_ will always be valid
+    LOG_DEBUG("ScrollingList", "Cleaning up video pool for list: " + std::to_string(listId_));
+    VideoPool::cleanup(baseViewInfo.Monitor, listId_);
 
-    if (hasVideos) {
-        VideoPool::cleanup(baseViewInfo.Monitor, listId_);
-    }
-
-    // Then delete components
+    // Delete all components
     for (unsigned int i = 0; i < componentSize; ++i) {
         if (Component* component = data[i]) {
             delete component;
-            data[i] = NULL;
+            data[i] = nullptr;
         }
     }
 }
+
+
 void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints) {
     clearPoints();

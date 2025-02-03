@@ -49,6 +49,8 @@ VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monito
 
 VideoComponent::~VideoComponent()
 {
+	LOG_DEBUG("VideoComponent", "Destroying VideoComponent for file: " + videoFile_);
+	VideoComponent::freeGraphicsMemory();
 }
 
 bool VideoComponent::update(float dt)
@@ -92,10 +94,13 @@ bool VideoComponent::update(float dt)
 		videoInst_->volumeUpdate();
 	}
 
-	if (baseViewInfo.ImageHeight == 0 && baseViewInfo.ImageWidth == 0)
-	{
-		baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
-		baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
+	float videoHeight = static_cast<float>(videoInst_->getHeight());
+	float videoWidth = static_cast<float>(videoInst_->getWidth());
+
+	if (baseViewInfo.ImageHeight != videoHeight || baseViewInfo.ImageWidth != videoWidth ||
+		baseViewInfo.ImageHeight == 0 || baseViewInfo.ImageWidth == 0) {
+		baseViewInfo.ImageHeight = videoHeight;
+		baseViewInfo.ImageWidth = videoWidth;
 	}
 
 	bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0f;
@@ -147,26 +152,31 @@ void VideoComponent::allocateGraphicsMemory() {
 	}
 }
 
-void VideoComponent::freeGraphicsMemory() {
+void VideoComponent::freeGraphicsMemory()
+{
 	Component::freeGraphicsMemory();
 	if (videoInst_) {
 		instanceReady_ = false;
-		if (!markedForDeletion_ && listId_ != -1) {
-			// Need to cast back to GStreamerVideo before releasing to pool
+
+		if (listId_ != -1) {  // Simplified check now that markedForDeletion_ is gone
 			if (auto* gstreamerVideo = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
-				// Release ownership to pool
+				LOG_DEBUG("VideoComponent", "Releasing video to pool: " + videoFile_);
 				VideoPool::releaseVideo(
-					std::unique_ptr<GStreamerVideo>(gstreamerVideo), 
-					monitor_, 
+					std::unique_ptr<GStreamerVideo>(gstreamerVideo),
+					monitor_,
 					listId_
 				);
-				videoInst_.release();  // Don't let unique_ptr delete it
+				videoInst_.release();  // Release ownership without deletion
 				return;
 			}
 		}
-		videoInst_.reset();  // This replaces delete videoInst_
+
+		LOG_DEBUG("VideoComponent", "Stopping and resetting video: " + videoFile_);
+		videoInst_->stop();
+		videoInst_.reset();  // Clean deletion for non-pooled instances
 	}
 }
+
 void VideoComponent::draw() {
 	if (!videoInst_ || !instanceReady_) return;
 

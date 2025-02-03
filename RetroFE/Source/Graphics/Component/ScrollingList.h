@@ -180,6 +180,7 @@ public:
 private:
 
     static int nextListId;
+    static std::mutex listIdMutex;  // Add mutex for thread safety
     int listId_;
 
     void clearPoints();

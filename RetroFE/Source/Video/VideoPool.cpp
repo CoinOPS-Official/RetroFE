@@ -119,41 +119,38 @@ void VideoPool::cleanup(int monitor, int listId) {
     if (listId == -1) return;
 
     std::unique_lock<std::shared_mutex> mapLock(mapMutex_);
-    if (!pools_.count(monitor) || !pools_[monitor].count(listId)) {
-        return;
-    }
 
-    PoolInfo& poolInfo = pools_[monitor][listId];
+    // Log the cleanup start
+    LOG_DEBUG("VideoPool", "Starting cleanup for Monitor: " + std::to_string(monitor) + 
+        ", List ID: " + std::to_string(listId));
 
-    size_t activeCount = poolInfo.currentActive.load();
-    if (activeCount > 0 || poolInfo.instances.size() > 0) {
-        LOG_WARNING("VideoPool", "Attempting cleanup with active/pooled videos...");
-        return;
-    }
+    if (pools_.count(monitor) && pools_[monitor].count(listId)) {
+        PoolInfo& poolInfo = pools_[monitor][listId];
 
-    {
-        if (!poolInfo.poolMutex.try_lock()) {
-            LOG_DEBUG("VideoPool", "Pool busy during cleanup, deferring...");
-            return;
-        }
-        std::lock_guard<std::timed_mutex> poolLock(poolInfo.poolMutex, std::adopt_lock);
+        // Log pool state before cleanup
+        LOG_DEBUG("VideoPool", "Pool state before cleanup - Active: " + 
+            std::to_string(poolInfo.currentActive.load()) + 
+            ", Instances: " + std::to_string(poolInfo.instances.size()));
 
-        // instances will clear automatically due to unique_ptr
+        // Clear all instances
         poolInfo.instances.clear();
+
+        // Reset pool state
         poolInfo.poolInitialized.store(false);
         poolInfo.hasExtraInstance.store(false);
         poolInfo.maxRequired.store(0);
         poolInfo.currentActive.store(0);
-    }
 
-    pools_[monitor].erase(listId);
-    if (pools_[monitor].empty()) {
-        pools_.erase(monitor);
-    }
+        // Remove from maps
+        pools_[monitor].erase(listId);
+        if (pools_[monitor].empty()) {
+            pools_.erase(monitor);
+        }
 
-    LOG_DEBUG("VideoPool", "Pool cleaned up. Monitor: " + 
-        std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+        LOG_DEBUG("VideoPool", "Completed cleanup for List ID: " + std::to_string(listId));
+    }
 }
+
 
 void VideoPool::shutdown() {
     std::unique_lock<std::shared_mutex> mapLock(mapMutex_);
