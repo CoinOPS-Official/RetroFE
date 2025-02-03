@@ -25,20 +25,21 @@
 #include <shared_mutex>
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include "../Video/IVideo.h"
 #include "../Video/GStreamerVideo.h"
 
 class VideoPool {
 public:
-    static GStreamerVideo* acquireVideo(int monitor, int listId, bool softOverlay);
-    static void releaseVideo(GStreamerVideo* vid, int monitor, int listId);
+    static std::unique_ptr<IVideo> acquireVideo(int monitor, int listId, bool softOverlay);
+    static void releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId);
     static void destroyVideo(GStreamerVideo* vid, int monitor, int listId);
     static void cleanup(int monitor, int listId);
     static void shutdown();
 
 private:
     struct PoolInfo {
-        std::deque<GStreamerVideo*> instances;  // Changed to deque
+        std::deque<std::unique_ptr<GStreamerVideo>> instances;
         std::atomic<size_t> currentActive{0};
         std::atomic<bool> poolInitialized{false};
         std::atomic<bool> hasExtraInstance{false};

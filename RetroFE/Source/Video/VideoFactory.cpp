@@ -21,38 +21,39 @@
 
 // Include your VideoPool header
 #include "VideoPool.h"
+#include <memory>
 
 bool VideoFactory::enabled_ = true;
 int VideoFactory::numLoops_ = 0;
 
-IVideo* VideoFactory::createVideo(int monitor, int numLoops, bool softOverlay, int listId)
-{
+std::unique_ptr<IVideo> VideoFactory::createVideo(int monitor, int numLoops, bool softOverlay, int listId) {
     if (!enabled_) {
-        return nullptr; // Early return if not enabled
+        return nullptr;
     }
 
-    // Acquire from the VideoPool instead of directly creating a new GStreamerVideo
-    GStreamerVideo* instance = VideoPool::acquireVideo(monitor, listId, softOverlay);
+    // VideoPool::acquireVideo now returns std::unique_ptr<IVideo>
+    auto instance = VideoPool::acquireVideo(monitor, listId, softOverlay);
     if (!instance) {
-        // Safety check in case acquireVideo somehow returned null
-        LOG_ERROR("VideoFactory", "VideoPool failed to provide a GStreamerVideo instance.");
+        LOG_ERROR("VideoFactory", "VideoPool failed to provide a video instance.");
         return nullptr;
     }
 
-    // Optionally re-initialize the instance in case it was previously unloaded
+    // Since instance is now a unique_ptr, use -> instead of .
     if (!instance->initialize()) {
-        LOG_ERROR("VideoFactory", "Failed to initialize GStreamerVideo from VideoPool");
-        // If initialization fails, you can destroy the instance or handle it differently
-        delete instance; 
+        LOG_ERROR("VideoFactory", "Failed to initialize video from VideoPool");
+        // No need to delete - unique_ptr will handle cleanup
         return nullptr;
     }
 
-    // Determine loops
-    int loopsToSet = (numLoops > 0) ? numLoops : numLoops_;
-    instance->setNumLoops(loopsToSet);
-    instance->setSoftOverlay(softOverlay);
+    // Cast to GStreamerVideo to access specific methods
+    if (auto* gstreamerVid = dynamic_cast<GStreamerVideo*>(instance.get())) {
+        int loopsToSet = (numLoops > 0) ? numLoops : numLoops_;
+        gstreamerVid->setNumLoops(loopsToSet);
+        gstreamerVid->setSoftOverlay(softOverlay);
+    }
 
-    return instance; // Return as IVideo pointer
+    // Return the unique_ptr - ownership is transferred to caller
+    return instance;
 }
 
 void VideoFactory::setEnabled(bool enabled)

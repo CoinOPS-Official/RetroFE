@@ -91,7 +91,10 @@ GStreamerVideo::GStreamerVideo(int monitor)
 }
 
 
-GStreamerVideo::~GStreamerVideo() = default;
+GStreamerVideo::~GStreamerVideo() 
+{
+    stop();
+}
 
 void GStreamerVideo::messageHandler() {
     if (!playbin_ || !isPlaying_)
@@ -357,6 +360,7 @@ bool GStreamerVideo::unload()
     textureHeight_ = height_;
     width_ = 0;
     height_ = 0;
+    textureValid_ = false;
     playCount_ = 0;
     numLoops_ = 0;
 
