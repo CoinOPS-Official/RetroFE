@@ -380,14 +380,35 @@ bool GStreamerVideo::unload()
     }
 
     GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-    if (bus) {
-        GstMessage* msg = nullptr;
-        // Pop messages until there are none left
-        while ((msg = gst_bus_pop(bus)) != nullptr) {
-            gst_message_unref(msg);
+
+    // Process all pending messages (non-blocking)
+    GstMessage* msg;
+    while ((msg = gst_bus_pop(bus))) {
+        switch (GST_MESSAGE_TYPE(msg)) {
+        case GST_MESSAGE_ERROR: {
+            GError *err;
+            gchar *debug_info;
+            gst_message_parse_error(msg, &err, &debug_info);
+
+            // Set error flag and log the error
+            hasError_.store(true, std::memory_order_release);
+            LOG_ERROR("GStreamerVideo", "Error received from element " + 
+                std::string(GST_OBJECT_NAME(msg->src)) + ": " + 
+                std::string(err->message));
+            if (debug_info) {
+                LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
+            }
+
+            g_clear_error(&err);
+            g_free(debug_info);
+            break;
         }
-        gst_object_unref(bus);
+        default:
+            break;
+        }
+        gst_message_unref(msg);
     }
+    gst_object_unref(bus);
 
     // Reset flags used for timing, volume, etc.
     paused_ = false;
