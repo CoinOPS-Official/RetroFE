@@ -46,7 +46,7 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
         poolInfo->poolMutex.lock();
     }
 
-    std::lock_guard<std::timed_mutex> poolLock(poolInfo->poolMutex, std::adopt_lock);
+    std::unique_lock<std::timed_mutex> poolLock(poolInfo->poolMutex, std::adopt_lock);
 
     // If not initialized yet, create new instances freely
     if (!poolInfo->poolInitialized.load()) {
@@ -65,12 +65,10 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
         return std::make_unique<GStreamerVideo>(monitor);
     }
 
-    // After this point, only use the pool
-    while (poolInfo->instances.empty()) {
-        poolInfo->poolMutex.unlock();
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-        poolInfo->poolMutex.lock();
-    }
+    // Wait for available instance using condition variable
+    poolInfo->waitCondition.wait(poolLock, [poolInfo]() {
+        return !poolInfo->instances.empty();
+        });
 
     auto vid = std::move(poolInfo->instances.front());
     poolInfo->instances.pop_front();
@@ -81,34 +79,42 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
         std::to_string(monitor) + ", List ID: " + std::to_string(listId));
     return vid;
 }
+
 void VideoPool::releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId) {
     if (!vid || listId == -1) return;
 
+    // Check if the instance encountered an error.
+    if (vid->hasError()) {
+        LOG_DEBUG("VideoPool", "Faulty video instance detected during release. Destroying instance. Monitor: " +
+            std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+        destroyVideo(vid.release(), monitor, listId);
+        return;
+    }
+    
     vid->unload();
 
     PoolInfo* poolInfo = getPoolInfo(monitor, listId);
 
-    if (!poolInfo->poolMutex.try_lock()) {
-        LOG_DEBUG("VideoPool", "Pool busy during release, deleting instance. Monitor: " + 
-            std::to_string(monitor) + ", List ID: " + std::to_string(listId));
-        // No need for explicit delete - unique_ptr will handle it
-        poolInfo->currentActive.fetch_sub(1);
-        return;
-    }
+    // Block until we can lock the pool mutex.
+    std::unique_lock<std::timed_mutex> poolLock(poolInfo->poolMutex);
 
-    std::lock_guard<std::timed_mutex> poolLock(poolInfo->poolMutex, std::adopt_lock);
-    size_t newActive = poolInfo->currentActive.fetch_sub(1) - 1;
+    // Decrement the active count under lock so that the instance can be accounted for.
+    poolInfo->currentActive.fetch_sub(1);
 
+    // On the first release, initialize the pool.
     if (!poolInfo->poolInitialized.load()) {
         poolInfo->poolInitialized.store(true);
         poolInfo->instances.push_back(std::move(vid));
-        LOG_DEBUG("VideoPool", "First release detected for Monitor: " + 
+        LOG_DEBUG("VideoPool", "First release detected for Monitor: " +
             std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+        poolInfo->waitCondition.notify_one();
         return;
     }
 
+    // Return the instance to the pool.
     poolInfo->instances.push_back(std::move(vid));
-    LOG_DEBUG("VideoPool", "Instance added to pool. Monitor: " + 
+    poolInfo->waitCondition.notify_one();
+    LOG_DEBUG("VideoPool", "Instance added to pool. Monitor: " +
         std::to_string(monitor) + ", List ID: " + std::to_string(listId));
 }
 
@@ -135,7 +141,6 @@ void VideoPool::cleanup(int monitor, int listId) {
         // Reset pool state
         poolInfo.poolInitialized.store(false);
         poolInfo.hasExtraInstance.store(false);
-        poolInfo.maxRequired.store(0);
         poolInfo.currentActive.store(0);
 
         // Remove from maps
@@ -165,7 +170,6 @@ void VideoPool::shutdown() {
             poolInfo.currentActive.store(0);
             poolInfo.poolInitialized.store(false);
             poolInfo.hasExtraInstance.store(false);
-            poolInfo.maxRequired.store(0);
         }
         listPools.clear();
     }

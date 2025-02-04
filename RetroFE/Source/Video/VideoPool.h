@@ -43,8 +43,8 @@ private:
         std::atomic<size_t> currentActive{0};
         std::atomic<bool> poolInitialized{false};
         std::atomic<bool> hasExtraInstance{false};
-        std::atomic<size_t> maxRequired{0};
         std::timed_mutex poolMutex;
+        std::condition_variable_any waitCondition;  // Add this line
 
         PoolInfo() = default;
         PoolInfo(const PoolInfo&) = delete;
