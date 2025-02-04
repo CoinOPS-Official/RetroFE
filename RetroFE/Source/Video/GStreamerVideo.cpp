@@ -379,6 +379,16 @@ bool GStreamerVideo::unload()
         LOG_ERROR("GStreamerVideo", "Pipeline did not reach READY state during unload.");
     }
 
+    GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
+    if (bus) {
+        GstMessage* msg = nullptr;
+        // Pop messages until there are none left
+        while ((msg = gst_bus_pop(bus)) != nullptr) {
+            gst_message_unref(msg);
+        }
+        gst_object_unref(bus);
+    }
+
     // Reset flags used for timing, volume, etc.
     paused_ = false;
     currentVolume_ = 0.0f;
