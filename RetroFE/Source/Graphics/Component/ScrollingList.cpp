@@ -511,12 +511,17 @@ void ScrollingList::allocateGraphicsMemory( )
     allocateSpritePoints( );
 }
 
-void ScrollingList::freeGraphicsMemory( )
+void ScrollingList::freeGraphicsMemory()
 {
-    Component::freeGraphicsMemory( );
+    Component::freeGraphicsMemory();
     scrollPeriod_ = 0;
-    
-    deallocateSpritePoints( );
+    // Clean up components
+    deallocateSpritePoints();
+
+    // Clean up the video pool for this list
+    if (listId_ != -1) {
+        VideoPool::cleanup(baseViewInfo.Monitor, listId_);
+    }
 }
 
 void ScrollingList::triggerEnterEvent( )
