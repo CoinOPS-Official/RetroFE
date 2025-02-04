@@ -41,49 +41,46 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
 
     PoolInfo* poolInfo = getPoolInfo(monitor, listId);
 
-    if (!poolInfo->poolMutex.try_lock()) {
-        LOG_DEBUG("VideoPool", "Pool busy, creating new instance. Monitor: " + 
-            std::to_string(monitor) + ", List ID: " + std::to_string(listId));
-        return std::make_unique<GStreamerVideo>(monitor);
+    // Get lock with timeout
+    if (!poolInfo->poolMutex.try_lock_for(std::chrono::milliseconds(100))) {
+        poolInfo->poolMutex.lock();
     }
 
     std::lock_guard<std::timed_mutex> poolLock(poolInfo->poolMutex, std::adopt_lock);
 
+    // If not initialized yet, create new instances freely
     if (!poolInfo->poolInitialized.load()) {
         poolInfo->currentActive.fetch_add(1);
-        LOG_DEBUG("VideoPool", "Creating first instance. Monitor: " + 
+        LOG_DEBUG("VideoPool", "Creating initial instance. Monitor: " + 
             std::to_string(monitor) + ", List ID: " + std::to_string(listId));
         return std::make_unique<GStreamerVideo>(monitor);
     }
 
+    // If we haven't created our +1 extra instance yet, do it now
     if (!poolInfo->hasExtraInstance.load()) {
         poolInfo->hasExtraInstance.store(true);
         poolInfo->currentActive.fetch_add(1);
-        LOG_DEBUG("VideoPool", "Creating extra instance after first release. Monitor: " + 
+        LOG_DEBUG("VideoPool", "Creating +1 extra instance. Monitor: " + 
             std::to_string(monitor) + ", List ID: " + std::to_string(listId));
         return std::make_unique<GStreamerVideo>(monitor);
     }
 
-    if (!poolInfo->instances.empty()) {
-        auto vid = std::move(poolInfo->instances.front());
-        poolInfo->instances.pop_front();
-        vid->setSoftOverlay(softOverlay);
-
-        poolInfo->currentActive.fetch_add(1);
-        size_t current = poolInfo->currentActive.load();
-        size_t maxReq = poolInfo->maxRequired.load();
-        while (maxReq < current && 
-            !poolInfo->maxRequired.compare_exchange_weak(maxReq, current)) {}
-
-        LOG_DEBUG("VideoPool", "Reusing instance from pool. Monitor: " + 
-            std::to_string(monitor) + ", List ID: " + std::to_string(listId));
-        return vid;  // Implicit conversion from unique_ptr<GStreamerVideo> to unique_ptr<IVideo>
+    // After this point, only use the pool
+    while (poolInfo->instances.empty()) {
+        poolInfo->poolMutex.unlock();
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        poolInfo->poolMutex.lock();
     }
 
+    auto vid = std::move(poolInfo->instances.front());
+    poolInfo->instances.pop_front();
+    vid->setSoftOverlay(softOverlay);
     poolInfo->currentActive.fetch_add(1);
-    return std::make_unique<GStreamerVideo>(monitor);
-}
 
+    LOG_DEBUG("VideoPool", "Reusing instance from pool. Monitor: " + 
+        std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+    return vid;
+}
 void VideoPool::releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId) {
     if (!vid || listId == -1) return;
 

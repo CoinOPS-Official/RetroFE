@@ -58,5 +58,4 @@ private:
     static std::shared_mutex mapMutex_;
 
     static PoolInfo* getPoolInfo(int monitor, int listId);
-    static constexpr std::chrono::milliseconds LOCK_TIMEOUT{5};
 };
