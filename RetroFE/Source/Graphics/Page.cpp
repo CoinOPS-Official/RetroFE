@@ -894,35 +894,56 @@ size_t Page::getSelectedIndex()
 }
 
 
-bool Page::pushCollection(CollectionInfo* collection)
+bool Page::pushCollection(CollectionInfo *collection)
 {
     if (!collection) {
         return false;
     }
 
-    // Grow the menu as needed
+    // Before creating new menus, cleanup existing ones at base level
     if (menus_.size() <= menuDepth_ && getAnActiveMenu()) {
-        for (ScrollingList const* menu : activeMenu_) {
-            auto* newMenu = new ScrollingList(*menu);
+        // Store the current state/positions that we want to preserve
+        std::vector<size_t> menuPositions;
+        for (auto* menu : activeMenu_) {
+            if (menu) {
+                menuPositions.push_back(menu->getScrollOffsetIndex());
+                menu->freeGraphicsMemory(); // Free graphics memory but don't delete yet
+            }
+        }
+
+        // Now create new menus for the next depth
+        size_t posIndex = 0;
+        for (auto it = activeMenu_.begin(); it != activeMenu_.end(); it++) {
+            ScrollingList const *menu = *it;
+            auto *newMenu = new ScrollingList(*menu);
             if (newMenu->isPlaylist()) {
                 playlistMenu_ = newMenu;
             }
             pushMenu(newMenu, menuDepth_);
+
+            // Restore position if we have one stored
+            if (posIndex < menuPositions.size()) {
+                newMenu->setScrollOffsetIndex(menuPositions[posIndex]);
+            }
+            posIndex++;
         }
     }
 
-    if (!menus_.empty()) {
+    // Set active menu and update with new collection items
+    if (menus_.size()) {
         activeMenu_ = menus_[menuDepth_];
         anActiveMenu_ = nullptr;
         selectedItem_ = nullptr;
-        for (ScrollingList* menu : activeMenu_) {
+
+        for (auto it = activeMenu_.begin(); it != activeMenu_.end(); it++) {
+            ScrollingList* menu = *it;
             menu->collectionName = collection->name;
-            // Add playlist menu items
-            if (menu->isPlaylist() && !collection->playlistItems.empty()) {
+            // add playlist menu items
+            if (menu->isPlaylist() && collection->playlistItems.size()) {
                 menu->setItems(&collection->playlistItems);
             }
             else {
-                // Add item collection menu
+                // add item collection menu
                 menu->setItems(&collection->items);
             }
         }
@@ -931,7 +952,7 @@ bool Page::pushCollection(CollectionInfo* collection)
         LOG_WARNING("RetroFE", "layout.xml doesn't have any menus");
     }
 
-    // Build the collection info instance
+    // build the collection info instance
     MenuInfo_S info;
     info.collection = collection;
     info.playlist = collection->playlists.begin();
@@ -944,34 +965,45 @@ bool Page::pushCollection(CollectionInfo* collection)
         menuDepth_++;
     }
 
-    // Update collection name for all LayerComponents
-    for (auto& layer : LayerComponents_) {
+    // Update collection name for layer components
+    for (const auto& layer : LayerComponents_) {
         for (Component* component : layer) {
-            component->collectionName = collection->name;
+            if (component) {
+                component->collectionName = collection->name;
+            }
         }
     }
 
     return true;
 }
-
-
 bool Page::popCollection()
 {
-    if (!getAnActiveMenu() || menuDepth_ <= 1 || collections_.size() <= 1) {
-        return false;
+    if (!getAnActiveMenu()) return false;
+    if(menuDepth_ <= 1) return false;
+    if(collections_.size() <= 1) return false;
+
+    // Clean up menus at current depth
+    if (menuDepth_ < menus_.size()) {
+        for (ScrollingList* menu : menus_[menuDepth_ - 1]) {
+            if (menu) {
+                menu->freeGraphicsMemory();
+                delete menu;
+            }
+        }
+        menus_[menuDepth_ - 1].clear();
     }
 
-    // Queue the collection for deletion
-    MenuInfo_S* info = &collections_.back();
+    // queue the collection for deletion
+    MenuInfo_S *info = &collections_.back();
     info->queueDelete = true;
     deleteCollections_.push_back(*info);
 
-    // Get the next collection off of the stack
+    // get the next collection off of the stack
     collections_.pop_back();
     info = &collections_.back();
 
-    // Build playlist menu
-    if (playlistMenu_ && !info->collection->playlistItems.empty()) {
+    // build playlist menu
+    if (playlistMenu_ && info->collection->playlistItems.size()) {
         playlistMenu_->setItems(&info->collection->playlistItems);
     }
 
@@ -980,13 +1012,23 @@ bool Page::popCollection()
 
     menuDepth_--;
     activeMenu_ = menus_[menuDepth_ - 1];
+
+    // Reallocate graphics memory for the menu we're returning to
+    for (ScrollingList* menu : activeMenu_) {
+        if (menu) {
+            menu->allocateGraphicsMemory();
+        }
+    }
+
     anActiveMenu_ = nullptr;
     selectedItem_ = nullptr;
 
-    // Update collection name for all LayerComponents
-    for (auto& layer : LayerComponents_) {
+    // Update collection name for all layer components
+    for (const auto& layer : LayerComponents_) {
         for (Component* component : layer) {
-            component->collectionName = info->collection->name;
+            if (component) {
+                component->collectionName = info->collection->name;
+            }
         }
     }
 
