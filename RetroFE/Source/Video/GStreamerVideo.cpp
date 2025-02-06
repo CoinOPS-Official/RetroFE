@@ -198,21 +198,27 @@ void GStreamerVideo::initializePlugins()
 #if defined(WIN32)
         enablePlugin("directsoundsink");
         disablePlugin("mfdeviceprovider");
+        disablePlugin("nvh264dec");
+        disablePlugin("nvh265dec");
         if (Configuration::HardwareVideoAccel)
         {
             if (IsIntelGPU())
             {
                 enablePlugin("qsvh264dec");
+				enablePlugin("qsvh265dec");
                 disablePlugin("d3d11h264dec");
-                disablePlugin("nvh264dec");
-                LOG_DEBUG("GStreamerVideo", "Using qsvh264dec for Intel GPU");
+                disablePlugin("d3d11h265dec");
+
+                LOG_DEBUG("GStreamerVideo", "Using qsvh264dec/qsvh265dec for Intel GPU");
             }
             else
             {
                 enablePlugin("d3d11h264dec");
+				enablePlugin("d3d11h265dec");
                 disablePlugin("qsvh264dec");
-                disablePlugin("nvh264dec");
-                LOG_DEBUG("GStreamerVideo", "Using d3d11h264dec for non-Intel GPU");
+				disablePlugin("qsvh265dec");
+
+                LOG_DEBUG("GStreamerVideo", "Using d3d11h264dec/d3d11h265dec for non-Intel GPU");
             }
         }
         else
@@ -220,9 +226,10 @@ void GStreamerVideo::initializePlugins()
             enablePlugin("avdec_h264");
             enablePlugin("avdec_h265");
             disablePlugin("d3d11h264dec");
+			disablePlugin("d3d11h265dec");
             disablePlugin("qsvh264dec");
-            disablePlugin("nvh264dec");
-            LOG_DEBUG("GStreamerVideo", "Using avdec_h264 and avdec_h265 for software decoding");
+            disablePlugin("qsvh265dec");
+            LOG_DEBUG("GStreamerVideo", "Using avdec_h264/avdec_h265 for software decoding");
         }
 #elif defined(__APPLE__)
         // if (Configuration::HardwareVideoAccel) {
