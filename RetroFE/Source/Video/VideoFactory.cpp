@@ -18,8 +18,6 @@
 
 #include "../Utility/Log.h"
 #include "GStreamerVideo.h"
-
-// Include your VideoPool header
 #include "VideoPool.h"
 #include <memory>
 

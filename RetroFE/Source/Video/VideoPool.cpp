@@ -15,8 +15,17 @@
 */
 // VideoPool.cpp
 #include "VideoPool.h"
+#include "GStreamerVideo.h"
+#include "../Utility/Log.h"
+#include <chrono>
+#include <memory>
+#include <string>
+#include <unordered_map>
+#include <shared_mutex>
+#include <deque>
+#include <condition_variable>
+#include <atomic>
 
-// Static member initialization
 VideoPool::PoolMap VideoPool::pools_;
 std::shared_mutex VideoPool::mapMutex_;
 
@@ -51,7 +60,7 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
     // If not initialized yet, create new instances freely
     if (!poolInfo->poolInitialized.load()) {
         poolInfo->currentActive.fetch_add(1);
-        LOG_DEBUG("VideoPool", "Creating initial instance. Monitor: " + 
+        LOG_DEBUG("VideoPool", "Creating initial instance. Monitor: " +
             std::to_string(monitor) + ", List ID: " + std::to_string(listId));
         return std::make_unique<GStreamerVideo>(monitor);
     }
@@ -60,7 +69,7 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
     if (!poolInfo->hasExtraInstance.load()) {
         poolInfo->hasExtraInstance.store(true);
         poolInfo->currentActive.fetch_add(1);
-        LOG_DEBUG("VideoPool", "Creating +1 extra instance. Monitor: " + 
+        LOG_DEBUG("VideoPool", "Creating +1 extra instance. Monitor: " +
             std::to_string(monitor) + ", List ID: " + std::to_string(listId));
         return std::make_unique<GStreamerVideo>(monitor);
     }
@@ -70,14 +79,14 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
         return !poolInfo->instances.empty();
         });
 
-    auto vid = std::move(poolInfo->instances.front());
+    std::unique_ptr<GStreamerVideo> vid = std::move(poolInfo->instances.front());
     poolInfo->instances.pop_front();
     vid->setSoftOverlay(softOverlay);
     poolInfo->currentActive.fetch_add(1);
 
-    LOG_DEBUG("VideoPool", "Reusing instance from pool. Monitor: " + 
+    LOG_DEBUG("VideoPool", "Reusing instance from pool. Monitor: " +
         std::to_string(monitor) + ", List ID: " + std::to_string(listId));
-    return vid;
+    return std::move(vid);
 }
 
 void VideoPool::releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId) {
@@ -124,15 +133,15 @@ void VideoPool::cleanup(int monitor, int listId) {
     std::unique_lock<std::shared_mutex> mapLock(mapMutex_);
 
     // Log the cleanup start
-    LOG_DEBUG("VideoPool", "Starting cleanup for Monitor: " + std::to_string(monitor) + 
+    LOG_DEBUG("VideoPool", "Starting cleanup for Monitor: " + std::to_string(monitor) +
         ", List ID: " + std::to_string(listId));
 
     if (pools_.count(monitor) && pools_[monitor].count(listId)) {
         PoolInfo& poolInfo = pools_[monitor][listId];
 
         // Log pool state before cleanup
-        LOG_DEBUG("VideoPool", "Pool state before cleanup - Active: " + 
-            std::to_string(poolInfo.currentActive.load()) + 
+        LOG_DEBUG("VideoPool", "Pool state before cleanup - Active: " +
+            std::to_string(poolInfo.currentActive.load()) +
             ", Instances: " + std::to_string(poolInfo.instances.size()));
 
         // Clear all instances
@@ -152,7 +161,6 @@ void VideoPool::cleanup(int monitor, int listId) {
         LOG_DEBUG("VideoPool", "Completed cleanup for List ID: " + std::to_string(listId));
     }
 }
-
 
 void VideoPool::shutdown() {
     std::unique_lock<std::shared_mutex> mapLock(mapMutex_);
@@ -190,6 +198,6 @@ void VideoPool::destroyVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, i
 
     // The unique_ptr will automatically destroy the video instance when it goes out of scope
 
-    LOG_DEBUG("VideoPool", "Destroyed faulty video instance. Monitor: " + 
+    LOG_DEBUG("VideoPool", "Destroyed faulty video instance. Monitor: " +
         std::to_string(monitor) + ", List ID: " + std::to_string(listId));
 }
