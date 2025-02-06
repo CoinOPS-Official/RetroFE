@@ -87,10 +87,10 @@ void VideoPool::releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, i
     if (vid->hasError()) {
         LOG_DEBUG("VideoPool", "Faulty video instance detected during release. Destroying instance. Monitor: " +
             std::to_string(monitor) + ", List ID: " + std::to_string(listId));
-        destroyVideo(vid.release(), monitor, listId);
+        destroyVideo(std::move(vid), monitor, listId);
         return;
     }
-    
+
     vid->unload();
 
     PoolInfo* poolInfo = getPoolInfo(monitor, listId);
@@ -178,7 +178,7 @@ void VideoPool::shutdown() {
     LOG_DEBUG("VideoPool", "VideoPool shutdown complete");
 }
 
-void VideoPool::destroyVideo(GStreamerVideo* vid, int monitor, int listId) {
+void VideoPool::destroyVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId) {
     if (!vid) return;
 
     PoolInfo* poolInfo = getPoolInfo(monitor, listId);
@@ -188,8 +188,7 @@ void VideoPool::destroyVideo(GStreamerVideo* vid, int monitor, int listId) {
         poolInfo->currentActive.fetch_sub(1);
     }
 
-    // Destroy the video instance
-    delete vid;
+    // The unique_ptr will automatically destroy the video instance when it goes out of scope
 
     LOG_DEBUG("VideoPool", "Destroyed faulty video instance. Monitor: " + 
         std::to_string(monitor) + ", List ID: " + std::to_string(listId));

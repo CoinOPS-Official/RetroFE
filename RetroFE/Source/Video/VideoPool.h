@@ -33,9 +33,9 @@ class VideoPool {
 public:
     static std::unique_ptr<IVideo> acquireVideo(int monitor, int listId, bool softOverlay);
     static void releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId);
-    static void destroyVideo(GStreamerVideo* vid, int monitor, int listId);
     static void cleanup(int monitor, int listId);
     static void shutdown();
+    static void destroyVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId);
 
 private:
     struct PoolInfo {
