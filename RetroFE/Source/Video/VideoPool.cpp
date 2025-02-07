@@ -13,16 +13,14 @@
 * You should have received a copy of the GNU General Public License
 * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
 */
-// VideoPool.cpp
+
 #include "VideoPool.h"
 #include "GStreamerVideo.h"
 #include "../Utility/Log.h"
 #include <chrono>
 #include <memory>
 #include <string>
-#include <unordered_map>
 #include <shared_mutex>
-#include <deque>
 #include <condition_variable>
 #include <atomic>
 
@@ -86,7 +84,7 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
 
     LOG_DEBUG("VideoPool", "Reusing instance from pool. Monitor: " +
         std::to_string(monitor) + ", List ID: " + std::to_string(listId));
-    return std::move(vid);
+    return std::unique_ptr<IVideo>(std::move(vid));
 }
 
 void VideoPool::releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId) {
