@@ -49,44 +49,55 @@ private:
 };
 
 #define LOG_DEBUG(component, message) \
-    if (Logger::isLevelEnabled("DEBUG", component)) { \
-        std::ostringstream oss; \
-        oss << message; \
-        Logger::write(Logger::ZONE_DEBUG, component, oss.str()); \
-    }
+    do { \
+        if (Logger::isLevelEnabled("DEBUG", component)) { \
+            std::ostringstream oss; \
+            oss << message; \
+            Logger::write(Logger::ZONE_DEBUG, component, oss.str()); \
+        } \
+    } while (0)
 
 #define LOG_INFO(component, message) \
-    if (Logger::isLevelEnabled("INFO", component)) { \
-        std::ostringstream oss; \
-        oss << message; \
-        Logger::write(Logger::ZONE_INFO, component, oss.str()); \
-    }
+    do { \
+        if (Logger::isLevelEnabled("INFO", component)) { \
+            std::ostringstream oss; \
+            oss << message; \
+            Logger::write(Logger::ZONE_INFO, component, oss.str()); \
+        } \
+    } while (0)
 
 #define LOG_NOTICE(component, message) \
-    if (Logger::isLevelEnabled("NOTICE", component)) { \
-        std::ostringstream oss; \
-        oss << message; \
-        Logger::write(Logger::ZONE_NOTICE, component, oss.str()); \
-    }
+    do { \
+        if (Logger::isLevelEnabled("NOTICE", component)) { \
+            std::ostringstream oss; \
+            oss << message; \
+            Logger::write(Logger::ZONE_NOTICE, component, oss.str()); \
+        } \
+    } while (0)
 
 #define LOG_WARNING(component, message) \
-    if (Logger::isLevelEnabled("WARNING", component)) { \
-        std::ostringstream oss; \
-        oss << message; \
-        Logger::write(Logger::ZONE_WARNING, component, oss.str()); \
-    }
+    do { \
+        if (Logger::isLevelEnabled("WARNING", component)) { \
+            std::ostringstream oss; \
+            oss << message; \
+            Logger::write(Logger::ZONE_WARNING, component, oss.str()); \
+        } \
+    } while (0)
 
 #define LOG_ERROR(component, message) \
-    if (Logger::isLevelEnabled("ERROR", component)) { \
-        std::ostringstream oss; \
-        oss << message; \
-        Logger::write(Logger::ZONE_ERROR, component, oss.str()); \
-    }
+    do { \
+        if (Logger::isLevelEnabled("ERROR", component)) { \
+            std::ostringstream oss; \
+            oss << message; \
+            Logger::write(Logger::ZONE_ERROR, component, oss.str()); \
+        } \
+    } while (0)
 
 #define LOG_FILECACHE(component, message) \
-    if (Logger::isLevelEnabled("FILECACHE", component)) { \
-        std::ostringstream oss; \
-        oss << message; \
-        Logger::write(Logger::ZONE_FILECACHE, component, oss.str()); \
-    }
-
+    do { \
+        if (Logger::isLevelEnabled("FILECACHE", component)) { \
+            std::ostringstream oss; \
+            oss << message; \
+            Logger::write(Logger::ZONE_FILECACHE, component, oss.str()); \
+        } \
+    } while (0)
