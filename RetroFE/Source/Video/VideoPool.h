@@ -24,6 +24,7 @@
 #include <atomic>
 #include <chrono>
 #include <memory>
+#include <condition_variable>
 #include "../Video/IVideo.h"
 #include "../Video/GStreamerVideo.h"
 
