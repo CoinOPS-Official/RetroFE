@@ -44,8 +44,6 @@
 #endif
 #if defined(__linux__) || defined(__APPLE__)
 #include <libusb-1.0/libusb.h>
-#include <libevdev-1.0/libevdev/libevdev.h>
-#include <libevdev-1.0/libevdev/libevdev-uinput.h>
 #include <dirent.h>
 #include <sys/types.h>
 #include <sys/wait.h>
@@ -56,6 +54,10 @@
 #include <cstring>
 #include <signal.h>
 #include <iostream>
+#endif
+# if defined(__linux__)
+#include <libevdev-1.0/libevdev/libevdev.h>
+#include <libevdev-1.0/libevdev/libevdev-uinput.h>
 #endif
 
 namespace fs = std::filesystem;
@@ -147,7 +149,9 @@ bool SetServoStik4Way() {
 bool SetServoStik8Way() {
 	return SetServoStikMode(false);
 }
+#endif
 
+#if defined (__linux__)
 std::vector<std::string> getInputDevices() {
 	std::vector<std::string> devicePaths;
 	const std::string inputDir = "/dev/input/";
@@ -233,6 +237,157 @@ bool detectInput(const std::vector<std::string>& devices) {
 	}
 	return false; // No input detected
 }
+#endif
+
+#if defined(__APPLE__)
+#include <IOKit/IOKitLib.h>
+#include <IOKit/hid/IOHIDManager.h>
+#include <CoreFoundation/CoreFoundation.h>
+#include <vector>
+#include <string>
+#include <iostream>
+#include <chrono>
+#include <thread>
+
+std::vector<std::string> getInputDevices() {
+    std::vector<std::string> devicePaths;
+    IOHIDManagerRef hidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+
+    if (hidManager == nullptr) {
+        std::cerr << "Failed to create HID Manager" << std::endl;
+        return devicePaths;
+    }
+
+    // Set up the device matching criteria to find all input devices
+    CFMutableDictionaryRef matchingDict = IOServiceMatching(kIOHIDDeviceKey);
+    IOHIDManagerSetDeviceMatching(hidManager, matchingDict);
+
+    IOHIDManagerOpen(hidManager, kIOHIDOptionsTypeNone);
+
+    // Get the list of devices
+    CFSetRef devices = IOHIDManagerCopyDevices(hidManager);
+    if (devices == nullptr) {
+        std::cerr << "No input devices found." << std::endl;
+        IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+        CFRelease(hidManager);
+        return devicePaths;
+    }
+
+    // Iterate over devices and check if they support key events (buttons/keys)
+    CFIndex deviceCount = CFSetGetCount(devices);
+    CFTypeRef *deviceArray = new CFTypeRef[deviceCount];
+    CFSetGetValues(devices, deviceArray);
+
+    for (CFIndex i = 0; i < deviceCount; ++i) {
+        IOHIDDeviceRef device = (IOHIDDeviceRef)deviceArray[i];
+
+        // Check if the device supports keys
+        if (IOHIDDeviceConformsTo(device, kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard)) {
+            // Get the product name (property)
+            CFTypeRef productNameRef = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
+
+            // Ensure the property is of type CFStringRef before using it
+            if (productNameRef && CFGetTypeID(productNameRef) == CFStringGetTypeID()) {
+                CFStringRef productName = (CFStringRef)productNameRef;
+
+                // Convert CFStringRef to std::string
+                char buffer[256];
+                if (CFStringGetCString(productName, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+                    devicePaths.push_back(std::string(buffer));
+                    std::cout << "Added valid input device: " << buffer << std::endl;
+                }
+            }
+        }
+    }
+
+    delete[] deviceArray;
+    CFRelease(devices);
+    IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+    CFRelease(hidManager);
+    return devicePaths;
+}
+
+bool detectInput(const std::vector<std::string>& devices) {
+    for (const auto& devicePath : devices) {
+        IOHIDManagerRef hidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+        if (hidManager == nullptr) {
+            std::cerr << "Failed to create HID Manager for device " << devicePath << std::endl;
+            continue;
+        }
+
+        // Set up the device matching criteria (similar to getInputDevices)
+        CFMutableDictionaryRef matchingDict = IOServiceMatching(kIOHIDDeviceKey);
+        IOHIDManagerSetDeviceMatching(hidManager, matchingDict);
+
+        IOHIDManagerOpen(hidManager, kIOHIDOptionsTypeNone);
+
+        CFSetRef devicesSet = IOHIDManagerCopyDevices(hidManager);
+        if (devicesSet == nullptr) {
+            std::cerr << "No devices found." << std::endl;
+            IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+            CFRelease(hidManager);
+            continue;
+        }
+
+        CFIndex deviceCount = CFSetGetCount(devicesSet);
+        CFTypeRef *deviceArray = new CFTypeRef[deviceCount];
+        CFSetGetValues(devicesSet, deviceArray);
+
+        // Iterate over devices to check if the desired input event is triggered
+        for (CFIndex i = 0; i < deviceCount; ++i) {
+            IOHIDDeviceRef device = (IOHIDDeviceRef)deviceArray[i];
+
+            // Check if the device supports keys
+            if (IOHIDDeviceConformsTo(device, kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard)) {
+
+                // Get the list of elements for the device
+                CFArrayRef elements = IOHIDDeviceCopyMatchingElements(device, nullptr, kIOHIDOptionsTypeNone);
+                if (elements) {
+                    CFIndex elementCount = CFArrayGetCount(elements);
+
+                    for (CFIndex j = 0; j < elementCount; ++j) {
+                        IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, j);
+
+                        // Check if the element represents a key
+                        if (IOHIDElementGetUsagePage(element) == kHIDPage_Button &&
+                            IOHIDElementGetUsage(element) >= kHIDUsage_Button_1 &&
+                            IOHIDElementGetUsage(element) <= kHIDUsage_Button_128) {
+                            
+                            // Create an IOHIDValueRef to store the value of the element
+                            IOHIDValueRef value = nullptr;
+                            IOReturn result = IOHIDDeviceGetValue(device, element, &value);
+
+                            if (result == kIOReturnSuccess && value != nullptr) {
+                                uint8_t keyValue = 0;
+                                // Extract the value (0 or 1 for key press/release)
+                                keyValue = (uint8_t)IOHIDValueGetIntegerValue(value);
+
+                                if (keyValue) {
+                                    std::cout << "Key press detected on device: " << devicePath << std::endl;
+                                    CFRelease(elements);
+                                    IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+                                    CFRelease(hidManager);
+                                    return true;
+                                }
+                                CFRelease(value);  // Always release the IOHIDValueRef
+                            } else {
+                                std::cerr << "Failed to get value for element" << std::endl;
+                            }
+                        }
+                    }
+                    CFRelease(elements);
+                }
+            }
+        }
+
+        delete[] deviceArray;
+        CFRelease(devicesSet);
+        IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+        CFRelease(hidManager);
+    }
+    return false; // No input detected
+}
+
 #endif
 
 std::string replaceVariables(std::string str,

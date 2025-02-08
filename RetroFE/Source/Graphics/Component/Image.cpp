@@ -21,6 +21,8 @@
 
 #if (__APPLE__)
 #include <SDL2_image/SDL_image.h>
+#include <webp/decode.h>
+#include <webp/demux.h>
 #else
 #include <SDL2/SDL_image.h>
 #include <decode.h>
