@@ -22,11 +22,14 @@
 #include "../../Video/VideoFactory.h"
 #include <SDL2/SDL.h>
 #include <string>
+#include <string_view>
+#include <atomic>
+#include <memory>
 
 class VideoComponent : public Component
 {
 public:
-    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay);
+    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listID);
     ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
@@ -42,19 +45,16 @@ public:
     unsigned long long getCurrent( ) override;
     unsigned long long getDuration( ) override;
     bool isPaused( ) override;
-    std::string_view filePath() override;
+    std::string_view filePath() const;
 
 private:
     std::string videoFile_;
-    IVideo* videoInst_{ nullptr };
-    bool isPlaying_{ false };
+    std::unique_ptr<IVideo> videoInst_;
+    std::atomic<bool> instanceReady_{false};
     bool hasBeenOnScreen_{ false };
     bool softOverlay_;
     int numLoops_;
     int monitor_;
+    int listId_;
     Page* currentPage_{ nullptr };
-    GstClockTime previousTime_ = 0;
-    GstClockTime previousPTS_ = 0;
-    gdouble cumulativeProportion_ = 0.0;
-    guint64 proportionSampleCount_ = 0;
 };

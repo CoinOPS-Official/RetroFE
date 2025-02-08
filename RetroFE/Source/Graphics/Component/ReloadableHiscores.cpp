@@ -176,6 +176,7 @@ bool ReloadableHiscores::update(float dt) {
 			}
 			else {
 				currentPosition_ = 0.0f; // Ensure non-scrolling tables remain visible
+				needsRedraw_ = true;
 			}
 
 			if (highScoreTable_->tables.size() > 1) {
@@ -479,6 +480,7 @@ void ReloadableHiscores::draw() {
 		SDL_RenderSetClipRect(renderer, nullptr);
 		SDL_SetRenderTarget(renderer, originalTarget);
 	}
+
 	// Step 6: Define the destination rectangle where the intermediate texture should be drawn
 	SDL_FRect destRect = {
 		baseViewInfo.XOrigin,

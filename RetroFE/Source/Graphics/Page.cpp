@@ -50,8 +50,8 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , selectSoundChunk_(NULL)
     , minShowTime_(0)
     , jukebox_(false)
-    , useThreading_(SDL::getRendererBackend(0) != "opengl")
-    // , useThreading_(false)
+    , useThreading_(Utils::getOSType() == "windows")
+    //, useThreading_(false)
 {
 
     for (int i = 0; i < MAX_LAYOUTS; i++) {
@@ -805,15 +805,18 @@ void Page::selectRandomPlaylist(CollectionInfo* collection, std::vector<std::str
     int i = 0;
     std::string playlistName;
     std::string settingsPlaylist = "settings";
+    std::string quickListPlaylist = "quicklist";
     config_.setProperty("settingsPlaylist", settingsPlaylist);
+    config_.setProperty("quickListPlaylist", quickListPlaylist);
 
     for (auto it = collection->playlists.begin(); it != collection->playlists.end(); it++) {
         if (i == index &&
             it->first != settingsPlaylist && 
+            it->first != quickListPlaylist &&
             it->first != "favorites" &&
             it->first != "lastplayed" &&
             std::find(cycleVector.begin(), cycleVector.end(), it->first) != cycleVector.end()
-        ) {
+            ) {
             playlistName = it->first;
             break;
         }
@@ -891,35 +894,56 @@ size_t Page::getSelectedIndex()
 }
 
 
-bool Page::pushCollection(CollectionInfo* collection)
+bool Page::pushCollection(CollectionInfo *collection)
 {
     if (!collection) {
         return false;
     }
 
-    // Grow the menu as needed
+    // Before creating new menus, cleanup existing ones at base level
     if (menus_.size() <= menuDepth_ && getAnActiveMenu()) {
-        for (ScrollingList const* menu : activeMenu_) {
-            auto* newMenu = new ScrollingList(*menu);
+        // Store the current state/positions that we want to preserve
+        std::vector<size_t> menuPositions;
+        for (auto* menu : activeMenu_) {
+            if (menu) {
+                menuPositions.push_back(menu->getScrollOffsetIndex());
+                menu->freeGraphicsMemory(); // Free graphics memory but don't delete yet
+            }
+        }
+
+        // Now create new menus for the next depth
+        size_t posIndex = 0;
+        for (auto it = activeMenu_.begin(); it != activeMenu_.end(); it++) {
+            ScrollingList const *menu = *it;
+            auto *newMenu = new ScrollingList(*menu);
             if (newMenu->isPlaylist()) {
                 playlistMenu_ = newMenu;
             }
             pushMenu(newMenu, menuDepth_);
+
+            // Restore position if we have one stored
+            if (posIndex < menuPositions.size()) {
+                newMenu->setScrollOffsetIndex(menuPositions[posIndex]);
+            }
+            posIndex++;
         }
     }
 
-    if (!menus_.empty()) {
+    // Set active menu and update with new collection items
+    if (menus_.size()) {
         activeMenu_ = menus_[menuDepth_];
         anActiveMenu_ = nullptr;
         selectedItem_ = nullptr;
-        for (ScrollingList* menu : activeMenu_) {
+
+        for (auto it = activeMenu_.begin(); it != activeMenu_.end(); it++) {
+            ScrollingList* menu = *it;
             menu->collectionName = collection->name;
-            // Add playlist menu items
-            if (menu->isPlaylist() && !collection->playlistItems.empty()) {
+            // add playlist menu items
+            if (menu->isPlaylist() && collection->playlistItems.size()) {
                 menu->setItems(&collection->playlistItems);
             }
             else {
-                // Add item collection menu
+                // add item collection menu
                 menu->setItems(&collection->items);
             }
         }
@@ -928,7 +952,7 @@ bool Page::pushCollection(CollectionInfo* collection)
         LOG_WARNING("RetroFE", "layout.xml doesn't have any menus");
     }
 
-    // Build the collection info instance
+    // build the collection info instance
     MenuInfo_S info;
     info.collection = collection;
     info.playlist = collection->playlists.begin();
@@ -941,34 +965,45 @@ bool Page::pushCollection(CollectionInfo* collection)
         menuDepth_++;
     }
 
-    // Update collection name for all LayerComponents
-    for (auto& layer : LayerComponents_) {
+    // Update collection name for layer components
+    for (const auto& layer : LayerComponents_) {
         for (Component* component : layer) {
-            component->collectionName = collection->name;
+            if (component) {
+                component->collectionName = collection->name;
+            }
         }
     }
 
     return true;
 }
-
-
 bool Page::popCollection()
 {
-    if (!getAnActiveMenu() || menuDepth_ <= 1 || collections_.size() <= 1) {
-        return false;
+    if (!getAnActiveMenu()) return false;
+    if(menuDepth_ <= 1) return false;
+    if(collections_.size() <= 1) return false;
+
+    // Clean up menus at current depth
+    if (menuDepth_ < menus_.size()) {
+        for (ScrollingList* menu : menus_[menuDepth_ - 1]) {
+            if (menu) {
+                menu->freeGraphicsMemory();
+                delete menu;
+            }
+        }
+        menus_[menuDepth_ - 1].clear();
     }
 
-    // Queue the collection for deletion
-    MenuInfo_S* info = &collections_.back();
+    // queue the collection for deletion
+    MenuInfo_S *info = &collections_.back();
     info->queueDelete = true;
     deleteCollections_.push_back(*info);
 
-    // Get the next collection off of the stack
+    // get the next collection off of the stack
     collections_.pop_back();
     info = &collections_.back();
 
-    // Build playlist menu
-    if (playlistMenu_ && !info->collection->playlistItems.empty()) {
+    // build playlist menu
+    if (playlistMenu_ && info->collection->playlistItems.size()) {
         playlistMenu_->setItems(&info->collection->playlistItems);
     }
 
@@ -977,13 +1012,23 @@ bool Page::popCollection()
 
     menuDepth_--;
     activeMenu_ = menus_[menuDepth_ - 1];
+
+    // Reallocate graphics memory for the menu we're returning to
+    for (ScrollingList* menu : activeMenu_) {
+        if (menu) {
+            menu->allocateGraphicsMemory();
+        }
+    }
+
     anActiveMenu_ = nullptr;
     selectedItem_ = nullptr;
 
-    // Update collection name for all LayerComponents
-    for (auto& layer : LayerComponents_) {
+    // Update collection name for all layer components
+    for (const auto& layer : LayerComponents_) {
         for (Component* component : layer) {
-            component->collectionName = info->collection->name;
+            if (component) {
+                component->collectionName = info->collection->name;
+            }
         }
     }
 
@@ -1164,7 +1209,9 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
     if (list.empty()) return;
 
     std::string settingsPlaylist = "";
+    std::string quickListPlaylist = "";
     config_.getProperty("settingsPlaylist", settingsPlaylist);
+    config_.getProperty("quickListPlaylist", quickListPlaylist);
 
     auto it = std::find(list.begin(), list.end(), getPlaylistName());
 
@@ -1173,7 +1220,7 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
     std::string nextPlaylist;
     if (it == list.end()) {
         for (auto it2 = list.begin(); it2 != list.end(); ++it2) {
-            if (*it2 != settingsPlaylist && playlistExists(*it2)) {
+            if (*it2 != settingsPlaylist && *it2 != quickListPlaylist && playlistExists(*it2)) {
                 nextPlaylist = *it2;
                 break;
             }
@@ -1182,7 +1229,7 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
         do {
             ++it;
             if (it == list.end()) it = list.begin();
-        } while (*it == settingsPlaylist || !playlistExists(*it));
+        } while (*it == settingsPlaylist || *it == quickListPlaylist || !playlistExists(*it));
         nextPlaylist = *it;
     }
 
@@ -1190,14 +1237,15 @@ void Page::nextCyclePlaylist(std::vector<std::string> list)
     selectPlaylist(nextPlaylist);
 }
 
-
 void Page::prevCyclePlaylist(std::vector<std::string> list)
 {
     // Empty list
     if (list.empty()) return;
 
     std::string settingsPlaylist = "";
+    std::string quickListPlaylist = "";
     config_.getProperty("settingsPlaylist", settingsPlaylist);
+    config_.getProperty("quickListPlaylist", quickListPlaylist);
 
     // Find the current playlist in the list
     auto it = std::find(list.begin(), list.end(), getPlaylistName());
@@ -1207,7 +1255,7 @@ void Page::prevCyclePlaylist(std::vector<std::string> list)
     // If current playlist not found, switch to the last playlist in the list
     if (it == list.end()) {
         for (auto it2 = list.rbegin(); it2 != list.rend(); ++it2) {
-            if (*it2 != settingsPlaylist && playlistExists(*it2)) {
+            if (*it2 != settingsPlaylist && *it2 != quickListPlaylist && playlistExists(*it2)) {
                 prevPlaylist = *it2;
                 break;
             }
@@ -1219,7 +1267,7 @@ void Page::prevCyclePlaylist(std::vector<std::string> list)
                 it = list.end(); // wrap
             }
             --it;
-        } while (*it == settingsPlaylist || !playlistExists(*it));
+        } while (*it == settingsPlaylist || *it == quickListPlaylist || !playlistExists(*it));
 
         prevPlaylist = *it;
     }
@@ -1365,7 +1413,8 @@ void Page::cleanup()
 
 
 void Page::draw() {
-    for (size_t i = 0; i < NUM_LAYERS; ++i) {
+ 
+    for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
         // Check for out-of-bounds access
         if (i >= LayerComponents_.size()) {
             LOG_ERROR("Page::draw", "Layer index out of bounds: " + std::to_string(i));
@@ -1374,7 +1423,6 @@ void Page::draw() {
 
         // Skip layers with no components or menus
         if (LayerComponents_[i].empty() && menus_.empty()) {
-            LOG_DEBUG("Page::draw", "Skipping layer " + std::to_string(i) + " (no components or menus).");
             continue;
         }
 
@@ -1395,14 +1443,12 @@ void Page::draw() {
                     continue;
                 }
 
-                // Check if the menu's layer index matches the current layer
-                if (menu->getLayerIndex() == i) {
-                    // Draw all components in the menu
-                    for (Component* c : menu->getComponents()) {
-                        if (!c) {
-                            LOG_WARNING("Page::draw", "Null component in menu->getComponents().");
-                            continue;
-                        }
+                for (Component* c : menu->getComponents()) {
+                    if (!c) {
+                        LOG_WARNING("Page::draw", "Null component in menu->getComponents().");
+                        continue;
+                    }
+                    if (c->baseViewInfo.Layer == i) {
                         c->draw();
                     }
                 }

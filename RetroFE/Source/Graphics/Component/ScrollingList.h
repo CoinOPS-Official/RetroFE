@@ -103,9 +103,9 @@ public:
 
     ~ScrollingList() override;
     const std::vector<Item*>& getItems() const;
-
-    void setLayerIndex(size_t layer);
     
+    int getListId() const;
+
     void triggerEnterEvent();
     void triggerExitEvent();
     void triggerMenuEnterEvent(int menuIndex = -1);
@@ -133,7 +133,6 @@ public:
     bool allocateTexture(size_t index, const Item* i);
     void buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType);
     void deallocateTexture(size_t index);
-    size_t getLayerIndex();
     void setItems(std::vector<Item*>* items);
     void selectItemByName(std::string_view name);
     std::string getSelectedItemName();
@@ -180,6 +179,10 @@ public:
     bool isPlaylist() const;
 private:
 
+    static int nextListId;
+    static std::mutex listIdMutex;  // Add mutex for thread safety
+    int listId_;
+
     void clearPoints();
     void clearTweenPoints();
     
@@ -215,6 +218,5 @@ private:
     RotatableView<Component*> components_;
 
     bool useTextureCaching_{ false };
-    size_t layerIndex_;
 
 };

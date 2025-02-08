@@ -27,6 +27,7 @@
 #include "VideoComponent.h"
 #include "ReloadableMedia.h"
 #include "Text.h"
+#include "../../Video/VideoPool.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
 #include "../../Collection/Item.h"
@@ -45,37 +46,43 @@
 #include <iomanip>
 #include <algorithm>
 
-ScrollingList::ScrollingList(Configuration& c,
-    Page& p,
-    bool           layoutMode,
-    bool           commonMode,
-    bool          playlistType,
-    bool          selectedImage,
-    FontManager* font,
-    const std::string& layoutKey,
-    const std::string& imageType,
-    const std::string& videoType,
-    bool          useTextureCaching)
-    : Component(p)
-    , layoutMode_(layoutMode)
-    , commonMode_(commonMode)
-    , playlistType_(playlistType)
-    , selectedImage_(selectedImage)
-    , config_(c)
-    , fontInst_(font)
-    , layoutKey_(layoutKey)
-    , imageType_(imageType)
-    , videoType_(videoType)
-    , useTextureCaching_(useTextureCaching)
+int ScrollingList::nextListId = 0;
+
+ScrollingList::ScrollingList( Configuration &c,
+                              Page          &p,
+                              bool           layoutMode,
+                              bool           commonMode,
+                              bool          playlistType,
+                              bool          selectedImage,
+                              FontManager          *font,
+                              const std::string    &layoutKey,
+                              const std::string    &imageType,
+                              const std::string    &videoType,
+                              bool          useTextureCaching)
+    : Component( p )
+    , layoutMode_( layoutMode )
+    , commonMode_( commonMode )
+    , playlistType_( playlistType )
+    , selectedImage_( selectedImage)
+    , config_( c )
+    , fontInst_( font )
+    , layoutKey_( layoutKey )
+    , imageType_( imageType )
+    , videoType_( videoType )
     , components_()
-    , layerIndex_(0)
- {
+    , useTextureCaching_(useTextureCaching)
+{
+    listId_ = nextListId++;
 }
 
 
 ScrollingList::~ScrollingList() {
     clearPoints();
     destroyItems();
+}
+
+int ScrollingList::getListId() const {
+    return listId_;
 }
 
 void ScrollingList::clearPoints() {
@@ -97,16 +104,6 @@ void ScrollingList::clearTweenPoints() {
 const std::vector<Item*>& ScrollingList::getItems() const
 {
     return *items_;
-}
-
-void ScrollingList::setLayerIndex(size_t layer)
-{
-    layerIndex_ = layer;
-}
-
-size_t ScrollingList::getLayerIndex()
-{
-	return layerIndex_;
 }
 
 void ScrollingList::setItems( std::vector<Item *> *items )
@@ -217,16 +214,22 @@ void ScrollingList::allocateSpritePoints() {
 
 void ScrollingList::destroyItems()
 {
-    size_t componentSize = components_.size();
+    auto& data = components_.raw();
+    size_t componentSize = data.size();
 
+    // Clean up the pool - listId_ will always be valid
+    LOG_DEBUG("ScrollingList", "Cleaning up video pool for list: " + std::to_string(listId_));
+    VideoPool::cleanup(baseViewInfo.Monitor, listId_);
+
+    // Delete all components
     for (unsigned int i = 0; i < componentSize; ++i) {
-        if (Component* component = components_[i]) {
-            component->freeGraphicsMemory();
+        if (Component* component = data[i]) {
             delete component;
+            data[i] = nullptr;
         }
-        components_[i] = NULL;
     }
 }
+
 
 void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints) {
@@ -508,12 +511,17 @@ void ScrollingList::allocateGraphicsMemory( )
     allocateSpritePoints( );
 }
 
-void ScrollingList::freeGraphicsMemory( )
+void ScrollingList::freeGraphicsMemory()
 {
-    Component::freeGraphicsMemory( );
+    Component::freeGraphicsMemory();
     scrollPeriod_ = 0;
-    
-    deallocateSpritePoints( );
+    // Clean up components
+    deallocateSpritePoints();
+
+    // Clean up the video pool for this list
+    if (listId_ != -1) {
+        VideoPool::cleanup(baseViewInfo.Monitor, listId_);
+    }
 }
 
 void ScrollingList::triggerEnterEvent( )
@@ -793,7 +801,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
         // Create video or image
         if (!t) {
             if (videoType_ != "null") {
-                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
+                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1, false, listId_);
             }
             else {
                 std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
@@ -817,7 +825,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
             if (!t) {
                 if (videoType_ != "null") {
-                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
+                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1,  false, listId_);
                 }
                 else {
                     std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
@@ -852,7 +860,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
             }
         }
         if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor);
+            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_);
         }
         else {
             name = imageType_;
@@ -868,7 +876,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
     // check rom directory path for art
     if ( !t ) {
         if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor);
+            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_);
         }
         else {
             name = imageType_;
@@ -1046,33 +1054,40 @@ bool ScrollingList::isFastScrolling() const
 
 void ScrollingList::scroll(bool forward)
 {
-    // Exit conditions
+    // Exit conditions: if no items or scroll points, return.
     if (!items_ || items_->empty() || !scrollPoints_ || scrollPoints_->empty())
         return;
 
+    // Ensure that scrollPeriod is not below the minimum.
     if (scrollPeriod_ < minScrollTime_)
         scrollPeriod_ = minScrollTime_;
 
     size_t itemsSize = items_->size();
     size_t scrollPointsSize = scrollPoints_->size();
 
-    // Replace the item that's scrolled out
-    Item const* itemToScroll;
+    // Determine which component is exiting based on the logical order.
+    size_t exitIndex = forward ? 0 : scrollPoints_->size() - 1;
+
+    // Determine the new item to load into the exiting slot.
+    Item const* itemToScroll = nullptr;
     if (forward) {
-        itemToScroll = (*items_)[loopIncrement(itemIndex_, scrollPointsSize, itemsSize)];
+        // Use loopIncrement to get the item that follows the currently visible block.
+        itemToScroll = (*items_)[ loopIncrement(itemIndex_, scrollPointsSize, itemsSize) ];
+        // Advance the index.
         itemIndex_ = loopIncrement(itemIndex_, 1, itemsSize);
-        deallocateTexture(0);
-        allocateTexture(0, itemToScroll);
     }
     else {
-        itemToScroll = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
+        itemToScroll = (*items_)[ loopDecrement(itemIndex_, 1, itemsSize) ];
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
-        deallocateTexture(loopDecrement(0, 1, scrollPointsSize));
-        allocateTexture(loopDecrement(0, 1, scrollPointsSize), itemToScroll);
     }
 
-    // Set the animations
-    for (size_t index = 0; index < scrollPointsSize; ++index)  // Renamed from 'i' to 'index'
+    // Only deallocate (i.e. reset/recycle) the component that is exiting.
+    deallocateTexture(exitIndex);
+    // Then allocate new media (video or image) into that slot.
+    allocateTexture(exitIndex, itemToScroll);
+
+    // Update the animations (tweening) for each visible component.
+    for (size_t index = 0; index < scrollPointsSize; ++index)
     {
         size_t nextIndex;
         if (forward) {
@@ -1082,11 +1097,11 @@ void ScrollingList::scroll(bool forward)
             nextIndex = (index == scrollPointsSize - 1) ? 0 : index + 1;
         }
 
-        Component* component = components_[index];  // Renamed from 'c' to 'component' for clarity
+        Component* component = components_[index];  // components_ operator[] gives the logical ordering.
         if (component) {
-            auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
+            auto& nextTweenPoint     = (*tweenPoints_)[nextIndex];
             auto& currentScrollPoint = (*scrollPoints_)[index];
-            auto& nextScrollPoint = (*scrollPoints_)[nextIndex];
+            auto& nextScrollPoint    = (*scrollPoints_)[nextIndex];
 
             component->allocateGraphicsMemory();
             resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
@@ -1095,9 +1110,8 @@ void ScrollingList::scroll(bool forward)
         }
     }
 
-	components_.rotate(forward);
-
-    return;
+    // Rotate the RotatableView so that the logical order is updated.
+    components_.rotate(forward);
 }
 
 bool ScrollingList::isPlaylist() const

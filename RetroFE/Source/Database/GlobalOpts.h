@@ -70,6 +70,7 @@
 #define OPTION_LAYOUT                "layout"
 #define OPTION_RANDOMLAYOUT          "randomLayout"
 #define OPTION_FIRSTPLAYLIST         "firstPlaylist"
+#define OPTION_QUICKLISTCOLLECTIONPLAYLIST             "quickListCollectionPlaylist"
 #define OPTION_AUTOPLAYLIST          "autoPlaylist"
 #define OPTION_CYCLEPLAYLIST         "cyclePlaylist"
 #define OPTION_FIRSTCOLLECTION       "firstCollection"
@@ -244,6 +245,7 @@ public:
     bool jumpinputclear() { return bool_value(OPTION_JUMPINPUTCLEAR); }
     bool controllercomboexit() { return bool_value(OPTION_CONTROLLERCOMBOEXIT); }
     bool controllercombosettings() { return bool_value(OPTION_CONTROLLERCOMBOSETTINGS); }
+	const char* quicklistcollectionplaylist() { return value(OPTION_QUICKLISTCOLLECTIONPLAYLIST); }
     const char *settingscollectionplaylist() { return value(OPTION_SETTINGSCOLLECTIONPLAYLIST); }
     bool servostickenabled() { return bool_value(OPTION_SERVOSTIKENABLED); }
     

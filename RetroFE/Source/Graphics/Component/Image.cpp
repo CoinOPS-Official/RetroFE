@@ -34,10 +34,53 @@
 #include <cstring>
 
  // Definition of static members
-std::unordered_map<std::string, Image::CachedImage> Image::textureCache_;
+Image::PathCache Image::pathCache_;
+std::unordered_map<Image::PathCache::CacheKey, Image::CachedImage, Image::PathCache::CacheKeyHash> Image::textureCache_;
 std::shared_mutex Image::textureCacheMutex_;
 
-bool Image::loadFileToBuffer(const std::string& filePath) {
+Image::PathCache::CacheKey Image::PathCache::getKey(const std::string& filePath, int monitor) {
+    // Use string_view for initial splitting to avoid allocations
+    std::string_view pathView(filePath);
+    std::string_view directoryView, filenameView;
+
+    // Find last occurrence of either forward slash or backslash
+    // Linux uses '/', Windows uses '\', but many Windows APIs accept '/' too
+    size_t lastForwardSlash = pathView.find_last_of('/');
+    size_t lastBackSlash = pathView.find_last_of('\\');
+
+    // Determine the actual last separator position
+    size_t lastSlash;
+    if (lastForwardSlash == std::string::npos) {
+        lastSlash = lastBackSlash;
+    } else if (lastBackSlash == std::string::npos) {
+        lastSlash = lastForwardSlash;
+    } else {
+        lastSlash = std::max(lastForwardSlash, lastBackSlash);
+    }
+
+    if (lastSlash != std::string::npos) {
+        directoryView = pathView.substr(0, lastSlash);
+        filenameView = pathView.substr(lastSlash + 1);
+
+        // Handle empty directory case
+        if (directoryView.empty()) {
+            directoryView = ".";
+        }
+    } else {
+        directoryView = ".";
+        filenameView = pathView;
+    }
+
+    std::lock_guard<std::mutex> lock(cacheMutex_);
+    // Use emplace for efficient in-place construction
+    auto dirIt = directories_.emplace(directoryView).first;
+    auto fileIt = filenames_.emplace(filenameView).first;
+
+    return { *dirIt, *fileIt, monitor };
+}
+
+bool Image::loadFileToBuffer(const std::string& filePath, std::vector<uint8_t>& outBuffer) 
+{
     LOG_INFO("Image", "Attempting to load file into buffer: " + filePath);
 
     // Open the file in binary mode and move the cursor to the end to determine the size
@@ -58,191 +101,170 @@ bool Image::loadFileToBuffer(const std::string& filePath) {
     // Seek back to the beginning of the file
     file.seekg(0, std::ios::beg);
 
-    // Resize the buffer to fit the file data
-    buffer_.resize(static_cast<size_t>(size));
+    // Resize the outBuffer to fit the file data
+    outBuffer.resize(static_cast<size_t>(size));
 
-    // Read the file data directly into the buffer
-    if (!file.read(reinterpret_cast<char*>(buffer_.data()), size)) {
+    // Read the file data directly into the outBuffer
+    if (!file.read(reinterpret_cast<char*>(outBuffer.data()), size)) {
         LOG_ERROR("Image", "Failed to read file: " + filePath);
-        buffer_.clear(); // Ensure the buffer is empty on failure
+        outBuffer.clear(); // Ensure the buffer is empty on failure
         return false;
     }
 
     LOG_INFO("Image", "Successfully loaded file into buffer: " + filePath);
     return true;
 }
+
 bool Image::isAnimatedGIF(const std::vector<uint8_t>& buffer) {
-    // Early exit for small files
-    if (buffer.size() < 10) return false;
+	// Early exit for small files
+	if (buffer.size() < 10) return false;
 
-    // Look for the GIF89a or GIF87a signature to ensure it's a valid GIF
-    if (!(std::memcmp(buffer.data(), "GIF87a", 6) == 0 || std::memcmp(buffer.data(), "GIF89a", 6) == 0)) {
-        return false;
-    }
+	// Look for the GIF89a or GIF87a signature to ensure it's a valid GIF
+	if (!(std::memcmp(buffer.data(), "GIF87a", 6) == 0 || std::memcmp(buffer.data(), "GIF89a", 6) == 0)) {
+		return false;
+	}
 
-    // Search through the file to see if there are more than one frame separator (0x21, 0xF9)
-    size_t frameCount = 0;
-    for (size_t i = 0; i < buffer.size() - 1; ++i) {
-        if (buffer[i] == 0x21 && buffer[i + 1] == 0xF9) {
-            frameCount++;
-            if (frameCount > 1) {
-                return true; // Animated if more than one frame is found
-            }
-        }
-    }
-    return false;
+	// Search through the file to see if there are more than one frame separator (0x21, 0xF9)
+	size_t frameCount = 0;
+	for (size_t i = 0; i < buffer.size() - 1; ++i) {
+		if (buffer[i] == 0x21 && buffer[i + 1] == 0xF9) {
+			frameCount++;
+			if (frameCount > 1) {
+				return true; // Animated if more than one frame is found
+			}
+		}
+	}
+	return false;
 }
 
 
 bool Image::isAnimatedWebP(const std::vector<uint8_t>& buffer) {
-    // Early exit for small files
-    if (buffer.size() < 12) return false;
+	// Early exit for small files
+	if (buffer.size() < 12) return false;
 
-    // Ensure it is a valid WebP file
-    if (!(std::memcmp(buffer.data(), "RIFF", 4) == 0 && std::memcmp(buffer.data() + 8, "WEBP", 4) == 0)) {
-        return false;
-    }
+	// Ensure it is a valid WebP file
+	if (!(std::memcmp(buffer.data(), "RIFF", 4) == 0 && std::memcmp(buffer.data() + 8, "WEBP", 4) == 0)) {
+		return false;
+	}
 
-    // Set up WebP data structure
-    WebPData webpData = { buffer.data(), buffer.size() };
+	// Set up WebP data structure
+	WebPData webpData = { buffer.data(), buffer.size() };
 
-    // Create the WebP demuxer to inspect the file's structure
-    WebPDemuxer* demux = WebPDemux(&webpData);
-    if (!demux) {
-        LOG_ERROR("Image", "Failed to create WebPDemuxer.");
-        return false;
-    }
+	// Create the WebP demuxer to inspect the file's structure
+	WebPDemuxer* demux = WebPDemux(&webpData);
+	if (!demux) {
+		LOG_ERROR("Image", "Failed to create WebPDemuxer.");
+		return false;
+	}
 
-    // Check the number of frames in the WebP animation
-    int frameCount = WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT);
-    WebPDemuxDelete(demux);
+	// Check the number of frames in the WebP animation
+	int frameCount = WebPDemuxGetI(demux, WEBP_FF_FRAME_COUNT);
+	WebPDemuxDelete(demux);
 
-    // If there is more than one frame, the WebP is animated
-    return frameCount > 1;
+	// If there is more than one frame, the WebP is animated
+	return frameCount > 1;
 }
 
 
 Image::Image(const std::string& file, const std::string& altFile, Page& p, int monitor, bool additive, bool useTextureCaching)
 	: Component(p), file_(file), altFile_(altFile), useTextureCaching_(useTextureCaching)
 {
-    baseViewInfo.Monitor = monitor;
-    baseViewInfo.Additive = additive;
-    baseViewInfo.Layout = page.getCurrentLayout();
+	baseViewInfo.Monitor = monitor;
+	baseViewInfo.Additive = additive;
+	baseViewInfo.Layout = page.getCurrentLayout();
 }
 
 Image::~Image() {
-    Image::freeGraphicsMemory();
+	Image::freeGraphicsMemory();
 }
 
 void Image::freeGraphicsMemory() {
     Component::freeGraphicsMemory();
-    if (textureIsUncached_ && texture_) {
+
+    // Handle static texture cleanup
+    if (!useTextureCaching_ && texture_) {
         SDL_DestroyTexture(texture_);
-        textureIsUncached_ = false;
+        texture_ = nullptr;
     }
 
-    // Reset instance-specific pointers
-    texture_ = nullptr;
-    frameTextures_ = nullptr;
+    // Handle animated texture cleanup
+    if (!useTextureCaching_) {
+        for (SDL_Texture* texture : frameTextures_) {
+            if (texture) {
+                SDL_DestroyTexture(texture);
+            }
+        }
+        frameTextures_.clear();
+    }
 }
 
 void Image::allocateGraphicsMemory() {
     // Check if graphics memory is already allocated
-    if (texture_ || frameTextures_) {
+    if (texture_ || !frameTextures_.empty()) {
         // Graphics memory already allocated
         return;
     }
 
-    // Define a lambda to attempt loading a file with caching
+    // Define a lambda to attempt loading a file with optional caching
     auto tryLoad = [&](const std::string& filePath) -> bool {
-        // Generate the cache key
-        std::string cacheKey = filePath + "#" + std::to_string(baseViewInfo.Monitor);
-        
-        // Attempt to retrieve CachedImage from cache
-        bool foundInCache = false;
-        CachedImage* cachedImagePtr = nullptr;
+        // Generate the cache key using PathCache
+        auto cacheKey = pathCache_.getKey(filePath, baseViewInfo.Monitor);
 
-        {
-            std::shared_lock<std::shared_mutex> lock(textureCacheMutex_);
-            auto it = textureCache_.find(cacheKey);
-            if (it != textureCache_.end()) {
-                cachedImagePtr = &it->second;
-                foundInCache = true;
+        if (useTextureCaching_) {
+            // Attempt to retrieve CachedImage from cache
+            {
+                std::shared_lock<std::shared_mutex> lock(textureCacheMutex_);
+                auto it = textureCache_.find(cacheKey);
+                if (it != textureCache_.end()) {
+                    CachedImage& cachedImage = it->second;
+                    if (cachedImage.texture) {
+                        texture_ = cachedImage.texture;
+                        int width, height;
+                        if (SDL_QueryTexture(texture_, nullptr, nullptr, &width, &height) == 0) {
+                            baseViewInfo.ImageWidth = static_cast<float>(width);
+                            baseViewInfo.ImageHeight = static_cast<float>(height);
+                            LOG_INFO("Image", "Loaded static texture from cache: " + filePath);
+                            return true;
+                        }
+                        LOG_ERROR("Image", "Failed to query cached texture: " + std::string(SDL_GetError()));
+                        return false;
+                    }
+                    else if (!cachedImage.frameTextures.empty()) {
+                        frameTextures_ = cachedImage.frameTextures;
+                        frameDelay_ = cachedImage.frameDelay;
+                        SDL_Texture* firstFrame = cachedImage.frameTextures[0];
+                        int width, height;
+                        if (SDL_QueryTexture(firstFrame, nullptr, nullptr, &width, &height) == 0) {
+                            baseViewInfo.ImageWidth = static_cast<float>(width);
+                            baseViewInfo.ImageHeight = static_cast<float>(height);
+                            lastFrameTime_ = SDL_GetTicks();
+                            LOG_INFO("Image", "Loaded animated texture from cache: " + filePath);
+                            return true;
+                        }
+                        LOG_ERROR("Image", "Failed to query first frame of cached animated texture: " + std::string(SDL_GetError()));
+                        return false;
+                    }
+                }
             }
         }
 
-        if (foundInCache && cachedImagePtr) {
-            if (cachedImagePtr->texture) {
-                // Static image
-                texture_ = cachedImagePtr->texture;
-
-                // Query texture dimensions
-                int width, height;
-                if (SDL_QueryTexture(texture_, nullptr, nullptr, &width, &height) != 0) {
-                    // Remove the invalid cache entry
-                    {
-                        std::unique_lock<std::shared_mutex> lock(textureCacheMutex_);
-                        SDL_DestroyTexture(texture_);
-                        textureCache_.erase(cacheKey);
-                    }
-                    LOG_ERROR("Image", "Failed to query texture: " + std::string(SDL_GetError()));
-                    return false;
-                }
-                else {
-                    baseViewInfo.ImageWidth = static_cast<float>(width);
-                    baseViewInfo.ImageHeight = static_cast<float>(height);
-                }
-
-                LOG_INFO("Image", "Loaded static texture from cache: " + filePath);
-                return true;
-            }
-            else if (!cachedImagePtr->frameTextures.empty()) {
-                // Animated image (ensure the frameTextures vector is not empty)
-                frameTextures_ = &cachedImagePtr->frameTextures;
-                frameDelay_ = cachedImagePtr->frameDelay;  // Use the single frame delay
-
-                // Assuming that all frames have the same width/height, we can use the first frame to determine the image size
-                SDL_Texture* firstFrame = cachedImagePtr->frameTextures[0];
-                int width, height;
-                if (SDL_QueryTexture(firstFrame, nullptr, nullptr, &width, &height) != 0) {
-                    LOG_ERROR("Image", "Failed to query first frame texture: " + std::string(SDL_GetError()));
-                    // Remove the invalid cache entry
-                    {
-                        std::unique_lock<std::shared_mutex> lock(textureCacheMutex_);
-                        textureCache_.erase(filePath);
-                    }
-					return false;
-                }
-                else {
-                    baseViewInfo.ImageWidth = static_cast<float>(width);
-                    baseViewInfo.ImageHeight = static_cast<float>(height);
-                }
-
-                lastFrameTime_ = SDL_GetTicks();
-                LOG_INFO("Image", "Loaded animated texture from cache: " + filePath);
-                return true;
-            }
-        }
-
-
-
-        // If not found in cache, proceed to load from file
-        if (!loadFileToBuffer(filePath)) {
+        std::vector<uint8_t> localBuffer;
+        // If not using cache or not found in cache, proceed to load from file
+        if (!loadFileToBuffer(filePath, localBuffer)) {
+            LOG_ERROR("Image", "Failed to load file into buffer: " + filePath);
             return false;
         }
 
-        bool isAnimated = false;
-        bool animatedGif = isAnimatedGIF(buffer_);
-        bool animatedWebP = isAnimatedWebP(buffer_);
-
-        // Create SDL_RWops from the buffer
-        SDL_RWops* rw = SDL_RWFromConstMem(buffer_.data(), static_cast<int>(buffer_.size()));
+        SDL_RWops* rw = SDL_RWFromConstMem(localBuffer.data(), static_cast<int>(localBuffer.size()));
         if (!rw) {
             LOG_ERROR("Image", "Failed to create RWops from buffer: " + std::string(SDL_GetError()));
             return false;
         }
 
         CachedImage newCachedImage;
+        bool isAnimated = false;
+        bool animatedGif = isAnimatedGIF(localBuffer);
+        bool animatedWebP = isAnimatedWebP(localBuffer);
 
         if (animatedWebP) {
             IMG_Animation* animation = IMG_LoadWEBPAnimation_RW(rw);
@@ -252,11 +274,12 @@ void Image::allocateGraphicsMemory() {
                 return false;
             }
 
-            WebPData webpData = { buffer_.data(), buffer_.size() };
+            WebPData webpData = { localBuffer.data(), localBuffer.size() };
             WebPDemuxer* demux = WebPDemux(&webpData);
             if (!demux) {
                 LOG_ERROR("Image", "Failed to initialize WebP demuxer.");
                 IMG_FreeAnimation(animation);
+                SDL_RWclose(rw);
                 return false;
             }
 
@@ -265,6 +288,7 @@ void Image::allocateGraphicsMemory() {
                 LOG_ERROR("Image", "Failed to get frames for WebP animation.");
                 WebPDemuxDelete(demux);
                 IMG_FreeAnimation(animation);
+                SDL_RWclose(rw);
                 return false;
             }
 
@@ -280,10 +304,14 @@ void Image::allocateGraphicsMemory() {
                 WebPDemuxDelete(demux);
                 IMG_FreeAnimation(animation);
                 SDL_UnlockMutex(SDL::getMutex());
+                SDL_RWclose(rw);
                 return false;
             }
 
-            SDL_FillRect(canvasSurface, nullptr, SDL_MapRGBA(canvasSurface->format, 0, 0, 0, 0));  // Clear the entire canvas initially
+            SDL_FillRect(canvasSurface, nullptr, SDL_MapRGBA(canvasSurface->format, 0, 0, 0, 0));
+
+            std::vector<SDL_Texture*>& targetTextures = useTextureCaching_ ?
+                newCachedImage.frameTextures : frameTextures_;
 
             do {
                 SDL_Surface* frameSurface = SDL_CreateRGBSurfaceWithFormat(0, iter.width, iter.height, 32, SDL_PIXELFORMAT_RGBA32);
@@ -292,7 +320,8 @@ void Image::allocateGraphicsMemory() {
                     continue;
                 }
 
-                uint8_t const* ret = WebPDecodeRGBAInto(iter.fragment.bytes, iter.fragment.size, (uint8_t*)frameSurface->pixels, frameSurface->pitch * frameSurface->h, frameSurface->pitch);
+                uint8_t const* ret = WebPDecodeRGBAInto(iter.fragment.bytes, iter.fragment.size,
+                    (uint8_t*)frameSurface->pixels, frameSurface->pitch * frameSurface->h, frameSurface->pitch);
                 if (!ret) {
                     LOG_ERROR("Image", "Failed to decode WebP frame: " + std::to_string(iter.frame_num));
                     SDL_FreeSurface(frameSurface);
@@ -301,13 +330,11 @@ void Image::allocateGraphicsMemory() {
 
                 SDL_Rect frameRect = { iter.x_offset, iter.y_offset, iter.width, iter.height };
 
-                // Clear the area before blitting the new frame (to handle fully transparent pixels)
                 if (iter.dispose_method == WEBP_MUX_DISPOSE_BACKGROUND) {
                     SDL_FillRect(canvasSurface, &frameRect, SDL_MapRGBA(canvasSurface->format, 0, 0, 0, 0));
                 }
 
-                // Blit the current frame onto the canvas at the correct offset
-                SDL_SetSurfaceBlendMode(frameSurface, SDL_BLENDMODE_NONE);  // Replace the pixels completely
+                SDL_SetSurfaceBlendMode(frameSurface, SDL_BLENDMODE_NONE);
                 if (SDL_BlitSurface(frameSurface, nullptr, canvasSurface, &frameRect) != 0) {
                     LOG_ERROR("Image", "Failed to blit WebP frame onto canvas: " + std::string(SDL_GetError()));
                     SDL_FreeSurface(frameSurface);
@@ -316,18 +343,18 @@ void Image::allocateGraphicsMemory() {
 
                 SDL_FreeSurface(frameSurface);
 
-                // Create texture from the updated canvas
                 SDL_Texture* frameTexture = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), canvasSurface);
                 if (frameTexture) {
                     SDL_SetTextureBlendMode(frameTexture, SDL_BLENDMODE_BLEND);
-                    newCachedImage.frameTextures.push_back(frameTexture);
+                    targetTextures.push_back(frameTexture);
                 }
                 else {
                     LOG_ERROR("Image", "Failed to create texture from WebP frame: " + std::string(SDL_GetError()));
-                    continue;
                 }
 
-                LOG_INFO("Image", "Processing frame " + std::to_string(iter.frame_num) + ": offset (" + std::to_string(iter.x_offset) + ", " + std::to_string(iter.y_offset) + "), size (" + std::to_string(iter.width) + "x" + std::to_string(iter.height) + ")");
+                LOG_INFO("Image", "Processing frame " + std::to_string(iter.frame_num) + ": offset (" +
+                    std::to_string(iter.x_offset) + ", " + std::to_string(iter.y_offset) + "), size (" +
+                    std::to_string(iter.width) + "x" + std::to_string(iter.height) + ")");
             } while (WebPDemuxNextFrame(&iter));
 
             SDL_FreeSurface(canvasSurface);
@@ -335,143 +362,177 @@ void Image::allocateGraphicsMemory() {
             WebPDemuxReleaseIterator(&iter);
             WebPDemuxDelete(demux);
 
-            if (newCachedImage.frameTextures.empty()) {
+            if (targetTextures.empty()) {
                 LOG_ERROR("Image", "No frame textures were created for WebP animated image.");
                 IMG_FreeAnimation(animation);
+                SDL_RWclose(rw);
                 return false;
             }
 
             baseViewInfo.ImageWidth = static_cast<float>(maxWidth);
             baseViewInfo.ImageHeight = static_cast<float>(maxHeight);
             lastFrameTime_ = SDL_GetTicks();
-            // Store the frame delay in newCachedImage
-            newCachedImage.frameDelay = iter.duration;
+
+            if (useTextureCaching_) {
+                newCachedImage.frameDelay = iter.duration;
+            }
+            else {
+                frameDelay_ = iter.duration;
+            }
+
             IMG_FreeAnimation(animation);
             SDL_RWclose(rw);
             isAnimated = true;
 
             LOG_INFO("Image", "Loaded WebP animated texture.");
         }
-        else if (animatedGif) {
-            IMG_Animation* animation = IMG_LoadAnimation_RW(rw, 0); // For GIFs
-            if (animation) {
-                SDL_LockMutex(SDL::getMutex());
+else if (animatedGif) {
+    IMG_Animation* animation = IMG_LoadAnimation_RW(rw, 0);
+    if (!animation) {
+        LOG_ERROR("Image", "Failed to load GIF animation: " + std::string(IMG_GetError()));
+        SDL_RWclose(rw);
+        return false;
+    }
 
-                for (int i = 0; i < animation->count; ++i) {
-                    SDL_Texture* frameTexture = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), animation->frames[i]);
-                    if (frameTexture) {
-                        newCachedImage.frameTextures.push_back(frameTexture);
-                    }
-                    else {
-                        LOG_ERROR("Image", "Failed to create texture from GIF animation frame: " + std::string(SDL_GetError()));
-                    }
-                }
+    // Validate animation data
+    if (animation->count <= 0 || !animation->frames || !animation->delays) {
+        LOG_ERROR("Image", "Invalid GIF animation data");
+        IMG_FreeAnimation(animation);
+        SDL_RWclose(rw);
+        return false;
+    }
 
-				newCachedImage.frameDelay = animation->delays[0];
+    SDL_LockMutex(SDL::getMutex());
 
-                SDL_UnlockMutex(SDL::getMutex());
+    std::vector<SDL_Texture*>& targetTextures = useTextureCaching_ ?
+        newCachedImage.frameTextures : frameTextures_;
 
-                if (newCachedImage.frameTextures.empty()) {
-                    LOG_ERROR("Image", "No frame textures were created for GIF animated image: " + filePath);
-                    IMG_FreeAnimation(animation);
-                    return false;
-                }
-
-                baseViewInfo.ImageWidth = static_cast<float>(animation->w);
-                baseViewInfo.ImageHeight = static_cast<float>(animation->h);
-                lastFrameTime_ = SDL_GetTicks();
-				IMG_FreeAnimation(animation);
-                isAnimated = true;
-
-                LOG_INFO("Image", "Loaded GIF animated texture: " + filePath);
-            }
-            else {
-                LOG_ERROR("Image", "Failed to load GIF animation: " + std::string(IMG_GetError()));
-            }
+    bool hasError = false;
+    for (int i = 0; i < animation->count; ++i) {
+        if (!animation->frames[i]) {
+            LOG_ERROR("Image", "Invalid frame at index " + std::to_string(i));
+            continue;
         }
 
-        // If the image is not animated, handle as a static image
+        SDL_Texture* frameTexture = SDL_CreateTextureFromSurface(
+            SDL::getRenderer(baseViewInfo.Monitor),
+            animation->frames[i]
+        );
+
+        if (frameTexture) {
+            SDL_SetTextureBlendMode(frameTexture, SDL_BLENDMODE_BLEND);  // Added blend mode setting
+            targetTextures.push_back(frameTexture);
+        }
+        else {
+            LOG_ERROR("Image", "Failed to create texture from GIF animation frame " +
+                std::to_string(i) + ": " + std::string(SDL_GetError()));
+            hasError = true;
+        }
+    }
+
+    SDL_UnlockMutex(SDL::getMutex());
+
+    if (targetTextures.empty()) {
+        LOG_ERROR("Image", "No frame textures were created for GIF animated image: " + filePath);
+        IMG_FreeAnimation(animation);
+        SDL_RWclose(rw);
+        return false;
+    }
+
+    // Set dimensions before potential early returns
+    baseViewInfo.ImageWidth = static_cast<float>(animation->w);
+    baseViewInfo.ImageHeight = static_cast<float>(animation->h);
+
+    // Set timing information
+    if (animation->delays && animation->count > 0) {
+        if (useTextureCaching_) {
+            newCachedImage.frameDelay = animation->delays[0];
+        }
+        else {
+            frameDelay_ = animation->delays[0];
+        }
+    }
+    else {
+        // Default delay if none provided
+        int defaultDelay = 100; // 100ms default
+        if (useTextureCaching_) {
+            newCachedImage.frameDelay = defaultDelay;
+        }
+        else {
+            frameDelay_ = defaultDelay;
+        }
+        LOG_WARNING("Image", "No delay information found, using default delay: " + filePath);
+    }
+
+    lastFrameTime_ = SDL_GetTicks();
+    isAnimated = true;
+
+    // Log warning if some frames failed but we still have valid textures
+    if (hasError && !targetTextures.empty()) {
+        LOG_WARNING("Image", "Loaded GIF animation with some frame errors: " + filePath);
+    }
+    else {
+        LOG_INFO("Image", "Loaded GIF animated texture: " + filePath);
+    }
+
+    IMG_FreeAnimation(animation);
+}
+        // Handle static images
         if (!isAnimated) {
-            SDL_LockMutex(SDL::getMutex());
-
-            newCachedImage.texture = IMG_LoadTexture_RW(SDL::getRenderer(baseViewInfo.Monitor), rw, 0);
-            if (newCachedImage.texture) {
-                SDL_SetTextureBlendMode(newCachedImage.texture, baseViewInfo.Additive ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
-
+            SDL_Texture* newTexture = IMG_LoadTexture_RW(SDL::getRenderer(baseViewInfo.Monitor), rw, 0);
+            if (newTexture) {
+                SDL_SetTextureBlendMode(newTexture, baseViewInfo.Additive ? SDL_BLENDMODE_ADD : SDL_BLENDMODE_BLEND);
                 int width, height;
-                if (SDL_QueryTexture(newCachedImage.texture, nullptr, nullptr, &width, &height) != 0) {
-                    LOG_ERROR("Image", "Failed to query texture: " + std::string(SDL_GetError()));
-                    SDL_DestroyTexture(newCachedImage.texture);
-                    newCachedImage.texture = nullptr;
-                    SDL_UnlockMutex(SDL::getMutex());
-                    return false; // Indicate failure
-                }
-                else {
+                if (SDL_QueryTexture(newTexture, nullptr, nullptr, &width, &height) == 0) {
                     baseViewInfo.ImageWidth = static_cast<float>(width);
                     baseViewInfo.ImageHeight = static_cast<float>(height);
+
+                    if (useTextureCaching_) {
+                        newCachedImage.texture = newTexture;
+                    } else {
+                        texture_ = newTexture;
+                    }
+
+                    LOG_INFO("Image", "Loaded static texture: " + filePath);
                 }
-
-                LOG_INFO("Image", "Loaded static texture: " + filePath);
             }
-            else {
-                LOG_ERROR("Image", "Failed to load static image: " + std::string(IMG_GetError()));
-                SDL_UnlockMutex(SDL::getMutex());
-                return false;
-            }
-
-            SDL_UnlockMutex(SDL::getMutex());
-            
-            if (!useTextureCaching_) {
-                texture_ = newCachedImage.texture;
-                textureIsUncached_ = true;
-                return true;
-            }
-        }
-
-
-        
-        // Update the cache
-        {
-            std::unique_lock<std::shared_mutex> lock(textureCacheMutex_);
-            textureCache_[cacheKey] = newCachedImage;
-        }
-
-        // Assign to instance-specific pointers by referencing the cache entry
-        const CachedImage* cacheEntry = nullptr;
-        {
-            std::shared_lock<std::shared_mutex> lock(textureCacheMutex_);
-            cacheEntry = &textureCache_.at(cacheKey);
-        }
-
-        if (cacheEntry->texture) {
-            texture_ = cacheEntry->texture;
-        }
-        if (isAnimated) {
-            frameDelay_ = cacheEntry->frameDelay;
-            frameTextures_ = &cacheEntry->frameTextures;
         }
 
         SDL_RWclose(rw);
-        buffer_.clear(); // Optional: Clear if you no longer need the buffer
-        LOG_INFO("Image", "Loaded and cached texture: " + filePath);
+
+        // Add to cache only if caching is enabled
+        if (useTextureCaching_) {
+            std::unique_lock<std::shared_mutex> lock(textureCacheMutex_);
+            textureCache_[cacheKey] = std::move(newCachedImage);
+            const CachedImage& cachedImage = textureCache_.at(cacheKey);
+
+            if (cachedImage.texture) {
+                texture_ = cachedImage.texture;
+            }
+            if (isAnimated) {
+                // Simple vector copy instead of pointer allocation
+                frameTextures_ = cachedImage.frameTextures;
+                frameDelay_ = cachedImage.frameDelay;
+            }
+        }
+
+        LOG_INFO("Image", "Loaded " << (useTextureCaching_ ? "and cached " : "without caching ") << "texture: " << filePath);
+
         return true;
         };
 
     // Attempt to load the primary file
     if (tryLoad(file_)) {
-        // Successfully loaded primary file
         return;
     }
 
     // If primary file failed, attempt to load the alternative file
     if (!altFile_.empty()) {
         if (tryLoad(altFile_)) {
-            // Successfully loaded alternative file
             return;
         }
     }
 
-    // If both attempts failed, log a comprehensive error
     LOG_ERROR("Image", "Failed to load both primary and alternative image files: " + file_ + " | " + altFile_);
 }
 
@@ -479,11 +540,7 @@ void Image::draw() {
     Component::draw();
 
     // Calculate the destination rectangle for rendering
-    SDL_FRect rect = { 0, 0, 0, 0 };
-    rect.x = baseViewInfo.XRelativeToOrigin();
-    rect.y = baseViewInfo.YRelativeToOrigin();
-    rect.w = baseViewInfo.ScaledWidth();
-    rect.h = baseViewInfo.ScaledHeight();
+    SDL_FRect rect = { baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(), baseViewInfo.ScaledWidth(), baseViewInfo.ScaledHeight() };
 
     // Prioritize static image rendering
     if (texture_) {
@@ -497,20 +554,19 @@ void Image::draw() {
 
         SDL_UnlockMutex(SDL::getMutex());
     }
-    else if (frameDelay_ != 0 && frameTextures_ && !frameTextures_->empty()) {
-        // Handle animation rendering
+    else if (frameDelay_ != 0 && !frameTextures_.empty()) {
         Uint32 currentTime = SDL_GetTicks();
+        Uint32 elapsed = currentTime - lastFrameTime_;
 
-        // Update the frame if enough time has passed based on frameDelay_
-        if (currentTime - lastFrameTime_ >= static_cast<Uint32>(frameDelay_)) {
-            lastFrameTime_ = currentTime;
-
-            // Increment current frame using modular arithmetic
-            currentFrame_ = (currentFrame_ + 1) % frameTextures_->size();
+        // Handle timer wraparound
+        if (elapsed >= static_cast<Uint32>(frameDelay_)) {
+            size_t framesToAdvance = elapsed / frameDelay_;
+            currentFrame_ = (currentFrame_ + framesToAdvance) % frameTextures_.size();
+            lastFrameTime_ = currentTime - (elapsed % frameDelay_);
         }
 
         // Render the current animation frame if valid
-        SDL_Texture* frameTexture = (*frameTextures_)[currentFrame_];
+        SDL_Texture* frameTexture = frameTextures_[currentFrame_];
         if (frameTexture) {
             SDL_LockMutex(SDL::getMutex());
 
@@ -532,18 +588,18 @@ void Image::draw() {
 }
 
 std::string_view Image::filePath() {
-    return file_;
+	return file_;
 }
 
 // Static method to clean up the texture cache
 void Image::cleanupTextureCache() {
-    std::unique_lock<std::shared_mutex> lock(textureCacheMutex_);    
+    std::unique_lock<std::shared_mutex> lock(textureCacheMutex_);
     for (auto& pair : textureCache_) {
+
         // Destroy static textures
         if (pair.second.texture) {
             SDL_DestroyTexture(pair.second.texture);
             pair.second.texture = nullptr;
-            LOG_INFO("TextureCache", "Destroyed cached static texture: " + pair.first);
         }
 
         // Destroy frame textures for animated images
@@ -567,7 +623,7 @@ void Image::cleanupTextureCache() {
             // Reset the frame delay to 0
             pair.second.frameDelay = 0;
 
-            LOG_INFO("TextureCache", "Destroyed cached animated textures: " + pair.first);
+            LOG_INFO("TextureCache", "Destroyed cached animated textures");
         }
     }
 

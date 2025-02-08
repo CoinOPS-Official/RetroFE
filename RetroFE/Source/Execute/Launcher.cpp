@@ -24,6 +24,7 @@
 #include "../SDL.h"
 #include "../Database/GlobalOpts.h"
 #include "../Collection/CollectionInfoBuilder.h"
+#include "../Database/HiScores.h"
 #include <cstdlib>
 #include <locale>
 #include <sstream>
@@ -917,25 +918,29 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		if (!isAttractMode) {
 			LOG_INFO("Launcher", "Waiting for launched item to exit.");
 
-			// Spawn a thread to perform the ServoStik check if the item launched successfully
-			servoThread = std::thread([&, pid]() {
-				int launchStatus;
-				pid_t result = waitpid(pid, &launchStatus, WNOHANG);
-				if (result == 0) { // Process is still running, assume successful launch
-					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && isServoStikEnabled) {
-						if (!SetServoStik4Way()) {
-							LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
-						}
-						else {
-							LOG_INFO("RetroFE", "Setting ServoStik to 4-way mode");
-							is4waySet = true;
+			if (isServoStikEnabled) {
+				// Spawn ServoStik thread only if needed
+				servoThread = std::thread([&]() {
+					// Give the process a moment to start
+					std::this_thread::sleep_for(std::chrono::milliseconds(500));
+
+					// Use kill with signal 0 to check if process is running
+					if (kill(pid, 0) == 0) {  // Process is running
+						if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
+							if (!SetServoStik4Way()) {
+								LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
+							}
+							else {
+								LOG_INFO("RetroFE", "Setting ServoStik to 4-way mode");
+								is4waySet = true;
+							}
 						}
 					}
-				}
-				});
+					});
+			}
 
-			// Wait for the process to exit
-			waitpid(pid, &status, 0);
+			// Main process waits here
+			waitpid(pid, &status, 0);  // This will block until the child exits
 		}
 		else {
 			// Attract mode logic
@@ -1065,6 +1070,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
 			cib.updateTimeSpent(collectionItem, gameplayDuration);
 		}
+	}
+	if (executable.find("mame") != std::string::npos) {
+		HiScores::getInstance().runHi2TxtAsync(collectionItem->name);
 	}
 
 	LOG_INFO("Launcher", "Completed execution for: " + executionString);

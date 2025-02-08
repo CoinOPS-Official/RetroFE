@@ -29,7 +29,7 @@ class IVideo
     virtual bool deInitialize() = 0;
     virtual SDL_Texture *getTexture() const = 0;
     virtual void draw() = 0;
-    virtual void loopHandler() = 0;
+    virtual void messageHandler() = 0;
     virtual void volumeUpdate() = 0;
     virtual int getHeight() = 0;
     virtual int getWidth() = 0;
@@ -44,14 +44,5 @@ class IVideo
     virtual unsigned long long getDuration() = 0;
     virtual bool isPaused() = 0;
     virtual bool isPlaying() = 0;
-    virtual void bufferDisconnect(bool disconnect) = 0;
-    virtual bool isBufferDisconnected() = 0;
-
-    virtual GstClockTime getLastPTS() const = 0;
-    virtual GstClockTime getExpectedTime() const = 0;
-    virtual bool isNewFrameAvailable() const = 0;
-    virtual void resetNewFrameFlag() = 0;
-    virtual GstElement* getPipeline() const = 0;
-    virtual GstElement* getVideoSink() const = 0;
-
+    virtual bool hasError() const = 0;
 };
