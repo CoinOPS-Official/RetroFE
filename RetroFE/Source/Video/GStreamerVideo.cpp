@@ -232,10 +232,11 @@ void GStreamerVideo::initializePlugins()
             LOG_DEBUG("GStreamerVideo", "Using avdec_h264/avdec_h265 for software decoding");
         }
 #elif defined(__APPLE__)
-        // if (Configuration::HardwareVideoAccel) {
-        //     enablePlugin("vah264dec");
-        //     enablePlugin("vah265dec");
-        // }
+        if (!Configuration::HardwareVideoAccel) {
+             enablePlugin("avdec_h264");
+             enablePlugin("avdec_h265");
+             LOG_DEBUG("GStreamerVideo", "Using avdec_h264/avdec_h265 for software decoding");
+        }
 #else
 		//enablePlugin("pipewiresink");
         //disablePlugin("alsasink");
