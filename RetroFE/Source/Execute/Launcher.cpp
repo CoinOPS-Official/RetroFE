@@ -1059,6 +1059,8 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		}
 		execArgs.push_back(nullptr);
 
+		setpgid(0, 0);
+
 		execvp(executable.c_str(), execArgs.data());
 		LOG_ERROR("Launcher", "Failed to execute: " + executable + " with arguments: " + args);
 		exit(EXIT_FAILURE);
@@ -1095,7 +1097,13 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			}
 
 			// Main process waits here
-			waitpid(pid, &status, 0);  // This will block until the child exits
+			while (true) {
+				if (kill(-pid, 0) == -1 && errno == ESRCH) {
+					// No process in the group exists.
+					break;
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
 		}
 		else {
 			// Attract mode logic
