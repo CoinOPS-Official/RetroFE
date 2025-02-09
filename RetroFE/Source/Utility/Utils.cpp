@@ -1,18 +1,18 @@
 /* This file is part of RetroFE.
- *
- * RetroFE is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * RetroFE is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
- */
+*
+* RetroFE is free software: you can redistribute it and/or modify
+* it under the terms of the GNU General Public License as published by
+* the Free Software Foundation, either version 3 of the License, or
+* (at your option) any later version.
+*
+* RetroFE is distributed in the hope that it will be useful,
+* but WITHOUT ANY WARRANTY; without even the implied warranty of
+* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+* GNU General Public License for more details.
+*
+* You should have received a copy of the GNU General Public License
+* along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
+*/
 
 #include "Utils.h"
 #include "../Database/Configuration.h"
@@ -25,18 +25,19 @@
 #include <filesystem>
 #include <unordered_set>
 #include <unordered_map>
+#include <codecvt>
 #ifndef __APPLE__
-    #include <charconv>
+#include <charconv>
 #endif
 
 #ifdef WIN32
-    #include <Windows.h>
+#include <Windows.h>
 #endif
 
 #ifdef WIN32
-    #include <io.h>
+#include <io.h>
 #else
-    #include <unistd.h>
+#include <unistd.h>
 #endif
 
 // Initialize the static member variables
@@ -55,9 +56,20 @@ Utils::~Utils() = default;
 #ifdef WIN32
 void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam ) {
     HWND hwnd = FindWindow(NULL, windowTitle);
-	if (hwnd != NULL) {
+    if (hwnd != NULL) {
         PostMessage(hwnd, Msg, wParam, lParam);
     }
+}
+
+// Utility function to convert std::wstring to std::string
+std::string Utils::wstringToString(const std::wstring& wstr) {
+    if (wstr.empty()) {
+        return std::string();
+    }
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
+    std::string strTo(size_needed, 0);
+    WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), &strTo[0], size_needed, NULL, NULL);
+    return strTo;
 }
 #endif
 
@@ -128,10 +140,10 @@ bool Utils::isFileInCache(const std::filesystem::path& baseDir, const std::strin
             LOG_FILECACHE("Hit", removeAbsolutePath(baseDir.string()) + " contains " + filename);
             return true;
         }
-    }
+        }
 
     return false;
-}
+    }
 
 
 
@@ -140,49 +152,43 @@ bool Utils::isFileCachePopulated(const std::filesystem::path& baseDir) {
 }
 
 bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file) {
+    namespace fs = std::filesystem;
 
-        namespace fs = std::filesystem;
+    fs::path absolutePath = Utils::combinePath(Configuration::absolutePath, prefix);
+    fs::path baseDir = absolutePath.parent_path();
 
-        fs::path absolutePath = Utils::combinePath(Configuration::absolutePath, prefix);
-        fs::path baseDir = absolutePath.parent_path();
+    // Check if the directory is known to not exist
+    if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
+        LOG_FILECACHE("Skip", "Skipping non-existing directory: " + removeAbsolutePath(baseDir.string()));
+        return false; // Directory was previously found not to exist
+    }
 
-        // Check if the directory is known to not exist
-        if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
-            LOG_FILECACHE("Skip", "Skipping non-existing directory: " + removeAbsolutePath(baseDir.string()));
-            return false; // Directory was previously found not to exist
+    // Early exit if the directory doesn't exist
+    if (!fs::is_directory(baseDir)) {
+        nonExistingDirectories.insert(baseDir); // Add to non-existing directories cache
+        return false;
+    }
+
+    std::string baseFileName = absolutePath.filename().string();
+
+    // Ensure the cache is populated
+    if (!isFileCachePopulated(baseDir)) {
+        populateCache(baseDir);
+    }
+
+    // Check for the file with each extension in the cache
+    for (const auto& ext : extensions) {
+        std::string tempFileName = baseFileName + "." + ext;
+        if (isFileInCache(baseDir, tempFileName)) {
+            file = (baseDir / tempFileName).string();
+            return true; // File found
         }
+    }
 
-        if (!fs::is_directory(baseDir)) {
-            // Handle the case where baseDir is not a directory
-            nonExistingDirectories.insert(baseDir); // Add to non-existing directories cache
-            return false;
-        }
-
-        std::string baseFileName = absolutePath.filename().string();
-
-        if (!isFileCachePopulated(baseDir)) {
-            populateCache(baseDir);
-        }
-
-        bool foundInCache = false;
-        for (const auto& ext : extensions) {
-            std::string tempFileName = baseFileName + "." + ext;
-            if (isFileInCache(baseDir, tempFileName)) {
-                file = (baseDir / tempFileName).string();
-                foundInCache = true;
-                break;
-            }
-        }
-
-        if (!foundInCache) {
-            // Log cache miss only once per directory after checking all extensions
-            LOG_FILECACHE("Miss", removeAbsolutePath(baseDir.string()) + " does not contain file '" + baseFileName + "'");
-        }
-
-        return foundInCache;
-
+    // Log cache miss after checking all extensions
+    LOG_FILECACHE("Miss", removeAbsolutePath(baseDir.string()) + " does not contain file '" + baseFileName + "'");
+    return false; // No matching file found
 }
-
 
 
 std::string Utils::replace(
@@ -281,6 +287,20 @@ std::string Utils::getEnvVar(std::string const& key)
     return val == NULL ? std::string() : std::string(val);
 }
 
+void Utils::setEnvVar(const std::string& var, const std::string& value) {
+#ifdef _WIN32
+    // On Windows, use _putenv_s
+    if (_putenv_s(var.c_str(), value.c_str()) != 0) {
+        LOG_ERROR("Utils", "Failed to set GST_DEBUG_DUMP_DOT_DIR environment variable.");
+    }
+#else
+    // On Unix-like systems, use setenv
+    if (setenv(var.c_str(), value.c_str(), 1) != 0) {
+        LOG_ERROR("Utils", "Failed to set GST_DEBUG_DUMP_DOT_DIR environment variable.");
+    }
+#endif
+}
+
 std::string Utils::getFileName(const std::string& filePath) {
     return std::filesystem::path(filePath).filename().string();
 }
@@ -352,11 +372,11 @@ std::string Utils::removeAbsolutePath(const std::string& fullPath) {
 
 // Check if we're starting retrofe from terminal on Win or Unix
 bool Utils::isOutputATerminal() {
-    #ifdef _WIN32
-        return _isatty(_fileno(stdout));
-    #else
-        return isatty(STDOUT_FILENO);
-    #endif
+#ifdef _WIN32
+    return _isatty(_fileno(stdout));
+#else
+    return isatty(STDOUT_FILENO);
+#endif
 }
 
 // Check if start of fullString contains startOfString
@@ -375,12 +395,45 @@ bool Utils::startsWithAndStrip(std::string& fullString, const std::string& start
 
 
 std::string Utils::getOSType(){
-    #ifdef WIN32
-        std::string osType = "windows";
-    #elif __APPLE__
-        std::string osType = "apple";
-    #else
-        std::string osType = "linux";
-    #endif
+#ifdef WIN32
+    std::string osType = "windows";
+#elif __APPLE__
+    std::string osType = "apple";
+#else
+    std::string osType = "linux";
+#endif
     return osType;
+}
+
+// Define the obfuscation key (simple and hard-coded for now)
+const std::string Utils::obfuscationKey = "s3cReT123!";
+
+// Public method to obfuscate data using XOR with the key
+std::string Utils::obfuscate(const std::string& data) {
+    return xorOperation(data, obfuscationKey);
+}
+
+// Public method to de-obfuscate data (same as obfuscate due to XOR symmetry)
+std::string Utils::deobfuscate(const std::string& data) {
+    return xorOperation(data, obfuscationKey);
+}
+
+// Private helper method to apply XOR obfuscation
+std::string Utils::xorOperation(const std::string& data, const std::string& key) {
+    std::string result = data;
+    for (size_t i = 0; i < data.size(); ++i) {
+        result[i] = data[i] ^ key[i % key.size()];
+    }
+    return result;
+}
+
+std::string Utils::removeNullCharacters(const std::string& input) {
+    std::string output;
+    output.reserve(input.size());  // Reserve space for efficiency
+    for (char ch : input) {
+        if (ch != '\0') {  // Filter out null characters
+            output += ch;
+        }
+    }
+    return output;
 }

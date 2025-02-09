@@ -365,6 +365,17 @@ bool CollectionInfoBuilder::ImportDirectory(CollectionInfo *info, const std::str
         } while (path != "");
     }
 
+    // Apply time spent data
+    std::string timeSpentFile = Utils::combinePath(Configuration::absolutePath, "collections", "timeSpent.txt");
+    std::map<std::string, double> currentTimeSpentList = ImportTimeSpent(timeSpentFile);
+
+    for (auto it = info->items.begin(); it != info->items.end(); ++it) {
+        std::string key = getKey(*it);
+        if (currentTimeSpentList.find(key) != currentTimeSpentList.end()) {
+            (*it)->timeSpent = currentTimeSpentList[key];
+        }
+    }
+
     // apply playCount data
     std::string playCountFile = Utils::combinePath(Configuration::absolutePath, "collections", "playCount.txt");
     std::map<std::string, Item*> curretPlayCountList = ImportPlayCount(playCountFile);
@@ -772,6 +783,40 @@ std::string CollectionInfoBuilder::getKey(Item* item)
     return "_" + item->collectionInfo->name + ":" + item->name;
 }
 
+void CollectionInfoBuilder::updateTimeSpent(Item* item, double timePlayedInSeconds) {
+    if (!item || timePlayedInSeconds <= 0) {
+        LOG_WARNING("CollectionInfoBuilder", "Invalid item or gameplay duration; cannot update time spent.");
+        return;
+    }
+
+    // Update the current item's timeSpent attribute in memory
+    item->timeSpent += timePlayedInSeconds;
+
+    std::string dir = Utils::combinePath(Configuration::absolutePath, "collections");
+    std::string file = Utils::combinePath(dir, "timeSpent.txt");
+
+    // Load existing timeSpent data
+    std::map<std::string, double> currentTimes = ImportTimeSpent(file);
+
+    // Update or add the current item's time spent in the map
+    std::string key = getKey(item);
+    currentTimes[key] = item->timeSpent;
+
+    // Persist updated timeSpent data to file
+    std::ofstream outstream(file, std::ios::trunc);
+    if (!outstream.is_open()) {
+        LOG_ERROR("CollectionInfoBuilder", "Failed to open " + file + " for writing.");
+        return;
+    }
+
+    for (const auto& [key, timeSpent] : currentTimes) {
+        outstream << key << ";" << timeSpent << std::endl;
+    }
+
+    outstream.close();
+    LOG_INFO("CollectionInfoBuilder", "Updated timeSpent.txt for " + item->name + ": +" + std::to_string(timePlayedInSeconds) + " seconds, total: " + std::to_string(item->timeSpent) + " seconds.");
+}
+
 void CollectionInfoBuilder::AddToPlayCount(Item* item)
 {
     // Write new playcount file
@@ -829,6 +874,32 @@ void CollectionInfoBuilder::AddToPlayCount(Item* item)
         LOG_ERROR("PlayCount", "Save failed: " + file);
     }
 }
+
+std::map<std::string, double> CollectionInfoBuilder::ImportTimeSpent(const std::string& file) {
+    std::map<std::string, double> timeSpentList;
+
+    std::ifstream filestream(file);
+    if (!filestream.is_open()) {
+        return timeSpentList;
+    }
+
+    std::string line;
+    while (std::getline(filestream, line)) {
+        line = Utils::filterComments(line);
+        if (!line.empty()) {
+            size_t separator = line.find(';');
+            if (separator != std::string::npos) {
+                std::string key = line.substr(0, separator);
+                double timeSpent = std::stod(line.substr(separator + 1));
+                timeSpentList[key] = timeSpent;
+            }
+        }
+    }
+    filestream.close();
+
+    return timeSpentList;
+}
+
 
 std::map<std::string, Item*> CollectionInfoBuilder::ImportPlayCount(const std::string& file)
 {

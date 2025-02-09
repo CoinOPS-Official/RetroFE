@@ -24,5 +24,5 @@
 class ImageBuilder
 {
 public:
-    Image * CreateImage(const std::string& path, Page &p, const std::string& name, int monitor, bool additive);
+    Image * CreateImage(const std::string& path, Page &p, const std::string& name, int monitor, bool additive, bool useTextureCaching = false);
 };

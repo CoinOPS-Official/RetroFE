@@ -301,3 +301,22 @@ void CollectionInfo::sortPlaylists()
     }
     sortType = "";
 }
+
+bool CollectionInfo::isItemInLastPlayed(const Item* selectedItem) {
+    // Check if 'lastplayed' playlist exists in this collection
+    auto it = this->playlists.find("lastplayed");
+    if (it != this->playlists.end()) {
+        // Get the vector of Item* for 'lastplayed'
+        std::vector<Item*>* lastPlayedList = it->second;
+
+        // Iterate through the vector of Item*
+        for (const auto& playedItem : *lastPlayedList) {
+            // Compare by name and collectionInfo directly
+            if (playedItem->name == selectedItem->name &&
+                playedItem->collectionInfo->name == selectedItem->collectionInfo->name) {
+                return true;  // Item is in the 'lastplayed' playlist
+            }
+        }
+    }
+    return false;  // Item is not in the 'lastplayed' playlist
+}

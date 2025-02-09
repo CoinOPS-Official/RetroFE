@@ -22,16 +22,20 @@
 #include <sstream>
 
 
-Text::Text( const std::string& text, Page &p, Font *font, int monitor )
+Text::Text( const std::string& text, Page &p, FontManager *font, int monitor )
     : Component(p)
     , textData_(text)
     , fontInst_(font)
+    , cachedPositions_()
+    , needsUpdate_(true)
 {
     baseViewInfo.Monitor = monitor;
     baseViewInfo.Layout = page.getCurrentLayout();
 }
 
-Text::~Text() = default;
+Text::~Text() { Component::freeGraphicsMemory(); }
+
+
 
 void Text::deInitializeFonts( )
 {
@@ -43,100 +47,118 @@ void Text::initializeFonts( )
     fontInst_->initialize( );
 }
 
-void Text::setText( const std::string& text, int id )
-{
-    if ( getId( ) == id )
+void Text::setText(const std::string& text, int id) {
+    if (getId() == id && textData_ != text) {
         textData_ = text;
+        needsUpdate_ = true;
+    }
 }
 
-void Text::draw( )
-{
-    Component::draw( );
+void Text::draw() {
+    Component::draw();
 
-    Font *font;
-    if ( baseViewInfo.font ) // Use font of this specific item if available
-      font = baseViewInfo.font;
-    else                     // If not, use the general font settings
-      font = fontInst_;
+    FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
+    SDL_Texture* texture = font->getTexture();
 
-    SDL_Texture *t = font->getTexture( );
-
-    float imageHeight = 0;
-    float imageWidth = 0;
-    float imageMaxWidth = 0;
-    if (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0) {
-        imageMaxWidth = baseViewInfo.Width;
-    }
-    else {
-        imageMaxWidth = baseViewInfo.MaxWidth;
+    if (!texture || textData_.empty()) {
+        return;
     }
 
-    imageHeight = (float)font->getHeight( );
+    float imageHeight = static_cast<float>(font->getHeight());
     float scale = baseViewInfo.FontSize / imageHeight;
+    float imageMaxWidth = (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
+        ? baseViewInfo.Width
+        : baseViewInfo.MaxWidth;
 
-    unsigned int textIndexMax = 0;
-
-    // determine image width
-    for ( unsigned int i = 0; i < textData_.size( ); ++i ) {
-        Font::GlyphInfo glyph;
-        if ( font->getRect( textData_[i], glyph ) ) {
-            if ( glyph.minX < 0 ) {
-                imageWidth += glyph.minX;
-            }
-            if ( (imageWidth + glyph.advance)*scale > imageMaxWidth ) {
-                break;
-            }
-            textIndexMax = i;
-            imageWidth  += glyph.advance;
-        }
-
+    // Recalculate and cache positions if necessary
+    if (needsUpdate_ || lastScale_ != scale || lastMaxWidth_ != imageMaxWidth) {
+        updateGlyphPositions(font, scale, imageMaxWidth);
+        needsUpdate_ = false;
+        lastScale_ = scale;
+        lastMaxWidth_ = imageMaxWidth;
     }
 
-    float oldWidth       = baseViewInfo.Width;
-    float oldHeight      = baseViewInfo.Height;
-    float oldImageWidth  = baseViewInfo.ImageHeight;
-    float oldImageHeight = baseViewInfo.ImageWidth;
+    float oldWidth = baseViewInfo.Width;
+    float oldHeight = baseViewInfo.Height;
+    float oldImageWidth = baseViewInfo.ImageWidth;
+    float oldImageHeight = baseViewInfo.ImageHeight;
 
-    baseViewInfo.Width       = imageWidth*scale;
-    baseViewInfo.Height      = baseViewInfo.FontSize;
-    baseViewInfo.ImageWidth  = imageWidth;
+    baseViewInfo.Width = cachedWidth_;  // Use unscaled cachedWidth_
+    baseViewInfo.Height = baseViewInfo.FontSize;
+    baseViewInfo.ImageWidth = cachedWidth_;
     baseViewInfo.ImageHeight = imageHeight;
 
-    float xOrigin = baseViewInfo.XRelativeToOrigin( );
-    float yOrigin = baseViewInfo.YRelativeToOrigin( );
+    float xOrigin = baseViewInfo.XRelativeToOrigin();
+    float yOrigin = baseViewInfo.YRelativeToOrigin();
 
-    baseViewInfo.Width       = oldWidth;
-    baseViewInfo.Height      = oldHeight;
-    baseViewInfo.ImageWidth  = oldImageWidth;
+    // Restore old baseViewInfo values
+    baseViewInfo.Width = oldWidth;
+    baseViewInfo.Height = oldHeight;
+    baseViewInfo.ImageWidth = oldImageWidth;
     baseViewInfo.ImageHeight = oldImageHeight;
 
+    SDL_FRect destRect;
 
-    SDL_Rect rect = { 0, 0, 0, 0 };
-    rect.x = static_cast<int>( xOrigin );
+    // Render each cached glyph position
+    for (const auto& pos : cachedPositions_) {
+        destRect.x = xOrigin + pos.xOffset;
+        destRect.y = yOrigin + pos.yOffset;
+        destRect.w = pos.sourceRect.w * scale;
+        destRect.h = pos.sourceRect.h * scale;
 
-    for ( unsigned int i = 0; i <= textIndexMax; ++i ) {
-        Font::GlyphInfo glyph;
-
-        if ( font->getRect(textData_[i], glyph) && glyph.rect.h > 0 ) {
-            SDL_Rect charRect = glyph.rect;
-            auto h = charRect.h * scale ;
-            float w = charRect.w * scale ;
-            rect.h = static_cast<int>( h );
-            rect.w = static_cast<int>( w );
-            rect.y = static_cast<int>( yOrigin );
-
-            if(glyph.minX < 0) {
-                rect.x += static_cast<int>( (float)(glyph.minX) * scale );
-            }
-            if ( font->getAscent( ) < glyph.maxY ) {
-                rect.y += static_cast<int>( (font->getAscent( ) - glyph.maxY)*scale );
-            }
-
-
-            SDL::renderCopy( t, baseViewInfo.Alpha, &charRect, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor) );
-
-            rect.x += static_cast<int>( glyph.advance * scale );
-
-        }
+        SDL::renderCopyF(
+            texture,
+            baseViewInfo.Alpha,
+            &pos.sourceRect,
+            &destRect,
+            baseViewInfo,
+            page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+            page.getLayoutHeightByMonitor(baseViewInfo.Monitor)
+        );
     }
+}
+
+void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) {
+    cachedPositions_.clear();
+    cachedPositions_.reserve(textData_.size());
+
+    float currentWidth = 0.0f;
+    int baseAscent = font->getAscent();
+
+    for (char c : textData_) {
+        FontManager::GlyphInfo glyph;
+        if (!font->getRect(c, glyph) || glyph.rect.h <= 0) continue;
+
+        // Adjust currentWidth by glyph.minX if minX < 0, unscaled
+        if (glyph.minX < 0) {
+            currentWidth += glyph.minX;
+        }
+
+        // Check if adding the glyph exceeds maxWidth
+        float scaledCurrentWidth = currentWidth * scale;
+        float scaledAdvance = glyph.advance * scale;
+
+        if ((scaledCurrentWidth + scaledAdvance) > maxWidth) break;
+
+        // Calculate xOffset
+        int xOffset = static_cast<int>(scaledCurrentWidth);
+        if (glyph.minX < 0) {
+            xOffset += static_cast<int>(glyph.minX * scale);
+        }
+
+        int yOffset = baseAscent < glyph.maxY ? static_cast<int>((baseAscent - glyph.maxY) * scale) : 0;
+
+        cachedPositions_.push_back({
+            glyph.rect,
+            xOffset,
+            yOffset,
+            scaledAdvance
+            });
+
+        // Increment currentWidth by glyph.advance, unscaled
+        currentWidth += glyph.advance;
+    }
+
+    cachedWidth_ = currentWidth * scale;
+    cachedHeight_ = baseViewInfo.FontSize;
 }

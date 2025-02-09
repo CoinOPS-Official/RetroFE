@@ -35,7 +35,6 @@ Component::Component(Page &p)
     newScrollItemSelected = false;
     menuIndex_ = -1;
 
-    currentTweens_ = nullptr;
     currentTweenIndex_ = 0;
     currentTweenComplete_ = true;
     elapsedTweenTime_ = 0;
@@ -45,8 +44,7 @@ Component::Component(Page &p)
 
 Component::~Component() = default;
 
-void Component::freeGraphicsMemory()
-{
+void Component::freeGraphicsMemory() {
     animationRequestedType_ = "";
     animationType_ = "";
     animationRequested_ = false;
@@ -54,20 +52,19 @@ void Component::freeGraphicsMemory()
     newScrollItemSelected = false;
     menuIndex_ = -1;
 
-    currentTweens_ = nullptr;
+    // Reset the shared_ptr to release the memory
+    currentTweens_.reset();
     currentTweenIndex_ = 0;
     currentTweenComplete_ = true;
     elapsedTweenTime_ = 0;
 
-    if (backgroundTexture_)
-    {
+    if (backgroundTexture_) {
         SDL_LockMutex(SDL::getMutex());
         SDL_DestroyTexture(backgroundTexture_);
         SDL_UnlockMutex(SDL::getMutex());
-        
+
         backgroundTexture_ = nullptr;
     }
- 
 }
 
 // used to draw lines in the layout using <container>
@@ -79,9 +76,7 @@ void Component::allocateGraphicsMemory()
         SDL_Surface* surface = SDL_CreateRGBSurface(0, 4, 4, 32, 0, 0, 0, 0);
         SDL_FillRect(surface, nullptr, SDL_MapRGB(surface->format, 255, 255, 255));
 
-        SDL_LockMutex(SDL::getMutex());
         backgroundTexture_ = SDL_CreateTextureFromSurface(SDL::getRenderer(baseViewInfo.Monitor), surface);
-        SDL_UnlockMutex(SDL::getMutex());
 
         SDL_FreeSurface(surface);
         SDL_SetTextureBlendMode(backgroundTexture_, SDL_BLENDMODE_BLEND);
@@ -98,6 +93,9 @@ void Component::initializeFonts()
 {
 }
 
+const std::string& Component::getAnimationRequestedType() const {
+    return animationRequestedType_;
+}
 
 void Component::triggerEvent(const std::string_view& event, int menuIndex)
 {
@@ -146,9 +144,8 @@ bool Component::isPlaylistScrolling() const
     return (!currentTweenComplete_ && animationType_ == "playlistScroll");
 }
 
-void Component::setTweens(AnimationEvents *set)
-{
-    tweens_ = set;
+void Component::setTweens(std::shared_ptr<AnimationEvents> set) {
+    tweens_ = std::move(set);
 }
 
 std::string_view Component::filePath()
@@ -156,28 +153,27 @@ std::string_view Component::filePath()
     return "";
 }
 
-bool Component::update(float dt)
-{
+bool Component::update(float dt) {
     elapsedTweenTime_ += dt;
-    if (animationRequested_ && animationRequestedType_ != "") {
-        Animation* newTweens;
-        // Check if this component is part of an active scrolling list
+    if (animationRequested_ && animationRequestedType_ != "" && !tweens_->getAnimationMap().empty()) {
+        std::shared_ptr<Animation> newTweens = nullptr;
         if (menuIndex_ >= MENU_INDEX_HIGH) {
-            // Check for animation at index i
             newTweens = tweens_->getAnimation(animationRequestedType_, MENU_INDEX_HIGH);
             if (!(newTweens && newTweens->size() > 0)) {
-                // Check for animation at the current menuIndex
                 newTweens = tweens_->getAnimation(animationRequestedType_, menuIndex_ - MENU_INDEX_HIGH);
             }
         }
         else {
-            // Check for animation at the current menuIndex
             newTweens = tweens_->getAnimation(animationRequestedType_, menuIndex_);
         }
+
+        if (newTweens && newTweens->size() == 0) {
+            newTweens.reset();
+        }
+
         if (newTweens && newTweens->size() > 0) {
-            //todo delete old tweens?
             animationType_ = animationRequestedType_;
-            currentTweens_ = newTweens;
+            currentTweens_ = newTweens;  // Assign to weak_ptr
             currentTweenIndex_ = 0;
             elapsedTweenTime_ = 0;
             storeViewInfo_ = baseViewInfo;
@@ -188,11 +184,11 @@ bool Component::update(float dt)
 
     if (tweens_ && currentTweenComplete_) {
         animationType_ = "idle";
-        currentTweens_ = tweens_->getAnimation("idle", menuIndex_);
-        if (currentTweens_ && currentTweens_->size() == 0 && !page.isMenuScrolling())
-        {
-            currentTweens_ = tweens_->getAnimation("menuIdle", menuIndex_);
+        auto idleTweens = tweens_->getAnimation("idle", menuIndex_);
+        if (idleTweens && idleTweens->size() == 0 && !page.isMenuScrolling()) {
+            idleTweens = tweens_->getAnimation("menuIdle", menuIndex_);
         }
+        currentTweens_ = idleTweens;  // Assign to weak_ptr
         currentTweenIndex_ = 0;
         elapsedTweenTime_ = 0;
         storeViewInfo_ = baseViewInfo;
@@ -200,10 +196,17 @@ bool Component::update(float dt)
         animationRequested_ = false;
     }
 
-    currentTweenComplete_ = animate();
-    if ( currentTweenComplete_ ) {
-      currentTweens_     = nullptr;
-      currentTweenIndex_ = 0;
+    // Lock weak_ptr before using
+    std::shared_ptr<Animation> lockedTweens = currentTweens_.lock();
+    if (lockedTweens) {
+        currentTweenComplete_ = animate();
+        if (currentTweenComplete_) {
+            currentTweens_.reset();
+            currentTweenIndex_ = 0;
+        }
+    }
+    else {
+        currentTweenComplete_ = true;
     }
 
     return currentTweenComplete_;
@@ -213,11 +216,11 @@ bool Component::update(float dt)
 void Component::draw()
 {
     if (backgroundTexture_ && baseViewInfo.Alpha > 0.0f) {
-        SDL_Rect rect = { 0,0,0,0 };
-        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
-        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
-        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
-        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
+        SDL_FRect rect = { 0,0,0,0 };
+        rect.h = baseViewInfo.ScaledHeight();
+        rect.w = baseViewInfo.ScaledWidth();
+        rect.x = baseViewInfo.XRelativeToOrigin();
+        rect.y = baseViewInfo.YRelativeToOrigin();
 
 
         SDL_SetTextureColorMod(backgroundTexture_,
@@ -225,27 +228,28 @@ void Component::draw()
             static_cast<char>(baseViewInfo.BackgroundGreen * 255),
             static_cast<char>(baseViewInfo.BackgroundBlue * 255));
 
-        SDL::renderCopy(backgroundTexture_, baseViewInfo.BackgroundAlpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        SDL::renderCopyF(backgroundTexture_, baseViewInfo.BackgroundAlpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
     }
 }
 
 bool Component::animate() {
     bool completeDone = false;
-    if (!currentTweens_ || currentTweenIndex_ >= currentTweens_->size()) {
+    auto sharedTweens = currentTweens_.lock(); // Lock the weak_ptr to get a shared_ptr
+
+    if (!sharedTweens || currentTweenIndex_ >= sharedTweens->size()) {
         completeDone = true;
     }
     else {
         bool currentDone = true;
-        TweenSet* tweens = currentTweens_->tweenSet(currentTweenIndex_);
+        auto tweens = sharedTweens->tweenSet(currentTweenIndex_);
         if (!tweens) return true; // Additional check for safety
 
         std::string playlist;
         bool foundFiltered;
 
         for (unsigned int i = 0; i < tweens->size(); i++) {
-            Tween const* tween = tweens->getTween(i);
+            const Tween* tween = tweens->getTween(i); // Ensure const correctness
 
-            // only animate if filter matches current playlist or in playlist1,playlist2,playlist3
             if (!tween->playlistFilter.empty() && !playlistName.empty()) {
                 foundFiltered = false;
                 std::stringstream ss(tween->playlistFilter);
@@ -255,7 +259,7 @@ bool Component::animate() {
                         break;
                     }
                 }
-                if (!foundFiltered) continue; // didn't find match, skip
+                if (!foundFiltered) continue;
             }
 
             double elapsedTime = elapsedTweenTime_;
@@ -427,7 +431,7 @@ bool Component::animate() {
         }
     }
 
-    if (!currentTweens_ || currentTweenIndex_ >= currentTweens_->size()) {
+    if (!sharedTweens || currentTweenIndex_ >= sharedTweens->size()) {
         completeDone = true;
     }
 

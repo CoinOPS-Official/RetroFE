@@ -18,6 +18,7 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <unordered_map>
 
 class Configuration
 {
@@ -36,6 +37,8 @@ public:
     bool getProperty(const std::string& key, bool &value);
     void childKeyCrumbs(const std::string& parent, std::vector<std::string> &children);
     void setProperty(const std::string& key, const std::string& value);
+    void setProperty(const std::string& key, const int& value);
+    void setProperty(const std::string& key, const bool& value);
     bool propertiesEmpty() const;
     bool propertyExists(const std::string& key);
     bool propertyPrefixExists(const std::string& key);
@@ -56,7 +59,7 @@ public:
 private:
     bool getRawProperty(const std::string& key, std::string &value);
     bool parseLine(const std::string& collection, std::string keyPrefix, std::string line, int lineCount);
-    using PropertiesType = std::map<std::string, std::string, std::less<>>;
+    using PropertiesType = std::unordered_map<std::string, std::string>;
     typedef std::pair<std::string, std::string> PropertiesPair;
 
     PropertiesType properties_;
