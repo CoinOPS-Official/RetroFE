@@ -694,7 +694,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	std::thread proc_thread;
 	bool multiple_display = SDL_GetNumVideoDisplays() > 1;
 	bool animateDuringGame = true;
-	config_.getProperty("OPTION_ANIMATEDURINGGAME", animateDuringGame);
+	config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
 
 	if (animateDuringGame && multiple_display && currentPage != nullptr) {
 		stop_thread = false;
