@@ -868,15 +868,17 @@ void GStreamerVideo::pause()
     if (!isPlaying_)
         return;
 
-    paused_ = !paused_;
-
     if (paused_)
     {
-        gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
+        paused_ = false;
+        if (gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE)
+            return;  // Failed to resume, keep state unchanged
     }
     else
     {
-        gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PLAYING);
+        paused_ = true;
+        if (gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE)
+            return;  // Failed to pause, keep state unchanged
     }
 }
 

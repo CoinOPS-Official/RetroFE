@@ -191,6 +191,7 @@ int RetroFE::initialize(void* context)
 // Launch a game/program
 void RetroFE::launchEnter()
 {
+	currentPage_->setIsLaunched(true);
 	// Disable window focus
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_FALSE);
 	// Free the textures, and take down SDL if unloadSDL flag is set
@@ -213,6 +214,7 @@ void RetroFE::launchEnter()
 // Return from the launch of a game/program
 void RetroFE::launchExit()
 {
+	currentPage_->setIsLaunched(false);
 	// Set up SDL, and load the textures if unloadSDL flag is set
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);

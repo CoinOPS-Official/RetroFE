@@ -1967,3 +1967,13 @@ void Page::setPlaylistMenu(ScrollingList* menu)
 {
     playlistMenu_ = menu;
 }
+
+void Page::setIsLaunched(bool isLaunched)
+{
+    isLaunched_ = isLaunched;
+}
+
+bool Page::getIsLaunched()
+{
+    return isLaunched_;
+}

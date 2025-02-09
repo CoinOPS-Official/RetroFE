@@ -180,6 +180,8 @@ public:
     bool isLocked() const;
     ScrollingList* getPlaylistMenu();
     void setPlaylistMenu(ScrollingList*);
+    void setIsLaunched(bool isLaunched);
+    bool getIsLaunched();
     bool playlistExists(const std::string&);
     void setSelectedItem();
     bool fromPreviousPlaylist = false;
@@ -238,5 +240,6 @@ private:
     std::vector<int> layoutHeightByMonitor_;
     bool jukebox_;
     bool useThreading_;
+    bool isLaunched_ = false;
 
 };
