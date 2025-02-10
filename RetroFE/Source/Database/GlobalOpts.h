@@ -151,6 +151,7 @@ public:
         const char *                defvalue;           // default value of this argument
         option_type                 type;               // type of option
         const char *                description;        // description for -showusage
+        const char *                friendly_name;      // A user-friendly name for the option
     };
     
     // Definition of functions to directly return the values of specific options
