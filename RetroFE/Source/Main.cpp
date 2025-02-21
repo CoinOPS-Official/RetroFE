@@ -313,10 +313,12 @@ int main(int argc, char** argv)
 
 #ifdef WIN32
     std::string gstPluginPath = Utils::combinePath(Configuration::absolutePath, "retrofe");
-    _putenv_s("GST_PLUGIN_PATH", gstPluginPath.c_str());
+    Utils::setEnvVar("GST_PLUGIN_PATH", gstPluginPath);
+    Utils::setEnvVar("FREI0R_PATH", gstPluginPath);
 #endif
 
     gst_debug_set_default_threshold(GST_LEVEL_ERROR);
+
 
     gst_init(nullptr, nullptr);
 
