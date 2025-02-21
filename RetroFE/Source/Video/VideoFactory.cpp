@@ -24,7 +24,7 @@
 bool VideoFactory::enabled_ = true;
 int VideoFactory::numLoops_ = 0;
 
-std::unique_ptr<IVideo> VideoFactory::createVideo(int monitor, int numLoops, bool softOverlay, int listId) {
+std::unique_ptr<IVideo> VideoFactory::createVideo(int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners) {
     if (!enabled_) {
         return nullptr;
     }
@@ -48,7 +48,10 @@ std::unique_ptr<IVideo> VideoFactory::createVideo(int monitor, int numLoops, boo
         int loopsToSet = (numLoops > 0) ? numLoops : numLoops_;
         gstreamerVid->setNumLoops(loopsToSet);
         gstreamerVid->setSoftOverlay(softOverlay);
-    }
+        if (perspectiveCorners) {  // Only set if not null
+            gstreamerVid->setPerspectiveCorners(perspectiveCorners);
+            }
+        }
 
     // Return the unique_ptr - ownership is transferred to caller
     return instance;

@@ -42,9 +42,12 @@
 #include "../../Video/VideoPool.h"
 
 
-VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listId)
+VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
 	: Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), listId_(listId), currentPage_(&p)
 {
+	if (perspectiveCorners) {
+		std::copy(perspectiveCorners, perspectiveCorners + 8, perspectiveCorners_);
+		}
 }
 
 VideoComponent::~VideoComponent()
@@ -79,7 +82,7 @@ bool VideoComponent::update(float dt)
 		videoInst_.reset();  // Smart pointer cleanup
 
 		// Get new instance
-		videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_);
+		videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_, perspectiveCorners_);
 		if (videoInst_) {
 			instanceReady_ = videoInst_->play(videoFile_);
 			if (instanceReady_) {
@@ -151,7 +154,7 @@ void VideoComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
 	if (!instanceReady_) {
 		if (!videoInst_ && videoFile_ != "") {
-			videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_);
+			videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_, perspectiveCorners_);
 			if (videoInst_) {
 				instanceReady_ = videoInst_->play(videoFile_);
 			}

@@ -801,7 +801,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
         // Create video or image
         if (!t) {
             if (videoType_ != "null") {
-                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1, false, listId_);
+                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1, false, listId_, perspectiveCorners_);
             }
             else {
                 std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
@@ -825,7 +825,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
             if (!t) {
                 if (videoType_ != "null") {
-                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1,  false, listId_);
+                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1,  false, listId_, perspectiveCorners_);
                 }
                 else {
                     std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
@@ -860,7 +860,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
             }
         }
         if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_);
+            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCorners_);
         }
         else {
             name = imageType_;
@@ -876,7 +876,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
     // check rom directory path for art
     if ( !t ) {
         if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_);
+            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCorners_);
         }
         else {
             name = imageType_;

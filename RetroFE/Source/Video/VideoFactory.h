@@ -22,7 +22,7 @@ class IVideo;
 class VideoFactory
 {
 public:
-    static std::unique_ptr<IVideo> createVideo(int monitor, int numLoops, bool softOverlay, int listId);
+    static std::unique_ptr<IVideo> createVideo(int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners);
     static void    setEnabled(bool enabled);
     static void    setNumLoops(int numLoops);
 

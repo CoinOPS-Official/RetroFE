@@ -19,7 +19,7 @@
 #include <fstream>
 
 
-VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops, bool softOverlay, int listId)
+VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
 {
     VideoComponent *component = nullptr;
     
@@ -39,7 +39,7 @@ VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, 
     std::string prefix = Utils::combinePath(path, name);
 
     if(std::string file; Utils::findMatchingFile(prefix, extensions, file)) {
-        component = new VideoComponent(page, file, monitor, numLoops, softOverlay, listId);
+        component = new VideoComponent(page, file, monitor, numLoops, softOverlay, listId, perspectiveCorners);
         //component->allocateGraphicsMemory();
     }
 

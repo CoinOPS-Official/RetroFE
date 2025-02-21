@@ -29,7 +29,7 @@
 class VideoComponent : public Component
 {
 public:
-    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listID);
+    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listID, const int* perspectiveCorners);
     ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
@@ -57,4 +57,5 @@ private:
     int monitor_;
     int listId_;
     Page* currentPage_{ nullptr };
+    int perspectiveCorners_[8]{ 0 }; // Initialize to zeros
 };

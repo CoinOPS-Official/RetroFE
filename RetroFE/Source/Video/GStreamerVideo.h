@@ -74,6 +74,8 @@ public:
 
     void setSoftOverlay(bool value);
 
+    void setPerspectiveCorners(const int* corners);
+
     bool hasError() const override {
         return hasError_.load(std::memory_order_acquire);
     }
@@ -87,13 +89,15 @@ private:
     void createSdlTexture();
     GstElement* playbin_{ nullptr };          // for playbin3
     GstElement* videoSink_{ nullptr };     // for appsink
-    GstVideoInfo videoInfo_;
+    GstElement* perspective_{ nullptr };
+    GstVideoInfo* videoInfo_{ nullptr };
     SDL_Texture* videoTexture_ = nullptr;    // YUV texture for video content
     SDL_Texture* alphaTexture_ = nullptr;    // Transparent texture for transitions
     SDL_Texture* texture_ = nullptr;         // Points to either videoTexture_ or alphaTexture_
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     guint elementSetupHandlerId_{ 0 };
     guint padProbeId_{ 0 };
+    GValueArray* gva_;
     std::atomic<int> width_{ 0 };
     std::atomic<int> height_{ 0 };
 	int textureWidth_{ -1 };
@@ -113,8 +117,12 @@ private:
     std::atomic<bool> stopping_{ false };
     static bool pluginsInitialized_;
     bool softOverlay_;
+    int counter_; // Counter for animation
 
     std::atomic<bool> hasError_{false};
+
+    int perspectiveCorners_[8]{ 0 };
+    bool hasPerspective_{ false };
 
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
 };

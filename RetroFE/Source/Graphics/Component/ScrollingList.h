@@ -177,6 +177,14 @@ public:
     bool isFastScrolling() const;
     void scroll(bool forward);
     bool isPlaylist() const;
+
+    void setPerspectiveCorners(const int corners[8]) {
+        std::copy(corners, corners + 8, perspectiveCorners_);
+    }
+    const int* getPerspectiveCorners() const { return perspectiveCorners_; }
+
+
+
 private:
 
     static int nextListId;
@@ -218,5 +226,8 @@ private:
     RotatableView<Component*> components_;
 
     bool useTextureCaching_{ false };
+
+    int perspectiveCorners_[8]{ 0 }; // stores x,y coordinates for all 4 corners in order: topLeft, topRight, bottomLeft, bottomRight
+
 
 };

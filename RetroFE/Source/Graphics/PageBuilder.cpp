@@ -1091,6 +1091,11 @@ ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monit
 	xml_attribute<> const* textFallbackXml = menuXml->first_attribute("textFallback");
 	xml_attribute<> const* monitorXml = menuXml->first_attribute("monitor");
 	xml_attribute<> const* useTextureCacheXml = menuXml->first_attribute("useTextureCache");
+	xml_attribute<> const* perspectiveXml = menuXml->first_attribute("usePerspective");
+	xml_attribute<> const* topLeftXml = menuXml->first_attribute("topLeft");
+	xml_attribute<> const* topRightXml = menuXml->first_attribute("topRight");
+	xml_attribute<> const* bottomLeftXml = menuXml->first_attribute("bottomLeft");
+	xml_attribute<> const* bottomRightXml = menuXml->first_attribute("bottomRight");
 
 	if (menuTypeXml) {
 		menuType = menuTypeXml->value();
@@ -1146,6 +1151,46 @@ ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monit
 	menu = new ScrollingList(config_, page, layoutMode, commonMode, playlistType, selectedImage, font, layoutKey, imageType, videoType, useTextureCache);
 	menu->baseViewInfo.Monitor = cMonitor;
 	menu->baseViewInfo.Layout = page.getCurrentLayout();
+
+	if (videoType != "null" && perspectiveXml) {
+		bool usePerspective = Utils::toLower(perspectiveXml->value()) == "true" ||
+			Utils::toLower(perspectiveXml->value()) == "yes";
+
+		// In your PageBuilder.cpp, instead of using Utils::split, use Utils::listToVector
+		if (usePerspective) {
+			// Only process corner coordinates if perspective is enabled
+			if (topLeftXml && topRightXml && bottomLeftXml && bottomRightXml) {
+				std::vector<std::string> topLeft;
+				std::vector<std::string> topRight;
+				std::vector<std::string> bottomLeft;
+				std::vector<std::string> bottomRight;
+
+				Utils::listToVector(topLeftXml->value(), topLeft, ',');
+				Utils::listToVector(topRightXml->value(), topRight, ',');
+				Utils::listToVector(bottomLeftXml->value(), bottomLeft, ',');
+				Utils::listToVector(bottomRightXml->value(), bottomRight, ',');
+
+				if (topLeft.size() == 2 && topRight.size() == 2 &&
+					bottomLeft.size() == 2 && bottomRight.size() == 2) {
+
+					int corners[8] = {
+						Utils::convertInt(topLeft[0]),     // top left x
+						Utils::convertInt(topLeft[1]),     // top left y
+						Utils::convertInt(topRight[0]),    // top right x
+						Utils::convertInt(topRight[1]),    // top right y
+						Utils::convertInt(bottomLeft[0]),  // bottom left x
+						Utils::convertInt(bottomLeft[1]),  // bottom left y
+						Utils::convertInt(bottomRight[0]), // bottom right x
+						Utils::convertInt(bottomRight[1])  // bottom right y
+					};
+					menu->setPerspectiveCorners(corners);
+				}
+				else {
+					LOG_WARNING("Layout", "Invalid coordinate format for perspective corners. Expected 'x,y'");
+				}
+			}
+		}
+	}
 
 	buildViewInfo(menuXml, menu->baseViewInfo);
 
