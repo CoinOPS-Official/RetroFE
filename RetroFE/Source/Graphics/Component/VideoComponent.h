@@ -58,4 +58,5 @@ private:
     int listId_;
     Page* currentPage_{ nullptr };
     int perspectiveCorners_[8]{ 0 }; // Initialize to zeros
+    bool hasPerspective_{ false };
 };

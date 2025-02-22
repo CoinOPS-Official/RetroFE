@@ -47,7 +47,8 @@ VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monito
 {
 	if (perspectiveCorners) {
 		std::copy(perspectiveCorners, perspectiveCorners + 8, perspectiveCorners_);
-		}
+		hasPerspective_ = true;
+	}
 }
 
 VideoComponent::~VideoComponent()
@@ -154,7 +155,8 @@ void VideoComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
 	if (!instanceReady_) {
 		if (!videoInst_ && videoFile_ != "") {
-			videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_, perspectiveCorners_);
+			videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_,
+				hasPerspective_ ? perspectiveCorners_ : nullptr);
 			if (videoInst_) {
 				instanceReady_ = videoInst_->play(videoFile_);
 			}

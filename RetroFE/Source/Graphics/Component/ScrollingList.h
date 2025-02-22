@@ -180,6 +180,7 @@ public:
 
     void setPerspectiveCorners(const int corners[8]) {
         std::copy(corners, corners + 8, perspectiveCorners_);
+        perspectiveCornersInitialized_ = true;
     }
     const int* getPerspectiveCorners() const { return perspectiveCorners_; }
 
@@ -227,7 +228,8 @@ private:
 
     bool useTextureCaching_{ false };
 
-    int perspectiveCorners_[8]{ 0 }; // stores x,y coordinates for all 4 corners in order: topLeft, topRight, bottomLeft, bottomRight
+    bool perspectiveCornersInitialized_{ false };
+    int perspectiveCorners_[8]; // stores x,y coordinates for all 4 corners in order: topLeft, topRight, bottomLeft, bottomRight
 
 
 };
