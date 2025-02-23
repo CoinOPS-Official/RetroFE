@@ -124,5 +124,7 @@ private:
     int perspectiveCorners_[8]{ 0 };
     bool hasPerspective_{ false };
 
+    GValueArray* perspective_gva_{ nullptr };
+
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
 };

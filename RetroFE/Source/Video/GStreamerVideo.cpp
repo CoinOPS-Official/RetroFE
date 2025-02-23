@@ -150,56 +150,56 @@ void GStreamerVideo::messageHandler() {
 	GstMessage* msg;
 	while ((msg = gst_bus_pop(bus))) {
 		switch (GST_MESSAGE_TYPE(msg)) {
-			case GST_MESSAGE_ERROR: {
-				GError* err;
-				gchar* debug_info;
-				gst_message_parse_error(msg, &err, &debug_info);
+		case GST_MESSAGE_ERROR: {
+			GError* err;
+			gchar* debug_info;
+			gst_message_parse_error(msg, &err, &debug_info);
 
-				// Set error flag and log the error
-				hasError_.store(true, std::memory_order_release);
-				LOG_ERROR("GStreamerVideo", "Error received from element " +
-					std::string(GST_OBJECT_NAME(msg->src)) + ": " +
-					std::string(err->message));
-				if (debug_info) {
-					LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
-				}
+			// Set error flag and log the error
+			hasError_.store(true, std::memory_order_release);
+			LOG_ERROR("GStreamerVideo", "Error received from element " +
+				std::string(GST_OBJECT_NAME(msg->src)) + ": " +
+				std::string(err->message));
+			if (debug_info) {
+				LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
+			}
 
-				g_clear_error(&err);
-				g_free(debug_info);
-				break;
-			}
-			case GST_MESSAGE_WARNING: {
-				GError* err;
-				gchar* debug_info;
-				gst_message_parse_warning(msg, &err, &debug_info);
-				LOG_DEBUG("GStreamerVideo", "Warning: " + std::string(err->message));
-				g_clear_error(&err);
-				g_free(debug_info);
-				break;
-			}
-			case GST_MESSAGE_INFO: {
-				GError* err;
-				gchar* debug_info;
-				gst_message_parse_info(msg, &err, &debug_info);
-				LOG_DEBUG("GStreamerVideo", "Info: " + std::string(err->message));
-				g_clear_error(&err);
-				g_free(debug_info);
-				break;
-			}
-			case GST_MESSAGE_EOS: {
-				// Check for EOS only if more than 1 second has played
-				if (getCurrent() > GST_SECOND) {
-					playCount_++;
-					if (!numLoops_ || numLoops_ > playCount_) {
-						restart();
-					}
-					else {
-						stop();
-					}
+			g_clear_error(&err);
+			g_free(debug_info);
+			break;
+		}
+		case GST_MESSAGE_WARNING: {
+			GError* err;
+			gchar* debug_info;
+			gst_message_parse_warning(msg, &err, &debug_info);
+			LOG_DEBUG("GStreamerVideo", "Warning: " + std::string(err->message));
+			g_clear_error(&err);
+			g_free(debug_info);
+			break;
+		}
+		case GST_MESSAGE_INFO: {
+			GError* err;
+			gchar* debug_info;
+			gst_message_parse_info(msg, &err, &debug_info);
+			LOG_DEBUG("GStreamerVideo", "Info: " + std::string(err->message));
+			g_clear_error(&err);
+			g_free(debug_info);
+			break;
+		}
+		case GST_MESSAGE_EOS: {
+			// Check for EOS only if more than 1 second has played
+			if (getCurrent() > GST_SECOND) {
+				playCount_++;
+				if (!numLoops_ || numLoops_ > playCount_) {
+					restart();
 				}
-				break;
+				else {
+					stop();
+				}
 			}
-			default:
+			break;
+		}
+		default:
 			break;
 		}
 		gst_message_unref(msg);
@@ -372,6 +372,10 @@ bool GStreamerVideo::stop() {
 		alphaTexture_ = nullptr;
 	}
 	SDL_UnlockMutex(SDL::getMutex());
+	if (perspective_gva_) {
+		g_value_array_free(perspective_gva_);
+		perspective_gva_ = nullptr;
+	}
 
 
 	return true;
@@ -410,25 +414,25 @@ bool GStreamerVideo::unload() {
 	GstMessage* msg;
 	while ((msg = gst_bus_pop(bus))) {
 		switch (GST_MESSAGE_TYPE(msg)) {
-			case GST_MESSAGE_ERROR: {
-				GError* err;
-				gchar* debug_info;
-				gst_message_parse_error(msg, &err, &debug_info);
+		case GST_MESSAGE_ERROR: {
+			GError* err;
+			gchar* debug_info;
+			gst_message_parse_error(msg, &err, &debug_info);
 
-				// Set error flag and log the error
-				hasError_.store(true, std::memory_order_release);
-				LOG_ERROR("GStreamerVideo", "Error received from element " +
-					std::string(GST_OBJECT_NAME(msg->src)) + ": " +
-					std::string(err->message));
-				if (debug_info) {
-					LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
-				}
-
-				g_clear_error(&err);
-				g_free(debug_info);
-				break;
+			// Set error flag and log the error
+			hasError_.store(true, std::memory_order_release);
+			LOG_ERROR("GStreamerVideo", "Error received from element " +
+				std::string(GST_OBJECT_NAME(msg->src)) + ": " +
+				std::string(err->message));
+			if (debug_info) {
+				LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
 			}
-			default:
+
+			g_clear_error(&err);
+			g_free(debug_info);
+			break;
+		}
+		default:
 			break;
 		}
 		gst_message_unref(msg);
@@ -466,95 +470,77 @@ bool GStreamerVideo::unload() {
 inline std::array<double, 9> computePerspectiveMatrixFromCorners(
 	int width,
 	int height,
-	const std::array<Point2D, 4>& targetCorners) {
+	const std::array<Point2D, 4>& pts)
+{
 	constexpr double EPSILON = 1e-9;
 
-	// Since we know the output is going to a GStreamer perspective element,
-	// we want to ensure optimal numerical stability for video processing
-	std::array<std::array<double, 8>, 8> A = {};
-	std::array<double, 8> b = {};
+	const Point2D A = pts[0];
+	const Point2D B = pts[1];
+	const Point2D D = pts[2];
+	const Point2D C = pts[3];
 
-	// Destination coordinates (original rectangle)
-	constexpr std::array<Point2D, 4> dstCorners = {
-		Point2D{0, 0},
-		Point2D{1, 0},     // Using unit rectangle - will scale later
-		Point2D{0, 1},
-		Point2D{1, 1}
+
+	double M11 = B.x - C.x;
+	double M12 = D.x - C.x;
+	double M21 = B.y - C.y;
+	double M22 = D.y - C.y;
+	double RHS1 = A.x - C.x;
+	double RHS2 = A.y - C.y;
+
+	double denom = M11 * M22 - M12 * M21;
+	if (std::abs(denom) < EPSILON)
+		return { 1,0,0, 0,1,0, 0,0,1 };
+
+	double X = (RHS1 * M22 - RHS2 * M12) / denom; // X = g+1
+	double Y = (M11 * RHS2 - M21 * RHS1) / denom; // Y = h+1
+
+	double g = X - 1.0;
+	double h = Y - 1.0;
+
+	// Now compute the remaining coefficients using the (1,0) and (0,1) constraints:
+	double a = X * B.x - A.x;  // a = (g+1)*B.x - A.x
+	double d = X * B.y - A.y;
+	double b = Y * D.x - A.x;  // b = (h+1)*D.x - A.x
+	double e = Y * D.y - A.y;
+	double c = A.x;
+	double f = A.y;
+
+	// Construct the forward homography Hf:
+	// Hf maps (u,v) in [0,1]² to the quadrilateral.
+	std::array<double, 9> Hf = { a, b, c,
+								 d, e, f,
+								 g, h, 1.0 };
+
+	// --- Invert Hf to obtain H, which maps the quadrilateral to the unit square ---
+	double det = Hf[0] * (Hf[4] * Hf[8] - Hf[5] * Hf[7])
+		- Hf[1] * (Hf[3] * Hf[8] - Hf[5] * Hf[6])
+		+ Hf[2] * (Hf[3] * Hf[7] - Hf[4] * Hf[6]);
+	if (std::abs(det) < EPSILON)
+		return { 1,0,0, 0,1,0, 0,0,1 };
+	double invDet = 1.0 / det;
+	std::array<double, 9> H = {
+		(Hf[4] * Hf[8] - Hf[5] * Hf[7]) * invDet,
+		(Hf[2] * Hf[7] - Hf[1] * Hf[8]) * invDet,
+		(Hf[1] * Hf[5] - Hf[2] * Hf[4]) * invDet,
+		(Hf[5] * Hf[6] - Hf[3] * Hf[8]) * invDet,
+		(Hf[0] * Hf[8] - Hf[2] * Hf[6]) * invDet,
+		(Hf[2] * Hf[3] - Hf[0] * Hf[5]) * invDet,
+		(Hf[3] * Hf[7] - Hf[4] * Hf[6]) * invDet,
+		(Hf[1] * Hf[6] - Hf[0] * Hf[7]) * invDet,
+		(Hf[0] * Hf[4] - Hf[1] * Hf[3]) * invDet
 	};
 
-	// Build the system more efficiently
-	for (int i = 0; i < 4; ++i) {
-		const int row = i * 2;
-		const auto& src = targetCorners[i];
-		const auto& dst = dstCorners[i];
-
-		// Even rows
-		A[row] = { src.x, src.y, 1, 0, 0, 0, -dst.x * src.x, -dst.x * src.y };
-		b[row] = dst.x;
-
-		// Odd rows
-		A[row + 1] = { 0, 0, 0, src.x, src.y, 1, -dst.y * src.x, -dst.y * src.y };
-		b[row + 1] = dst.y;
+	// Normalize so that H[8] == 1.
+	for (double& val : H) {
+		val /= H[8];
 	}
+	// --- Scale the first two rows by the output dimensions ---
+	H[0] *= width; H[1] *= width; H[2] *= width;
+	H[3] *= height; H[4] *= height; H[5] *= height;
 
-	// Gaussian elimination with scaled partial pivoting for better numerical stability
-	for (int i = 0; i < 8; ++i) {
-		// Find best pivot using scaling
-		int maxRow = i;
-		double maxVal = 0;
-
-		for (int j = i; j < 8; ++j) {
-			const double val = std::abs(A[j][i]);
-			if (val > maxVal) {
-				maxVal = val;
-				maxRow = j;
-			}
-		}
-
-		if (maxVal < EPSILON) {
-			return { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-		}
-
-		if (maxRow != i) {
-			A[i].swap(A[maxRow]);
-			std::swap(b[i], b[maxRow]);
-		}
-
-		const double pivotInv = 1.0 / A[i][i];
-		for (int j = i; j < 8; ++j) {
-			A[i][j] *= pivotInv;
-		}
-		b[i] *= pivotInv;
-
-		for (int j = 0; j < 8; ++j) {
-			if (j != i) {
-				const double factor = A[j][i];
-				for (int k = i; k < 8; ++k) {
-					A[j][k] -= factor * A[i][k];
-				}
-				b[j] -= factor * b[i];
-			}
-		}
-	}
-
-	// Scale the result by the width and height
-	std::array<double, 9> result = {
-		b[0] * width, b[1] * width, b[2] * width,
-		b[3] * height, b[4] * height, b[5] * height,
-		b[6], b[7], 1.0
-	};
-
-	// Quick check for degeneracy
-	const double det = result[0] * (result[4] * result[8] - result[5] * result[7]) -
-		result[1] * (result[3] * result[8] - result[5] * result[6]) +
-		result[2] * (result[3] * result[7] - result[4] * result[6]);
-
-	if (std::abs(det) < EPSILON) {
-		return { 1, 0, 0, 0, 1, 0, 0, 0, 1 };
-	}
-
-	return result;
+	return H;
 }
+
 
 
 
@@ -789,33 +775,34 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 					video->height_.store(newHeight, std::memory_order_release);
 
 					// Perspective box
-					if (video->hasPerspective_) {
+					if (video->hasPerspective_ && !video->textureValid_) {
+						// Only update perspective matrix if texture is invalid.
+						// Free and recompute the cached GValueArray if necessary.
+						if (video->perspective_gva_) {
+							g_value_array_free(video->perspective_gva_);
+							video->perspective_gva_ = nullptr;
+						}
 						std::array<Point2D, 4> perspectiveBox = {
-							Point2D(video->perspectiveCorners_[0], video->perspectiveCorners_[1]),    // top-left
-							Point2D(video->perspectiveCorners_[2], video->perspectiveCorners_[3]),    // top-right
-							Point2D(video->perspectiveCorners_[4], video->perspectiveCorners_[5]),    // bottom-left
-							Point2D(video->perspectiveCorners_[6], video->perspectiveCorners_[7])     // bottom-right
+							Point2D(video->perspectiveCorners_[0], video->perspectiveCorners_[1]), // top-left
+							Point2D(video->perspectiveCorners_[2], video->perspectiveCorners_[3]), // top-right
+							Point2D(video->perspectiveCorners_[4], video->perspectiveCorners_[5]), // bottom-left
+							Point2D(video->perspectiveCorners_[6], video->perspectiveCorners_[7])  // bottom-right
 						};
 						std::array<double, 9> mat = computePerspectiveMatrixFromCorners(newWidth, newHeight, perspectiveBox);
 
-						// Create GValueArray and single reusable GValue
-						GValueArray* gva = g_value_array_new(9);
+						video->perspective_gva_ = g_value_array_new(9);
 						GValue val = G_VALUE_INIT;
 						g_value_init(&val, G_TYPE_DOUBLE);
-
-						// Reuse the same GValue object for all elements
 						for (const double element : mat) {
 							g_value_set_double(&val, element);
-							g_value_array_append(gva, &val);
+							g_value_array_append(video->perspective_gva_, &val);
 						}
-
-						if (video->perspective_) {
-							// Set the computed matrix on the perspective element
-							g_object_set(video->perspective_, "matrix", gva, nullptr);
-						}
-						// Cleanup
 						g_value_unset(&val);
-						g_value_array_free(gva);
+
+						// Set the new perspective matrix.
+						if (video->perspective_) {
+							g_object_set(video->perspective_, "matrix", video->perspective_gva_, nullptr);
+						}
 					}
 				}
 			}
