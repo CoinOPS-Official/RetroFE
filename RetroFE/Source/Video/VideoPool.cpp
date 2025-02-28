@@ -46,11 +46,31 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
         return std::make_unique<GStreamerVideo>(monitor);
     }
 
+    // Periodically check health and trim excess instances (every 30th call)
+    static std::atomic<int> callCounter{ 0 };
+    if (++callCounter % 30 == 0) {
+        if (!checkPoolHealth(monitor, listId)) {
+            // If health check fails, schedule cleanup
+            cleanup(monitor, listId);
+        }
+        else {
+            // If health is good, just trim excess instances
+            trimExcessInstances(monitor, listId);
+        }
+    }
+
     PoolInfo* poolInfo = getPoolInfo(monitor, listId);
 
-    // Get lock with timeout
-    if (!poolInfo->poolMutex.try_lock_for(std::chrono::milliseconds(100))) {
-        poolInfo->poolMutex.lock();
+    // Add backoff mechanism for lock acquisition
+    const int MAX_RETRIES = 5;
+    int retries = 0;
+    while (!poolInfo->poolMutex.try_lock_for(std::chrono::milliseconds(100))) {
+        if (++retries >= MAX_RETRIES) {
+            LOG_WARNING("VideoPool", "Lock timeout in acquireVideo. Creating fallback instance. Monitor: " +
+                std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+            return std::make_unique<GStreamerVideo>(monitor);
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(20 * retries));  // Exponential backoff
     }
 
     std::unique_lock<std::timed_mutex> poolLock(poolInfo->poolMutex, std::adopt_lock);
@@ -72,15 +92,29 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
         return std::make_unique<GStreamerVideo>(monitor);
     }
 
-    // Wait for available instance using condition variable
-    poolInfo->waitCondition.wait(poolLock, [poolInfo]() {
-        return !poolInfo->instances.empty();
-        });
+    auto waitResult = poolInfo->waitCondition.wait_for(poolLock,
+        std::chrono::milliseconds(500),
+        [poolInfo]() { return !poolInfo->instances.empty(); });
+
+    if (!waitResult) {
+        // Timed out waiting for an instance
+        LOG_WARNING("VideoPool", "Timed out waiting for video instance. Creating new instance. Monitor: " +
+            std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+        poolInfo->currentActive.fetch_add(1);
+        return std::make_unique<GStreamerVideo>(monitor);
+    }
 
     std::unique_ptr<GStreamerVideo> vid = std::move(poolInfo->instances.front());
     poolInfo->instances.pop_front();
     vid->setSoftOverlay(softOverlay);
     poolInfo->currentActive.fetch_add(1);
+
+    // After incrementing currentActive, update observedMaxActive if needed
+    size_t newActiveCount = poolInfo->currentActive.load();
+    size_t currentMax = poolInfo->observedMaxActive.load();
+    if (newActiveCount > currentMax) {
+        poolInfo->observedMaxActive.store(newActiveCount);
+    }
 
     LOG_DEBUG("VideoPool", "Reusing instance from pool. Monitor: " +
         std::to_string(monitor) + ", List ID: " + std::to_string(listId));
@@ -98,20 +132,43 @@ void VideoPool::releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, i
         return;
     }
 
-    vid->unload();
+    try {
+        vid->unload();
+    }
+    catch (const std::exception& e) {
+        LOG_ERROR("VideoPool", "Exception during video unload: " + std::string(e.what()) +
+            ". Destroying instance.");
+        destroyVideo(std::move(vid), monitor, listId);
+        return;
+    }
+    catch (...) {
+        LOG_ERROR("VideoPool", "Unknown exception during video unload. Destroying instance.");
+        destroyVideo(std::move(vid), monitor, listId);
+        return;
+    }
 
     PoolInfo* poolInfo = getPoolInfo(monitor, listId);
 
-    // Block until we can lock the pool mutex.
-    std::unique_lock<std::timed_mutex> poolLock(poolInfo->poolMutex);
+    if (!poolInfo->poolMutex.try_lock_for(std::chrono::milliseconds(300))) {
+        LOG_WARNING("VideoPool", "Lock timeout in releaseVideo. Destroying instance. Monitor: " +
+            std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+        destroyVideo(std::move(vid), monitor, listId);
+        return;
+    }
+    std::unique_lock<std::timed_mutex> poolLock(poolInfo->poolMutex, std::adopt_lock);
 
     // Decrement the active count under lock so that the instance can be accounted for.
     poolInfo->currentActive.fetch_sub(1);
 
-    // On the first release, initialize the pool.
+    // On the first release, initialize the pool and set initial observed max
     if (!poolInfo->poolInitialized.load()) {
         poolInfo->poolInitialized.store(true);
         poolInfo->instances.push_back(std::move(vid));
+
+        // Initial observed max should be at least 1
+        size_t currentActive = poolInfo->currentActive.load();
+        poolInfo->observedMaxActive.store(std::max(currentActive, size_t(1)));
+
         LOG_DEBUG("VideoPool", "First release detected for Monitor: " +
             std::to_string(monitor) + ", List ID: " + std::to_string(listId));
         poolInfo->waitCondition.notify_one();
@@ -149,6 +206,7 @@ void VideoPool::cleanup(int monitor, int listId) {
         poolInfo.poolInitialized.store(false);
         poolInfo.hasExtraInstance.store(false);
         poolInfo.currentActive.store(0);
+        poolInfo.observedMaxActive.store(0);  // Reset observed maximum
 
         // Remove from maps
         pools_[monitor].erase(listId);
@@ -198,4 +256,72 @@ void VideoPool::destroyVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, i
 
     LOG_DEBUG("VideoPool", "Destroyed faulty video instance. Monitor: " +
         std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+}
+
+void VideoPool::trimExcessInstances(int monitor, int listId) {
+    if (listId == -1) return;
+
+    PoolInfo* poolInfo = getPoolInfo(monitor, listId);
+
+    // Try to lock with timeout - if can't get lock, just skip trimming
+    if (!poolInfo->poolMutex.try_lock_for(std::chrono::milliseconds(100))) {
+        return;
+    }
+
+    std::unique_lock<std::timed_mutex> poolLock(poolInfo->poolMutex, std::adopt_lock);
+
+    // Don't trim if there are active users waiting
+    if (poolInfo->waitCondition.wait_for(poolLock, std::chrono::milliseconds(0),
+        []() { return true; }) == false) {
+        return;
+    }
+
+    // Get the current active count and update the observed maximum
+    size_t currentActive = poolInfo->currentActive.load();
+    size_t observedMax = poolInfo->observedMaxActive.load();
+
+    if (currentActive > observedMax) {
+        poolInfo->observedMaxActive.store(currentActive);
+        observedMax = currentActive;
+    }
+
+    // Target size = observed maximum + 1 extra instance (for safety)
+    // But never go below 2 instances minimum
+    size_t targetSize = std::max(observedMax + 1, size_t(2));
+
+    // Keep the pool size reasonable
+    size_t currentPoolSize = poolInfo->instances.size();
+
+    // Only trim if we have substantially more instances than needed
+    // This prevents constant resizing for small fluctuations
+    if (currentPoolSize > targetSize + 2) {
+        size_t excessCount = currentPoolSize - targetSize;
+        LOG_DEBUG("VideoPool", "Trimming " + std::to_string(excessCount) +
+            " excess instances (keeping " + std::to_string(targetSize) +
+            ") for Monitor: " + std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+
+        while (poolInfo->instances.size() > targetSize) {
+            poolInfo->instances.pop_back();  // Remove oldest instances first
+        }
+    }
+}
+
+bool VideoPool::checkPoolHealth(int monitor, int listId) {
+    std::shared_lock<std::shared_mutex> readLock(mapMutex_);
+    if (pools_.count(monitor) && pools_[monitor].count(listId)) {
+        PoolInfo& poolInfo = pools_[monitor][listId];
+
+        // If active count is suspiciously high, reset pool
+        size_t activeCount = poolInfo.currentActive.load();
+
+        if (activeCount > 20) {  // Very high count - likely corruption
+            LOG_WARNING("VideoPool", "Health check detected suspicious active count: " +
+                std::to_string(activeCount) + " for Monitor: " + std::to_string(monitor) +
+                ", List ID: " + std::to_string(listId) + ". Scheduling cleanup.");
+            return false;
+        }
+
+        return true;
+    }
+    return true;  // No pool exists, so it's "healthy" by default
 }

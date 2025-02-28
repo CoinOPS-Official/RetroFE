@@ -35,6 +35,10 @@ public:
     static void cleanup(int monitor, int listId);
     static void shutdown();
     static void destroyVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId);
+    // Health check method
+    static bool checkPoolHealth(int monitor, int listId);
+    // Trim excess instances, but determine target size dynamically
+    static void trimExcessInstances(int monitor, int listId);
 
 private:
     struct PoolInfo {
@@ -44,7 +48,7 @@ private:
         std::atomic<bool> hasExtraInstance{false};
         std::timed_mutex poolMutex;
         std::condition_variable_any waitCondition;  // Add this line
-
+        std::atomic<size_t> observedMaxActive{ 0 };  // Track observed maximum active instances
         PoolInfo() = default;
         PoolInfo(const PoolInfo&) = delete;
         PoolInfo& operator=(const PoolInfo&) = delete;
