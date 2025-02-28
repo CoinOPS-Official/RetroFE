@@ -50,7 +50,7 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , selectSoundChunk_(NULL)
     , minShowTime_(0)
     , jukebox_(false)
-    , useThreading_(Utils::getOSType() == "windows")
+    , useThreading_(Utils::getOSType() == "windows" && SDL::getRendererBackend(0) == "direct3d11")
     //, useThreading_(false)
 {
 
