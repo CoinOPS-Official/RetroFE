@@ -109,7 +109,7 @@
 #define OPTION_ATTRACTMODEFAST           "attractModeFast"
 #define OPTION_ATTRACTMODELAUNCH         "attractModeLaunch"
 #define OPTION_ATTRACTMODELAUNCHRUNTIME  "attractModeLaunchRunTime"
-#define OPTION_ATTRACTMODELAUNCHSCROLLTIME "attractModeLaunchScrollTime"
+#define OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS   "attractModeLaunchMinMaxScrolls"
 
 // INPUT OPTIONS
 #define OPTION_COLLECTIONINPUTCLEAR    "collectionInputClear"
@@ -238,7 +238,7 @@ public:
     bool attractmodefast() { return bool_value(OPTION_ATTRACTMODEFAST); }
     bool attractmodelaunch() { return bool_value(OPTION_ATTRACTMODELAUNCH); }
     int attractmodelaunchruntime() { return int_value(OPTION_ATTRACTMODELAUNCHRUNTIME); }
-    int attractmodelaunchscrolltime() { return int_value(OPTION_ATTRACTMODELAUNCHSCROLLTIME); }
+    int attractmodelaunchminmaxScrolls() { return int_value(OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS); }
     
     bool collectioninputclear() { return bool_value(OPTION_COLLECTIONINPUTCLEAR); }
     bool playlistinputclear() { return bool_value(OPTION_PLAYLISTINPUTCLEAR); }

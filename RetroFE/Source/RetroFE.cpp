@@ -238,7 +238,7 @@ void RetroFE::launchExit()
 		}
 	}
 	input_.resetStates();
-	attract_.reset();
+	//attract_.reset();
 	currentPage_->updateReloadables(0);
 	currentPage_->onNewItemSelected();
 	currentPage_->reallocateMenuSpritePoints(false); // skip updating playlist menu
@@ -466,8 +466,8 @@ bool RetroFE::run()
 	int attractModeCollectionTime = 0;
 	int attractModeMinTime = 1000;
 	int attractModeMaxTime = 5000;
-	int attractModeLaunchScrollTime = 30;
 	bool attractModeLaunch = false;
+	std::string attractModeLaunchMinMaxScrolls = "3,5";
 
 	std::string firstCollection = "Main";
 	bool running = true;
@@ -482,8 +482,10 @@ bool RetroFE::run()
 	config_.getProperty(OPTION_FIRSTCOLLECTION, firstCollection);
 	config_.getProperty(OPTION_ATTRACTMODEFAST, attractModeFast);
 	config_.getProperty(OPTION_ATTRACTMODELAUNCH, attractModeLaunch);
-	config_.getProperty(OPTION_ATTRACTMODELAUNCHSCROLLTIME, attractModeLaunchScrollTime);
-
+	config_.getProperty(OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS, attractModeLaunchMinMaxScrolls);
+	std::vector<std::string> attMinMaxVec;
+	Utils::listToVector(attractModeLaunchMinMaxScrolls, attMinMaxVec, ',');
+	
 	attract_.idleTime = static_cast<float>(attractModeTime);
 	attract_.idleNextTime = static_cast<float>(attractModeNextTime);
 	attract_.idlePlaylistTime = static_cast<float>(attractModePlaylistTime);
@@ -492,7 +494,7 @@ bool RetroFE::run()
 	attract_.maxTime = attractModeMaxTime;
 	attract_.isFast = attractModeFast;
 	attract_.shouldLaunch = attractModeLaunch;
-	attract_.minScrollBeforeLaunchTime_ = static_cast<float>(attractModeLaunchScrollTime);
+	attract_.setLaunchFrequencyRange(Utils::convertInt(attMinMaxVec[0]), Utils::convertInt(attMinMaxVec[1]));
 
 	int fps = 60;
 	int fpsIdle = 60;
