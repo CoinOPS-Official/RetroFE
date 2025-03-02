@@ -76,6 +76,7 @@ public:
 
     void setPerspectiveCorners(const int* corners);
 
+
     bool hasError() const override {
         return hasError_.load(std::memory_order_acquire);
     }
@@ -127,4 +128,6 @@ private:
     GValueArray* perspective_gva_{ nullptr };
 
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
+    static void customGstLogHandler(GstDebugCategory* category, GstDebugLevel level, const gchar* file, const gchar* function, gint line, GObject* object, GstDebugMessage* message, gpointer user_data);
+
 };

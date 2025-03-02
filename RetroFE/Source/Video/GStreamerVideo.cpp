@@ -303,6 +303,7 @@ bool GStreamerVideo::initialize() {
 		gst_registry_scan_path(registry, path.c_str());
 #endif
 	}
+	gst_debug_add_log_function(customGstLogHandler, nullptr, nullptr);
 	initialized_ = true;
 	return true;
 }
@@ -1160,5 +1161,50 @@ void GStreamerVideo::setPerspectiveCorners(const int* corners) {
 	else {
 		std::fill(perspectiveCorners_, perspectiveCorners_ + 8, 0);
 		hasPerspective_ = false;  // Reset flag when corners are cleared
+	}
+}
+
+void GStreamerVideo::customGstLogHandler(GstDebugCategory* category, GstDebugLevel level,
+	const gchar* file, const gchar* function, gint line,
+	GObject* object, GstDebugMessage* message, gpointer user_data)
+{
+	// Extract the log message from the GStreamer message
+	std::string logMsg = gst_debug_message_get(message);
+
+	// Get the original GStreamer category name if available, or default to "Unknown"
+	std::string originalComponent = (category && gst_debug_category_get_name(category))
+		? gst_debug_category_get_name(category)
+		: "Unknown";
+
+	// Combine the original component and log message in the format "component: message"
+	std::string fullMessage = originalComponent + ": " + logMsg;
+
+	// Use a fixed component name so that all GStreamer logs appear under one category
+	std::string component = "GStreamerLog";
+
+	// Map GStreamer log levels to your Logger's macros
+	switch (level) {
+	case GST_LEVEL_ERROR:
+		LOG_ERROR(component, fullMessage);
+		break;
+	case GST_LEVEL_WARNING:
+		LOG_WARNING(component, fullMessage);
+		break;
+	case GST_LEVEL_FIXME:
+		LOG_NOTICE(component, fullMessage);
+		break;
+	case GST_LEVEL_INFO:
+		LOG_INFO(component, fullMessage);
+		break;
+	case GST_LEVEL_DEBUG:
+	case GST_LEVEL_LOG:
+	case GST_LEVEL_TRACE:
+	case GST_LEVEL_MEMDUMP:
+		LOG_DEBUG(component, fullMessage);
+		break;
+	default:
+		// Default to DEBUG if the level is unrecognized
+		LOG_DEBUG(component, fullMessage);
+		break;
 	}
 }
