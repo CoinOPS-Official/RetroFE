@@ -45,7 +45,7 @@ public:
     GStreamerVideo(const GStreamerVideo&) = delete;
     GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo() override;
-    void messageHandler() override;
+    void messageHandler(float dt) override;
     bool initialize() override;
     bool unload();
     bool createPipelineIfNeeded();
@@ -92,7 +92,7 @@ private:
     GstElement* videoSink_{ nullptr };     // for appsink
     GstElement* perspective_{ nullptr };
     GstVideoInfo* videoInfo_{ nullptr };
-    SDL_Texture* videoTexture_ = nullptr;    // YUV texture for video content
+    SDL_Texture* videoTexture_ = nullptr;    // Texture for video content
     SDL_Texture* alphaTexture_ = nullptr;    // Transparent texture for transitions
     SDL_Texture* texture_ = nullptr;         // Points to either videoTexture_ or alphaTexture_
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
@@ -101,9 +101,9 @@ private:
     GValueArray* gva_;
     std::atomic<int> width_{ 0 };
     std::atomic<int> height_{ 0 };
-	int textureWidth_{ -1 };
-	int textureHeight_{ -1 };
-	bool textureValid_{ false };
+    std::atomic<int> textureWidth_{ -1 };
+    std::atomic<int> textureHeight_{ -1 };
+    std::atomic<bool> textureValid_{ false };
     std::atomic<bool> isPlaying_{ false };
     static bool initialized_;
     int playCount_{ 0 };
@@ -115,10 +115,8 @@ private:
     bool paused_{ false };
     double lastSetVolume_{ -1.0 };
     bool lastSetMuteState_{ false };
-    std::atomic<bool> stopping_{ false };
     static bool pluginsInitialized_;
     bool softOverlay_;
-    int counter_; // Counter for animation
 
     std::atomic<bool> hasError_{false};
 

@@ -114,34 +114,69 @@ GStreamerVideo::~GStreamerVideo() {
 
 void GStreamerVideo::createAlphaTexture() {
 	SDL_LockMutex(SDL::getMutex());
-	if (alphaTexture_) return;  // Already created
+	if (alphaTexture_) {
+		SDL_UnlockMutex(SDL::getMutex());
+		return;
+	}
 
 	alphaTexture_ = SDL_CreateTexture(
 		SDL::getRenderer(monitor_), SDL_PIXELFORMAT_RGBA32,
-		SDL_TEXTUREACCESS_STREAMING, ALPHA_TEXTURE_SIZE, ALPHA_TEXTURE_SIZE);
+		SDL_TEXTUREACCESS_STATIC, ALPHA_TEXTURE_SIZE, ALPHA_TEXTURE_SIZE);
 
 	if (!alphaTexture_) {
 		LOG_ERROR("GStreamerVideo", "Failed to create alpha texture: " + std::string(SDL_GetError()));
+		SDL_UnlockMutex(SDL::getMutex());
 		return;
 	}
 
 	SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
 	SDL_SetTextureBlendMode(alphaTexture_, blendMode);
 
-	// Initialize alpha texture to transparent black
-	void* pixels;
-	int pitch;
-	if (SDL_LockTexture(alphaTexture_, nullptr, &pixels, &pitch) == 0) {
-		SDL_memset(pixels, 0, pitch * ALPHA_TEXTURE_SIZE);
-		SDL_UnlockTexture(alphaTexture_);
+	const int pitch = ALPHA_TEXTURE_SIZE * 4;  // 4 bytes per pixel
+	const int size = pitch * ALPHA_TEXTURE_SIZE;
+	std::vector<uint8_t> pixels(size, 0);  // Transparent black
+	if (SDL_UpdateTexture(alphaTexture_, nullptr, pixels.data(), pitch) != 0) {
+		LOG_ERROR("GStreamerVideo", "Failed to update alpha texture: " + std::string(SDL_GetError()));
+		hasError_.store(true, std::memory_order_release);
 	}
+	texture_ = alphaTexture_;
 	SDL_UnlockMutex(SDL::getMutex());
 }
 
-void GStreamerVideo::messageHandler() {
-	if (!playbin_ || !isPlaying_)
+void GStreamerVideo::messageHandler(float dt) {
+	// Skip if no playbin or not playing
+	if (!playbin_ || !isPlaying_.load(std::memory_order_relaxed))
 		return;
 
+	// Accumulate time since last message processing
+	static float timeAccumulator = 0.0f;
+
+	// Default message checking interval: 50ms (20Hz)
+	constexpr float DEFAULT_CHECK_INTERVAL = 0.050f;
+
+	// Shorter interval during transitions or paused state: ~16ms (60Hz)
+	constexpr float CRITICAL_CHECK_INTERVAL = 0.016f;
+
+	// Determine which interval to use based on playback state
+	float currentInterval = DEFAULT_CHECK_INTERVAL;
+
+	// Use faster checking during paused state or when there's an error
+	// These are critical states where we want more responsive message handling
+	if (hasError_.load(std::memory_order_relaxed)) {
+		currentInterval = CRITICAL_CHECK_INTERVAL;
+	}
+
+	// Accumulate the time
+	timeAccumulator += dt;
+
+	// Skip if not enough time has passed
+	if (timeAccumulator < currentInterval)
+		return;
+
+	// Reset accumulator (don't just zero it - subtract the interval to maintain precision)
+	timeAccumulator -= currentInterval;
+
+	// Get the bus and process messages
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 	if (!bus)
 		return;
@@ -150,56 +185,56 @@ void GStreamerVideo::messageHandler() {
 	GstMessage* msg;
 	while ((msg = gst_bus_pop(bus))) {
 		switch (GST_MESSAGE_TYPE(msg)) {
-		case GST_MESSAGE_ERROR: {
-			GError* err;
-			gchar* debug_info;
-			gst_message_parse_error(msg, &err, &debug_info);
+			case GST_MESSAGE_ERROR: {
+				GError* err;
+				gchar* debug_info;
+				gst_message_parse_error(msg, &err, &debug_info);
 
-			// Set error flag and log the error
-			hasError_.store(true, std::memory_order_release);
-			LOG_ERROR("GStreamerVideo", "Error received from element " +
-				std::string(GST_OBJECT_NAME(msg->src)) + ": " +
-				std::string(err->message));
-			if (debug_info) {
-				LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
-			}
+				// Set error flag and log the error
+				hasError_.store(true, std::memory_order_release);
+				LOG_ERROR("GStreamerVideo", "Error received from element " +
+					std::string(GST_OBJECT_NAME(msg->src)) + ": " +
+					std::string(err->message));
+				if (debug_info) {
+					LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
+				}
 
-			g_clear_error(&err);
-			g_free(debug_info);
-			break;
-		}
-		case GST_MESSAGE_WARNING: {
-			GError* err;
-			gchar* debug_info;
-			gst_message_parse_warning(msg, &err, &debug_info);
-			LOG_DEBUG("GStreamerVideo", "Warning: " + std::string(err->message));
-			g_clear_error(&err);
-			g_free(debug_info);
-			break;
-		}
-		case GST_MESSAGE_INFO: {
-			GError* err;
-			gchar* debug_info;
-			gst_message_parse_info(msg, &err, &debug_info);
-			LOG_DEBUG("GStreamerVideo", "Info: " + std::string(err->message));
-			g_clear_error(&err);
-			g_free(debug_info);
-			break;
-		}
-		case GST_MESSAGE_EOS: {
-			// Check for EOS only if more than 1 second has played
-			if (getCurrent() > GST_SECOND) {
-				playCount_++;
-				if (!numLoops_ || numLoops_ > playCount_) {
-					restart();
-				}
-				else {
-					stop();
-				}
+				g_clear_error(&err);
+				g_free(debug_info);
+				break;
 			}
-			break;
-		}
-		default:
+			case GST_MESSAGE_WARNING: {
+				GError* err;
+				gchar* debug_info;
+				gst_message_parse_warning(msg, &err, &debug_info);
+				LOG_DEBUG("GStreamerVideo", "Warning: " + std::string(err->message));
+				g_clear_error(&err);
+				g_free(debug_info);
+				break;
+			}
+			case GST_MESSAGE_INFO: {
+				GError* err;
+				gchar* debug_info;
+				gst_message_parse_info(msg, &err, &debug_info);
+				LOG_DEBUG("GStreamerVideo", "Info: " + std::string(err->message));
+				g_clear_error(&err);
+				g_free(debug_info);
+				break;
+			}
+			case GST_MESSAGE_EOS: {
+				// Check for EOS only if more than 1 second has played
+				if (getCurrent() > GST_SECOND) {
+					playCount_++;
+					if (!numLoops_ || numLoops_ > playCount_) {
+						restart();
+					}
+					else {
+						stop();
+					}
+				}
+				break;
+			}
+			default:
 			break;
 		}
 		gst_message_unref(msg);
@@ -321,9 +356,7 @@ bool GStreamerVideo::stop() {
 		return false;
 	}
 
-	stopping_.store(true, std::memory_order_release);
-
-	isPlaying_ = false;
+	isPlaying_.store(false, std::memory_order_release);
 
 	if (playbin_)
 	{
@@ -388,12 +421,7 @@ bool GStreamerVideo::unload() {
 		return false;
 	}
 
-	stopping_.store(true, std::memory_order_release);
-	isPlaying_ = false;
-
-
-	texture_ = alphaTexture_;  // Switch to transparent texture
-
+	isPlaying_.store(false, std::memory_order_release);
 
 	// Set pipeline to GST_STATE_READY (instead of GST_STATE_NULL) so we can reuse it later
 	GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
@@ -449,17 +477,17 @@ bool GStreamerVideo::unload() {
 	playCount_ = 0;
 	numLoops_ = 0;
 
-	SDL_LockMutex(SDL::getMutex());
 	if (videoInfo_) {
 		gst_video_info_free(videoInfo_);
 		videoInfo_ = nullptr;
 	}
-	textureWidth_ = width_.load(std::memory_order_acquire);
-	textureHeight_ = height_.load(std::memory_order_acquire);
+	textureWidth_.store(width_.load(std::memory_order_acquire), std::memory_order_release);
+	textureHeight_.store(height_.load(std::memory_order_acquire), std::memory_order_release);
 	width_.store(0, std::memory_order_release);
 	height_.store(0, std::memory_order_release);
+	SDL_LockMutex(SDL::getMutex());
 	texture_ = alphaTexture_;  // Switch to blank texture
-	textureValid_ = false;
+	textureValid_.store(false, std::memory_order_release);
 	SDL_UnlockMutex(SDL::getMutex());
 
 	LOG_DEBUG("GStreamerVideo", "Pipeline unloaded, now in READY state.");
@@ -691,7 +719,6 @@ bool GStreamerVideo::play(const std::string& file) {
 	}
 
 	paused_ = true;
-	isPlaying_ = true;
 	currentFile_ = file;
 
 	// Mute and volume to 0 by default
@@ -718,9 +745,6 @@ bool GStreamerVideo::play(const std::string& file) {
 	}
 
 	LOG_DEBUG("GStreamerVideo", "Playing file: " + file);
-
-	// Let future calls proceed
-	stopping_.store(false, std::memory_order_release);
 
 	return true;
 }
@@ -760,14 +784,14 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 				if (newWidth > 0 && newHeight > 0) {
 					// Update texture validity
 					if (video->videoTexture_ &&
-						video->textureWidth_ == newWidth &&
-						video->textureHeight_ == newHeight) {
-						video->textureValid_ = true;
+						video->textureWidth_.load(std::memory_order_acquire) == newWidth &&
+						video->textureHeight_.load(std::memory_order_acquire) == newHeight) {
+						video->textureValid_.store(true, std::memory_order_release);
 						LOG_DEBUG("GStreamerVideo", "Will reuse existing texture for dimensions " +
 							std::to_string(newWidth) + "x" + std::to_string(newHeight));
 					}
 					else {
-						video->textureValid_ = false;
+						video->textureValid_.store(false, std::memory_order_release);
 						LOG_DEBUG("GStreamerVideo", "Will create new texture for dimensions " +
 							std::to_string(newWidth) + "x" + std::to_string(newHeight));
 					}
@@ -776,7 +800,7 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 					video->height_.store(newHeight, std::memory_order_release);
 
 					// Perspective box
-					if (video->hasPerspective_ && !video->textureValid_) {
+					if (video->hasPerspective_ && !video->textureValid_.load(std::memory_order_acquire)) {
 						// Only update perspective matrix if texture is invalid.
 						// Free and recompute the cached GValueArray if necessary.
 						if (video->perspective_gva_) {
@@ -805,6 +829,9 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 							g_object_set(video->perspective_, "matrix", video->perspective_gva_, nullptr);
 						}
 					}
+
+					video->isPlaying_.store(true, std::memory_order_release);
+					LOG_DEBUG("GStreamerVideo", "Caps processed, video is now playing: " + video->currentFile_);
 				}
 			}
 		}
@@ -822,7 +849,7 @@ void GStreamerVideo::createSdlTexture() {
 	if (newWidth <= 0 || newHeight <= 0) {
 		LOG_ERROR("GStreamerVideo", "Invalid dimensions (" +
 			std::to_string(newWidth) + "x" + std::to_string(newHeight) + ").");
-		textureValid_ = false;
+		textureValid_.store(false, std::memory_order_release);
 		return;
 	}
 
@@ -837,7 +864,7 @@ void GStreamerVideo::createSdlTexture() {
 		}
 		texture_ = nullptr;  // Reset pointer since we destroyed the texture
 
-		textureValid_ = false;
+		textureValid_.store(false, std::memory_order_release);
 
 		// Create YUV texture for video
 		videoTexture_ = SDL_CreateTexture(
@@ -846,7 +873,7 @@ void GStreamerVideo::createSdlTexture() {
 
 		if (!videoTexture_) {
 			LOG_ERROR("GStreamerVideo", "SDL_CreateTexture failed: " + std::string(SDL_GetError()));
-			textureValid_ = false;
+			textureValid_.store(false, std::memory_order_release);
 			return;
 		}
 
@@ -858,9 +885,9 @@ void GStreamerVideo::createSdlTexture() {
 
 	}
 
-	textureWidth_ = newWidth;
-	textureHeight_ = newHeight;
-	textureValid_ = true;
+	textureWidth_.store(newWidth, std::memory_order_release);
+	textureHeight_.store(newHeight, std::memory_order_release);
+	textureValid_.store(true, std::memory_order_release);
 }
 
 void GStreamerVideo::volumeUpdate() {
@@ -899,74 +926,99 @@ void GStreamerVideo::volumeUpdate() {
 
 
 int GStreamerVideo::getHeight() {
-	return height_;
+	return height_.load(std::memory_order_relaxed);
 }
 
 int GStreamerVideo::getWidth() {
-	return width_;
+	return width_.load(std::memory_order_relaxed);
 }
 
 void GStreamerVideo::draw() {
-	if (!isPlaying_ || stopping_.load(std::memory_order_acquire)) {
+	// Cache atomic states at the beginning to avoid repeated loads
+	bool isPlaying = isPlaying_.load(std::memory_order_acquire);
+
+	// Early exit if not playing or stopping is in progress
+	if (!isPlaying) {
 		return;
 	}
 
-	// Try to pull a sample from the appsink.
+	// Try to pull a sample from the appsink (GStreamer operation - no mutex needed)
 	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
+
+	// If no sample is available, check for EOS condition
 	if (!sample) {
-		GstState state;
-		gst_element_get_state(GST_ELEMENT(playbin_), &state, nullptr, 0);
-		if (state == GST_STATE_PLAYING && gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
-			if (getCurrent() > GST_SECOND) {
-				playCount_++;
-				if (!numLoops_ || numLoops_ > playCount_) {
-					restart();
-				}
-				else {
-					stop();
+		// Only check state if we're still playing (reusing cached value)
+		if (isPlaying) {
+			GstState state;
+			gst_element_get_state(GST_ELEMENT(playbin_), &state, nullptr, 0);
+
+			// Check for end of stream when in PLAYING state
+			if (state == GST_STATE_PLAYING && gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
+				if (getCurrent() > GST_SECOND) {
+					playCount_++;
+					if (!numLoops_ || numLoops_ > playCount_) {
+						restart();
+					}
+					else {
+						stop();
+					}
 				}
 			}
 		}
 		return;
 	}
 
+	// Get buffer from sample (GStreamer operation - no mutex needed)
 	GstBuffer* buf = gst_sample_get_buffer(sample);
 	GstVideoFrame frame;
 
+	// Check for valid video info and map the frame (GStreamer operation - no mutex needed)
+	if (!videoInfo_ || !gst_video_frame_map(&frame, videoInfo_, buf, GST_MAP_READ)) {
+		gst_sample_unref(sample);
+		return;
+	}
+
+	// Now we need the SDL mutex only for texture operations
 	SDL_LockMutex(SDL::getMutex());
-	if (!videoInfo_) {
-		SDL_UnlockMutex(SDL::getMutex());
-		gst_sample_unref(sample);
-		return;
-	}
 
-	if (!gst_video_frame_map(&frame, videoInfo_, buf, GST_MAP_READ)) {
-		SDL_UnlockMutex(SDL::getMutex());
-		gst_sample_unref(sample);
-		return;
-	}
+	// Cache texture validity once inside the mutex section
+	bool textureValid = textureValid_.load(std::memory_order_acquire);
 
-	// Check if we need to switch to video texture.
-	if (textureValid_ && texture_ != videoTexture_) {
+	// Check if we need to switch to video texture
+	if (textureValid && texture_ != videoTexture_) {
 		texture_ = videoTexture_;
 	}
 
-	// Handle texture creation if needed.
-	if (!textureValid_) {
+	// Handle texture creation if needed
+	if (!textureValid) {
 		createSdlTexture();
+
+		// Refresh our cached value after createSdlTexture
+		textureValid = textureValid_.load(std::memory_order_acquire);
+
+		// Bail out if texture creation failed
+		if (!textureValid || !texture_) {
+			SDL_UnlockMutex(SDL::getMutex());
+			gst_video_frame_unmap(&frame);
+			gst_sample_unref(sample);
+			return;
+		}
 	}
 
-	// Update the texture if valid.
-	if (textureValid_ && texture_ == videoTexture_) {
+	// We now know texture is valid from above checks
+	// Update the texture if it's the video texture (using cached state)
+	if (texture_ == videoTexture_) {
+		int updateResult = -1;
+
 		if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-			SDL_UpdateNVTexture(texture_, nullptr,
+			updateResult = SDL_UpdateNVTexture(texture_, nullptr,
 				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
 				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0),
 				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1)),
 				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1));
 		}
 		else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-			SDL_UpdateYUVTexture(texture_, nullptr,
+			updateResult = SDL_UpdateYUVTexture(texture_, nullptr,
 				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
 				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0),
 				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1)),
@@ -975,25 +1027,38 @@ void GStreamerVideo::draw() {
 				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 2));
 		}
 		else if (sdlFormat_ == SDL_PIXELFORMAT_ABGR8888) {
-			// For RGBA, there is only one plane (plane 0).
-			SDL_UpdateTexture(texture_, nullptr,
+			// For RGBA, there is only one plane (plane 0)
+			updateResult = SDL_UpdateTexture(texture_, nullptr,
 				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
 				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0));
 		}
+		else {
+			// Unsupported format - should not happen due to format checking in createPipelineIfNeeded()
+			LOG_ERROR("GStreamerVideo", "Unsupported pixel format in draw()");
+			updateResult = -1;
+		}
+
+		// Check for texture update errors
+		if (updateResult != 0) {
+			LOG_ERROR("GStreamerVideo", "Texture update failed: " + std::string(SDL_GetError()));
+			// Mark texture as invalid so we'll try to recreate it next frame
+			textureValid_.store(false, std::memory_order_release);
+		}
 	}
+
+	// We're done with SDL operations, unlock the mutex
 	SDL_UnlockMutex(SDL::getMutex());
+
+	// Clean up GStreamer resources (no mutex needed)
 	gst_video_frame_unmap(&frame);
 	gst_sample_unref(sample);
 }
 
-
 bool GStreamerVideo::isPlaying() {
-	return isPlaying_;
+	return isPlaying_.load(std::memory_order_acquire);
 }
 
 void GStreamerVideo::setVolume(float volume) {
-	if (!isPlaying_)
-		return;
 	volume_ = volume;
 }
 
@@ -1082,12 +1147,6 @@ void GStreamerVideo::pause() {
 void GStreamerVideo::restart() {
 	if (!isPlaying_)
 		return;
-
-	// Clear buffered frames
-  //  bufferQueue_.clear();
-
-
-	// Use same seeking method consistently
 	if (!gst_element_seek(playbin_, 1.0, GST_FORMAT_TIME,
 		GST_SEEK_FLAG_FLUSH,
 		GST_SEEK_TYPE_SET, 0,

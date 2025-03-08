@@ -29,7 +29,7 @@ class IVideo
     virtual bool deInitialize() = 0;
     virtual SDL_Texture *getTexture() const = 0;
     virtual void draw() = 0;
-    virtual void messageHandler() = 0;
+    virtual void messageHandler(float dt) = 0;
     virtual void volumeUpdate() = 0;
     virtual int getHeight() = 0;
     virtual int getWidth() = 0;

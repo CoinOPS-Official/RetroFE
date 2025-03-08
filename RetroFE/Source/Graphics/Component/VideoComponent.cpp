@@ -57,96 +57,97 @@ VideoComponent::~VideoComponent()
 	VideoComponent::freeGraphicsMemory();
 }
 
-bool VideoComponent::update(float dt)
-{
-	if (!instanceReady_ || !currentPage_)
-	{
+bool VideoComponent::update(float dt) {
+	if (!instanceReady_ || !currentPage_) {
 		return Component::update(dt);
 	}
 
 	if ((currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0)) {
 		if (videoInst_->isPaused()) {
-			videoInst_->pause();
+			videoInst_->pause();  // Ensure paused during launch
 		}
 		return Component::update(dt);
 	}
 
-	videoInst_->messageHandler();
+	videoInst_->messageHandler(dt);
 
 	// Check for errors first
-	if (videoInst_->hasError()) {
+	bool hasError = videoInst_->hasError();
+	if (hasError) {
 		LOG_DEBUG("VideoComponent", "Detected error in video instance for " +
 			Utils::getFileName(videoFile_) + ", destroying and creating new instance");
-
-		// Stop the errored instance
 		instanceReady_ = false;
-		videoInst_.reset();  // Smart pointer cleanup
-
-		// Get new instance
+		videoInst_.reset();
 		videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_, perspectiveCorners_);
 		if (videoInst_) {
 			instanceReady_ = videoInst_->play(videoFile_);
-			if (instanceReady_) {
-				LOG_DEBUG("VideoComponent", "Successfully created new instance for " +
-					Utils::getFileName(videoFile_));
-			}
-			else {
+			dimensionsUpdated_ = false; // Reset flag for new instance
+			if (!instanceReady_) {
 				LOG_ERROR("VideoComponent", "Failed to start playback with new instance: " +
 					Utils::getFileName(videoFile_));
 			}
 		}
-
 		return Component::update(dt);
 	}
-	videoInst_->setVolume(baseViewInfo.Volume);
 
-	if (!currentPage_->isMenuScrolling())
-	{
-		videoInst_->volumeUpdate();
-	}
+	// Cache the playing state once
+	bool isVideoPlaying = videoInst_->isPlaying();
+	bool isPaused = videoInst_->isPaused();
 
-	float videoHeight = static_cast<float>(videoInst_->getHeight());
-	float videoWidth = static_cast<float>(videoInst_->getWidth());
+	// Only proceed with state changes if video is fully playing
+	if (isVideoPlaying) {
+		videoInst_->setVolume(baseViewInfo.Volume);
 
-	if (baseViewInfo.ImageHeight != videoHeight || baseViewInfo.ImageWidth != videoWidth ||
-		baseViewInfo.ImageHeight == 0 || baseViewInfo.ImageWidth == 0) {
-		baseViewInfo.ImageHeight = videoHeight;
-		baseViewInfo.ImageWidth = videoWidth;
-	}
-
-	bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0f;
-
-	if (isCurrentlyVisible)
-	{
-		hasBeenOnScreen_ = true;
-	}
-
-	if (baseViewInfo.PauseOnScroll)
-	{
-		if (!isCurrentlyVisible && !videoInst_->isPaused() && !currentPage_->isMenuFastScrolling())
-		{
-			pause();
-			LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+		if (!currentPage_->isMenuScrolling()) {
+			videoInst_->volumeUpdate();
 		}
-		else if (isCurrentlyVisible && videoInst_->isPaused())
-		{
-			pause();
-			LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+
+		// Only update dimensions once after playback starts
+		if (!dimensionsUpdated_) {
+			auto videoHeight = static_cast<float>(videoInst_->getHeight());
+			auto videoWidth = static_cast<float>(videoInst_->getWidth());
+
+			// Only update if we have valid dimensions
+			if (videoHeight > 0.0f && videoWidth > 0.0f) {
+				baseViewInfo.ImageHeight = videoHeight;
+				baseViewInfo.ImageWidth = videoWidth;
+				dimensionsUpdated_ = true; // Mark dimensions as updated
+
+				LOG_DEBUG("VideoComponent", "Updated video dimensions: " +
+					std::to_string(videoWidth) + "x" + std::to_string(videoHeight) +
+					" for " + Utils::getFileName(videoFile_));
+			}
+		}
+
+		bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0f;
+		if (isCurrentlyVisible) {
+			hasBeenOnScreen_ = true;
+		}
+
+		if (baseViewInfo.PauseOnScroll) {
+			if (!isCurrentlyVisible && !isPaused && !currentPage_->isMenuFastScrolling()) {
+				pause();
+				LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+			}
+			else if (isCurrentlyVisible && isPaused) {
+				pause();
+				LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+			}
+		}
+
+		if (baseViewInfo.Restart && hasBeenOnScreen_) {
+			if (isPaused) {
+				pause();  // Resume if paused
+			}
+
+			GstClockTime currentTime = videoInst_->getCurrent();
+			if (currentTime > 1000000) {
+				restart();
+				baseViewInfo.Restart = false;
+				LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
+			}
 		}
 	}
-
-	if (baseViewInfo.Restart && hasBeenOnScreen_) {
-		if (isPaused())
-			pause();
-
-		// Wait until the current frame is processed before restarting (if needed)
-		if (videoInst_->getCurrent() > 1000000) {
-			restart();
-			baseViewInfo.Restart = false;
-			LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
-		}
-	}
-
 
 	return Component::update(dt);
 }
