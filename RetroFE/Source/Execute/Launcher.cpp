@@ -420,37 +420,42 @@ std::string replaceVariables(std::string str,
 #ifdef WIN32
 // Utility function to terminate a process and all its child processes
 void TerminateProcessAndChildren(DWORD processId) {
+	LOG_INFO("Launcher", "Terminating process ID: " + std::to_string(processId));
+
 	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (hSnap == INVALID_HANDLE_VALUE) {
 		LOG_WARNING("Launcher", "Failed to create snapshot for process termination.");
 		return;
 	}
 
+	// First find all child processes
+	std::vector<DWORD> childPids;
 	PROCESSENTRY32 pe32{};
 	pe32.dwSize = sizeof(PROCESSENTRY32);
 
-	// Get the first process
 	if (Process32First(hSnap, &pe32)) {
 		do {
-			// Check if the process is a child of the given processId
 			if (pe32.th32ParentProcessID == processId) {
-				// Recursively terminate child processes
-				TerminateProcessAndChildren(pe32.th32ProcessID);
+				childPids.push_back(pe32.th32ProcessID);
 			}
 		} while (Process32Next(hSnap, &pe32));
 	}
 
 	CloseHandle(hSnap);
 
-	// Open the main process and terminate it
-	HANDLE hProcess = OpenProcess(PROCESS_TERMINATE, FALSE, processId);
-	if (hProcess != nullptr) {
-		LOG_INFO("Launcher", "Terminating process ID: " + std::to_string(processId));
-		TerminateProcess(hProcess, 0);
-		CloseHandle(hProcess);
+	// Terminate children first
+	for (DWORD childPid : childPids) {
+		TerminateProcessAndChildren(childPid);
 	}
-	else {
-		LOG_WARNING("Launcher", "Failed to open process ID: " + std::to_string(processId));
+
+	// Now terminate the main process
+	HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, processId);
+	if (hProcess != nullptr) {
+		if (TerminateProcess(hProcess, 1)) {
+			// Wait for process to exit with timeout
+			WaitForSingleObject(hProcess, 2000); // 2 second timeout
+		}
+		CloseHandle(hProcess);
 	}
 }
 #endif
@@ -876,72 +881,223 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, attractModeLaunchRunTime);
 			auto start = std::chrono::high_resolution_clock::now();
 			bool userInputDetected = false;
+			bool processTerminated = false;
 
-			auto isAnyKeyPressed = []() -> auto {
-				// Common virtual key codes, adjust this list as necessary
-				std::vector<int> relevantKeys = {
-					// Letters A-Z
-					0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A,
-					0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54,
-					0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, // A-Z
-					// Numbers 0-9
-					0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, // 0-9
-					// Arrow keys
-					VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT,
-					// Other common keys
-					VK_RETURN, VK_SPACE, VK_ESCAPE, VK_TAB, VK_BACK,
-					// Modifier keys
-					VK_SHIFT, VK_CONTROL, VK_MENU // Shift, Ctrl, Alt
+			// For tracking first input
+			bool firstInputWasExitCommand = false;
+			bool anyInputRegistered = false;
+
+			// Variables for simultaneous button detection
+			bool startButtonDown = false;
+			bool backButtonDown = false;
+			auto startPressTime = std::chrono::high_resolution_clock::now();
+			auto backPressTime = std::chrono::high_resolution_clock::now();
+			const int simultaneousThresholdMs = 200; // Consider buttons pressed simultaneously if within 200ms
+
+			// Store process ID for window detection
+			DWORD launchedProcessId = GetProcessId(hLaunchedProcess);
+			HWND gameWindow = nullptr;
+
+			// Give the process a moment to create its window
+			Sleep(500);
+
+			// Function to find the game window based on process ID
+			auto findGameWindow = [launchedProcessId]() -> HWND {
+				struct EnumData {
+					DWORD processId;
+					HWND result;
 				};
 
-				for (int virtualKey : relevantKeys) {
-					if (GetAsyncKeyState(virtualKey) & 0x8000) {
-						LOG_INFO("Launcher", "Key press detected: " + std::to_string(virtualKey));
-						return true;
+				EnumData data = { launchedProcessId, nullptr };
+
+				EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+					EnumData* data = reinterpret_cast<EnumData*>(lParam);
+					DWORD windowProcessId = 0;
+					GetWindowThreadProcessId(hwnd, &windowProcessId);
+
+					if (windowProcessId == data->processId && IsWindowVisible(hwnd)) {
+						data->result = hwnd;
+						return FALSE; // Stop enumeration, we found it
 					}
-				}
-				return false;
+					return TRUE; // Continue enumeration
+					}, reinterpret_cast<LPARAM>(&data));
+
+				return data.result;
 				};
 
-			auto isAnyControllerButtonPressed = []() -> auto {
+			// First attempt to find the game window
+			gameWindow = findGameWindow();
+			if (gameWindow) {
+				LOG_DEBUG("Launcher", "Found game window handle: 0x" + std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
+			}
+
+			// Combined input detection function that checks for all input types and special cases
+			auto checkInputs = [&]() -> bool {
+				bool inputDetected = false;
+				auto currentTime = std::chrono::high_resolution_clock::now();
+
+				// Check ESC key first (immediate exit command)
+				if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+					// If this is the first input, mark it as an exit command
+					if (!anyInputRegistered) {
+						firstInputWasExitCommand = true;
+						LOG_INFO("Launcher", "ESC key pressed - game will not be added to last played");
+					}
+					else {
+						LOG_DEBUG("Launcher", "ESC key pressed");
+					}
+
+					anyInputRegistered = true;
+					inputDetected = true;
+				}
+
+				// Check controller for START+BACK combo
 				XINPUT_STATE state;
 				ZeroMemory(&state, sizeof(XINPUT_STATE));
-				if (XInputGetState(0, &state) == ERROR_SUCCESS) { // Check the first controller
-					if (state.Gamepad.wButtons != 0) { // Any button is pressed
-						return true;
+				if (XInputGetState(0, &state) == ERROR_SUCCESS) {
+					// Check START button state change
+					bool startCurrentlyDown = (state.Gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
+					if (startCurrentlyDown != startButtonDown) {
+						startButtonDown = startCurrentlyDown;
+						if (startButtonDown) {
+							startPressTime = currentTime;
+							LOG_DEBUG("Launcher", "START button pressed");
+						}
+					}
+
+					// Check BACK button state change
+					bool backCurrentlyDown = (state.Gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
+					if (backCurrentlyDown != backButtonDown) {
+						backButtonDown = backCurrentlyDown;
+						if (backButtonDown) {
+							backPressTime = currentTime;
+							LOG_DEBUG("Launcher", "BACK button pressed");
+						}
+					}
+
+					// If both buttons are pressed, check if they were pressed simultaneously
+					if (startButtonDown && backButtonDown) {
+						auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(
+							std::max(startPressTime, backPressTime) - std::min(startPressTime, backPressTime)
+						).count();
+
+						if (timeDiff <= simultaneousThresholdMs) {
+							// If this is the first input, flag it
+							if (!anyInputRegistered) {
+								firstInputWasExitCommand = true;
+								LOG_INFO("Launcher", "START+BACK combo detected (within " +
+									std::to_string(timeDiff) + "ms) - game will not be added to last played");
+							}
+							else {
+								LOG_DEBUG("Launcher", "START+BACK combo detected (within " + std::to_string(timeDiff) + "ms)");
+							}
+
+							inputDetected = true;
+						}
+					}
+
+					// Check any other controller buttons (individual START or BACK are included here)
+					if (state.Gamepad.wButtons != 0 && !inputDetected) {
+						if (!anyInputRegistered) {
+							LOG_INFO("Launcher", "Controller input - game will be added to last played");
+						}
+						else {
+							LOG_DEBUG("Launcher", "Controller input detected");
+						}
+						anyInputRegistered = true;
+						inputDetected = true;
 					}
 				}
-				return false;
+
+				// Check other keyboard keys if no input detected yet
+				if (!inputDetected) {
+					for (int virtualKey : {
+						// Letters A-Z
+						0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A,
+							0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54,
+							0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, // A-Z
+							// Numbers 0-9
+							0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, // 0-9
+							// Arrow keys
+							VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT,
+							// Other common keys (excluding ESC which was already checked)
+							VK_RETURN, VK_SPACE, VK_TAB, VK_BACK,
+							// Modifier keys
+							VK_SHIFT, VK_CONTROL, VK_MENU // Shift, Ctrl, Alt
+					}) {
+						if (GetAsyncKeyState(virtualKey) & 0x8000) {
+							if (!anyInputRegistered) {
+								LOG_INFO("Launcher", "Keyboard input - game will be added to last played");
+							}
+							else {
+								LOG_DEBUG("Launcher", "Keyboard input detected");
+							}
+							anyInputRegistered = true;
+							inputDetected = true;
+							break;
+						}
+					}
+				}
+
+				return inputDetected;
 				};
 
-			while (true) {
+			// Window check counter to reduce frequency of checks
+			int windowCheckCounter = 0;
 
+			while (true) {
 				// Process window messages
 				MSG msg;
 				while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 					DispatchMessage(&msg);
 				}
 
-				// Check for keyboard/controller input
-				if (isAnyKeyPressed() || isAnyControllerButtonPressed()) {
-					LOG_INFO("Launcher", "User input detected, waiting indefinitely.");
+				// Check for any input (keyboard, controller, or special combos)
+				if (checkInputs()) {
+					LOG_INFO("Launcher", "User interrupted attract mode - waiting for game to exit");
 					userInputDetected = true;
 					break;
 				}
 
-				// Check if the launched process has exited
-				DWORD exitCode;
-				if (GetExitCodeProcess(hLaunchedProcess, &exitCode)) {
-					if (exitCode != STILL_ACTIVE) {
-						// Process has terminated
-						break;
+				// Check if the window still exists (do this every 5 loops to reduce overhead)
+				if (++windowCheckCounter % 5 == 0) {
+					if (gameWindow) {
+						if (!IsWindow(gameWindow)) {
+							LOG_INFO("Launcher", "Game window closed - process is terminating");
+							processTerminated = true;
+							break;
+						}
 					}
+					else {
+						// Try to find the window if we don't have it yet
+						gameWindow = findGameWindow();
+						if (gameWindow) {
+							LOG_DEBUG("Launcher", "Found game window handle: 0x" +
+								std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
+						}
+					}
+				}
+
+				// Check if the launched process has exited (use this as a backup method)
+				DWORD exitCode;
+				if (!GetExitCodeProcess(hLaunchedProcess, &exitCode)) {
+					DWORD error = GetLastError();
+					LOG_WARNING("Launcher", "Failed to get process exit code, error: " + std::to_string(error));
+					processTerminated = true;
+					break;
+				}
+
+				if (exitCode != STILL_ACTIVE) {
+					LOG_INFO("Launcher", "Process terminated with exit code: " + std::to_string(exitCode));
+					processTerminated = true;
+					break;
 				}
 
 				// Check if the timeout has been reached
 				auto now = std::chrono::high_resolution_clock::now();
 				auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start).count();
 				if (elapsed >= attractModeLaunchRunTime) {
+					LOG_INFO("Launcher", "Attract mode timeout reached - terminating game");
 					break;
 				}
 
@@ -950,47 +1106,62 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			}
 
 			if (userInputDetected) {
+				bool shouldAddToLastPlayed = !firstInputWasExitCommand;
+
+				// Wait indefinitely for the process to exit
 				while (WAIT_OBJECT_0 != MsgWaitForMultipleObjects(1, &hLaunchedProcess, FALSE, INFINITE, QS_ALLINPUT)) {
 					MSG msg;
 					while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 						DispatchMessage(&msg);
 					}
-					// Add to last played if user interrupted during attract mode
+
+					// Also check window existence as a backup during this wait
+					if (gameWindow && !IsWindow(gameWindow)) {
+						LOG_DEBUG("Launcher", "Game window closed while waiting in user input mode");
+						break; // Exit the wait loop since the window is gone
+					}
+				}
+
+				// Only add to last played if first input wasn't an exit command
+				if (shouldAddToLastPlayed) {
+					LOG_INFO("Launcher", "Adding game to last played");
+
+					// Add to last played
 					CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
 					std::string lastPlayedSkipCollection = "";
 					int size = 0;
 					config_.getProperty(OPTION_LASTPLAYEDSKIPCOLLECTION, lastPlayedSkipCollection);
 					config_.getProperty(OPTION_LASTPLAYEDSIZE, size);
 
-					if (lastPlayedSkipCollection != "")
-					{
-						// see if any of the comma seperated match current collection
+					if (lastPlayedSkipCollection != "") {
+						// Check if collection should be skipped
 						std::stringstream ss(lastPlayedSkipCollection);
 						std::string collection = "";
 						bool updateLastPlayed = true;
-						while (ss.good())
-						{
+						while (ss.good()) {
 							getline(ss, collection, ',');
-							// Check if the current collection matches any collection in lastPlayedSkipCollection
-							if (collectionItem->collectionInfo->name == collection)
-							{
+							if (collectionItem->collectionInfo->name == collection) {
 								updateLastPlayed = false;
-								break; // No need to check further, as we found a match
+								break;
 							}
 						}
-						// Update last played collection if not found in the skip collection
-						if (updateLastPlayed)
-						{
+
+						// Update last played collection if needed
+						if (updateLastPlayed) {
 							cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, size);
-							//currentPage_->updateReloadables(0);
 						}
 					}
 				}
 			}
-			else {
-				LOG_INFO("Launcher", "Attract Mode timeout reached, terminating game.");
+			else if (!processTerminated) {
+				// Timer elapsed case (process still running)
 				DWORD processId = GetProcessId(hLaunchedProcess);
-				TerminateProcessAndChildren(processId);  // Terminate the process and its children
+				if (processId != 0) {
+					TerminateProcessAndChildren(processId);
+				}
+				else {
+					LOG_WARNING("Launcher", "Could not get process ID for termination");
+				}
 			}
 		}
 		else if (wait) {
@@ -1003,8 +1174,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			}
 			LOG_INFO("Launcher", "Process completed.");
 		}
-		if (is4waySet)
-		{
+
+		// Restore ServoStik if needed
+		if (is4waySet) {
 			if (!PacSetServoStik8Way()) { // return to 8-way if 4-way switch occurred
 				LOG_ERROR("RetroFE", "Failed to return ServoStik to 8-way mode");
 			}
@@ -1012,7 +1184,12 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				LOG_INFO("RetroFE", "Returned ServoStik to 8-way mode");
 			}
 		}
-		CloseHandle(hLaunchedProcess);
+
+		// Always clean up handles
+		if (hLaunchedProcess != nullptr) {
+			CloseHandle(hLaunchedProcess);
+			hLaunchedProcess = nullptr;
+		}
 		retVal = true;
 	}
 	else {
