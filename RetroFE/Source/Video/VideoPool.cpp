@@ -23,6 +23,7 @@
 #include <shared_mutex>
 #include <condition_variable>
 #include <atomic>
+#include <thread>
 
 VideoPool::PoolMap VideoPool::pools_;
 std::shared_mutex VideoPool::mapMutex_;

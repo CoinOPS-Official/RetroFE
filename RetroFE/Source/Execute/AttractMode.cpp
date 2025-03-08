@@ -18,6 +18,7 @@
 #include "../Graphics/Page.h"
 #include <cstdlib>
 #include <ctime>
+#include <cmath>
 #include <string>
 
 AttractMode::AttractMode()
