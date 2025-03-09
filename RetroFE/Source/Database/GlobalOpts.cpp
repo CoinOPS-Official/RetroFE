@@ -28,7 +28,7 @@
 
 const global_options::options_entry global_options::s_option_entries[] =
 {
-    
+
     { nullptr,                        nullptr,     global_options::option_type::HEADER,   "LOGGING OPTIONS" },
     { OPTION_LOG,                     "NONE",      global_options::option_type::STRING,   "Set logging level, any combo of ERROR,INFO,NOTICE,WARNING,DEBUG,FILECACHE or ALL or NONE" },
     { OPTION_DUMPPROPERTIES,          "false",     global_options::option_type::BOOLEAN,  "Dump contents of properties to txt in current directory"},
@@ -77,6 +77,8 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_RANDOMLAYOUT,             "",         global_options::option_type::MSTRING,  "Randomly choose a layout on launch, CSV list of layout names" },
     { OPTION_FIRSTPLAYLIST,            "arcades",  global_options::option_type::STRING,   "Start on this playlist if available" },
     { OPTION_AUTOPLAYLIST,             "all",      global_options::option_type::STRING,   "Start on this playlist when entering a collection if available" },
+    { OPTION_QUICKLISTCOLLECTIONPLAYLIST,                
+                                       "",         global_options::option_type::STRING,  "Jump to playlist by way of quickList key" },
     { OPTION_CYCLEPLAYLIST,            "",         global_options::option_type::MSTRING,  "Set of playlists that can be cycled through, CSV list of playlist names" },
     { OPTION_FIRSTCOLLECTION,          "",         global_options::option_type::STRING,   "Start on this collection if available" },
     { OPTION_CYCLECOLLECTION,          "",         global_options::option_type::MSTRING,  "Set of collections that can be cycled through, CSV list of collection names" },
@@ -93,6 +95,7 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_CFWLETTERSUB,             "false",    global_options::option_type::BOOLEAN,  "Jump subs in a collection by sub instead of by the letter of the item" },
     { OPTION_PREVLETTERSUBTOCURRENT,   "false",    global_options::option_type::BOOLEAN,  "Jump to the start of the current letter instead of the previous letter if jump to letter enabled" },
     { OPTION_RANDOMSTART,              "false",    global_options::option_type::BOOLEAN,  "Start on a random item when RetroFE boots" },
+    { OPTION_RANDOMPLAYLIST,           "false",    global_options::option_type::BOOLEAN,  "Start on a random playlist when RetroFE boots" },
     { OPTION_KIOSK,                    "false",    global_options::option_type::BOOLEAN,  "Start on the first playlist in cyclePlaylist with navigation and favorites locked, can be toggled with a setting in controls.conf" },
     { OPTION_GLOBALFAVLAST,            "false",    global_options::option_type::BOOLEAN,  "Save last played and favorites to a new collection" },
     { OPTION_INFOEXITONSCROLL,         "false",    global_options::option_type::BOOLEAN,  "Hide info text boxes when scrolling" },
@@ -111,6 +114,9 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_ATTRACTMODEMINTIME,        "100",     global_options::option_type::INTEGER,  "Minimum number of milliseconds attract mode will scroll" },
     { OPTION_ATTRACTMODEMAXTIME,        "1600",    global_options::option_type::INTEGER,  "Maximum number of milliseconds attract mode will scroll" },
     { OPTION_ATTRACTMODEFAST,           "false",   global_options::option_type::BOOLEAN,  "Scroll(false) or jump(true) to the next random point while in attract mode" },
+    { OPTION_ATTRACTMODELAUNCH,         "false",   global_options::option_type::BOOLEAN,  "When in attract mode will launch games for a time configured by attractModeLaunchRunTime, default 30 sec" },
+    { OPTION_ATTRACTMODELAUNCHRUNTIME,  "30",      global_options::option_type::INTEGER,  "If attractModeLaunch = true, the length of time a launched item will run" },
+    { OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS,   "3,5",     global_options::option_type::MSTRING,  "If attractModeLaunch = true, comma separated min and max number of scrolls before launch" },
 
     { nullptr,                         nullptr,    global_options::option_type::HEADER,   "INPUT OPTIONS" },
     { OPTION_COLLECTIONINPUTCLEAR,     "false",    global_options::option_type::BOOLEAN,  "Clear input queue on collection change" },
@@ -119,6 +125,7 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_CONTROLLERCOMBOEXIT,      "true",     global_options::option_type::BOOLEAN,  "Close RetroFE with the controller combo set in controls.conf" },
     { OPTION_CONTROLLERCOMBOSETTINGS,  "false",    global_options::option_type::BOOLEAN,  "Open settings playlist with the controller combo set in controls.conf" },
     { OPTION_SETTINGSCOLLECTIONPLAYLIST,"Arcades:settings", global_options::option_type::STRING,   "Used by settings toggle to go to the playlist in collection:playlist format, defaults to settings.txt in the current collection" },
+    { OPTION_SERVOSTIKENABLED,         "false",    global_options::option_type::BOOLEAN,   "Enable ServoStik support" },
 
     { nullptr,                         nullptr,    global_options::option_type::HEADER,   "METADATA OPTIONS" },
     { OPTION_METALOCK,                 "true",     global_options::option_type::BOOLEAN,  "Locks RetroFE from looking for XML changes and uses meta.db, faster loading when true" },

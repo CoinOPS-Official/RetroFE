@@ -34,7 +34,9 @@ public:
     static std::string getRendererBackend(int index);
     static SDL_mutex *getMutex( );
     static SDL_Window *getWindow( int index );
+    static SDL_Texture* getRenderTarget(int index);
     static bool renderCopy( SDL_Texture *texture, float alpha, SDL_Rect const *src, SDL_Rect const *dest, ViewInfo &viewInfo, int layoutWidth, int layoutHeight );
+    static bool renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight);
     static int getScreenCount( ) 
 	{
         return screenCount_;
@@ -82,4 +84,5 @@ private:
     static int                         numScreens_;
     static int                         numDisplays_;
 	static int                         screenCount_;
+    static std::vector<SDL_Texture*>   renderTargets_;
 };

@@ -181,6 +181,18 @@ int main(int argc, char** argv)
             metadb->resetDatabase();
             return 0;
         }
+        else if (param == "-gstdotdebug" ||
+            param == "--gstdotdebug") {
+            Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", Configuration::absolutePath);
+            config.debugDotEnabled = true;
+            std::string path =
+#ifdef WIN32
+                Utils::combinePath(Configuration::absolutePath, "retrofe");
+#else
+                Configuration::absolutePath;
+#endif
+            Utils::setEnvVar("GST_DEBUG_DUMP_DOT_DIR", path);
+        }
         else if (param == "-showconfig" ||
             param == "--showconfig" ||
             param == "-sc") {
@@ -299,7 +311,14 @@ int main(int argc, char** argv)
     // Initialize random seed
     srand(static_cast<unsigned int>(time(nullptr)));
 
+#ifdef WIN32
+    std::string gstPluginPath = Utils::combinePath(Configuration::absolutePath, "retrofe");
+    Utils::setEnvVar("GST_PLUGIN_PATH", gstPluginPath);
+    Utils::setEnvVar("FREI0R_PATH", gstPluginPath);
+#endif
+
     gst_debug_set_default_threshold(GST_LEVEL_ERROR);
+
 
     gst_init(nullptr, nullptr);
 
@@ -387,11 +406,6 @@ static bool ImportConfiguration(Configuration* c) {
     
     // Check if GStreamer initialization was successful
     if (gst_is_initialized()) {
-    #ifdef WIN32
-            std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
-            GstRegistry* registry = gst_registry_get();
-            gst_registry_scan_path(registry, path.c_str());
-    #endif
         LOG_INFO("RetroFE", "GStreamer successfully initialized");
     }
     else {

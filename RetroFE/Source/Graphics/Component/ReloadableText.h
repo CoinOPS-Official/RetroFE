@@ -21,11 +21,12 @@
 #include "../../Collection/Item.h"
 #include <SDL2/SDL.h>
 #include <string>
+#include <filesystem>
 
 class ReloadableText : public Component
 {
 public:
-    ReloadableText(std::string type, Page &page, Configuration &config, bool systemMode, Font *font, std::string layoutKey, std::string timeFormat, std::string textFormat, std::string singlePrefix, std::string singlePostfix, std::string pluralPrefix, std::string pluralPostfix);
+    ReloadableText(std::string type, Page &page, Configuration &config, bool systemMode, FontManager *font, std::string layoutKey, std::string timeFormat, std::string textFormat, std::string singlePrefix, std::string singlePostfix, std::string pluralPrefix, std::string pluralPostfix, std::string location = "");
     virtual ~ReloadableText();
     bool     update(float dt);
     void     draw();
@@ -35,6 +36,7 @@ public:
     void     initializeFonts();
 
 private:
+    bool isInTransition() const;
     void ReloadTexture();
     std::string getTimeSince(std::string sinceTimestamp);
 
@@ -43,11 +45,18 @@ private:
     Text *imageInst_;
     std::string type_;
     std::string layoutKey_;
-    Font *fontInst_;
+    FontManager *fontInst_;
     std::string timeFormat_;
     std::string textFormat_;
     std::string singlePrefix_;
     std::string singlePostfix_;
     std::string pluralPrefix_;
     std::string pluralPostfix_;
+    std::string currentType_;
+    std::string currentValue_;
+    std::string location_;
+    std::string filePath_;
+    std::filesystem::file_time_type lastWriteTime_;
+    Uint32 lastFileReloadTime_ = 0;
+    const Uint32 fileDebounceDuration_ = 1000; // 1 second debounce per instance
 };

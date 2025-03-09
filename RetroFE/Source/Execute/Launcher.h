@@ -26,32 +26,22 @@ class RetroFE;
 class Launcher
 {
 public:
-    explicit Launcher(Configuration &c);
-    bool run(std::string collection, Item *collectionItem, Page *currentPage = NULL);
+    explicit Launcher(Configuration &c, RetroFE &retroFe);
+    bool run(std::string collection, Item *collectionItem, Page *currentPage = NULL, bool isAttractMode = false);
     void startScript();
     void exitScript();
 	void LEDBlinky( int command, std::string collection = "", Item *collectionItem = NULL);
-    void keepRendering(std::atomic<bool>& stop_thread, Page& currentPage);
+    void keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) const;
 
 private:
-    std::string replaceString(
-        std::string subject,
-        const std::string &search,
-        const std::string &replace);
-
     bool launcherName(std::string &launcherName, std::string collection);
     bool launcherExecutable(std::string &executable, std::string launcherName);
     bool launcherArgs(std::string &args, std::string launcherName);
     bool extensions(std::string &extensions, std::string launcherName);
     bool collectionDirectory(std::string &directory, std::string collection);
     bool findFile(std::string& foundFilePath, std::string& foundFilename, const std::string& directory, const std::string& filenameWithoutExtension, const std::string& extensions);
-    bool execute(std::string executable, std::string arguments, std::string currentDirectory, bool wait = true, Page*currentPage = NULL);
-    std::string replaceVariables(std::string str,
-                                 std::string itemFilePath,
-                                 std::string itemName,
-                                 std::string itemFilename,
-                                 std::string itemDirectory,
-                                 std::string itemCollectionName);
-
+    bool simpleExecute(std::string executable, std::string args, std::string currentDirectory, bool wait = true, Page* currentPage = nullptr);
+    bool execute(std::string executable, std::string args, std::string currentDirectory, bool wait = true, Page* currentPage = nullptr, bool isAttractMode = false, Item* collectionItem = nullptr);
     Configuration &config_;
+    RetroFE &retroFeInstance_;
 };

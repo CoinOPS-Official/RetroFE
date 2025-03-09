@@ -15,17 +15,19 @@
  */
 #pragma once
 
+#include <memory>
+
 class IVideo;
 
 class VideoFactory
 {
 public:
-    static IVideo *createVideo( int monitor, int numLoops = -1 );
+    static std::unique_ptr<IVideo> createVideo(int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners);
     static void    setEnabled(bool enabled);
     static void    setNumLoops(int numLoops);
 
 private:
     static bool    enabled_;
     static int     numLoops_;
-    static IVideo *instance_;
 };
+

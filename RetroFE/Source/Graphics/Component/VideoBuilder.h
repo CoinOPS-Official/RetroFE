@@ -20,9 +20,12 @@
 #include "../Page.h"
 #include "../../Video/VideoFactory.h"
 
+class Page;
+class VideoComponent;
+
 //todo: this is more of a factory than a builder
 class VideoBuilder
 {
 public:
-    VideoComponent * createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops = -1);
+    static VideoComponent* createVideo(const std::string& path, Page& page, const std::string& name, int monitor, int numLoops = -1, bool softOverlay = false, int listId = -1, const int* perspectiveCorners = nullptr);
 };

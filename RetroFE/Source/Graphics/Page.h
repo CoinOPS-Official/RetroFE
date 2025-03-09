@@ -180,6 +180,8 @@ public:
     bool isLocked() const;
     ScrollingList* getPlaylistMenu();
     void setPlaylistMenu(ScrollingList*);
+    void setIsLaunched(bool isLaunched);
+    bool getIsLaunched();
     bool playlistExists(const std::string&);
     void setSelectedItem();
     bool fromPreviousPlaylist = false;
@@ -188,6 +190,7 @@ public:
 
 private:
     void playlistChange();
+    std::string lastPlaylistName_;
     std::string collectionName_;
     Configuration &config_;
     std::string controlsType_;
@@ -214,7 +217,7 @@ private:
     CollectionVector_T deleteCollections_;
 
     static const unsigned int NUM_LAYERS = 20;
-    std::vector<Component *> LayerComponents;
+    std::vector<std::vector<Component*>> LayerComponents_; // Grouped by layer
     std::list<ScrollingList *> deleteMenuList_;
     std::list<CollectionInfo *> deleteCollectionList_;
     std::map<std::string, size_t> lastPlaylistOffsets_;
@@ -237,5 +240,6 @@ private:
     std::vector<int> layoutHeightByMonitor_;
     bool jukebox_;
     bool useThreading_;
+    bool isLaunched_ = false;
 
 };

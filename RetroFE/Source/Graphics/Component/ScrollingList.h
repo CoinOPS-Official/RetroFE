@@ -24,9 +24,65 @@
 #include "../../Database/Configuration.h"
 #include <SDL2/SDL.h>
 
+template<typename T>
+class RotatableView {
+private:
+    std::vector<T> data_;
+    size_t head_ = 0;
+    size_t size_ = 0;
+    size_t capacity_;
+
+public:
+    // Default constructor
+    RotatableView() : data_(0), capacity_(0) {}
+
+    // Parameterized constructor
+    explicit RotatableView(size_t capacity) : data_(capacity, T()), capacity_(capacity) {}
+
+    // Initialize or reset the buffer
+    void initialize(size_t capacity) {
+        data_.clear();
+        data_.resize(capacity, T());
+        head_ = 0;
+        capacity_ = capacity;
+    }
+
+    // Rotate the buffer forward or backward
+    void rotate(bool forward) {
+        if (forward) {
+            head_ = (head_ + 1) % capacity_;
+        }
+        else {
+            head_ = (head_ - 1 + capacity_) % capacity_;
+        }
+    }
+
+    // Access element at a given offset from the head
+    T& operator[](size_t index) {
+        return data_[(head_ + index) % capacity_];
+    }
+
+    const T& operator[](size_t index) const {
+        return data_[(head_ + index) % capacity_];
+    }
+
+
+    // Get the raw underlying vector for iteration if needed
+    std::vector<T>& raw() { return data_; }
+    const std::vector<T>& raw() const { return data_; }
+
+    // Size and capacity methods
+    size_t size() const { return capacity_; }
+    bool empty() const { return capacity_ == 0; }
+
+    // Direct access to current head
+    T& head() { return data_[head_]; }
+    const T& head() const { return data_[head_]; }
+};
+
 
 class Configuration;
-class Font;
+class FontManager;
 
 class ScrollingList : public Component
 {
@@ -39,16 +95,17 @@ public:
         bool          commonMode,
         bool          playlistType,
         bool          selectedImage,
-        Font* font,
+        FontManager* font,
         const std::string& layoutKey,
         const std::string& imageType,
-        const std::string& videoType);
+        const std::string& videoType,
+        bool useTextureCaching);
 
     ~ScrollingList() override;
     const std::vector<Item*>& getItems() const;
     
-    using Component::draw;
-    
+    int getListId() const;
+
     void triggerEnterEvent();
     void triggerExitEvent();
     void triggerMenuEnterEvent(int menuIndex = -1);
@@ -80,7 +137,7 @@ public:
     void selectItemByName(std::string_view name);
     std::string getSelectedItemName();
     void destroyItems();
-    void setPoints(std::vector<ViewInfo*>* scrollPoints, std::vector<AnimationEvents*>* tweenPoints);
+    void setPoints(std::vector<ViewInfo*>* points, std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints);
     size_t getSelectedIndex() const;
     void setSelectedIndex(unsigned int index);
     size_t getSize() const;
@@ -107,7 +164,7 @@ public:
     void allocateGraphicsMemory() override;
     void freeGraphicsMemory() override;
     bool update(float dt) override;
-    void draw(unsigned int layer);
+    const std::vector<Component*>& getComponents() const;
     void setScrollAcceleration(float value);
     void setStartScrollTime(float value);
     void setMinScrollTime(float value);
@@ -120,9 +177,25 @@ public:
     bool isFastScrolling() const;
     void scroll(bool forward);
     bool isPlaylist() const;
+
+    void setPerspectiveCorners(const int corners[8]) {
+        std::copy(corners, corners + 8, perspectiveCorners_);
+        perspectiveCornersInitialized_ = true;
+    }
+    const int* getPerspectiveCorners() const { return perspectiveCorners_; }
+
+
+
 private:
 
-    void resetTweens(Component* c, AnimationEvents* sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const;
+    static int nextListId;
+    static std::mutex listIdMutex;  // Add mutex for thread safety
+    int listId_;
+
+    void clearPoints();
+    void clearTweenPoints();
+    
+    void resetTweens(Component* c, std::shared_ptr<AnimationEvents> sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const;
     inline size_t loopIncrement(size_t offset, size_t index, size_t size) const;
     inline size_t loopDecrement(size_t offset, size_t index, size_t size) const;
 
@@ -130,11 +203,11 @@ private:
     bool commonMode_;
     bool playlistType_;
     bool selectedImage_;
-    bool textFallback_{ true };
+    bool textFallback_{ false };
 
     std::vector<Component*>* spriteList_{ nullptr };
     std::vector<ViewInfo*>* scrollPoints_{ nullptr };
-    std::vector<AnimationEvents*>* tweenPoints_{ nullptr };
+    std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints_;
 
     size_t itemIndex_{ 0 };
     size_t selectedOffsetIndex_{ 0 };
@@ -145,12 +218,18 @@ private:
     float scrollPeriod_{ 0 };
 
     Configuration& config_;
-    Font* fontInst_;
+    FontManager* fontInst_;
     std::string    layoutKey_;
     std::string    imageType_;
     std::string    videoType_;
 
     std::vector<Item*>* items_{ nullptr };
-    std::vector<Component*> components_;
+    RotatableView<Component*> components_;
+
+    bool useTextureCaching_{ false };
+
+    bool perspectiveCornersInitialized_{ false };
+    int perspectiveCorners_[8]; // stores x,y coordinates for all 4 corners in order: topLeft, topRight, bottomLeft, bottomRight
+
 
 };

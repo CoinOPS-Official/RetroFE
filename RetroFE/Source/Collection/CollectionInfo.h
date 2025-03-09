@@ -31,6 +31,7 @@ public:
     bool saveFavorites(Item* removed = nullptr);
     void sortItems();
     void sortPlaylists();
+    bool isItemInLastPlayed(const Item* selectedItem);
     void addSubcollection(CollectionInfo *info);
     auto itemIsLess(const std::string& sortType, bool currentCollectionMenusort) const;
     void extensionList(std::vector<std::string> &extensions) const;

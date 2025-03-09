@@ -70,6 +70,7 @@
 #define OPTION_LAYOUT                "layout"
 #define OPTION_RANDOMLAYOUT          "randomLayout"
 #define OPTION_FIRSTPLAYLIST         "firstPlaylist"
+#define OPTION_QUICKLISTCOLLECTIONPLAYLIST             "quickListCollectionPlaylist"
 #define OPTION_AUTOPLAYLIST          "autoPlaylist"
 #define OPTION_CYCLEPLAYLIST         "cyclePlaylist"
 #define OPTION_FIRSTCOLLECTION       "firstCollection"
@@ -87,6 +88,7 @@
 #define OPTION_CFWLETTERSUB           "cfwLetterSub"
 #define OPTION_PREVLETTERSUBTOCURRENT  "prevLetterSubToCurrent"
 #define OPTION_RANDOMSTART            "randomStart"
+#define OPTION_RANDOMPLAYLIST         "randomPlaylist"
 #define OPTION_KIOSK                  "kiosk"
 #define OPTION_GLOBALFAVLAST          "globalFavLast"
 #define OPTION_INFOEXITONSCROLL       "infoExitOnScroll"
@@ -105,6 +107,9 @@
 #define OPTION_ATTRACTMODEMINTIME        "attractModeMinTime"
 #define OPTION_ATTRACTMODEMAXTIME        "attractModeMaxTime"
 #define OPTION_ATTRACTMODEFAST           "attractModeFast"
+#define OPTION_ATTRACTMODELAUNCH         "attractModeLaunch"
+#define OPTION_ATTRACTMODELAUNCHRUNTIME  "attractModeLaunchRunTime"
+#define OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS   "attractModeLaunchMinMaxScrolls"
 
 // INPUT OPTIONS
 #define OPTION_COLLECTIONINPUTCLEAR    "collectionInputClear"
@@ -113,6 +118,7 @@
 #define OPTION_CONTROLLERCOMBOEXIT     "controllerComboExit"
 #define OPTION_CONTROLLERCOMBOSETTINGS "controllerComboSettings"
 #define OPTION_SETTINGSCOLLECTIONPLAYLIST "settingsCollectionPlaylist"
+#define OPTION_SERVOSTIKENABLED "servoStikEnabled"
 
 // METADATA OPTIONS
 #define OPTION_METALOCK               "metaLock"
@@ -144,15 +150,15 @@ public:
         MSTRING,         // comma-delimited string option
         PATH,            // single path option
     };
-    
+
     // Definition of options_entry describing a single option with its description and default value
     struct options_entry {
-        const char *                name;               // name on the command line
-        const char *                defvalue;           // default value of this argument
+        const char* name;               // name on the command line
+        const char* defvalue;           // default value of this argument
         option_type                 type;               // type of option
-        const char *                description;        // description for -showusage
+        const char* description;        // description for -showusage
     };
-    
+
     // Definition of functions to directly return the values of specific options
     const char* log() { return value(OPTION_LOG); }
     bool dumpproperties() { return bool_value(OPTION_DUMPPROPERTIES); }
@@ -168,19 +174,19 @@ public:
     int screennumx() { return int_value(OPTION_SCREENNUMX); }
     bool mirrorx() { return bool_value(OPTION_MIRRORX); }
     int rotationx() { return int_value(OPTION_ROTATIONX); }
-    
+
     bool windowborder() { return bool_value(OPTION_WINDOWBORDER); }
     bool windowresize() { return bool_value(OPTION_WINDOWRESIZE); }
     int fps() { return int_value(OPTION_FPS); }
     int fpsidle() { return int_value(OPTION_FPSIDLE); }
     bool hidemouse() { return bool_value(OPTION_HIDEMOUSE); }
     bool animateduringgame() { return bool_value(OPTION_ANIMATEDURINGGAME); }
-    
+
     bool videoenable() { return bool_value(OPTION_VIDEOENABLE); }
     int videoloop() { return int_value(OPTION_VIDEOLOOP); }
     bool disablevideorestart() { return bool_value(OPTION_DISABLEVIDEORESTART); }
     bool disablepauseonscroll() { return bool_value(OPTION_DISABLEPAUSEONSCROLL); }
-    
+
     bool vsync() { return bool_value(OPTION_VSYNC); }
     bool hardwarevideoaccel() { return bool_value(OPTION_HARDWAREVIDEOACCEL); }
     int avdecmaxthreads() { return int_value(OPTION_AVDECMAXTHREADS); }
@@ -190,18 +196,18 @@ public:
     bool highpriority() { return bool_value(OPTION_HIGHPRIORITY); }
     bool unloadsdl() { return bool_value(OPTION_UNLOADSDL); }
     bool minimizeonfocusloss() { return bool_value(OPTION_MINIMIZEONFOCUSLOSS); }
-    int avdecthreadtype() {return int_value(OPTION_AVDECTHREADTYPE); }
+    int avdecthreadtype() { return int_value(OPTION_AVDECTHREADTYPE); }
     int glswapinterval() { return int_value(OPTION_GLSWAPINTERVAL); }
-    
+
     const char* layout() { return value(OPTION_LAYOUT); }
-    const char *randomlayout() { return value(OPTION_RANDOMLAYOUT); }
-    const char *firstplaylist() { return value(OPTION_FIRSTPLAYLIST); }
-    const char *autoplaylist() { return value(OPTION_AUTOPLAYLIST); }
-    const char *cycleplaylist() { return value(OPTION_CYCLEPLAYLIST); }
-    const char *firstcollection() { return value(OPTION_FIRSTCOLLECTION); }
-    const char *cyclecollection() { return value(OPTION_CYCLECOLLECTION); }
+    const char* randomlayout() { return value(OPTION_RANDOMLAYOUT); }
+    const char* firstplaylist() { return value(OPTION_FIRSTPLAYLIST); }
+    const char* autoplaylist() { return value(OPTION_AUTOPLAYLIST); }
+    const char* cycleplaylist() { return value(OPTION_CYCLEPLAYLIST); }
+    const char* firstcollection() { return value(OPTION_FIRSTCOLLECTION); }
+    const char* cyclecollection() { return value(OPTION_CYCLECOLLECTION); }
     int lastplayedsize() { return int_value(OPTION_LASTPLAYEDSIZE); }
-    const char *lastplayedskipcollection() { return value(OPTION_LASTPLAYEDSKIPCOLLECTION); }
+    const char* lastplayedskipcollection() { return value(OPTION_LASTPLAYEDSKIPCOLLECTION); }
     bool enteroncollection() { return bool_value(OPTION_ENTERONCOLLECTION); }
     bool backoncollection() { return bool_value(OPTION_BACKONCOLLECTION); }
     bool startcollectionenter() { return bool_value(OPTION_STARTCOLLECTIONENTER); }
@@ -212,6 +218,7 @@ public:
     bool cfwlettersub() { return bool_value(OPTION_CFWLETTERSUB); }
     bool prevlettersubtocurrent() { return bool_value(OPTION_PREVLETTERSUBTOCURRENT); }
     bool randomstart() { return bool_value(OPTION_RANDOMSTART); }
+    bool randomplaylist() { return bool_value(OPTION_RANDOMPLAYLIST);}
     bool kiosk() { return bool_value(OPTION_KIOSK); }
     bool globalfavlast() { return bool_value(OPTION_GLOBALFAVLAST); }
     bool infoexitonscroll() { return bool_value(OPTION_INFOEXITONSCROLL); }
@@ -223,19 +230,24 @@ public:
     int attractmodetime() { return int_value(OPTION_ATTRACTMODETIME); }
     int attractmodenexttime() { return int_value(OPTION_ATTRACTMODENEXTTIME); }
     int attractmodeplaylisttime() { return int_value(OPTION_ATTRACTMODEPLAYLISTTIME); }
-    const char *attractmodeskipplaylist() { return value(OPTION_ATTRACTMODESKIPPLAYLIST); }
+    const char* attractmodeskipplaylist() { return value(OPTION_ATTRACTMODESKIPPLAYLIST); }
     int attractmodecollectiontime() { return int_value(OPTION_ATTRACTMODECOLLECTIONTIME); }
-    const char *attractmodeskipcollection() { return value(OPTION_ATTRACTMODESKIPCOLLECTION); }
+    const char* attractmodeskipcollection() { return value(OPTION_ATTRACTMODESKIPCOLLECTION); }
     int attractmodemintime() { return int_value(OPTION_ATTRACTMODEMINTIME); }
     int attractmodemaxtime() { return int_value(OPTION_ATTRACTMODEMAXTIME); }
     bool attractmodefast() { return bool_value(OPTION_ATTRACTMODEFAST); }
+    bool attractmodelaunch() { return bool_value(OPTION_ATTRACTMODELAUNCH); }
+    int attractmodelaunchruntime() { return int_value(OPTION_ATTRACTMODELAUNCHRUNTIME); }
+    int attractmodelaunchminmaxScrolls() { return int_value(OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS); }
     
     bool collectioninputclear() { return bool_value(OPTION_COLLECTIONINPUTCLEAR); }
     bool playlistinputclear() { return bool_value(OPTION_PLAYLISTINPUTCLEAR); }
     bool jumpinputclear() { return bool_value(OPTION_JUMPINPUTCLEAR); }
     bool controllercomboexit() { return bool_value(OPTION_CONTROLLERCOMBOEXIT); }
     bool controllercombosettings() { return bool_value(OPTION_CONTROLLERCOMBOSETTINGS); }
+	const char* quicklistcollectionplaylist() { return value(OPTION_QUICKLISTCOLLECTIONPLAYLIST); }
     const char *settingscollectionplaylist() { return value(OPTION_SETTINGSCOLLECTIONPLAYLIST); }
+    bool servostickenabled() { return bool_value(OPTION_SERVOSTIKENABLED); }
     
     bool metalock() { return bool_value(OPTION_METALOCK); }
     bool overwritexml() { return bool_value(OPTION_OVERWRITEXML); }

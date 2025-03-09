@@ -17,21 +17,22 @@
 
 #include "Font.h"
 #include <string>
-#include <map>
+#include <unordered_map>
+#include <memory>
 
 class FontCache
 {
 public:
     FontCache();
-    void initialize();
+    bool initialize() const;
     void deInitialize();
     bool loadFont(std::string font, int fontSize, SDL_Color color, int monitor);
-    Font *getFont(std::string font, int fontSize, SDL_Color color);
+    FontManager* getFont(const std::string& fontPath, int fontSize, SDL_Color color, int monitor);
 
     virtual ~FontCache();
 private:
-    std::map<std::string, Font *> fontFaceMap_;
-    std::string buildFontKey(std::string font, int fontSize, SDL_Color color);
+    std::unordered_map<std::string, std::unique_ptr<FontManager>> fontFaceMap_;
+    std::string buildFontKey(std::string font, int fontSize, SDL_Color color, int monitor);
 
 };
 

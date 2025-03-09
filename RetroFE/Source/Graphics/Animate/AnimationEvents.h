@@ -20,18 +20,21 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory> // Include memory for std::shared_ptr
 
-class AnimationEvents
-{
+class AnimationEvents {
 public:
     AnimationEvents();
     ~AnimationEvents();
 
-    Animation *getAnimation(const std::string& tween);
-    Animation *getAnimation(const std::string& tween, int index);
-    void setAnimation(const std::string& tween, int index, Animation *animation);
+    std::shared_ptr<Animation> getAnimation(const std::string& tween);
+    std::shared_ptr<Animation> getAnimation(const std::string& tween, int index);
+    void setAnimation(const std::string& tween, int index, std::shared_ptr<Animation> animation);
     void clear();
 
+    // Getter for animationMap_
+    const std::map<std::string, std::map<int, std::shared_ptr<Animation>>>& getAnimationMap() const;
+
 private:
-    std::map<std::string, std::map<int, Animation *> > animationMap_;
+    std::map<std::string, std::map<int, std::shared_ptr<Animation>>> animationMap_;
 };

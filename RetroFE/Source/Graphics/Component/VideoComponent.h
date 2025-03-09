@@ -22,12 +22,15 @@
 #include "../../Video/VideoFactory.h"
 #include <SDL2/SDL.h>
 #include <string>
+#include <string_view>
+#include <atomic>
+#include <memory>
 
 class VideoComponent : public Component
 {
 public:
-    VideoComponent(Page &p, const std::string& videoFile, int monitor, int numLoops);
-    virtual ~VideoComponent();
+    explicit VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listID, const int* perspectiveCorners);
+    ~VideoComponent() override;
     bool update(float dt) override;
     void draw() override;
     void freeGraphicsMemory() override;
@@ -42,15 +45,19 @@ public:
     unsigned long long getCurrent( ) override;
     unsigned long long getDuration( ) override;
     bool isPaused( ) override;
-    std::string_view filePath() override;
+    std::string_view filePath() const;
 
 private:
     std::string videoFile_;
-    std::string name_;
-    IVideo* videoInst_{ nullptr };
-    bool isPlaying_{ false };
+    std::unique_ptr<IVideo> videoInst_;
+    std::atomic<bool> instanceReady_{false};
     bool hasBeenOnScreen_{ false };
+    bool softOverlay_;
     int numLoops_;
     int monitor_;
+    int listId_;
     Page* currentPage_{ nullptr };
+    int perspectiveCorners_[8]{ 0 }; // Initialize to zeros
+    bool hasPerspective_{ false };
+    bool dimensionsUpdated_ = false; // Track if dimensions have been updated for the current video
 };

@@ -19,21 +19,28 @@
 #include <fstream>
 
 
-VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops)
+VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
 {
     VideoComponent *component = nullptr;
     
     // Declare the extensions vector as static so it's only initialized once.
+#ifdef WIN32
     static std::vector<std::string> extensions = {
-        "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
-        "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
+        "mp4", "avi", "mkv",
+        "mp3", "wav", "flac"
     };
+#else
+    static std::vector<std::string> extensions = {
+    "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
+    "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
+    };
+#endif
 
     std::string prefix = Utils::combinePath(path, name);
 
     if(std::string file; Utils::findMatchingFile(prefix, extensions, file)) {
-        component = new VideoComponent(page, file, monitor, numLoops);
-        component->allocateGraphicsMemory();
+        component = new VideoComponent(page, file, monitor, numLoops, softOverlay, listId, perspectiveCorners);
+        //component->allocateGraphicsMemory();
     }
 
     return component;

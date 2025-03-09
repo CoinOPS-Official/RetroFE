@@ -35,6 +35,7 @@ public:
     void addPlaylists(CollectionInfo *info);
     void loadPlaylistItems(CollectionInfo* info, std::map<std::string, Item*>* playlistItems, const std::string& path);
     void updateLastPlayedPlaylist(CollectionInfo *info, Item *item, int size);
+    void updateTimeSpent(Item* item, double timePlayedInSeconds);
     void injectMetadata(CollectionInfo *info);
     static bool createCollectionDirectory(const std::string& collectionName, const std::string& collectionType = NULL, const std::string& osType = NULL);
     bool ImportBasicList(CollectionInfo *info, const std::string& file, std::vector<Item *> &list);
@@ -46,6 +47,7 @@ private:
     bool ImportDirectory(CollectionInfo *info, const std::string& mergedCollectionName);
     std::string getKey(Item* item);
     void AddToPlayCount(Item* item);
+    std::map<std::string, double> ImportTimeSpent(const std::string& file);
     std::map<std::string, Item*> ImportPlayCount(const std::string& file);
     void ImportRomDirectory(const std::string& path, CollectionInfo *info, std::map<std::string, Item *> includeFilter, std::map<std::string, Item *> excludeFilter, bool romHierarchy, bool emuarc);
 };
