@@ -755,6 +755,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		};
 
 	HANDLE hLaunchedProcess = nullptr;
+	DWORD launchedProcessId = 0;
 	bool handleObtained = false;
 
 	// Lower priority before launching the process
@@ -791,6 +792,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			&startupInfo,             // Startup information
 			&processInfo)) {          // Process information
 			hLaunchedProcess = processInfo.hProcess;
+			launchedProcessId = processInfo.dwProcessId;
 			handleObtained = true;
 			CloseHandle(processInfo.hThread);
 			LOG_INFO("Launcher", "Process launched successfully with handle obtained.");
@@ -815,6 +817,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		if (ShellExecuteExA(&shExInfo)) {
 			hLaunchedProcess = shExInfo.hProcess;
 			if (hLaunchedProcess) {
+				launchedProcessId = GetProcessId(hLaunchedProcess);
 				handleObtained = true;
 				LOG_INFO("Launcher", "ShellExecuteEx successfully launched: " + exePathStr);
 			}
@@ -856,6 +859,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			GetWindowThreadProcessId(hwndFullscreen, &gameProcessId);
 			hLaunchedProcess = OpenProcess(SYNCHRONIZE, FALSE, gameProcessId);
 			if (hLaunchedProcess) {
+				launchedProcessId = gameProcessId;
 				handleObtained = true;
 				LOG_INFO("Launcher", "Fullscreen process detected and handle obtained.");
 			}
@@ -867,7 +871,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		bool is4waySet = false;
 		bool isServoStikEnabled = false;
 		config_.getProperty(OPTION_SERVOSTIKENABLED, isServoStikEnabled);
-		if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && isServoStikEnabled) {
+		if (!isAttractMode && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && isServoStikEnabled) {
 			if (!PacSetServoStik4Way()) {
 				LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
 			}
@@ -895,7 +899,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			const int simultaneousThresholdMs = 200; // Consider buttons pressed simultaneously if within 200ms
 
 			// Store process ID for window detection
-			DWORD launchedProcessId = GetProcessId(hLaunchedProcess);
 			HWND gameWindow = nullptr;
 
 			// Give the process a moment to create its window
@@ -1056,6 +1059,17 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				if (checkInputs()) {
 					LOG_INFO("Launcher", "User interrupted attract mode - waiting for game to exit");
 					userInputDetected = true;
+					if (!firstInputWasExitCommand) {  // Normal input (gameplay intended)
+						if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && isServoStikEnabled) {
+							if (!PacSetServoStik4Way()) {
+								LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode after normal input");
+							}
+							else {
+								LOG_INFO("RetroFE", "Setting ServoStik to 4-way mode after normal input");
+								is4waySet = true;
+							}
+						}
+					}
 					break;
 				}
 
@@ -1155,12 +1169,8 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			}
 			else if (!processTerminated) {
 				// Timer elapsed case (process still running)
-				DWORD processId = GetProcessId(hLaunchedProcess);
-				if (processId != 0) {
-					TerminateProcessAndChildren(processId);
-				}
-				else {
-					LOG_WARNING("Launcher", "Could not get process ID for termination");
+				if (launchedProcessId != 0) {
+					TerminateProcessAndChildren(launchedProcessId);
 				}
 			}
 		}
@@ -1421,7 +1431,7 @@ void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) 
 
 	while (!stop_thread) {
 		lastTime = currentTime;
-		currentTime = static_cast<float>(SDL_GetTicks()) / 1000;
+		currentTime = static_cast<float>(SDL_GetTicks64()) / 1000;
 
 		if (currentTime < lastTime) {
 			currentTime = lastTime;
@@ -1442,12 +1452,10 @@ void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) 
 			SDL_SetRenderTarget(SDL::getRenderer(i), SDL::getRenderTarget(i));
 			SDL_SetRenderDrawColor(SDL::getRenderer(i), 0x0, 0x0, 0x0, 0xFF);
 			SDL_RenderClear(SDL::getRenderer(i));
-		}
+		
 
-		currentPage.draw();
+		currentPage.draw(i);
 
-		for (int i = 1; i < SDL::getScreenCount(); ++i) {
-			// Switch back to the screen's framebuffer
 			SDL_SetRenderTarget(SDL::getRenderer(i), nullptr);
 
 			// Render the texture onto the screen
