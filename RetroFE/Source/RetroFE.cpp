@@ -123,17 +123,8 @@ void RetroFE::render()
 		SDL_SetRenderDrawColor(SDL::getRenderer(i), 0x0, 0x0, 0x0, 0xFF);
 		SDL_RenderClear(SDL::getRenderer(i));
 
-	}
+		currentPage_->draw(i);  // Draws onto the currently set render targets (textures)
 
-	// Step 2: Draw the current page onto the render target (textures)
-	if (currentPage_)
-	{
-		currentPage_->draw();  // Draws onto the currently set render targets (textures)
-	}
-
-	// Step 3: Present the rendered content on each screen
-	for (int i = 0; i < SDL::getScreenCount(); ++i)
-	{
 		// Switch back to the screen's framebuffer
 		SDL_SetRenderTarget(SDL::getRenderer(i), nullptr);
 
@@ -244,7 +235,7 @@ void RetroFE::launchExit()
 	currentPage_->reallocateMenuSpritePoints(false); // skip updating playlist menu
 
 	// Restore time settings
-	currentTime_ = static_cast<float>(SDL_GetTicks()) / 1000;
+	currentTime_ = static_cast<float>(SDL_GetTicks64()) / 1000;
 	keyLastTime_ = currentTime_;
 	lastLaunchReturnTime_ = currentTime_;
 
@@ -519,7 +510,7 @@ bool RetroFE::run()
 
 	Launcher l(config_, *this);
 	Menu m(config_, input_);
-	preloadTime = static_cast<float>(SDL_GetTicks()) / 1000;
+	preloadTime = static_cast<float>(SDL_GetTicks64()) / 1000;
 
 	l.LEDBlinky(1);
 	l.startScript();
@@ -2261,7 +2252,7 @@ bool RetroFE::run()
 		if (running)
 		{
 			lastTime = currentTime_;
-			currentTime_ = static_cast<float>(SDL_GetTicks()) / 1000;
+			currentTime_ = static_cast<float>(SDL_GetTicks64()) / 1000;
 
 			if (currentTime_ < lastTime)
 			{

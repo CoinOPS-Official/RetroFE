@@ -1412,51 +1412,55 @@ void Page::cleanup()
 }
 
 
-void Page::draw() {
- 
+void Page::draw(int monitor) {
+    // Early check: if we're out of bounds in layer components, return
+    if (LayerComponents_.empty()) {
+        return;
+    }
+
+    // Cache the menus reference
+    const auto& menus = menus_;
+    const bool hasMenus = !menus.empty();
+
+    // Process each layer for this specific monitor
     for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
-        // Check for out-of-bounds access
+        // Skip layers beyond our vector size
         if (i >= LayerComponents_.size()) {
-            LOG_ERROR("Page::draw", "Layer index out of bounds: " + std::to_string(i));
-            break; // Exit loop
+            break;  // No need to check higher layers
         }
 
-        // Skip layers with no components or menus
-        if (LayerComponents_[i].empty() && menus_.empty()) {
+        // Get components for this layer
+        const auto& layerComponents = LayerComponents_[i];
+
+        // Skip empty layers when possible
+        if (layerComponents.empty() && !hasMenus) {
             continue;
         }
 
-        // Draw all components in the layer
-        for (Component* component : LayerComponents_[i]) {
-            if (!component) {
-                LOG_WARNING("Page::draw", "Null component in LayerComponents_[" + std::to_string(i) + "].");
-                continue;
+        // Draw regular components for this layer and the specified monitor
+        for (Component* component : layerComponents) {
+            if (component && component->baseViewInfo.Monitor == monitor) {
+                component->draw();
             }
-            component->draw();
         }
 
-        // Draw all menus in the layer
-        for (const auto& menuList : menus_) {
-            for (ScrollingList* const menu : menuList) {
-                if (!menu) {
-                    LOG_WARNING("Page::draw", "Null menu in menus_.");
-                    continue;
-                }
+        // Draw menu components for this layer and the specified monitor
+        if (hasMenus) {
+            for (const auto& menuList : menus) {
+                for (ScrollingList const* menu : menuList) {
+                    if (!menu) continue;
 
-                for (Component* c : menu->getComponents()) {
-                    if (!c) {
-                        LOG_WARNING("Page::draw", "Null component in menu->getComponents().");
-                        continue;
-                    }
-                    if (c->baseViewInfo.Layer == i) {
-                        c->draw();
+                    for (Component* c : menu->getComponents()) {
+                        // Only draw if component matches both layer and monitor
+                        if (c && c->baseViewInfo.Layer == i && c->baseViewInfo.Monitor == monitor) {
+                            c->draw();
+                        }
                     }
                 }
             }
         }
     }
 }
-
 
 
 void Page::removePlaylist()
