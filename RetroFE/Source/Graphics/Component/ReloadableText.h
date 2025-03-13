@@ -57,6 +57,6 @@ private:
     std::string location_;
     std::string filePath_;
     std::filesystem::file_time_type lastWriteTime_;
-    Uint32 lastFileReloadTime_ = 0;
-    const Uint32 fileDebounceDuration_ = 1000; // 1 second debounce per instance
+    Uint64 lastFileReloadTime_ = 0;
+    const Uint64 fileDebounceDuration_ = 1000; // 1 second debounce per instance
 };

@@ -60,7 +60,7 @@ bool ReloadableText::update(float dt)
     }
     else if (type_ == "file")
     {
-        Uint32 now = SDL_GetTicks();
+        Uint64 now = SDL_GetTicks64();
         if (now - lastFileReloadTime_ >= fileDebounceDuration_) {
             ReloadTexture();
             lastFileReloadTime_ = now;

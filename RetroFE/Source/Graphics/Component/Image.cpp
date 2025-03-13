@@ -199,7 +199,7 @@ void Image::draw() {
             LOG_ERROR("Image", "Animated image resources are missing. Cannot draw animated image.");
             return;
         }
-        Uint32 currentTime = SDL_GetTicks();
+        Uint32 currentTime = SDL_GetTicks64();
         Uint32 elapsed = currentTime - lastFrameTime_;
         if (elapsed >= static_cast<Uint32>(frameDelay_)) {
             size_t framesToAdvance = elapsed / frameDelay_;
@@ -311,7 +311,7 @@ bool Image::loadFromCache(const LoadContext& ctx) {
                         frameDelay_ = cachedImage.frameDelay;
                         ctx.baseViewInfo.ImageWidth = static_cast<float>(surfW);
                         ctx.baseViewInfo.ImageHeight = static_cast<float>(surfH);
-                        lastFrameTime_ = SDL_GetTicks();
+                        lastFrameTime_ = SDL_GetTicks64();
                         isUsingCachedSurfaces_ = true;
                         LOG_INFO("Image", "Loaded animated surfaces and texture from cache for " +
                             ctx.filePath + " (" + std::to_string(surfW) + "x" + std::to_string(surfH) + ")");
@@ -479,7 +479,7 @@ bool Image::loadAnimatedGIF(const std::vector<uint8_t>& buffer, LoadContext& ctx
         else {
             frameDelay_ = delay;
             }
-        lastFrameTime_ = SDL_GetTicks();
+        lastFrameTime_ = SDL_GetTicks64();
         LOG_INFO("Image", "Loaded animated GIF with " + std::to_string(decodedSurfaces.size()) + " frames");
 
         // Update the instance's animated surfaces regardless of caching.
@@ -576,7 +576,7 @@ bool Image::loadAnimatedWebP(const std::vector<uint8_t>& buffer, LoadContext& ct
         }
     baseViewInfo.ImageWidth = static_cast<float>(width);
     baseViewInfo.ImageHeight = static_cast<float>(height);
-    lastFrameTime_ = SDL_GetTicks();
+    lastFrameTime_ = SDL_GetTicks64();
     if (ctx.useCache) {
         LOG_INFO("Image", "Decoded animated WebP into " + std::to_string(decodedSurfaces.size()) +
             " surfaces (will be cached)");
