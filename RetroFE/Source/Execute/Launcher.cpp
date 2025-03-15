@@ -1077,9 +1077,24 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				if (++windowCheckCounter % 5 == 0) {
 					if (gameWindow) {
 						if (!IsWindow(gameWindow)) {
-							LOG_INFO("Launcher", "Game window closed - process is terminating");
-							processTerminated = true;
-							break;
+							LOG_DEBUG("Launcher", "Original game window handle invalid - attempting to find new window");
+							// Try to find window again before assuming process termination
+							gameWindow = findGameWindow();
+							if (!gameWindow) {
+								// Double check process is actually terminated
+								DWORD exitCode;
+								if (!GetExitCodeProcess(hLaunchedProcess, &exitCode) || exitCode != STILL_ACTIVE) {
+									LOG_INFO("Launcher", "Game process has terminated");
+									processTerminated = true;
+									break;
+								}
+								// No window but process still running - likely minimized or background mode
+								LOG_DEBUG("Launcher", "Process still running but window not found");
+							}
+							else {
+								LOG_DEBUG("Launcher", "Found new game window handle: 0x" +
+									std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
+							}
 						}
 					}
 					else {
@@ -1428,6 +1443,8 @@ void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) 
 	float deltaTime = 0;
 	double sleepTime;
 	double fpsTime = 1000.0 / static_cast<double>(60);
+	bool vSync = false;
+	config_.getProperty("OPTION_VSYNC", vSync);
 
 	while (!stop_thread) {
 		lastTime = currentTime;
@@ -1440,7 +1457,7 @@ void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) 
 		deltaTime = currentTime - lastTime;
 		sleepTime = fpsTime - deltaTime * 1000;
 
-		if (sleepTime > 0 && sleepTime < 1000) {
+		if (!vSync && sleepTime > 0 && sleepTime < 1000) {
 			SDL_Delay(static_cast<unsigned int>(sleepTime));
 		}
 		currentPage.update(float(0));
