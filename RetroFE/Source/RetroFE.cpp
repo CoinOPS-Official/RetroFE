@@ -195,14 +195,22 @@ int RetroFE::initialize(void* context)
 void RetroFE::initializeMusicPlayer()
 {
 	// Initialize music player
-	musicPlayer_ = MusicPlayer::getInstance();
-	if (!musicPlayer_->initialize(config_))
+	bool musicPlayerEnabled = false;
+	config_.getProperty("musicPlayer.enabled", musicPlayerEnabled);
+	if (musicPlayerEnabled)
 	{
-		LOG_ERROR("RetroFE", "Failed to initialize music player");
+		musicPlayer_ = MusicPlayer::getInstance();
+		if (!musicPlayer_->initialize(config_))
+		{
+			LOG_ERROR("RetroFE", "Failed to initialize music player");
+		}
+		else
+		{
+			LOG_INFO("RetroFE", "Music player initialized successfully");
+		}
 	}
-	else
-	{
-		LOG_INFO("RetroFE", "Music player initialized successfully");
+	else {
+		LOG_INFO("RetroFE", "Music player disabled by configuration");
 	}
 }
 
@@ -223,7 +231,12 @@ void RetroFE::launchEnter()
 #ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_FALSE);
 #endif
-
+	bool musicPlayerPlayInGame = false;
+	config_.getProperty("musicPlayer.playInGame", musicPlayerPlayInGame);
+	if (!musicPlayerPlayInGame && musicPlayer_)
+	{
+		musicPlayer_->pauseMusic();
+	}
 #ifdef WIN32
 	Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 75, 0);
 #endif
@@ -270,6 +283,13 @@ void RetroFE::launchExit()
 	// If not MacOS, warp cursor top right. game/program may warp elsewhere
 	SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0), 0);
 #endif
+
+	bool musicPlayerPlayInGame = false;
+	config_.getProperty("musicPlayer.playInGame", musicPlayerPlayInGame);
+	if (!musicPlayerPlayInGame && musicPlayer_)
+	{
+		musicPlayer_->resumeMusic();
+	}
 
 #ifdef WIN32
 	Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 76, 0);
@@ -508,7 +528,7 @@ bool RetroFE::run()
 	config_.getProperty(OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS, attractModeLaunchMinMaxScrolls);
 	std::vector<std::string> attMinMaxVec;
 	Utils::listToVector(attractModeLaunchMinMaxScrolls, attMinMaxVec, ',');
-	
+
 	attract_.idleTime = static_cast<float>(attractModeTime);
 	attract_.idleNextTime = static_cast<float>(attractModeNextTime);
 	attract_.idlePlaylistTime = static_cast<float>(attractModePlaylistTime);
@@ -775,22 +795,23 @@ bool RetroFE::run()
 
 				splashMode = false;
 
-
-				// Check if music should auto-start
-				bool autoStart = false;
-				if (config_.getProperty("musicPlayer.autostart", autoStart) && autoStart)
-				{
-					LOG_INFO("RetroFE", "Auto-starting music player");
-					bool shuffle = true;
-					config_.getProperty("musicPlayer.shuffle", shuffle);
-
-					if (shuffle)
+				if (musicPlayer_) {
+					// Check if music should auto-start
+					bool autoStart = false;
+					if (config_.getProperty("musicPlayer.autostart", autoStart) && autoStart)
 					{
-						musicPlayer_->shuffle();
-					}
-					else
-					{
-						musicPlayer_->playMusic(0); // Start with first track
+						LOG_INFO("RetroFE", "Auto-starting music player");
+						bool shuffle = true;
+						config_.getProperty("musicPlayer.shuffle", shuffle);
+
+						if (shuffle)
+						{
+							musicPlayer_->shuffle();
+						}
+						else
+						{
+							musicPlayer_->playMusic(0); // Start with first track
+						}
 					}
 				}
 
@@ -1195,7 +1216,7 @@ bool RetroFE::run()
 					lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
 				}
 				config_.setProperty("lastCollection", collectionName);
-				
+
 				state = RETROFE_PLAYLIST_REQUEST;
 				if (quickListCollection != "" && quickListCollection != collectionName)
 				{
@@ -2132,7 +2153,8 @@ bool RetroFE::run()
 
 					currentPage_->allocateGraphicsMemory();
 					currentPage_->setLocked(kioskLock_);
-				} else {
+				}
+				else {
 					// Same layout case - just pop collection
 					if (!currentPage_->popCollection()) {
 						LOG_ERROR("RetroFE", "Failed to pop collection during back navigation");
@@ -2151,7 +2173,8 @@ bool RetroFE::run()
 				if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
 					config_.propertyExists(settingPrefix + OPTION_AUTOPLAYLIST)) {
 					config_.getProperty(settingPrefix + OPTION_AUTOPLAYLIST, autoPlaylist);
-				} else {
+				}
+				else {
 					config_.getProperty(OPTION_AUTOPLAYLIST, autoPlaylist);
 				}
 
@@ -2163,7 +2186,7 @@ bool RetroFE::run()
 				// Check if we should return to remembered playlist
 				bool rememberMenu = false;
 				config_.getProperty(OPTION_REMEMBERMENU, rememberMenu);
-				bool returnToRememberedPlaylist = rememberMenu && 
+				bool returnToRememberedPlaylist = rememberMenu &&
 					lastMenuPlaylists_.find(collectionName) != lastMenuPlaylists_.end();
 
 				// Set appropriate playlist
@@ -2174,7 +2197,8 @@ bool RetroFE::run()
 					if (lastMenuOffsets_.find(collectionName) != lastMenuOffsets_.end()) {
 						currentPage_->setScrollOffsetIndex(lastMenuOffsets_[collectionName]);
 					}
-				} else {
+				}
+				else {
 					// Use auto playlist with fallback to "all"
 					currentPage_->selectPlaylist(autoPlaylist);
 					if (currentPage_->getPlaylistName() != autoPlaylist) {
@@ -2551,58 +2575,57 @@ void RetroFE::goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleV
 // Add this function implementation to RetroFE.cpp
 void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 {
-	// Get the MusicPlayer instance
-	MusicPlayer* musicPlayer = MusicPlayer::getInstance();
-	if (!musicPlayer) return;
-
+	if (!musicPlayer_) {
+		return;
+	}
 	switch (input)
 	{
 	case UserInput::KeyCodeMusicPlayPause:
-		if (musicPlayer->isPlaying())
+		if (musicPlayer_->isPlaying())
 		{
-			musicPlayer->pauseMusic();
+			musicPlayer_->pauseMusic();
 		}
-		else if (musicPlayer->isPaused())
+		else if (musicPlayer_->isPaused())
 		{
-			musicPlayer->resumeMusic();
+			musicPlayer_->resumeMusic();
 		}
 		else
 		{
-			musicPlayer->playMusic();
+			musicPlayer_->playMusic();
 		}
 		break;
 
 	case UserInput::KeyCodeMusicNext:
-		musicPlayer->nextTrack();
+		musicPlayer_->nextTrack();
 		break;
 
 	case UserInput::KeyCodeMusicPrev:
-		musicPlayer->previousTrack();
+		musicPlayer_->previousTrack();
 		break;
 
 	case UserInput::KeyCodeMusicVolumeUp:
 	{
-		int currentVolume = musicPlayer->getVolume();
+		int currentVolume = musicPlayer_->getVolume();
 		int newVolume = std::min(MIX_MAX_VOLUME, currentVolume + 16); // Increment by 8 (out of 128)
-		musicPlayer->setVolume(newVolume);
+		musicPlayer_->setVolume(newVolume);
 	}
 	break;
 
 	case UserInput::KeyCodeMusicVolumeDown:
 	{
-		int currentVolume = musicPlayer->getVolume();
+		int currentVolume = musicPlayer_->getVolume();
 		int newVolume = std::max(0, currentVolume - 16); // Decrement by 8 (out of 128) 
-		musicPlayer->setVolume(newVolume);
+		musicPlayer_->setVolume(newVolume);
 	}
 	break;
 
 	case UserInput::KeyCodeMusicToggleShuffle:
-		musicPlayer->setShuffle(!musicPlayer->getShuffle());
-		break;
+	musicPlayer_->setShuffle(!musicPlayer_->getShuffle());
+	break;
 
 	case UserInput::KeyCodeMusicToggleLoop:
-		musicPlayer->setLoop(!musicPlayer->getLoop());
-		break;
+	musicPlayer_->setLoop(!musicPlayer_->getLoop());
+	break;
 	}
 }
 
