@@ -86,6 +86,10 @@ public:
     bool getShuffle() const;
     void shutdown();
 
+    bool hasTrackChanged();
+
+    bool isPlayingNewTrack();
+
 private:
     MusicPlayer();
     ~MusicPlayer();
@@ -113,4 +117,5 @@ private:
     bool shuffleMode;
     bool isShuttingDown;
     std::mt19937 rng;
+    std::string lastCheckedTrackPath;
 };

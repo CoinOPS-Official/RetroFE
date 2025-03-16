@@ -889,3 +889,22 @@ void MusicPlayer::shutdown()
 	currentIndex = -1;
 	LOG_INFO("MusicPlayer", "Music player shutdown complete");
 }
+
+bool MusicPlayer::hasTrackChanged()
+{
+	std::string currentTrackPath = getCurrentTrackPath();
+	bool changed = !currentTrackPath.empty() && (currentTrackPath != lastCheckedTrackPath);
+
+	// Update last checked track
+	if (changed) {
+		lastCheckedTrackPath = currentTrackPath;
+	}
+
+	return changed;
+}
+
+bool MusicPlayer::isPlayingNewTrack()
+{
+	// Only report change if music is actually playing
+	return isPlaying() && hasTrackChanged();
+}

@@ -18,6 +18,7 @@
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
 #include "../../Database/Configuration.h"
+#include "../../Sound/MusicPlayer.h"
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
@@ -64,6 +65,16 @@ bool ReloadableText::update(float dt)
         if (now - lastFileReloadTime_ >= fileDebounceDuration_) {
             ReloadTexture();
             lastFileReloadTime_ = now;
+        }
+    }
+    else if (type_ == "trackInfo")
+    {
+        // Get the MusicPlayer instance
+        MusicPlayer* musicPlayer = MusicPlayer::getInstance();
+
+        // Check if the music player exists and if the track has changed
+        if (musicPlayer && (musicPlayer->hasTrackChanged())) {
+            ReloadTexture();
         }
     }
     // needs to be ran at the end to prevent the NewItemSelected flag from being detected
@@ -175,6 +186,30 @@ void ReloadableText::ReloadTexture()
         {
             LOG_ERROR("ReloadableText", "Failed to open file: " + filePath_);
             return;
+        }
+    }
+    else if (type_ == "trackInfo") {
+        MusicPlayer const* musicPlayer = MusicPlayer::getInstance();
+
+        if (!musicPlayer || musicPlayer->getCurrentTrackName().empty()) {
+            text = "";
+        }
+        else {
+            // Simply get the current information - no need to compare with previous state
+            std::string currentArtist = musicPlayer->getCurrentArtist();
+            std::string currentTitle = musicPlayer->getCurrentTitle();
+
+            // Format the display text
+            if (!currentArtist.empty() && !currentTitle.empty()) {
+                text = currentArtist + " - " + currentTitle;
+            }
+            else if (!currentTitle.empty()) {
+                text = currentTitle;
+            }
+            else {
+                // Fallback to track name
+                text = musicPlayer->getCurrentTrackName();
+            }
         }
     }
     else if (type_ == "time") {
