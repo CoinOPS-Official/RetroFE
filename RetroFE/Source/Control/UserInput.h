@@ -89,6 +89,13 @@ public:
         KeyCodeToggleBuildInfo,
         KeyCodeSettings,
         KeyCodeQuickList,
+        KeyCodeMusicPlayPause,
+        KeyCodeMusicNext,
+        KeyCodeMusicPrev,
+        KeyCodeMusicVolumeUp,
+        KeyCodeMusicVolumeDown,
+        KeyCodeMusicToggleShuffle,
+        KeyCodeMusicToggleLoop,
         // leave KeyCodeMax at the end
         KeyCodeMax,
     };

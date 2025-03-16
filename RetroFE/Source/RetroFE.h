@@ -156,6 +156,7 @@ private:
     bool isStandalonePlaylist(std::string playlist);
     bool isInAttractModeSkipPlaylist(std::string playlist);
     void goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleVector);
+    void handleMusicControls(UserInput::KeyCode_E input);
     void            quit( );
     Page           *loadPage(const std::string& collectionName);
     Page           *loadSplashPage( );
