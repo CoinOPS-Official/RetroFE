@@ -59,6 +59,8 @@ public:
     int getCurrentTrackNumber() const;
 
     bool initialize(Configuration& config);
+    bool loadM3UPlaylist(const std::string& playlistPath);
+    void loadMusicFolderFromConfig();
     bool loadMusicFolder(const std::string& folderPath);
     bool playMusic(int index = -1);  // -1 means play current or random track
     bool pauseMusic();
@@ -97,6 +99,8 @@ private:
     int getNextTrackIndex();
     void loadTrack(int index);
     bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata);
+    bool parseM3UFile(const std::string& playlistPath);
+    bool isValidAudioFile(const std::string& filePath);
     static MusicPlayer* instance;
 
     Configuration* config;
