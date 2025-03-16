@@ -31,7 +31,19 @@ class MusicPlayer
 {
 public:
     static MusicPlayer* getInstance();
+    struct TrackMetadata
+    {
+        std::string title;
+        std::string artist;
+        std::string album;
+        std::string year;
+        std::string genre;
+        std::string comment;
+        int trackNumber;
 
+        // Constructor with default values
+        TrackMetadata() : trackNumber(0) {}
+    };
     bool initialize(Configuration& config);
     bool loadMusicFolder(const std::string& folderPath);
     bool playMusic(int index = -1);  // -1 means play current or random track
@@ -46,6 +58,9 @@ public:
     int getVolume() const;
     std::string getCurrentTrackName() const;
     std::string getCurrentTrackPath() const;
+    std::string getFormattedTrackInfo(int index = -1) const;
+    std::string getTrackArtist(int index = -1) const;
+    std::string getTrackAlbum(int index = -1) const;
     int getCurrentTrackIndex() const;
     int getTrackCount() const;
     void setLoop(bool loop);
@@ -59,11 +74,15 @@ private:
     MusicPlayer();
     ~MusicPlayer();
 
+
+    std::vector<TrackMetadata> trackMetadata;
+
     static void musicFinishedCallback();
     void onMusicFinished();
     void resetShutdownFlag();
     int getNextTrackIndex();
     void loadTrack(int index);
+    bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata);
     static MusicPlayer* instance;
 
     Configuration* config;

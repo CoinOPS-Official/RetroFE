@@ -124,6 +124,7 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
     // Clear existing music files
     musicFiles.clear();
     musicNames.clear();
+    trackMetadata.clear();
 
     LOG_INFO("MusicPlayer", "Loading music from folder: " + folderPath);
 
@@ -135,6 +136,8 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
             return false;
         }
 
+        std::vector<std::tuple<std::string, std::string, TrackMetadata>> musicEntries;
+
         for (const auto& entry : fs::directory_iterator(folderPath))
         {
             if (entry.is_regular_file())
@@ -144,30 +147,29 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
 
                 if (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".mod")
                 {
-                    musicFiles.push_back(entry.path().string());
-                    musicNames.push_back(entry.path().filename().string());
+                    std::string filePath = entry.path().string();
+                    std::string fileName = entry.path().filename().string();
+
+                    TrackMetadata metadata;
+                    readTrackMetadata(filePath, metadata);
+
+                    musicEntries.push_back(std::make_tuple(filePath, fileName, metadata));
                 }
             }
         }
 
-        // Sort alphabetically
-        std::vector<std::pair<std::string, std::string>> combined;
-        for (size_t i = 0; i < musicFiles.size(); ++i)
-        {
-            combined.push_back({ musicFiles[i], musicNames[i] });
-        }
-
-        std::sort(combined.begin(), combined.end(),
+        // Sort entries - can sort by metadata fields if needed
+        std::sort(musicEntries.begin(), musicEntries.end(),
             [](const auto& a, const auto& b) {
-                return a.second < b.second;
+                return std::get<1>(a) < std::get<1>(b);
             });
 
-        musicFiles.clear();
-        musicNames.clear();
-        for (const auto& pair : combined)
+        // Unpack sorted entries
+        for (const auto& entry : musicEntries)
         {
-            musicFiles.push_back(pair.first);
-            musicNames.push_back(pair.second);
+            musicFiles.push_back(std::get<0>(entry));
+            musicNames.push_back(std::get<1>(entry));
+            trackMetadata.push_back(std::get<2>(entry));
         }
 
         LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles.size()) + " music files");
@@ -208,6 +210,91 @@ void MusicPlayer::loadTrack(int index)
 
     currentIndex = index;
     LOG_INFO("MusicPlayer", "Loaded track: " + musicNames[index]);
+}
+
+bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& metadata)
+{
+    // Default to filename without extension as title
+    std::string fileName = fs::path(filePath).filename().string();
+    size_t lastDot = fileName.find_last_of('.');
+    if (lastDot != std::string::npos) {
+        metadata.title = fileName.substr(0, lastDot);
+    }
+    else {
+        metadata.title = fileName;
+    }
+
+    // Use SDL_mixer to get some basic metadata when available
+    Mix_Music* music = Mix_LoadMUS(filePath.c_str());
+    if (music) {
+        const char* title = Mix_GetMusicTitle(music);
+        const char* artist = Mix_GetMusicArtistTag(music);
+        const char* album = Mix_GetMusicAlbumTag(music);
+
+        if (title && strlen(title) > 0) metadata.title = title;
+        if (artist && strlen(artist) > 0) metadata.artist = artist;
+        if (album && strlen(album) > 0) metadata.album = album;
+
+        Mix_FreeMusic(music);
+        return true;
+    }
+
+    // If SDL_mixer couldn't read the file or provide metadata
+    return false;
+}
+
+std::string MusicPlayer::getFormattedTrackInfo(int index) const
+{
+    if (index == -1) {
+        index = currentIndex;
+    }
+
+    if (index < 0 || index >= static_cast<int>(trackMetadata.size())) {
+        return "";
+    }
+
+    const auto& meta = trackMetadata[index];
+    std::string info = meta.title;
+
+    if (!meta.artist.empty()) {
+        info += " - " + meta.artist;
+    }
+
+    if (!meta.album.empty()) {
+        info += " (" + meta.album;
+        if (!meta.year.empty()) {
+            info += ", " + meta.year;
+        }
+        info += ")";
+    }
+
+    return info;
+}
+
+std::string MusicPlayer::getTrackArtist(int index) const
+{
+    if (index == -1) {
+        index = currentIndex;
+    }
+
+    if (index < 0 || index >= static_cast<int>(trackMetadata.size())) {
+        return "";
+    }
+
+    return trackMetadata[index].artist;
+}
+
+std::string MusicPlayer::getTrackAlbum(int index) const
+{
+    if (index == -1) {
+        index = currentIndex;
+    }
+
+    if (index < 0 || index >= static_cast<int>(trackMetadata.size())) {
+        return "";
+    }
+
+    return trackMetadata[index].album;
 }
 
 bool MusicPlayer::playMusic(int index)
@@ -264,7 +351,7 @@ bool MusicPlayer::playMusic(int index)
         return false;
     }
 
-    LOG_INFO("MusicPlayer", "Playing track: " + musicNames[index]);
+    LOG_INFO("MusicPlayer", "Playing track: " + musicNames[index] + " with tag: " + getFormattedTrackInfo(index));
     return true;
 }
 
@@ -491,7 +578,7 @@ void MusicPlayer::musicFinishedCallback()
 
 void MusicPlayer::onMusicFinished()
 {
-    LOG_INFO("MusicPlayer", "Track finished: " + getCurrentTrackName());
+    LOG_INFO("MusicPlayer", "Track finished: " + getCurrentTrackName() + " with tag: " + getFormattedTrackInfo());
 
     // Don't proceed to the next track if we're shutting down
     if (isShuttingDown)
