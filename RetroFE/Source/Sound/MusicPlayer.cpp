@@ -17,6 +17,7 @@
 #include "MusicPlayer.h"
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
+#include <SDL2/SDL_image.h>
 #include <algorithm>
 #include <chrono>
 
@@ -560,7 +561,7 @@ std::string MusicPlayer::getTrackAlbum(int index) const
 
 bool MusicPlayer::playMusic(int index)
 {
-	// If index is -1, play current track if there is one, or random if shuffle enabled
+	// If index is -1, play current track if one exists, or choose a default.
 	if (index == -1)
 	{
 		if (currentIndex >= 0)
@@ -569,12 +570,17 @@ bool MusicPlayer::playMusic(int index)
 		}
 		else if (shuffleMode && !musicFiles.empty())
 		{
-			std::uniform_int_distribution<size_t> dist(0, musicFiles.size() - 1);
-			index = static_cast<int>(dist(rng));
+			// With shuffle enabled, use the first track in the shuffled order.
+			if (shuffledIndices.empty())
+			{
+				// Generate a new shuffle order.
+				setShuffle(true);
+			}
+			index = shuffledIndices[currentShufflePos];
 		}
 		else if (!musicFiles.empty())
 		{
-			index = 0;  // Default to first track
+			index = 0;
 		}
 		else
 		{
@@ -583,29 +589,44 @@ bool MusicPlayer::playMusic(int index)
 		}
 	}
 
-	// Check if index is valid
+	// Check that the index is valid.
 	if (index < 0 || index >= static_cast<int>(musicFiles.size()))
 	{
 		LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
 		return false;
 	}
 
-	// Stop any currently playing music
+	// Stop any currently playing music.
 	if (Mix_PlayingMusic())
 	{
 		Mix_HaltMusic();
 	}
 
-	// Load the track
+	// Load the specified track.
 	loadTrack(index);
 
-	// If loading failed
 	if (!currentMusic)
 	{
 		return false;
 	}
 
-	// Play the music
+	// If shuffle mode is enabled, update the current shuffle position so that manual track selections
+	// become part of the shuffle order. (Assuming the shuffle order already contains all tracks.)
+	if (shuffleMode)
+	{
+		auto it = std::find(shuffledIndices.begin(), shuffledIndices.end(), index);
+		if (it != shuffledIndices.end())
+		{
+			currentShufflePos = static_cast<int>(std::distance(shuffledIndices.begin(), it));
+		}
+		else
+		{
+			// If for some reason the track isn't in the current shuffle order, regenerate it.
+			setShuffle(true);
+		}
+	}
+
+	// Play the music.
 	if (Mix_PlayMusic(currentMusic, loopMode ? -1 : 1) == -1)
 	{
 		LOG_ERROR("MusicPlayer", "Failed to play music: " + std::string(Mix_GetError()));
@@ -670,25 +691,24 @@ int MusicPlayer::getNextTrackIndex()
 {
 	if (shuffleMode)
 	{
-		// Choose a random track that's not the current one
-		if (musicFiles.size() > 1)
+		// In shuffle mode, step forward in the shuffled order.
+		if (shuffledIndices.empty())
+			return -1; // Safety check
+
+		if (currentShufflePos < static_cast<int>(shuffledIndices.size()) - 1)
 		{
-			int nextIndex;
-			do
-			{
-				std::uniform_int_distribution<size_t> dist(0, musicFiles.size() - 1);
-				nextIndex = static_cast<int>(dist(rng));
-			} while (nextIndex == currentIndex);
-			return nextIndex;
+			currentShufflePos++;
 		}
 		else
 		{
-			return 0;  // Only one track, so return it
+			// Option: Loop back to the start (or alternatively, reshuffle).
+			currentShufflePos = 0;
 		}
+		return shuffledIndices[currentShufflePos];
 	}
 	else
 	{
-		// Sequential playback
+		// Sequential playback when shuffle is off.
 		return (currentIndex + 1) % musicFiles.size();
 	}
 }
@@ -702,12 +722,23 @@ bool MusicPlayer::previousTrack()
 
 	if (shuffleMode)
 	{
-		// For shuffle mode, just pick another random track
-		return nextTrack();
+		if (shuffledIndices.empty())
+			return false; // Safety check
+
+		if (currentShufflePos > 0)
+		{
+			currentShufflePos--;
+		}
+		else
+		{
+			// Option: Wrap around to the end of the shuffled list.
+			currentShufflePos = static_cast<int>(shuffledIndices.size()) - 1;
+		}
+		return playMusic(shuffledIndices[currentShufflePos]);
 	}
 	else
 	{
-		// Go to previous track in sequence
+		// Go to previous track in sequential mode.
 		int prevIndex = (currentIndex - 1 + static_cast<int>(musicFiles.size())) % static_cast<int>(musicFiles.size());
 		return playMusic(prevIndex);
 	}
@@ -813,7 +844,37 @@ bool MusicPlayer::setShuffle(bool shuffle)
 {
 	shuffleMode = shuffle;
 
-	// Save to config if available
+	if (shuffleMode)
+	{
+		// Build a shuffled order for all tracks.
+		shuffledIndices.clear();
+		for (int i = 0; i < static_cast<int>(musicFiles.size()); i++) {
+			shuffledIndices.push_back(i);
+		}
+		std::shuffle(shuffledIndices.begin(), shuffledIndices.end(), rng);
+
+		// If a track is currently playing, update currentShufflePos to its position in the shuffled list.
+		if (currentIndex >= 0)
+		{
+			auto it = std::find(shuffledIndices.begin(), shuffledIndices.end(), currentIndex);
+			if (it != shuffledIndices.end())
+				currentShufflePos = static_cast<int>(std::distance(shuffledIndices.begin(), it));
+			else
+				currentShufflePos = 0;
+		}
+		else
+		{
+			currentShufflePos = 0;
+		}
+	}
+	else
+	{
+		// When shuffle is off, clear the shuffle order.
+		shuffledIndices.clear();
+		currentShufflePos = -1;
+	}
+
+	// Save to config if available.
 	if (config)
 	{
 		config->setProperty("musicPlayer.shuffle", shuffleMode);
@@ -907,4 +968,138 @@ bool MusicPlayer::isPlayingNewTrack()
 {
 	// Only report change if music is actually playing
 	return isPlaying() && hasTrackChanged();
+}
+
+bool extractAlbumArtFromFile(const std::string& filePath, std::vector<unsigned char>& albumArtData) {
+	std::ifstream file(filePath, std::ios::binary);
+	if (!file.is_open()) {
+		SDL_Log("Failed to open file: %s", filePath.c_str());
+		return false;
+	}
+
+	// Read the ID3v2 header (10 bytes)
+	char header[10];
+	file.read(header, 10);
+	if (file.gcount() < 10 || std::strncmp(header, "ID3", 3) != 0) {
+		// Not an ID3v2 file
+		return false;
+	}
+
+	// Get the tag size (bytes 6-9 are synchsafe integers)
+	unsigned char sizeBytes[4];
+	std::memcpy(sizeBytes, header + 6, 4);
+	int tagSize = 0;
+	for (int i = 0; i < 4; ++i) {
+		tagSize = (tagSize << 7) | (sizeBytes[i] & 0x7F);
+	}
+	int tagEnd = 10 + tagSize; // End position of the tag
+
+	// Loop through frames until we reach the end of the tag.
+	while (file.tellg() < tagEnd) {
+		char frameHeader[10];
+		file.read(frameHeader, 10);
+		if (file.gcount() < 10)
+			break;
+
+		// Frame ID is in the first 4 bytes.
+		char frameID[5] = { frameHeader[0], frameHeader[1], frameHeader[2], frameHeader[3], 0 };
+		// Get frame size (assuming ID3v2.3 - big-endian integer)
+		int frameSize = (static_cast<unsigned char>(frameHeader[4]) << 24) |
+			(static_cast<unsigned char>(frameHeader[5]) << 16) |
+			(static_cast<unsigned char>(frameHeader[6]) << 8) |
+			(static_cast<unsigned char>(frameHeader[7]));
+
+		if (frameSize <= 0)
+			break;
+
+		if (std::strcmp(frameID, "APIC") == 0) {
+			// Read the entire frame data.
+			std::vector<unsigned char> frameData(frameSize);
+			file.read(reinterpret_cast<char*>(frameData.data()), frameSize);
+			if (static_cast<int>(frameData.size()) < frameSize)
+				break;
+
+			size_t offset = 0;
+
+			// Skip text encoding (1 byte)
+			offset += 1;
+
+			// Skip MIME type (null-terminated string)
+			while (offset < frameData.size() && frameData[offset] != 0)
+				offset++;
+			offset++; // Skip the null terminator
+
+			// The next byte is the picture type.
+			if (offset >= frameData.size())
+				break;
+			unsigned char pictureType = frameData[offset];
+			offset++; // Move past picture type
+
+			// We only want the front cover (picture type == 3)
+			if (pictureType != 0x03) {
+				// Not the front cover; skip this frame.
+				continue;
+			}
+
+			// Skip description (null-terminated string)
+			while (offset < frameData.size() && frameData[offset] != 0)
+				offset++;
+			offset++; // Skip the null terminator
+
+			if (offset < frameData.size()) {
+				// The rest of the frame is the image data.
+				albumArtData.assign(frameData.begin() + offset, frameData.end());
+				return true;
+			}
+			else {
+				return false;
+			}
+		}
+		else {
+			// Skip this frame's data if not APIC.
+			file.seekg(frameSize, std::ios::cur);
+		}
+	}
+	return false;
+}
+
+SDL_Texture* MusicPlayer::getAlbumArt(SDL_Renderer* renderer, int trackIndex) {
+	// Validate track index.
+	if (trackIndex < 0 || trackIndex >= static_cast<int>(musicFiles.size())) {
+		return nullptr;
+	}
+
+	// Get the file path of the requested track.
+	std::string filePath = musicFiles[trackIndex];
+
+	// Extract album art data from the file.
+	std::vector<unsigned char> albumArtData;
+	if (!extractAlbumArtFromFile(filePath, albumArtData) || albumArtData.empty()) {
+		// No album art available.
+		return nullptr;
+	}
+
+	// Create an SDL_RWops from the album art data.
+	SDL_RWops* rw = SDL_RWFromConstMem(albumArtData.data(), static_cast<int>(albumArtData.size()));
+	if (!rw) {
+		SDL_Log("Failed to create RWops: %s", SDL_GetError());
+		return nullptr;
+	}
+
+	// Load the image into an SDL_Surface using SDL_image.
+	SDL_Surface* imageSurface = IMG_Load_RW(rw, 1); // The '1' indicates SDL will close the RWops.
+	if (!imageSurface) {
+		SDL_Log("Failed to load image from RWops: %s", IMG_GetError());
+		return nullptr;
+	}
+
+	// Create an SDL_Texture from the surface.
+	SDL_Texture* albumArtTexture = SDL_CreateTextureFromSurface(renderer, imageSurface);
+	if (!albumArtTexture) {
+		SDL_Log("Failed to create texture: %s", SDL_GetError());
+	}
+
+	SDL_FreeSurface(imageSurface);
+
+	return albumArtTexture;
 }

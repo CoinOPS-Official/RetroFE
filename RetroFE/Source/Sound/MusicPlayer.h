@@ -23,6 +23,7 @@
 #if (__APPLE__)
 #include <SDL2_mixer/SDL_mixer.h>
 #else
+#include <SDL2/SDL_image.h>
 #include <SDL2/SDL_mixer.h>
 #endif
 #include "../Database/Configuration.h"
@@ -90,6 +91,8 @@ public:
 
     bool isPlayingNewTrack();
 
+    SDL_Texture* getAlbumArt(SDL_Renderer* renderer, int trackIndex);
+
 private:
     MusicPlayer();
     ~MusicPlayer();
@@ -111,6 +114,8 @@ private:
     Mix_Music* currentMusic;
     std::vector<std::string> musicFiles;
     std::vector<std::string> musicNames;
+    std::vector<int> shuffledIndices;
+    int currentShufflePos = -1;
     int currentIndex;
     int volume;
     bool loopMode;
