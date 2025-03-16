@@ -227,4 +227,14 @@ private:
     bool hasVuMeter_;
     int sampleSize_;  // 1, 2, or 4 bytes per sample
 
+    Configuration* config;
+    Mix_Music* currentMusic;
+    std::vector<std::string> musicFiles;
+    std::vector<std::string> musicNames;
+    int currentIndex;
+    int volume;
+    bool loopMode;
+    bool shuffleMode;
+    bool isShuttingDown;
+    std::mt19937 rng;
 };
