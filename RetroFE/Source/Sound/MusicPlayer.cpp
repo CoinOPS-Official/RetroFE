@@ -224,23 +224,145 @@ bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& 
         metadata.title = fileName;
     }
 
-    // Use SDL_mixer to get some basic metadata when available
+    bool metadataFound = false;
+
+    // Use SDL_mixer to get metadata when available
     Mix_Music* music = Mix_LoadMUS(filePath.c_str());
     if (music) {
+        // Get basic metadata
         const char* title = Mix_GetMusicTitle(music);
         const char* artist = Mix_GetMusicArtistTag(music);
         const char* album = Mix_GetMusicAlbumTag(music);
 
-        if (title && strlen(title) > 0) metadata.title = title;
-        if (artist && strlen(artist) > 0) metadata.artist = artist;
-        if (album && strlen(album) > 0) metadata.album = album;
+        if (title && strlen(title) > 0) {
+            metadata.title = title;
+            metadataFound = true;
+        }
+
+        if (artist && strlen(artist) > 0) {
+            metadata.artist = artist;
+            metadataFound = true;
+        }
+
+        if (album && strlen(album) > 0) {
+            metadata.album = album;
+            metadataFound = true;
+        }
+
+        // Try to get additional tag information
+        // Note: Not all of these functions may be available depending on your SDL_mixer version
+        // Add conditionals if needed
+#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
+        // SDL_mixer 2.6.0 or newer has more tag functions
+        const char* copyright = Mix_GetMusicCopyrightTag(music);
+        if (copyright && strlen(copyright) > 0) {
+            metadata.comment = copyright;
+            metadataFound = true;
+        }
+#endif
 
         Mix_FreeMusic(music);
-        return true;
     }
 
-    // If SDL_mixer couldn't read the file or provide metadata
-    return false;
+    // If we didn't find any metadata, try to parse the filename for artist - title format
+    if (!metadataFound && metadata.artist.empty()) {
+        // Check for common patterns like "Artist - Title" or "Artist_-_Title"
+        std::string name = metadata.title;
+        size_t dashPos = name.find(" - ");
+        if (dashPos != std::string::npos) {
+            metadata.artist = name.substr(0, dashPos);
+            metadata.title = name.substr(dashPos + 3);
+        }
+        else if ((dashPos = name.find("_-_")) != std::string::npos) {
+            metadata.artist = name.substr(0, dashPos);
+            std::replace(metadata.artist.begin(), metadata.artist.end(), '_', ' ');
+            metadata.title = name.substr(dashPos + 3);
+            std::replace(metadata.title.begin(), metadata.title.end(), '_', ' ');
+        }
+    }
+
+    return true;
+}
+
+const MusicPlayer::TrackMetadata& MusicPlayer::getCurrentTrackMetadata() const
+{
+    static TrackMetadata emptyMetadata;
+
+    if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[currentIndex];
+    }
+    return emptyMetadata;
+}
+
+const MusicPlayer::TrackMetadata& MusicPlayer::getTrackMetadata(int index) const
+{
+    static TrackMetadata emptyMetadata;
+
+    if (index >= 0 && index < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[index];
+    }
+    return emptyMetadata;
+}
+
+size_t MusicPlayer::getTrackMetadataCount() const
+{
+    return trackMetadata.size();
+}
+
+std::string MusicPlayer::getCurrentTitle() const
+{
+    if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[currentIndex].title;
+    }
+    return "";
+}
+
+std::string MusicPlayer::getCurrentArtist() const
+{
+    if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[currentIndex].artist;
+    }
+    return "";
+}
+
+std::string MusicPlayer::getCurrentAlbum() const
+{
+    if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[currentIndex].album;
+    }
+    return "";
+}
+
+std::string MusicPlayer::getCurrentYear() const
+{
+    if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[currentIndex].year;
+    }
+    return "";
+}
+
+std::string MusicPlayer::getCurrentGenre() const
+{
+    if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[currentIndex].genre;
+    }
+    return "";
+}
+
+std::string MusicPlayer::getCurrentComment() const
+{
+    if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[currentIndex].comment;
+    }
+    return "";
+}
+
+int MusicPlayer::getCurrentTrackNumber() const
+{
+    if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
+        return trackMetadata[currentIndex].trackNumber;
+    }
+    return 0;
 }
 
 std::string MusicPlayer::getFormattedTrackInfo(int index) const

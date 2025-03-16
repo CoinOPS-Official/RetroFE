@@ -44,6 +44,20 @@ public:
         // Constructor with default values
         TrackMetadata() : trackNumber(0) {}
     };
+
+    const TrackMetadata& getCurrentTrackMetadata() const;
+    const TrackMetadata& getTrackMetadata(int index) const;
+    size_t getTrackMetadataCount() const;
+
+    // Direct accessors for current track's metadata fields
+    std::string getCurrentTitle() const;
+    std::string getCurrentArtist() const;
+    std::string getCurrentAlbum() const;
+    std::string getCurrentYear() const;
+    std::string getCurrentGenre() const;
+    std::string getCurrentComment() const;
+    int getCurrentTrackNumber() const;
+
     bool initialize(Configuration& config);
     bool loadMusicFolder(const std::string& folderPath);
     bool playMusic(int index = -1);  // -1 means play current or random track
