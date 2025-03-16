@@ -27,6 +27,7 @@
 #include "Graphics/Component/ScrollingList.h"
 #include "Graphics/Page.h"
 #include "Graphics/PageBuilder.h"
+#include "Sound/MusicPlayer.h"
 #include "Menu/Menu.h"
 #include "SDL.h"
 #include "Utility/Log.h"
@@ -70,7 +71,7 @@ RetroFE::RetroFE(Configuration& c)
 	: initialized(false), initializeError(false), initializeThread(NULL), config_(c), db_(NULL), metadb_(NULL),
 	input_(config_), currentPage_(NULL), keyInputDisable_(0), currentTime_(0), lastLaunchReturnTime_(0),
 	keyLastTime_(0), keyDelayTime_(.3f), reboot_(false), kioskLock_(false), paused_(false), buildInfo_(false),
-	collectionInfo_(false), gameInfo_(false)
+	collectionInfo_(false), gameInfo_(false), musicPlayer_(nullptr)
 {
 	menuMode_ = false;
 	attractMode_ = false;
@@ -178,6 +179,9 @@ int RetroFE::initialize(void* context)
 		return -1;
 	}
 
+	instance->initializeMusicPlayer();
+
+
 	// Initialize HiScores
 	std::string zipPath = Utils::combinePath(Configuration::absolutePath, "hi2txt", "hi2txt_defaults.zip");
 	std::string overridePath = Utils::combinePath(Configuration::absolutePath, "hi2txt", "scores");
@@ -186,6 +190,20 @@ int RetroFE::initialize(void* context)
 
 	instance->initialized = true;
 	return 0;
+}
+
+void RetroFE::initializeMusicPlayer()
+{
+	// Initialize music player
+	musicPlayer_ = MusicPlayer::getInstance();
+	if (!musicPlayer_->initialize(config_))
+	{
+		LOG_ERROR("RetroFE", "Failed to initialize music player");
+	}
+	else
+	{
+		LOG_INFO("RetroFE", "Music player initialized successfully");
+	}
 }
 
 // Launch a game/program
@@ -338,6 +356,11 @@ bool RetroFE::deInitialize()
 	{
 		delete db_;
 		db_ = nullptr;
+	}
+
+	if (musicPlayer_)
+	{
+		musicPlayer_->shutdown();
 	}
 
 	initialized = false;
@@ -751,6 +774,26 @@ bool RetroFE::run()
 				currentPage_->reallocateMenuSpritePoints();  // Update playlist menu
 
 				splashMode = false;
+
+
+				// Check if music should auto-start
+				bool autoStart = false;
+				if (config_.getProperty("musicPlayer.autostart", autoStart) && autoStart)
+				{
+					LOG_INFO("RetroFE", "Auto-starting music player");
+					bool shuffle = true;
+					config_.getProperty("musicPlayer.shuffle", shuffle);
+
+					if (shuffle)
+					{
+						musicPlayer_->shuffle();
+					}
+					else
+					{
+						musicPlayer_->playMusic(0); // Start with first track
+					}
+				}
+
 				state = RETROFE_LOAD_ART;
 			}
 			break;
