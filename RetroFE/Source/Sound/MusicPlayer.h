@@ -63,12 +63,13 @@ public:
     bool loadM3UPlaylist(const std::string& playlistPath);
     void loadMusicFolderFromConfig();
     bool loadMusicFolder(const std::string& folderPath);
-    bool playMusic(int index = -1);  // -1 means play current or random track
-    bool pauseMusic();
-    bool resumeMusic();
-    bool stopMusic();
-    bool nextTrack();
-    bool previousTrack();
+    bool playMusic(int index = -1, int customFadeMs = -1);  // -1 means play current or random track
+    double saveCurrentMusicPosition();
+    bool pauseMusic(int customFadeMs = -1);
+    bool resumeMusic(int customFadeMs = -1);
+    bool stopMusic(int customFadeMs = -1);
+    bool nextTrack(int customFadeMs = -1);
+    bool previousTrack(int customFadeMs = -1);
     bool isPlaying() const;
     bool isPaused() const;
     void setVolume(int volume);  // 0-128 (SDL_Mixer range)
@@ -102,12 +103,14 @@ private:
 
     static void musicFinishedCallback();
     void onMusicFinished();
+    void setFadeDuration(int ms);
+    int getFadeDuration() const;
     void resetShutdownFlag();
     int getNextTrackIndex();
     void loadTrack(int index);
-    bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata);
+    bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const;
     bool parseM3UFile(const std::string& playlistPath);
-    bool isValidAudioFile(const std::string& filePath);
+    bool isValidAudioFile(const std::string& filePath) const;
     static MusicPlayer* instance;
 
     Configuration* config;
@@ -122,5 +125,10 @@ private:
     bool shuffleMode;
     bool isShuttingDown;
     std::mt19937 rng;
+    bool isPendingPause;
+    double pausedMusicPosition;
+    bool isPendingTrackChange;
+    int pendingTrackIndex;
+    int fadeMs;
     std::string lastCheckedTrackPath;
 };

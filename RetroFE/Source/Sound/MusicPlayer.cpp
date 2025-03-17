@@ -42,7 +42,10 @@ MusicPlayer::MusicPlayer()
 	, loopMode(false)
 	, shuffleMode(false)
 	, isShuttingDown(false)
-
+	, pausedMusicPosition(0.0)
+	, isPendingTrackChange(false)
+	, pendingTrackIndex(-1)
+	, fadeMs(1500)
 {
 	// Seed the random number generator with current time
 	auto now = std::chrono::high_resolution_clock::now();
@@ -100,6 +103,12 @@ bool MusicPlayer::initialize(Configuration& config)
 		shuffleMode = configShuffle;
 	}
 
+	int configFadeMs;
+	if (config.getProperty("musicPlayer.fadeMs", configFadeMs))
+	{
+		fadeMs = std::max(0, configFadeMs);
+	}
+
 	// First check if an M3U playlist is specified
 	std::string m3uPlaylist;
 	if (config.getProperty("musicPlayer.m3uplaylist", m3uPlaylist))
@@ -130,6 +139,7 @@ bool MusicPlayer::initialize(Configuration& config)
 	LOG_INFO("MusicPlayer", "Initialized with volume: " + std::to_string(volume) +
 		", loop: " + std::to_string(loopMode) +
 		", shuffle: " + std::to_string(shuffleMode) +
+		", fade: " + std::to_string(fadeMs) + "ms" +
 		", tracks found: " + std::to_string(musicFiles.size()));
 
 	return true;
@@ -315,7 +325,7 @@ bool MusicPlayer::parseM3UFile(const std::string& playlistPath)
 	}
 }
 
-bool MusicPlayer::isValidAudioFile(const std::string& filePath)
+bool MusicPlayer::isValidAudioFile(const std::string& filePath) const
 {
 	std::string ext = fs::path(filePath).extension().string();
 	std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
@@ -352,7 +362,7 @@ void MusicPlayer::loadTrack(int index)
 	LOG_INFO("MusicPlayer", "Loaded track: " + musicNames[index]);
 }
 
-bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& metadata)
+bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const
 {
 	// Default to filename without extension as title
 	std::string fileName = fs::path(filePath).filename().string();
@@ -559,21 +569,23 @@ std::string MusicPlayer::getTrackAlbum(int index) const
 	return trackMetadata[index].album;
 }
 
-bool MusicPlayer::playMusic(int index)
+bool MusicPlayer::playMusic(int index, int customFadeMs)
 {
-	// If index is -1, play current track if one exists, or choose a default.
+	// Use default fade if -1 is passed
+	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
+
+	// Validate index
 	if (index == -1)
 	{
+		// Use current or choose default as in your original code
 		if (currentIndex >= 0)
 		{
 			index = currentIndex;
 		}
 		else if (shuffleMode && !musicFiles.empty())
 		{
-			// With shuffle enabled, use the first track in the shuffled order.
 			if (shuffledIndices.empty())
 			{
-				// Generate a new shuffle order.
 				setShuffle(true);
 			}
 			index = shuffledIndices[currentShufflePos];
@@ -596,22 +608,47 @@ bool MusicPlayer::playMusic(int index)
 		return false;
 	}
 
-	// Stop any currently playing music.
-	if (Mix_PlayingMusic())
+	// Clear any pending pause state
+	isPendingPause = false;
+
+	// If music is already playing or fading, fade it out first
+	if (Mix_PlayingMusic() || Mix_FadingMusic() != MIX_NO_FADING)
 	{
-		Mix_HaltMusic();
+		if (useFadeMs > 0)
+		{
+			// Set up for pending track change after fade out
+			isPendingTrackChange = true;
+			pendingTrackIndex = index;
+
+			// Fade out current music
+			if (Mix_FadeOutMusic(useFadeMs) == 0)
+			{
+				LOG_WARNING("MusicPlayer", "Failed to fade out music, stopping immediately");
+				Mix_HaltMusic();
+			}
+			else
+			{
+				LOG_INFO("MusicPlayer", "Fading out current track before changing to new track");
+				return true; // Return true, the actual track change will happen in the callback
+			}
+		}
+		else
+		{
+			// No fade, stop immediately
+			Mix_HaltMusic();
+		}
 	}
 
-	// Load the specified track.
+	// No fade or music was halted immediately, so load and play the new track
 	loadTrack(index);
 
 	if (!currentMusic)
 	{
+		isPendingTrackChange = false;
 		return false;
 	}
 
-	// If shuffle mode is enabled, update the current shuffle position so that manual track selections
-	// become part of the shuffle order. (Assuming the shuffle order already contains all tracks.)
+	// If shuffle mode is enabled, update the current shuffle position
 	if (shuffleMode)
 	{
 		auto it = std::find(shuffledIndices.begin(), shuffledIndices.end(), index);
@@ -626,65 +663,248 @@ bool MusicPlayer::playMusic(int index)
 		}
 	}
 
-	// Play the music.
-	if (Mix_PlayMusic(currentMusic, loopMode ? -1 : 1) == -1)
+	// Play the music with fade-in if specified
+	int result;
+	if (useFadeMs > 0)
+	{
+		result = Mix_FadeInMusic(currentMusic, loopMode ? -1 : 1, useFadeMs);
+		LOG_INFO("MusicPlayer", "Fading in track: " + musicNames[index] + " over " + std::to_string(useFadeMs) + "ms");
+	}
+	else
+	{
+		result = Mix_PlayMusic(currentMusic, loopMode ? -1 : 1);
+		LOG_INFO("MusicPlayer", "Playing track: " + musicNames[index]);
+	}
+
+	if (result == -1)
 	{
 		LOG_ERROR("MusicPlayer", "Failed to play music: " + std::string(Mix_GetError()));
 		return false;
 	}
 
-	LOG_INFO("MusicPlayer", "Playing track: " + musicNames[index] + " with tag: " + getFormattedTrackInfo(index));
+	LOG_INFO("MusicPlayer", "Now playing track: " + getFormattedTrackInfo(index));
+	isPendingTrackChange = false;
 	return true;
 }
+double MusicPlayer::saveCurrentMusicPosition()
+{
+	if (currentMusic)
+	{
+		// Get the current position in the music in seconds
+		// If your SDL_mixer version doesn't support this, you'll need to track time manually
+#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
+		return Mix_GetMusicPosition(currentMusic);
+#else
+// For older SDL_mixer versions, we can't get the position
+		return 0.0;
+#endif
+	}
+	return 0.0;
+}
 
-bool MusicPlayer::pauseMusic()
+bool MusicPlayer::pauseMusic(int customFadeMs)
 {
 	if (!isPlaying() || isPaused())
 	{
 		return false;
 	}
 
-	Mix_PauseMusic();
-	LOG_INFO("MusicPlayer", "Music paused");
+	// Use default fade if -1 is passed
+	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
+
+	// Save current position before pausing (for possible resume with fade)
+	pausedMusicPosition = saveCurrentMusicPosition();
+
+	if (useFadeMs > 0)
+	{
+		// Set flags to indicate this is a pause operation
+		isPendingPause = true;
+		isPendingTrackChange = false;
+		pendingTrackIndex = -1;
+
+		// Fade out and then pause
+		if (Mix_FadeOutMusic(useFadeMs) == 0)
+		{
+			// Failed to fade out, pause immediately
+			LOG_WARNING("MusicPlayer", "Failed to fade out before pause, pausing immediately");
+			Mix_PauseMusic();
+			isPendingPause = false;
+		}
+		else
+		{
+			LOG_INFO("MusicPlayer", "Fading out music before pausing over " + std::to_string(useFadeMs) + "ms");
+			// The actual pause will be handled in the musicFinishedCallback
+		}
+	}
+	else
+	{
+		// No fade, pause immediately
+		Mix_PauseMusic();
+		LOG_INFO("MusicPlayer", "Music paused");
+	}
+
 	return true;
 }
 
-bool MusicPlayer::resumeMusic()
+bool MusicPlayer::resumeMusic(int customFadeMs)
 {
-	if (!isPaused())
+	// Use default fade if -1 is passed
+	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
+
+	// If we're in a paused state after fade-out, we need to load the track and start it
+	if (isPendingPause)
+	{
+		isPendingPause = false;
+
+		// If we have a saved position and the track is still valid
+		if (pausedMusicPosition > 0.0 && currentIndex >= 0 && currentIndex < static_cast<int>(musicFiles.size()))
+		{
+			// Load the track
+			loadTrack(currentIndex);
+
+			if (!currentMusic)
+			{
+				LOG_ERROR("MusicPlayer", "Failed to reload track for resume");
+				return false;
+			}
+
+			// Calculate the adjusted position - add the fade duration in seconds
+			// This ensures we don't repeat music that was playing during the fade-out
+			double adjustedPosition = pausedMusicPosition;
+
+			// Only add the fade time if it was a non-zero fade and if we're not at the beginning
+			if (fadeMs > 0 && pausedMusicPosition > 0.0)
+			{
+				// Convert fadeMs from milliseconds to seconds and add
+				adjustedPosition += fadeMs / 1000.0;
+
+				// Get the music length if possible to avoid going past the end
+#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
+				double musicLength = Mix_MusicDuration(currentMusic);
+				// If we have a valid duration and our adjusted position exceeds it
+				if (musicLength > 0 && adjustedPosition >= musicLength)
+				{
+					// If looping is on, wrap around
+					if (loopMode)
+					{
+						adjustedPosition = std::fmod(adjustedPosition, musicLength);
+					}
+					// Otherwise cap at just before the end
+					else
+					{
+						LOG_INFO("MusicPlayer", "Adjusted position would exceed track length, playing next track instead");
+						return nextTrack(useFadeMs);
+					}
+				}
+#endif
+			}
+
+			// Start playback from the adjusted position with fade-in
+#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
+			if (Mix_FadeInMusicPos(currentMusic, loopMode ? -1 : 1, useFadeMs, adjustedPosition) == -1)
+			{
+				LOG_ERROR("MusicPlayer", "Failed to resume music with fade: " + std::string(Mix_GetError()));
+				return false;
+			}
+#else
+			if (Mix_FadeInMusic(currentMusic, loopMode ? -1 : 1, useFadeMs) == -1)
+			{
+				LOG_ERROR("MusicPlayer", "Failed to resume music with fade: " + std::string(Mix_GetError()));
+				return false;
+			}
+#endif
+
+			LOG_INFO("MusicPlayer", "Resuming track: " + musicNames[currentIndex] + " from adjusted position " +
+				std::to_string(adjustedPosition) + " (original: " + std::to_string(pausedMusicPosition) +
+				") with " + std::to_string(useFadeMs) + "ms fade");
+			return true;
+		}
+		else if (currentIndex >= 0 && currentIndex < static_cast<int>(musicFiles.size()))
+		{
+			// Just restart the track from the beginning
+			return playMusic(currentIndex, useFadeMs);
+		}
+		else
+		{
+			LOG_ERROR("MusicPlayer", "No valid track to resume");
+			return false;
+		}
+	}
+	else if (isPaused())
+	{
+		// Regular pause (not after fade-out), just resume
+		Mix_ResumeMusic();
+		LOG_INFO("MusicPlayer", "Music resumed");
+		return true;
+	}
+
+	return false; // Nothing to resume
+}
+
+bool MusicPlayer::stopMusic(int customFadeMs)
+{
+	if (!Mix_PlayingMusic() && !Mix_PausedMusic() && !isPendingPause)
 	{
 		return false;
 	}
 
-	Mix_ResumeMusic();
-	LOG_INFO("MusicPlayer", "Music resumed");
-	return true;
-}
+	// Clear any pending pause state
+	isPendingPause = false;
+	isPendingTrackChange = false;
+	pendingTrackIndex = -1;
 
-bool MusicPlayer::stopMusic()
-{
-	if (!Mix_PlayingMusic() && !Mix_PausedMusic())
+	// Use default fade if -1 is passed
+	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
+
+	if (useFadeMs > 0 && !isShuttingDown)
 	{
-		return false;
+		// Fade out music
+		if (Mix_FadeOutMusic(useFadeMs) == 0)
+		{
+			// Failed to fade out, stop immediately
+			LOG_WARNING("MusicPlayer", "Failed to fade out music, stopping immediately");
+			Mix_HaltMusic();
+		}
+		else
+		{
+			LOG_INFO("MusicPlayer", "Fading out music over " + std::to_string(useFadeMs) + "ms");
+		}
+	}
+	else
+	{
+		// Stop immediately
+		Mix_HaltMusic();
+		LOG_INFO("MusicPlayer", "Music stopped immediately");
 	}
 
-	// Set the shutdown flag before stopping the music to prevent callback chain
-	isShuttingDown = true;
+	// Reset saved position
+	pausedMusicPosition = 0.0;
 
-	Mix_HaltMusic();
-	LOG_INFO("MusicPlayer", "Music stopped");
 	return true;
 }
 
-bool MusicPlayer::nextTrack()
+bool MusicPlayer::nextTrack(int customFadeMs)
 {
 	if (musicFiles.empty())
 	{
 		return false;
 	}
 
-	int nextIndex = getNextTrackIndex();
-	return playMusic(nextIndex);
+	int nextIndex;
+
+	if (shuffleMode)
+	{
+		// In shuffle mode, move to the next track in the shuffled order
+		currentShufflePos = (currentShufflePos + 1) % shuffledIndices.size();
+		nextIndex = shuffledIndices[currentShufflePos];
+	}
+	else
+	{
+		// In sequential mode, move to the next track in the list
+		nextIndex = (currentIndex + 1) % musicFiles.size();
+	}
+
+	return playMusic(nextIndex, customFadeMs);
 }
 
 int MusicPlayer::getNextTrackIndex()
@@ -713,35 +933,28 @@ int MusicPlayer::getNextTrackIndex()
 	}
 }
 
-bool MusicPlayer::previousTrack()
+bool MusicPlayer::previousTrack(int customFadeMs)
 {
 	if (musicFiles.empty())
 	{
 		return false;
 	}
 
+	int prevIndex;
+
 	if (shuffleMode)
 	{
-		if (shuffledIndices.empty())
-			return false; // Safety check
-
-		if (currentShufflePos > 0)
-		{
-			currentShufflePos--;
-		}
-		else
-		{
-			// Option: Wrap around to the end of the shuffled list.
-			currentShufflePos = static_cast<int>(shuffledIndices.size()) - 1;
-		}
-		return playMusic(shuffledIndices[currentShufflePos]);
+		// In shuffle mode, move to the previous track in the shuffled order
+		currentShufflePos = (currentShufflePos - 1 + static_cast<int>(shuffledIndices.size())) % static_cast<int>(shuffledIndices.size());
+		prevIndex = shuffledIndices[currentShufflePos];
 	}
 	else
 	{
-		// Go to previous track in sequential mode.
-		int prevIndex = (currentIndex - 1 + static_cast<int>(musicFiles.size())) % static_cast<int>(musicFiles.size());
-		return playMusic(prevIndex);
+		// In sequential mode, move to the previous track in the list
+		prevIndex = (currentIndex - 1 + static_cast<int>(musicFiles.size())) % static_cast<int>(musicFiles.size());
 	}
+
+	return playMusic(prevIndex, customFadeMs);
 }
 
 bool MusicPlayer::isPlaying() const
@@ -751,7 +964,7 @@ bool MusicPlayer::isPlaying() const
 
 bool MusicPlayer::isPaused() const
 {
-	return Mix_PausedMusic() == 1;
+	return Mix_PausedMusic() == 1 || isPendingPause;
 }
 
 void MusicPlayer::setVolume(int newVolume)
@@ -836,7 +1049,7 @@ bool MusicPlayer::shuffle()
 
 	// Get a random track and play it
 	std::uniform_int_distribution<size_t> dist(0, musicFiles.size() - 1);
-	int randomIndex = static_cast<int>(dist(rng));
+	auto randomIndex = static_cast<int>(dist(rng));
 	return playMusic(randomIndex);
 }
 
@@ -900,22 +1113,57 @@ void MusicPlayer::musicFinishedCallback()
 
 void MusicPlayer::onMusicFinished()
 {
-	LOG_INFO("MusicPlayer", "Track finished: " + getCurrentTrackName() + " with tag: " + getFormattedTrackInfo());
-
-	// Don't proceed to the next track if we're shutting down
+	// Don't proceed if shutting down
 	if (isShuttingDown)
 	{
-		LOG_INFO("MusicPlayer", "Not playing next track - application is shutting down");
 		return;
 	}
 
-	// In loop mode, SDL_Mixer handles the looping automatically for a single track
-	// We only need to handle when a track finishes and we need to go to the next one
-	if (!loopMode)
+	// Check if this is a pause operation
+	if (isPendingPause)
+	{
+		// This was a fade-to-pause operation
+		Mix_PauseMusic();  // Ensure paused state is set
+		LOG_INFO("MusicPlayer", "Music paused after fade-out");
+		return;  // Don't continue to next track
+	}
+
+	// Check if we're waiting to change tracks after a fade
+	if (isPendingTrackChange && pendingTrackIndex >= 0)
+	{
+		int indexToPlay = pendingTrackIndex;
+		isPendingTrackChange = false;
+		pendingTrackIndex = -1;
+
+		LOG_INFO("MusicPlayer", "Playing next track after fade: " + std::to_string(indexToPlay));
+		playMusic(indexToPlay, fadeMs);  // No fade-in needed after a fade-out
+		return;
+	}
+
+	// Normal track finished playing
+	LOG_INFO("MusicPlayer", "Track finished playing: " + getCurrentTrackName());
+
+	if (!loopMode)  // In loop mode SDL_mixer handles looping internally
 	{
 		// Play the next track
 		nextTrack();
 	}
+}
+
+void MusicPlayer::setFadeDuration(int ms)
+{
+	fadeMs = std::max(0, ms);
+
+	// Save to config if available
+	if (config)
+	{
+		config->setProperty("musicPlayer.fadeMs", fadeMs);
+	}
+}
+
+int MusicPlayer::getFadeDuration() const
+{
+	return fadeMs;
 }
 
 void MusicPlayer::resetShutdownFlag()
