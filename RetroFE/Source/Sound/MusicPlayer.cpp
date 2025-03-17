@@ -969,6 +969,9 @@ bool MusicPlayer::isPaused() const
 
 void MusicPlayer::setVolume(int newVolume)
 {
+	if (Mix_FadingMusic() != MIX_NO_FADING)
+		return;
+
 	// Ensure volume is within SDL_Mixer's range (0-128)
 	volume = std::max(0, std::min(MIX_MAX_VOLUME, newVolume));
 	Mix_VolumeMusic(volume);
@@ -984,7 +987,7 @@ void MusicPlayer::setVolume(int newVolume)
 
 int MusicPlayer::getVolume() const
 {
-	return volume;
+	return Mix_GetMusicVolume(currentMusic);
 }
 
 std::string MusicPlayer::getCurrentTrackName() const
@@ -1136,7 +1139,7 @@ void MusicPlayer::onMusicFinished()
 		pendingTrackIndex = -1;
 
 		LOG_INFO("MusicPlayer", "Playing next track after fade: " + std::to_string(indexToPlay));
-		playMusic(indexToPlay, fadeMs);  // No fade-in needed after a fade-out
+		playMusic(indexToPlay, fadeMs);
 		return;
 	}
 

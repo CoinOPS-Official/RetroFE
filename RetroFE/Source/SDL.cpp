@@ -46,7 +46,7 @@ bool SDL::initialize(Configuration& config)
 {
 	int audioRate = MIX_DEFAULT_FREQUENCY;
 	Uint16 audioFormat = MIX_DEFAULT_FORMAT; /* 16-bit stereo */
-	int audioChannels = 1;
+	int audioChannels = 2;
 	int audioBuffers = 4096;
 	bool hideMouse;
 

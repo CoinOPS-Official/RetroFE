@@ -2607,20 +2607,8 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 	{
 		int currentVolume = musicPlayer_->getVolume();
 
-		// Faster logarithmic increment
-		int increment;
-		if (currentVolume < 16) {
-			increment = 2;       // Low volume: +2
-		}
-		else if (currentVolume < 48) {
-			increment = 4;       // Low-mid volume: +4
-		}
-		else if (currentVolume < 80) {
-			increment = 8;       // Mid-high volume: +8
-		}
-		else {
-			increment = 12;      // High volume: +12
-		}
+		// Logarithmic increment - larger steps at low volumes, smaller at high volumes
+		int increment = 1;
 
 		int newVolume = std::min(MIX_MAX_VOLUME, currentVolume + increment);
 		musicPlayer_->setVolume(newVolume);
@@ -2631,20 +2619,8 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 	{
 		int currentVolume = musicPlayer_->getVolume();
 
-		// Faster logarithmic decrement
-		int decrement;
-		if (currentVolume <= 16) {
-			decrement = 2;       // Low volume: -2
-		}
-		else if (currentVolume <= 48) {
-			decrement = 4;       // Low-mid volume: -4
-		}
-		else if (currentVolume <= 80) {
-			decrement = 8;       // Mid-high volume: -8
-		}
-		else {
-			decrement = 12;      // High volume: -12
-		}
+		// Logarithmic decrement - smaller steps at low volumes, larger at high volumes
+		int decrement = 1;
 
 		int newVolume = std::max(0, currentVolume - decrement);
 		musicPlayer_->setVolume(newVolume);
@@ -2652,12 +2628,12 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 	break;
 
 	case UserInput::KeyCodeMusicToggleShuffle:
-	musicPlayer_->setShuffle(!musicPlayer_->getShuffle());
-	break;
+		musicPlayer_->setShuffle(!musicPlayer_->getShuffle());
+		break;
 
 	case UserInput::KeyCodeMusicToggleLoop:
-	musicPlayer_->setLoop(!musicPlayer_->getLoop());
-	break;
+		musicPlayer_->setLoop(!musicPlayer_->getLoop());
+		break;
 	}
 }
 
@@ -2689,6 +2665,49 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		{
 			break;
 		}
+	}
+
+	if (input_.keystate(UserInput::KeyCodeMusicPlayPause))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicPlayPause);
+		//return RETROFE_IDLE;
+	}
+	else if (input_.keystate(UserInput::KeyCodeMusicNext))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicNext);
+		//return RETROFE_IDLE;
+	}
+	else if (input_.keystate(UserInput::KeyCodeMusicPrev))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicPrev);
+		//return RETROFE_IDLE;
+	}
+	else if (input_.keystate(UserInput::KeyCodeMusicVolumeUp))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicVolumeUp);
+		//return RETROFE_IDLE;
+	}
+	else if (input_.keystate(UserInput::KeyCodeMusicVolumeDown))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicVolumeDown);
+		//return RETROFE_IDLE;
+	}
+	else if (input_.keystate(UserInput::KeyCodeMusicToggleShuffle))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicToggleShuffle);
+		//return RETROFE_IDLE;
+	}
+	else if (input_.keystate(UserInput::KeyCodeMusicToggleLoop))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicToggleLoop);
+		//return RETROFE_IDLE;
 	}
 
 	if (screensaver && ssExitInputs[e.type])
@@ -3327,52 +3346,6 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		}
 	}
 
-	// Handle music player controls
-	if (currentTime_ - keyLastTime_ > keyDelayTime_)
-	{
-		if (input_.keystate(UserInput::KeyCodeMusicPlayPause))
-		{
-			keyLastTime_ = currentTime_;
-			handleMusicControls(UserInput::KeyCodeMusicPlayPause);
-			return RETROFE_IDLE;
-		}
-		else if (input_.keystate(UserInput::KeyCodeMusicNext))
-		{
-			keyLastTime_ = currentTime_;
-			handleMusicControls(UserInput::KeyCodeMusicNext);
-			return RETROFE_IDLE;
-		}
-		else if (input_.keystate(UserInput::KeyCodeMusicPrev))
-		{
-			keyLastTime_ = currentTime_;
-			handleMusicControls(UserInput::KeyCodeMusicPrev);
-			return RETROFE_IDLE;
-		}
-		else if (input_.keystate(UserInput::KeyCodeMusicVolumeUp))
-		{
-			keyLastTime_ = currentTime_;
-			handleMusicControls(UserInput::KeyCodeMusicVolumeUp);
-			return RETROFE_IDLE;
-		}
-		else if (input_.keystate(UserInput::KeyCodeMusicVolumeDown))
-		{
-			keyLastTime_ = currentTime_;
-			handleMusicControls(UserInput::KeyCodeMusicVolumeDown);
-			return RETROFE_IDLE;
-		}
-		else if (input_.keystate(UserInput::KeyCodeMusicToggleShuffle))
-		{
-			keyLastTime_ = currentTime_;
-			handleMusicControls(UserInput::KeyCodeMusicToggleShuffle);
-			return RETROFE_IDLE;
-		}
-		else if (input_.keystate(UserInput::KeyCodeMusicToggleLoop))
-		{
-			keyLastTime_ = currentTime_;
-			handleMusicControls(UserInput::KeyCodeMusicToggleLoop);
-			return RETROFE_IDLE;
-		}
-	}
 
 	if (state != RETROFE_IDLE)
 	{
