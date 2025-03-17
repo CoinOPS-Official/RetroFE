@@ -2667,48 +2667,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		}
 	}
 
-	if (input_.keystate(UserInput::KeyCodeMusicPlayPause))
-	{
-		keyLastTime_ = currentTime_;
-		handleMusicControls(UserInput::KeyCodeMusicPlayPause);
-		//return RETROFE_IDLE;
-	}
-	else if (input_.keystate(UserInput::KeyCodeMusicNext))
-	{
-		keyLastTime_ = currentTime_;
-		handleMusicControls(UserInput::KeyCodeMusicNext);
-		//return RETROFE_IDLE;
-	}
-	else if (input_.keystate(UserInput::KeyCodeMusicPrev))
-	{
-		keyLastTime_ = currentTime_;
-		handleMusicControls(UserInput::KeyCodeMusicPrev);
-		//return RETROFE_IDLE;
-	}
-	else if (input_.keystate(UserInput::KeyCodeMusicVolumeUp))
-	{
-		keyLastTime_ = currentTime_;
-		handleMusicControls(UserInput::KeyCodeMusicVolumeUp);
-		//return RETROFE_IDLE;
-	}
-	else if (input_.keystate(UserInput::KeyCodeMusicVolumeDown))
-	{
-		keyLastTime_ = currentTime_;
-		handleMusicControls(UserInput::KeyCodeMusicVolumeDown);
-		//return RETROFE_IDLE;
-	}
-	else if (input_.keystate(UserInput::KeyCodeMusicToggleShuffle))
-	{
-		keyLastTime_ = currentTime_;
-		handleMusicControls(UserInput::KeyCodeMusicToggleShuffle);
-		//return RETROFE_IDLE;
-	}
-	else if (input_.keystate(UserInput::KeyCodeMusicToggleLoop))
-	{
-		keyLastTime_ = currentTime_;
-		handleMusicControls(UserInput::KeyCodeMusicToggleLoop);
-		//return RETROFE_IDLE;
-	}
+
 
 	if (screensaver && ssExitInputs[e.type])
 	{
@@ -2830,9 +2789,53 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		}
 	}
 
+	if (input_.keystate(UserInput::KeyCodeMusicVolumeUp))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicVolumeUp);
+		return state;
+	}
+	else if (input_.keystate(UserInput::KeyCodeMusicVolumeDown))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicVolumeDown);
+		return state;
+	}
+
 	// don't wait for idle
 	if (currentTime_ - keyLastTime_ > keyDelayTime_)
 	{
+		if (input_.keystate(UserInput::KeyCodeMusicPlayPause))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicPlayPause);
+			return state;
+		}
+		else if (input_.keystate(UserInput::KeyCodeMusicNext))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicNext);
+			return state;
+		}
+		else if (input_.keystate(UserInput::KeyCodeMusicPrev))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicPrev);
+			return state;
+		}
+		else if (input_.keystate(UserInput::KeyCodeMusicToggleShuffle))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicToggleShuffle);
+			return state;
+		}
+		else if (input_.keystate(UserInput::KeyCodeMusicToggleLoop))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicToggleLoop);
+			return state;
+		}
+
 		// lock or unlock playlist/collection/menu nav and fav toggle
 		if (page->isIdle() && input_.keystate(UserInput::KeyCodeKisok))
 		{
