@@ -2606,7 +2606,23 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 	case UserInput::KeyCodeMusicVolumeUp:
 	{
 		int currentVolume = musicPlayer_->getVolume();
-		int newVolume = std::min(MIX_MAX_VOLUME, currentVolume + 16); // Increment by 8 (out of 128)
+
+		// Faster logarithmic increment
+		int increment;
+		if (currentVolume < 16) {
+			increment = 2;       // Low volume: +2
+		}
+		else if (currentVolume < 48) {
+			increment = 4;       // Low-mid volume: +4
+		}
+		else if (currentVolume < 80) {
+			increment = 8;       // Mid-high volume: +8
+		}
+		else {
+			increment = 12;      // High volume: +12
+		}
+
+		int newVolume = std::min(MIX_MAX_VOLUME, currentVolume + increment);
 		musicPlayer_->setVolume(newVolume);
 	}
 	break;
@@ -2614,7 +2630,23 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 	case UserInput::KeyCodeMusicVolumeDown:
 	{
 		int currentVolume = musicPlayer_->getVolume();
-		int newVolume = std::max(0, currentVolume - 16); // Decrement by 8 (out of 128) 
+
+		// Faster logarithmic decrement
+		int decrement;
+		if (currentVolume <= 16) {
+			decrement = 2;       // Low volume: -2
+		}
+		else if (currentVolume <= 48) {
+			decrement = 4;       // Low-mid volume: -4
+		}
+		else if (currentVolume <= 80) {
+			decrement = 8;       // Mid-high volume: -8
+		}
+		else {
+			decrement = 12;      // High volume: -12
+		}
+
+		int newVolume = std::max(0, currentVolume - decrement);
 		musicPlayer_->setVolume(newVolume);
 	}
 	break;
