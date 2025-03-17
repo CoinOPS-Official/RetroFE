@@ -704,7 +704,7 @@ double MusicPlayer::saveCurrentMusicPosition()
 
 bool MusicPlayer::pauseMusic(int customFadeMs)
 {
-	if (!isPlaying() || isPaused())
+	if (!isPlaying() || isPaused() || !Mix_FadingMusic() == MIX_NO_FADING)
 	{
 		return false;
 	}
@@ -748,6 +748,9 @@ bool MusicPlayer::pauseMusic(int customFadeMs)
 
 bool MusicPlayer::resumeMusic(int customFadeMs)
 {
+	if (!Mix_FadingMusic() == MIX_NO_FADING)
+		return false;
+	
 	// Use default fade if -1 is passed
 	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
 
@@ -885,7 +888,7 @@ bool MusicPlayer::stopMusic(int customFadeMs)
 
 bool MusicPlayer::nextTrack(int customFadeMs)
 {
-	if (musicFiles.empty())
+	if (musicFiles.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
 	{
 		return false;
 	}
@@ -935,7 +938,7 @@ int MusicPlayer::getNextTrackIndex()
 
 bool MusicPlayer::previousTrack(int customFadeMs)
 {
-	if (musicFiles.empty())
+	if (musicFiles.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
 	{
 		return false;
 	}
@@ -987,7 +990,7 @@ void MusicPlayer::setVolume(int newVolume)
 
 int MusicPlayer::getVolume() const
 {
-	return Mix_GetMusicVolume(currentMusic);
+	return Mix_VolumeMusic(-1);
 }
 
 std::string MusicPlayer::getCurrentTrackName() const
