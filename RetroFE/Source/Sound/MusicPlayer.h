@@ -46,6 +46,16 @@ public:
         TrackMetadata() : trackNumber(0) {}
     };
 
+    enum class TrackChangeDirection {
+        NONE,
+        NEXT,
+        PREVIOUS
+    };
+
+    TrackChangeDirection getTrackChangeDirection() const;
+
+    bool isFading() const;
+
     const TrackMetadata& getCurrentTrackMetadata() const;
     const TrackMetadata& getTrackMetadata(int index) const;
     size_t getTrackMetadataCount() const;
@@ -75,6 +85,7 @@ public:
     void setVolume(int volume);  // 0-128 (SDL_Mixer range)
     int getVolume() const;
     std::string getCurrentTrackName() const;
+    std::string getCurrentTrackNameWithoutExtension() const;
     std::string getCurrentTrackPath() const;
     std::string getFormattedTrackInfo(int index = -1) const;
     std::string getTrackArtist(int index = -1) const;
@@ -94,12 +105,20 @@ public:
 
     SDL_Texture* getAlbumArt(SDL_Renderer* renderer, int trackIndex);
 
+    double getCurrent();
+
+    double getDuration();
+
+    void setTrackChangeDirection(TrackChangeDirection direction);
+
 private:
     MusicPlayer();
     ~MusicPlayer();
 
 
     std::vector<TrackMetadata> trackMetadata;
+
+    TrackChangeDirection trackChangeDirection;
 
     static void musicFinishedCallback();
     void onMusicFinished();

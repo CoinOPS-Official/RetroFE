@@ -26,6 +26,7 @@
 #include "Component/ReloadableHiscores.h"
 #include "Component/ScrollingList.h"
 #include "Component/VideoBuilder.h"
+#include "Component/MusicPlayerComponent.h"
 #include "Animate/AnimationEvents.h"
 #include "Animate/TweenTypes.h"
 #include "../Sound/Sound.h"
@@ -725,6 +726,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
 	loadReloadableImages(layout, "reloadableText", page);
 	loadReloadableImages(layout, "reloadableScrollingText", page);
 	loadReloadableImages(layout, "reloadableHiscores", page);
+	loadReloadableImages(layout, "musicPlayer", page);
 
 	return true;
 }
@@ -860,6 +862,16 @@ void PageBuilder::loadReloadableImages(const xml_node<>* layout, const std::stri
 			c = new ReloadableHiscores(config_, textFormat, *page, selectedOffset,
 				font, scrollingSpeed, startTime,
 				excludedColumns, baseColumnPadding, baseRowPadding, maxRows);
+		}
+
+		else if (tagName == "musicPlayer") {
+			std::string typeValue = type->value();
+
+			// Create font for text-based music player components
+			FontManager* font = addFont(componentXml, nullptr, cMonitor);
+
+			// Create MusicPlayerComponent with common mode enabled
+			c = new MusicPlayerComponent(config_, true, typeValue, *page, cMonitor, font);
 		}
 
 		else {

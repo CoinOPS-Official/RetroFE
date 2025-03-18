@@ -2596,10 +2596,12 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 		break;
 
 	case UserInput::KeyCodeMusicNext:
+		musicPlayer_->setTrackChangeDirection(MusicPlayer::TrackChangeDirection::NEXT);
 		musicPlayer_->nextTrack();
 		break;
 
 	case UserInput::KeyCodeMusicPrev:
+		musicPlayer_->setTrackChangeDirection(MusicPlayer::TrackChangeDirection::PREVIOUS);
 		musicPlayer_->previousTrack();
 		break;
 

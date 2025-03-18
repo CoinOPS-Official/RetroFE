@@ -46,6 +46,7 @@ MusicPlayer::MusicPlayer()
 	, isPendingTrackChange(false)
 	, pendingTrackIndex(-1)
 	, fadeMs(1500)
+	, trackChangeDirection(TrackChangeDirection::NONE)
 {
 	// Seed the random number generator with current time
 	auto now = std::chrono::high_resolution_clock::now();
@@ -893,6 +894,8 @@ bool MusicPlayer::nextTrack(int customFadeMs)
 		return false;
 	}
 
+	//trackChangeDirection = TrackChangeDirection::NEXT;
+
 	int nextIndex;
 
 	if (shuffleMode)
@@ -942,6 +945,8 @@ bool MusicPlayer::previousTrack(int customFadeMs)
 	{
 		return false;
 	}
+
+	//trackChangeDirection = TrackChangeDirection::PREVIOUS;
 
 	int prevIndex;
 
@@ -1000,6 +1005,32 @@ std::string MusicPlayer::getCurrentTrackName() const
 		return musicNames[currentIndex];
 	}
 	return "";
+}
+
+std::string MusicPlayer::getCurrentTrackNameWithoutExtension() const
+{
+	// First get the full filename with extension
+	std::string fullName;
+	if (currentIndex >= 0 && currentIndex < static_cast<int>(musicNames.size()))
+	{
+		fullName = musicNames[currentIndex];
+	}
+	else
+	{
+		return "";
+	}
+
+	// Find the last occurrence of a dot to identify the extension
+	size_t lastDotPos = fullName.find_last_of('.');
+
+	// If no dot is found, return the full filename
+	if (lastDotPos == std::string::npos)
+	{
+		return fullName;
+	}
+
+	// Return everything before the last dot
+	return fullName.substr(0, lastDotPos);
 }
 
 std::string MusicPlayer::getCurrentTrackPath() const
@@ -1356,4 +1387,37 @@ SDL_Texture* MusicPlayer::getAlbumArt(SDL_Renderer* renderer, int trackIndex) {
 	SDL_FreeSurface(imageSurface);
 
 	return albumArtTexture;
+}
+
+double MusicPlayer::getCurrent()
+{
+	if (!currentMusic) {
+		return -1.0;
+	}
+
+	return Mix_GetMusicPosition(currentMusic);
+}
+
+double MusicPlayer::getDuration()
+{
+	if (!currentMusic) {
+		return -1.0;
+	}
+
+	return Mix_MusicDuration(currentMusic);;
+}
+
+void MusicPlayer::setTrackChangeDirection(TrackChangeDirection direction)
+{
+	trackChangeDirection = direction;
+}
+
+MusicPlayer::TrackChangeDirection MusicPlayer::getTrackChangeDirection() const
+{
+	return trackChangeDirection;
+}
+
+bool MusicPlayer::isFading() const
+{
+	return Mix_FadingMusic() != MIX_NO_FADING;
 }
