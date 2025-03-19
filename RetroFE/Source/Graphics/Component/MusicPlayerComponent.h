@@ -32,6 +32,8 @@ public:
 
     bool update(float dt) override;
     void draw() override;
+    void drawAlbumArt();
+    SDL_Texture* loadDefaultAlbumArt();
     void freeGraphicsMemory() override;
     void allocateGraphicsMemory() override;
     std::string_view filePath() override; // Add to match other components
@@ -66,5 +68,12 @@ private:
     std::string lastState_;  // Tracks the last state (playing/paused/etc.)
     float refreshInterval_;  // How often to update in seconds
     float refreshTimer_;
+
+    // Album art tracking
+    SDL_Texture* albumArtTexture_;
+    int albumArtTrackIndex_;
+    SDL_Renderer* renderer_;
+    int albumArtTextureWidth_;
+    int albumArtTextureHeight_;
 
 };

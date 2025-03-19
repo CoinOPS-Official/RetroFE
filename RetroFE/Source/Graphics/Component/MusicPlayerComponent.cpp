@@ -40,6 +40,11 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
     , lastState_("")
     , refreshInterval_(1.0f)
     , refreshTimer_(0.0f)
+    , albumArtTexture_(nullptr)
+    , albumArtTrackIndex_(-1)
+    , renderer_(nullptr)
+    , albumArtTextureWidth_(0)
+    , albumArtTextureHeight_(0)
 {
     // Set the monitor for this component
     baseViewInfo.Monitor = monitor;
@@ -62,6 +67,11 @@ void MusicPlayerComponent::freeGraphicsMemory()
 {
     Component::freeGraphicsMemory();
 
+    if (albumArtTexture_ != nullptr) {
+        SDL_DestroyTexture(albumArtTexture_);
+        albumArtTexture_ = nullptr;
+    }
+
     if (loadedComponent_ != nullptr) {
         loadedComponent_->freeGraphicsMemory();
         delete loadedComponent_;
@@ -72,6 +82,11 @@ void MusicPlayerComponent::freeGraphicsMemory()
 void MusicPlayerComponent::allocateGraphicsMemory()
 {
     Component::allocateGraphicsMemory();
+
+    // Get the renderer if we're going to handle album art
+    if (Utils::toLower(type_) == "albumart") {
+        renderer_ = SDL::getRenderer(baseViewInfo.Monitor);
+    }
 
     // Create the component based on the specified type
     loadedComponent_ = reloadComponent();
@@ -93,6 +108,32 @@ bool MusicPlayerComponent::update(float dt)
 {
     // Update refresh timer
     refreshTimer_ += dt;
+
+    // Special handling for album art
+    if (Utils::toLower(type_) == "albumart") {
+        int currentTrackIndex = musicPlayer_->getCurrentTrackIndex();
+
+        // Check if track has changed or refresh timeout
+        bool needsUpdate = (currentTrackIndex != albumArtTrackIndex_) || (refreshTimer_ >= refreshInterval_);
+
+        if (needsUpdate) {
+            refreshTimer_ = 0.0f;
+
+            // If track changed, reset texture reference to trigger reload
+            if (currentTrackIndex != albumArtTrackIndex_) {
+                // Free old texture if needed
+                if (albumArtTexture_ != nullptr) {
+                    SDL_DestroyTexture(albumArtTexture_);
+                    albumArtTexture_ = nullptr;
+                }
+
+                albumArtTrackIndex_ = currentTrackIndex;
+                lastState_ = std::to_string(currentTrackIndex); // Update state to track index
+            }
+        }
+
+        return Component::update(dt);
+    }
 
     // Determine current state
     std::string currentState;
@@ -153,6 +194,14 @@ void MusicPlayerComponent::draw()
 {
     Component::draw();
 
+    // For album art, handle drawing directly
+    if (Utils::toLower(type_) == "albumart") {
+        if (baseViewInfo.Alpha > 0.0f) {
+            drawAlbumArt();
+        }
+        return;
+    }
+
     if (loadedComponent_ != nullptr) {
         loadedComponent_->baseViewInfo = baseViewInfo;
         if (baseViewInfo.Alpha > 0.0f) {
@@ -161,8 +210,106 @@ void MusicPlayerComponent::draw()
     }
 }
 
+void MusicPlayerComponent::drawAlbumArt()
+{
+    if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
+        return;
+    }
+
+    // Try to get album art texture if we don't have one
+    if (albumArtTexture_ == nullptr && albumArtTrackIndex_ >= 0) {
+        // Get album art from the music player
+        std::vector<unsigned char> albumArtData;
+        if (musicPlayer_->getAlbumArt(albumArtTrackIndex_, albumArtData) && !albumArtData.empty()) {
+            // Convert album art data to texture using SDL_image
+            SDL_RWops* rw = SDL_RWFromConstMem(albumArtData.data(), static_cast<int>(albumArtData.size()));
+            if (rw) {
+                // Use IMG_LoadTexture_RW which simplifies the process
+                albumArtTexture_ = IMG_LoadTexture_RW(renderer_, rw, 1); // 1 means auto-close
+
+                if (albumArtTexture_) {
+                    // Get texture dimensions
+                    SDL_QueryTexture(albumArtTexture_, nullptr, nullptr,
+                        &albumArtTextureWidth_, &albumArtTextureHeight_);
+                    baseViewInfo.ImageWidth = (float)albumArtTextureWidth_;
+                    baseViewInfo.ImageHeight = (float)albumArtTextureHeight_;
+                    LOG_INFO("MusicPlayerComponent", "Created album art texture");
+                }
+            }
+        }
+
+        // If no album art found or texture creation failed, try to load default
+        if (albumArtTexture_ == nullptr) {
+            albumArtTexture_ = loadDefaultAlbumArt();
+        }
+    }
+
+    // Draw the album art if we have a texture
+    if (albumArtTexture_ != nullptr) {
+        SDL_Rect rect;
+
+        // Use the baseViewInfo for position and size calculations
+        rect.x = static_cast<int>(baseViewInfo.XRelativeToOrigin());
+        rect.y = static_cast<int>(baseViewInfo.YRelativeToOrigin());
+        rect.h = static_cast<int>(baseViewInfo.ScaledHeight());
+        rect.w = static_cast<int>(baseViewInfo.ScaledWidth());
+
+        // Use the existing SDL render method
+        SDL::renderCopy(
+            albumArtTexture_,
+            baseViewInfo.Alpha,
+            nullptr,
+            &rect,
+            baseViewInfo,
+            page.getLayoutWidth(baseViewInfo.Monitor),
+            page.getLayoutHeight(baseViewInfo.Monitor)
+        );
+    }
+}
+
+SDL_Texture* MusicPlayerComponent::loadDefaultAlbumArt()
+{
+    // Get layout name from config
+    std::string layoutName;
+    config_.getProperty(OPTION_LAYOUT, layoutName);
+
+    // Try different paths for default album art
+    std::vector<std::string> searchPaths = {
+        Utils::combinePath(Configuration::absolutePath, "layouts", layoutName,
+                          "collections", "_common", "medium_artwork", "albumart", "default.png"),
+        Utils::combinePath(Configuration::absolutePath, "layouts", layoutName,
+                          "collections", "_common", "medium_artwork", "albumart", "default.jpg"),
+        Utils::combinePath(Configuration::absolutePath, "layouts", layoutName,
+                          "collections", "_common", "medium_artwork", "music", "default.png"),
+        Utils::combinePath(Configuration::absolutePath, "layouts", layoutName,
+                          "collections", "_common", "medium_artwork", "music", "default.jpg")
+    };
+
+    // Try to load each path using IMG_LoadTexture which simplifies the process
+    for (const auto& path : searchPaths) {
+        if (std::filesystem::exists(path)) {
+            SDL_Texture* texture = IMG_LoadTexture(renderer_, path.c_str());
+            if (texture) {
+                // Get dimensions for the default texture
+                SDL_QueryTexture(texture, nullptr, nullptr,
+                    &albumArtTextureWidth_, &albumArtTextureHeight_);
+                LOG_INFO("MusicPlayerComponent", "Loaded default album art from: " + path);
+                return texture;
+            }
+        }
+    }
+
+    LOG_WARNING("MusicPlayerComponent", "Failed to load default album art");
+    return nullptr;
+}
+
 Component* MusicPlayerComponent::reloadComponent()
 {
+    // Album art is handled directly, don't create a component for it
+    if (Utils::toLower(type_) == "albumart") {
+        return nullptr;
+    }
+    
     Component* component = nullptr;
     std::string typeLC = Utils::toLower(type_);
     std::string basename;

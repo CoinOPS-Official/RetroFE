@@ -20,6 +20,7 @@
 #include <SDL2/SDL_image.h>
 #include <algorithm>
 #include <chrono>
+#include <cstddef>
 
 namespace fs = std::filesystem;
 
@@ -1263,80 +1264,151 @@ bool extractAlbumArtFromFile(const std::string& filePath, std::vector<unsigned c
 	}
 
 	// Read the ID3v2 header (10 bytes)
-	char header[10];
-	file.read(header, 10);
-	if (file.gcount() < 10 || std::strncmp(header, "ID3", 3) != 0) {
+	std::vector<std::byte> header(10);
+	file.read(reinterpret_cast<char*>(header.data()), header.size());
+	if (file.gcount() < static_cast<std::streamsize>(header.size()) ||
+		std::memcmp(header.data(), "ID3", 3) != 0) {
 		// Not an ID3v2 file
 		return false;
 	}
 
+	// Get ID3 version
+	unsigned int majorVersion = static_cast<unsigned int>(std::to_integer<unsigned char>(header[3]));
+	SDL_Log("ID3v2.%d tag found", majorVersion);
+
 	// Get the tag size (bytes 6-9 are synchsafe integers)
-	unsigned char sizeBytes[4];
-	std::memcpy(sizeBytes, header + 6, 4);
 	int tagSize = 0;
 	for (int i = 0; i < 4; ++i) {
-		tagSize = (tagSize << 7) | (sizeBytes[i] & 0x7F);
+		tagSize = (tagSize << 7) | (std::to_integer<unsigned char>(header[6 + i]) & 0x7F);
 	}
 	int tagEnd = 10 + tagSize; // End position of the tag
 
+	SDL_Log("Tag size: %d bytes", tagSize);
+
 	// Loop through frames until we reach the end of the tag.
-	while (file.tellg() < tagEnd) {
-		char frameHeader[10];
-		file.read(frameHeader, 10);
-		if (file.gcount() < 10)
+	while (file.tellg() < tagEnd && !file.eof()) {
+		std::vector<std::byte> frameHeader(10);
+		file.read(reinterpret_cast<char*>(frameHeader.data()), frameHeader.size());
+		if (file.gcount() < static_cast<std::streamsize>(frameHeader.size()))
 			break;
 
 		// Frame ID is in the first 4 bytes.
-		char frameID[5] = { frameHeader[0], frameHeader[1], frameHeader[2], frameHeader[3], 0 };
-		// Get frame size (assuming ID3v2.3 - big-endian integer)
-		int frameSize = (static_cast<unsigned char>(frameHeader[4]) << 24) |
-			(static_cast<unsigned char>(frameHeader[5]) << 16) |
-			(static_cast<unsigned char>(frameHeader[6]) << 8) |
-			(static_cast<unsigned char>(frameHeader[7]));
+		char frameID[5] = {
+			static_cast<char>(std::to_integer<unsigned char>(frameHeader[0])),
+			static_cast<char>(std::to_integer<unsigned char>(frameHeader[1])),
+			static_cast<char>(std::to_integer<unsigned char>(frameHeader[2])),
+			static_cast<char>(std::to_integer<unsigned char>(frameHeader[3])),
+			0
+		};
 
-		if (frameSize <= 0)
+		// Get frame size (handle different versions correctly)
+		int frameSize;
+		if (majorVersion >= 4) {
+			// ID3v2.4 uses synchsafe integers
+			frameSize = 0;
+			for (int i = 0; i < 4; ++i) {
+				frameSize = (frameSize << 7) | (std::to_integer<unsigned char>(frameHeader[4 + i]) & 0x7F);
+			}
+		}
+		else {
+			// ID3v2.3 uses regular integers
+			frameSize = (std::to_integer<unsigned char>(frameHeader[4]) << 24) |
+				(std::to_integer<unsigned char>(frameHeader[5]) << 16) |
+				(std::to_integer<unsigned char>(frameHeader[6]) << 8) |
+				(std::to_integer<unsigned char>(frameHeader[7]));
+		}
+
+		if (frameSize <= 0 || frameSize > 10000000) { // Sanity check on frame size
+			SDL_Log("Invalid frame size: %d", frameSize);
 			break;
+		}
+
+		SDL_Log("Found frame: %s, size: %d bytes", frameID, frameSize);
 
 		if (std::strcmp(frameID, "APIC") == 0) {
 			// Read the entire frame data.
-			std::vector<unsigned char> frameData(frameSize);
+			std::vector<std::byte> frameData(frameSize);
 			file.read(reinterpret_cast<char*>(frameData.data()), frameSize);
-			if (static_cast<int>(frameData.size()) < frameSize)
+			if (file.gcount() < frameSize)
 				break;
 
 			size_t offset = 0;
 
 			// Skip text encoding (1 byte)
+			int textEncoding = std::to_integer<int>(frameData[offset]);
 			offset += 1;
+			SDL_Log("Text encoding: %d", textEncoding);
 
 			// Skip MIME type (null-terminated string)
-			while (offset < frameData.size() && frameData[offset] != 0)
+			std::string mimeType;
+			while (offset < frameData.size() && std::to_integer<unsigned char>(frameData[offset]) != 0) {
+				mimeType += static_cast<char>(std::to_integer<unsigned char>(frameData[offset]));
 				offset++;
+			}
 			offset++; // Skip the null terminator
+			SDL_Log("MIME type: %s", mimeType.c_str());
 
 			// The next byte is the picture type.
 			if (offset >= frameData.size())
 				break;
-			unsigned char pictureType = frameData[offset];
+			int pictureType = std::to_integer<unsigned char>(frameData[offset]);
 			offset++; // Move past picture type
+			SDL_Log("Picture type: %d", pictureType);
 
-			// We only want the front cover (picture type == 3)
-			if (pictureType != 0x03) {
-				// Not the front cover; skip this frame.
+			// We want either front cover (3) or any picture if desperate
+			if (pictureType != 0x03 && pictureType != 0x00) {
+				// Skip if not front cover or other picture
 				continue;
 			}
 
 			// Skip description (null-terminated string)
-			while (offset < frameData.size() && frameData[offset] != 0)
-				offset++;
-			offset++; // Skip the null terminator
+			// Handle encoding properly
+			if (textEncoding == 0 || textEncoding == 3) { // ISO-8859-1 or UTF-8
+				while (offset < frameData.size() && std::to_integer<unsigned char>(frameData[offset]) != 0)
+					offset++;
+				offset++; // Skip the null terminator
+			}
+			else { // UTF-16/UTF-16BE with BOM
+				while (offset + 1 < frameData.size() &&
+					!(std::to_integer<unsigned char>(frameData[offset]) == 0 &&
+						std::to_integer<unsigned char>(frameData[offset + 1]) == 0))
+					offset += 2;
+				offset += 2; // Skip the double null terminator
+			}
 
 			if (offset < frameData.size()) {
-				// The rest of the frame is the image data.
-				albumArtData.assign(frameData.begin() + offset, frameData.end());
-				return true;
+				// Log how much image data we're extracting
+				SDL_Log("Extracting %zu bytes of image data", frameData.size() - offset);
+
+				// Convert std::byte to unsigned char for albumArtData
+				albumArtData.resize(frameData.size() - offset);
+				for (size_t i = 0; i < albumArtData.size(); ++i) {
+					albumArtData[i] = std::to_integer<unsigned char>(frameData[offset + i]);
+				}
+
+				// Validate the image data starts with proper headers
+				if (albumArtData.size() >= 4) {
+					// Check if it's a valid JPG/PNG
+					if ((albumArtData[0] == 0xFF && albumArtData[1] == 0xD8) || // JPEG
+						(albumArtData[0] == 0x89 && albumArtData[1] == 0x50 && albumArtData[2] == 0x4E && albumArtData[3] == 0x47)) { // PNG
+						SDL_Log("Valid image header detected");
+						return true;
+					}
+					else {
+						SDL_Log("Warning: Invalid image header: %02X %02X %02X %02X",
+							albumArtData[0], albumArtData[1],
+							albumArtData[2], albumArtData[3]);
+						// Continue anyway, IMG_Load might still handle it
+						return true;
+					}
+				}
+				else {
+					SDL_Log("Image data too small: %zu bytes", albumArtData.size());
+					return false;
+				}
 			}
 			else {
+				SDL_Log("Invalid APIC frame structure");
 				return false;
 			}
 		}
@@ -1345,50 +1417,35 @@ bool extractAlbumArtFromFile(const std::string& filePath, std::vector<unsigned c
 			file.seekg(frameSize, std::ios::cur);
 		}
 	}
+
+	SDL_Log("No suitable album art found");
 	return false;
 }
 
-SDL_Texture* MusicPlayer::getAlbumArt(SDL_Renderer* renderer, int trackIndex) {
-	// Validate track index.
+bool MusicPlayer::getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData) {
+	// Clear the output vector first
+	albumArtData.clear();
+
+	// Validate track index
 	if (trackIndex < 0 || trackIndex >= static_cast<int>(musicFiles.size())) {
-		return nullptr;
+		LOG_ERROR("MusicPlayer", "Invalid track index for album art: " + std::to_string(trackIndex));
+		return false;
 	}
 
-	// Get the file path of the requested track.
+	// Get the file path of the requested track
 	std::string filePath = musicFiles[trackIndex];
 
-	// Extract album art data from the file.
-	std::vector<unsigned char> albumArtData;
-	if (!extractAlbumArtFromFile(filePath, albumArtData) || albumArtData.empty()) {
-		// No album art available.
-		return nullptr;
+	// Extract album art data from the file
+	bool result = extractAlbumArtFromFile(filePath, albumArtData);
+
+	if (!result || albumArtData.empty()) {
+		LOG_INFO("MusicPlayer", "No album art found in track: " + musicNames[trackIndex]);
+		return false;
 	}
 
-	// Create an SDL_RWops from the album art data.
-	SDL_RWops* rw = SDL_RWFromConstMem(albumArtData.data(), static_cast<int>(albumArtData.size()));
-	if (!rw) {
-		SDL_Log("Failed to create RWops: %s", SDL_GetError());
-		return nullptr;
-	}
-
-	// Load the image into an SDL_Surface using SDL_image.
-	SDL_Surface* imageSurface = IMG_Load_RW(rw, 1); // The '1' indicates SDL will close the RWops.
-	if (!imageSurface) {
-		SDL_Log("Failed to load image from RWops: %s", IMG_GetError());
-		return nullptr;
-	}
-
-	// Create an SDL_Texture from the surface.
-	SDL_Texture* albumArtTexture = SDL_CreateTextureFromSurface(renderer, imageSurface);
-	if (!albumArtTexture) {
-		SDL_Log("Failed to create texture: %s", SDL_GetError());
-	}
-
-	SDL_FreeSurface(imageSurface);
-
-	return albumArtTexture;
+	LOG_INFO("MusicPlayer", "Extracted album art from track: " + musicNames[trackIndex]);
+	return true;
 }
-
 double MusicPlayer::getCurrent()
 {
 	if (!currentMusic) {

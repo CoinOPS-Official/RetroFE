@@ -103,7 +103,8 @@ public:
 
     bool isPlayingNewTrack();
 
-    SDL_Texture* getAlbumArt(SDL_Renderer* renderer, int trackIndex);
+
+    bool getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData);
 
     double getCurrent();
 
