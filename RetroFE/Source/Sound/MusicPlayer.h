@@ -117,9 +117,9 @@ private:
     ~MusicPlayer();
 
 
-    std::vector<TrackMetadata> trackMetadata;
+    std::vector<TrackMetadata> trackMetadata_;
 
-    TrackChangeDirection trackChangeDirection;
+    TrackChangeDirection trackChangeDirection_;
 
     static void musicFinishedCallback();
     void onMusicFinished();
@@ -131,24 +131,24 @@ private:
     bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const;
     bool parseM3UFile(const std::string& playlistPath);
     bool isValidAudioFile(const std::string& filePath) const;
-    static MusicPlayer* instance;
+    static MusicPlayer* instance_;
 
-    Configuration* config;
-    Mix_Music* currentMusic;
-    std::vector<std::string> musicFiles;
-    std::vector<std::string> musicNames;
-    std::vector<int> shuffledIndices;
-    int currentShufflePos = -1;
-    int currentIndex;
-    int volume;
-    bool loopMode;
-    bool shuffleMode;
-    bool isShuttingDown;
-    std::mt19937 rng;
-    bool isPendingPause;
-    double pausedMusicPosition;
-    bool isPendingTrackChange;
-    int pendingTrackIndex;
-    int fadeMs;
-    std::string lastCheckedTrackPath;
+    Configuration* config_;
+    Mix_Music* currentMusic_;
+    std::vector<std::string> musicFiles_;
+    std::vector<std::string> musicNames_;
+    std::vector<int> shuffledIndices_;
+    int currentShufflePos_ = -1;
+    int currentIndex_;
+    int volume_;
+    bool loopMode_;
+    bool shuffleMode_;
+    bool isShuttingDown_;
+    std::mt19937 rng_;
+    bool isPendingPause_;
+    double pausedMusicPosition_;
+    bool isPendingTrackChange_;
+    int pendingTrackIndex_;
+    int fadeMs_;
+    std::string lastCheckedTrackPath_;
 };

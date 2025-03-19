@@ -24,30 +24,30 @@
 
 namespace fs = std::filesystem;
 
-MusicPlayer* MusicPlayer::instance = nullptr;
+MusicPlayer* MusicPlayer::instance_ = nullptr;
 
 MusicPlayer* MusicPlayer::getInstance()
 {
-	if (!instance)
+	if (!instance_)
 	{
-		instance = new MusicPlayer();
+		instance_ = new MusicPlayer();
 	}
-	return instance;
+	return instance_;
 }
 
 MusicPlayer::MusicPlayer()
-	: config(nullptr)
-	, currentMusic(nullptr)
-	, currentIndex(-1)
-	, volume(MIX_MAX_VOLUME)
-	, loopMode(false)
-	, shuffleMode(false)
-	, isShuttingDown(false)
-	, pausedMusicPosition(0.0)
-	, isPendingTrackChange(false)
-	, pendingTrackIndex(-1)
-	, fadeMs(1500)
-	, trackChangeDirection(TrackChangeDirection::NONE)
+	: config_(nullptr)
+	, currentMusic_(nullptr)
+	, currentIndex_(-1)
+	, volume_(MIX_MAX_VOLUME)
+	, loopMode_(false)
+	, shuffleMode_(false)
+	, isShuttingDown_(false)
+	, pausedMusicPosition_(0.0)
+	, isPendingTrackChange_(false)
+	, pendingTrackIndex_(-1)
+	, fadeMs_(1500)
+	, trackChangeDirection_(TrackChangeDirection::NONE)
 {
 	// Seed the random number generator with current time
 	auto now = std::chrono::high_resolution_clock::now();
@@ -60,55 +60,55 @@ MusicPlayer::MusicPlayer()
 		static_cast<uint32_t>((seed >> 32) & 0xFFFFFFFF)
 	};
 
-	rng.seed(seq);
+	rng_.seed(seq);
 }
 
 MusicPlayer::~MusicPlayer()
 {
-	isShuttingDown = true;
+	isShuttingDown_ = true;
 	stopMusic();
-	if (currentMusic)
+	if (currentMusic_)
 	{
-		Mix_FreeMusic(currentMusic);
-		currentMusic = nullptr;
+		Mix_FreeMusic(currentMusic_);
+		currentMusic_ = nullptr;
 	}
 }
 
 bool MusicPlayer::initialize(Configuration& config)
 {
-	this->config = &config;
+	this->config_ = &config;
 
 	// Get volume from config if available
 	int configVolume;
 	if (config.getProperty("musicPlayer.volume", configVolume))
 	{
-		volume = std::max(0, std::min(MIX_MAX_VOLUME, configVolume));
+		volume_ = std::max(0, std::min(MIX_MAX_VOLUME, configVolume));
 	}
 
 	// Set the music callback for handling when music finishes
 	Mix_HookMusicFinished(MusicPlayer::musicFinishedCallback);
 
 	// Set music volume
-	Mix_VolumeMusic(volume);
+	Mix_VolumeMusic(volume_);
 
 	// Get loop mode from config
 	bool configLoop;
 	if (config.getProperty("musicPlayer.loop", configLoop))
 	{
-		loopMode = configLoop;
+		loopMode_ = configLoop;
 	}
 
 	// Get shuffle mode from config
 	bool configShuffle;
 	if (config.getProperty("musicPlayer.shuffle", configShuffle))
 	{
-		shuffleMode = configShuffle;
+		shuffleMode_ = configShuffle;
 	}
 
 	int configFadeMs;
 	if (config.getProperty("musicPlayer.fadeMs", configFadeMs))
 	{
-		fadeMs = std::max(0, configFadeMs);
+		fadeMs_ = std::max(0, configFadeMs);
 	}
 
 	// First check if an M3U playlist is specified
@@ -138,11 +138,11 @@ bool MusicPlayer::initialize(Configuration& config)
 		loadMusicFolderFromConfig();
 	}
 
-	LOG_INFO("MusicPlayer", "Initialized with volume: " + std::to_string(volume) +
-		", loop: " + std::to_string(loopMode) +
-		", shuffle: " + std::to_string(shuffleMode) +
-		", fade: " + std::to_string(fadeMs) + "ms" +
-		", tracks found: " + std::to_string(musicFiles.size()));
+	LOG_INFO("MusicPlayer", "Initialized with volume: " + std::to_string(volume_) +
+		", loop: " + std::to_string(loopMode_) +
+		", shuffle: " + std::to_string(shuffleMode_) +
+		", fade: " + std::to_string(fadeMs_) + "ms" +
+		", tracks found: " + std::to_string(musicFiles_.size()));
 
 	return true;
 }
@@ -151,7 +151,7 @@ bool MusicPlayer::initialize(Configuration& config)
 void MusicPlayer::loadMusicFolderFromConfig()
 {
 	std::string musicFolder;
-	if (config && config->getProperty("musicPlayer.folder", musicFolder))
+	if (config_ && config_->getProperty("musicPlayer.folder", musicFolder))
 	{
 		loadMusicFolder(musicFolder);
 	}
@@ -165,9 +165,9 @@ void MusicPlayer::loadMusicFolderFromConfig()
 bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
 {
 	// Clear existing music files
-	musicFiles.clear();
-	musicNames.clear();
-	trackMetadata.clear();
+	musicFiles_.clear();
+	musicNames_.clear();
+	trackMetadata_.clear();
 
 	LOG_INFO("MusicPlayer", "Loading music from folder: " + folderPath);
 
@@ -210,12 +210,12 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
 		// Unpack sorted entries
 		for (const auto& entry : musicEntries)
 		{
-			musicFiles.push_back(std::get<0>(entry));
-			musicNames.push_back(std::get<1>(entry));
-			trackMetadata.push_back(std::get<2>(entry));
+			musicFiles_.push_back(std::get<0>(entry));
+			musicNames_.push_back(std::get<1>(entry));
+			trackMetadata_.push_back(std::get<2>(entry));
 		}
 
-		LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles.size()) + " music files");
+		LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles_.size()) + " music files");
 	}
 	catch (const std::exception& e)
 	{
@@ -223,15 +223,15 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
 		return false;
 	}
 
-	return !musicFiles.empty();
+	return !musicFiles_.empty();
 }
 
 bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPath)
 {
 	// Clear existing music files
-	musicFiles.clear();
-	musicNames.clear();
-	trackMetadata.clear();
+	musicFiles_.clear();
+	musicNames_.clear();
+	trackMetadata_.clear();
 
 	LOG_INFO("MusicPlayer", "Loading music from M3U playlist: " + playlistPath);
 
@@ -241,8 +241,8 @@ bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPath)
 		return false;
 	}
 
-	LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles.size()) + " music files in playlist");
-	return !musicFiles.empty();
+	LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles_.size()) + " music files in playlist");
+	return !musicFiles_.empty();
 }
 
 bool MusicPlayer::parseM3UFile(const std::string& playlistPath)
@@ -313,9 +313,9 @@ bool MusicPlayer::parseM3UFile(const std::string& playlistPath)
 		// Unpack sorted entries
 		for (const auto& entry : musicEntries)
 		{
-			musicFiles.push_back(std::get<0>(entry));
-			musicNames.push_back(std::get<1>(entry));
-			trackMetadata.push_back(std::get<2>(entry));
+			musicFiles_.push_back(std::get<0>(entry));
+			musicNames_.push_back(std::get<1>(entry));
+			trackMetadata_.push_back(std::get<2>(entry));
 		}
 
 		return true;
@@ -338,30 +338,30 @@ bool MusicPlayer::isValidAudioFile(const std::string& filePath) const
 void MusicPlayer::loadTrack(int index)
 {
 	// Free any currently playing music
-	if (currentMusic)
+	if (currentMusic_)
 	{
-		Mix_FreeMusic(currentMusic);
-		currentMusic = nullptr;
+		Mix_FreeMusic(currentMusic_);
+		currentMusic_ = nullptr;
 	}
 
-	if (index < 0 || index >= static_cast<int>(musicFiles.size()))
+	if (index < 0 || index >= static_cast<int>(musicFiles_.size()))
 	{
 		LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
-		currentIndex = -1;
+		currentIndex_ = -1;
 		return;
 	}
 
 	// Load the specified track
-	currentMusic = Mix_LoadMUS(musicFiles[index].c_str());
-	if (!currentMusic)
+	currentMusic_ = Mix_LoadMUS(musicFiles_[index].c_str());
+	if (!currentMusic_)
 	{
-		LOG_ERROR("MusicPlayer", "Failed to load music file: " + musicFiles[index] + ", Error: " + Mix_GetError());
-		currentIndex = -1;
+		LOG_ERROR("MusicPlayer", "Failed to load music file: " + musicFiles_[index] + ", Error: " + Mix_GetError());
+		currentIndex_ = -1;
 		return;
 	}
 
-	currentIndex = index;
-	LOG_INFO("MusicPlayer", "Loaded track: " + musicNames[index]);
+	currentIndex_ = index;
+	LOG_INFO("MusicPlayer", "Loaded track: " + musicNames_[index]);
 }
 
 bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const
@@ -440,8 +440,8 @@ const MusicPlayer::TrackMetadata& MusicPlayer::getCurrentTrackMetadata() const
 {
 	static TrackMetadata emptyMetadata;
 
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[currentIndex];
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[currentIndex_];
 	}
 	return emptyMetadata;
 }
@@ -450,69 +450,69 @@ const MusicPlayer::TrackMetadata& MusicPlayer::getTrackMetadata(int index) const
 {
 	static TrackMetadata emptyMetadata;
 
-	if (index >= 0 && index < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[index];
+	if (index >= 0 && index < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[index];
 	}
 	return emptyMetadata;
 }
 
 size_t MusicPlayer::getTrackMetadataCount() const
 {
-	return trackMetadata.size();
+	return trackMetadata_.size();
 }
 
 std::string MusicPlayer::getCurrentTitle() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[currentIndex].title;
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[currentIndex_].title;
 	}
 	return "";
 }
 
 std::string MusicPlayer::getCurrentArtist() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[currentIndex].artist;
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[currentIndex_].artist;
 	}
 	return "";
 }
 
 std::string MusicPlayer::getCurrentAlbum() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[currentIndex].album;
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[currentIndex_].album;
 	}
 	return "";
 }
 
 std::string MusicPlayer::getCurrentYear() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[currentIndex].year;
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[currentIndex_].year;
 	}
 	return "";
 }
 
 std::string MusicPlayer::getCurrentGenre() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[currentIndex].genre;
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[currentIndex_].genre;
 	}
 	return "";
 }
 
 std::string MusicPlayer::getCurrentComment() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[currentIndex].comment;
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[currentIndex_].comment;
 	}
 	return "";
 }
 
 int MusicPlayer::getCurrentTrackNumber() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(trackMetadata.size())) {
-		return trackMetadata[currentIndex].trackNumber;
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+		return trackMetadata_[currentIndex_].trackNumber;
 	}
 	return 0;
 }
@@ -520,14 +520,14 @@ int MusicPlayer::getCurrentTrackNumber() const
 std::string MusicPlayer::getFormattedTrackInfo(int index) const
 {
 	if (index == -1) {
-		index = currentIndex;
+		index = currentIndex_;
 	}
 
-	if (index < 0 || index >= static_cast<int>(trackMetadata.size())) {
+	if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
 		return "";
 	}
 
-	const auto& meta = trackMetadata[index];
+	const auto& meta = trackMetadata_[index];
 	std::string info = meta.title;
 
 	if (!meta.artist.empty()) {
@@ -548,51 +548,51 @@ std::string MusicPlayer::getFormattedTrackInfo(int index) const
 std::string MusicPlayer::getTrackArtist(int index) const
 {
 	if (index == -1) {
-		index = currentIndex;
+		index = currentIndex_;
 	}
 
-	if (index < 0 || index >= static_cast<int>(trackMetadata.size())) {
+	if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
 		return "";
 	}
 
-	return trackMetadata[index].artist;
+	return trackMetadata_[index].artist;
 }
 
 std::string MusicPlayer::getTrackAlbum(int index) const
 {
 	if (index == -1) {
-		index = currentIndex;
+		index = currentIndex_;
 	}
 
-	if (index < 0 || index >= static_cast<int>(trackMetadata.size())) {
+	if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
 		return "";
 	}
 
-	return trackMetadata[index].album;
+	return trackMetadata_[index].album;
 }
 
 bool MusicPlayer::playMusic(int index, int customFadeMs)
 {
 	// Use default fade if -1 is passed
-	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
+	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
 	// Validate index
 	if (index == -1)
 	{
 		// Use current or choose default as in your original code
-		if (currentIndex >= 0)
+		if (currentIndex_ >= 0)
 		{
-			index = currentIndex;
+			index = currentIndex_;
 		}
-		else if (shuffleMode && !musicFiles.empty())
+		else if (shuffleMode_ && !musicFiles_.empty())
 		{
-			if (shuffledIndices.empty())
+			if (shuffledIndices_.empty())
 			{
 				setShuffle(true);
 			}
-			index = shuffledIndices[currentShufflePos];
+			index = shuffledIndices_[currentShufflePos_];
 		}
-		else if (!musicFiles.empty())
+		else if (!musicFiles_.empty())
 		{
 			index = 0;
 		}
@@ -604,14 +604,14 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 	}
 
 	// Check that the index is valid.
-	if (index < 0 || index >= static_cast<int>(musicFiles.size()))
+	if (index < 0 || index >= static_cast<int>(musicFiles_.size()))
 	{
 		LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
 		return false;
 	}
 
 	// Clear any pending pause state
-	isPendingPause = false;
+	isPendingPause_ = false;
 
 	// If music is already playing or fading, fade it out first
 	if (Mix_PlayingMusic() || Mix_FadingMusic() != MIX_NO_FADING)
@@ -619,8 +619,8 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 		if (useFadeMs > 0)
 		{
 			// Set up for pending track change after fade out
-			isPendingTrackChange = true;
-			pendingTrackIndex = index;
+			isPendingTrackChange_ = true;
+			pendingTrackIndex_ = index;
 
 			// Fade out current music
 			if (Mix_FadeOutMusic(useFadeMs) == 0)
@@ -644,19 +644,19 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 	// No fade or music was halted immediately, so load and play the new track
 	loadTrack(index);
 
-	if (!currentMusic)
+	if (!currentMusic_)
 	{
-		isPendingTrackChange = false;
+		isPendingTrackChange_ = false;
 		return false;
 	}
 
 	// If shuffle mode is enabled, update the current shuffle position
-	if (shuffleMode)
+	if (shuffleMode_)
 	{
-		auto it = std::find(shuffledIndices.begin(), shuffledIndices.end(), index);
-		if (it != shuffledIndices.end())
+		auto it = std::find(shuffledIndices_.begin(), shuffledIndices_.end(), index);
+		if (it != shuffledIndices_.end())
 		{
-			currentShufflePos = static_cast<int>(std::distance(shuffledIndices.begin(), it));
+			currentShufflePos_ = static_cast<int>(std::distance(shuffledIndices_.begin(), it));
 		}
 		else
 		{
@@ -669,13 +669,13 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 	int result;
 	if (useFadeMs > 0)
 	{
-		result = Mix_FadeInMusic(currentMusic, loopMode ? -1 : 1, useFadeMs);
-		LOG_INFO("MusicPlayer", "Fading in track: " + musicNames[index] + " over " + std::to_string(useFadeMs) + "ms");
+		result = Mix_FadeInMusic(currentMusic_, loopMode_ ? -1 : 1, useFadeMs);
+		LOG_INFO("MusicPlayer", "Fading in track: " + musicNames_[index] + " over " + std::to_string(useFadeMs) + "ms");
 	}
 	else
 	{
-		result = Mix_PlayMusic(currentMusic, loopMode ? -1 : 1);
-		LOG_INFO("MusicPlayer", "Playing track: " + musicNames[index]);
+		result = Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
+		LOG_INFO("MusicPlayer", "Playing track: " + musicNames_[index]);
 	}
 
 	if (result == -1)
@@ -685,17 +685,17 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 	}
 
 	LOG_INFO("MusicPlayer", "Now playing track: " + getFormattedTrackInfo(index));
-	isPendingTrackChange = false;
+	isPendingTrackChange_ = false;
 	return true;
 }
 double MusicPlayer::saveCurrentMusicPosition()
 {
-	if (currentMusic)
+	if (currentMusic_)
 	{
 		// Get the current position in the music in seconds
 		// If your SDL_mixer version doesn't support this, you'll need to track time manually
 #if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-		return Mix_GetMusicPosition(currentMusic);
+		return Mix_GetMusicPosition(currentMusic_);
 #else
 // For older SDL_mixer versions, we can't get the position
 		return 0.0;
@@ -712,17 +712,17 @@ bool MusicPlayer::pauseMusic(int customFadeMs)
 	}
 
 	// Use default fade if -1 is passed
-	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
+	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
 	// Save current position before pausing (for possible resume with fade)
-	pausedMusicPosition = saveCurrentMusicPosition();
+	pausedMusicPosition_ = saveCurrentMusicPosition();
 
 	if (useFadeMs > 0)
 	{
 		// Set flags to indicate this is a pause operation
-		isPendingPause = true;
-		isPendingTrackChange = false;
-		pendingTrackIndex = -1;
+		isPendingPause_ = true;
+		isPendingTrackChange_ = false;
+		pendingTrackIndex_ = -1;
 
 		// Fade out and then pause
 		if (Mix_FadeOutMusic(useFadeMs) == 0)
@@ -730,7 +730,7 @@ bool MusicPlayer::pauseMusic(int customFadeMs)
 			// Failed to fade out, pause immediately
 			LOG_WARNING("MusicPlayer", "Failed to fade out before pause, pausing immediately");
 			Mix_PauseMusic();
-			isPendingPause = false;
+			isPendingPause_ = false;
 		}
 		else
 		{
@@ -754,20 +754,20 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 		return false;
 	
 	// Use default fade if -1 is passed
-	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
+	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
 	// If we're in a paused state after fade-out, we need to load the track and start it
-	if (isPendingPause)
+	if (isPendingPause_)
 	{
-		isPendingPause = false;
+		isPendingPause_ = false;
 
 		// If we have a saved position and the track is still valid
-		if (pausedMusicPosition > 0.0 && currentIndex >= 0 && currentIndex < static_cast<int>(musicFiles.size()))
+		if (pausedMusicPosition_ > 0.0 && currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
 		{
 			// Load the track
-			loadTrack(currentIndex);
+			loadTrack(currentIndex_);
 
-			if (!currentMusic)
+			if (!currentMusic_)
 			{
 				LOG_ERROR("MusicPlayer", "Failed to reload track for resume");
 				return false;
@@ -775,22 +775,22 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 
 			// Calculate the adjusted position - add the fade duration in seconds
 			// This ensures we don't repeat music that was playing during the fade-out
-			double adjustedPosition = pausedMusicPosition;
+			double adjustedPosition = pausedMusicPosition_;
 
 			// Only add the fade time if it was a non-zero fade and if we're not at the beginning
-			if (fadeMs > 0 && pausedMusicPosition > 0.0)
+			if (fadeMs_ > 0 && pausedMusicPosition_ > 0.0)
 			{
 				// Convert fadeMs from milliseconds to seconds and add
-				adjustedPosition += fadeMs / 1000.0;
+				adjustedPosition += fadeMs_ / 1000.0;
 
 				// Get the music length if possible to avoid going past the end
 #if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-				double musicLength = Mix_MusicDuration(currentMusic);
+				double musicLength = Mix_MusicDuration(currentMusic_);
 				// If we have a valid duration and our adjusted position exceeds it
 				if (musicLength > 0 && adjustedPosition >= musicLength)
 				{
 					// If looping is on, wrap around
-					if (loopMode)
+					if (loopMode_)
 					{
 						adjustedPosition = std::fmod(adjustedPosition, musicLength);
 					}
@@ -806,7 +806,7 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 
 			// Start playback from the adjusted position with fade-in
 #if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-			if (Mix_FadeInMusicPos(currentMusic, loopMode ? -1 : 1, useFadeMs, adjustedPosition) == -1)
+			if (Mix_FadeInMusicPos(currentMusic_, loopMode_ ? -1 : 1, useFadeMs, adjustedPosition) == -1)
 			{
 				LOG_ERROR("MusicPlayer", "Failed to resume music with fade: " + std::string(Mix_GetError()));
 				return false;
@@ -819,15 +819,15 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 			}
 #endif
 
-			LOG_INFO("MusicPlayer", "Resuming track: " + musicNames[currentIndex] + " from adjusted position " +
-				std::to_string(adjustedPosition) + " (original: " + std::to_string(pausedMusicPosition) +
+			LOG_INFO("MusicPlayer", "Resuming track: " + musicNames_[currentIndex_] + " from adjusted position " +
+				std::to_string(adjustedPosition) + " (original: " + std::to_string(pausedMusicPosition_) +
 				") with " + std::to_string(useFadeMs) + "ms fade");
 			return true;
 		}
-		else if (currentIndex >= 0 && currentIndex < static_cast<int>(musicFiles.size()))
+		else if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
 		{
 			// Just restart the track from the beginning
-			return playMusic(currentIndex, useFadeMs);
+			return playMusic(currentIndex_, useFadeMs);
 		}
 		else
 		{
@@ -848,20 +848,20 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 
 bool MusicPlayer::stopMusic(int customFadeMs)
 {
-	if (!Mix_PlayingMusic() && !Mix_PausedMusic() && !isPendingPause)
+	if (!Mix_PlayingMusic() && !Mix_PausedMusic() && !isPendingPause_)
 	{
 		return false;
 	}
 
 	// Clear any pending pause state
-	isPendingPause = false;
-	isPendingTrackChange = false;
-	pendingTrackIndex = -1;
+	isPendingPause_ = false;
+	isPendingTrackChange_ = false;
+	pendingTrackIndex_ = -1;
 
 	// Use default fade if -1 is passed
-	int useFadeMs = (customFadeMs < 0) ? fadeMs : customFadeMs;
+	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
-	if (useFadeMs > 0 && !isShuttingDown)
+	if (useFadeMs > 0 && !isShuttingDown_)
 	{
 		// Fade out music
 		if (Mix_FadeOutMusic(useFadeMs) == 0)
@@ -883,14 +883,14 @@ bool MusicPlayer::stopMusic(int customFadeMs)
 	}
 
 	// Reset saved position
-	pausedMusicPosition = 0.0;
+	pausedMusicPosition_ = 0.0;
 
 	return true;
 }
 
 bool MusicPlayer::nextTrack(int customFadeMs)
 {
-	if (musicFiles.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
+	if (musicFiles_.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
 	{
 		return false;
 	}
@@ -899,16 +899,16 @@ bool MusicPlayer::nextTrack(int customFadeMs)
 
 	int nextIndex;
 
-	if (shuffleMode)
+	if (shuffleMode_)
 	{
 		// In shuffle mode, move to the next track in the shuffled order
-		currentShufflePos = (currentShufflePos + 1) % shuffledIndices.size();
-		nextIndex = shuffledIndices[currentShufflePos];
+		currentShufflePos_ = (currentShufflePos_ + 1) % shuffledIndices_.size();
+		nextIndex = shuffledIndices_[currentShufflePos_];
 	}
 	else
 	{
 		// In sequential mode, move to the next track in the list
-		nextIndex = (currentIndex + 1) % musicFiles.size();
+		nextIndex = (currentIndex_ + 1) % musicFiles_.size();
 	}
 
 	return playMusic(nextIndex, customFadeMs);
@@ -916,33 +916,33 @@ bool MusicPlayer::nextTrack(int customFadeMs)
 
 int MusicPlayer::getNextTrackIndex()
 {
-	if (shuffleMode)
+	if (shuffleMode_)
 	{
 		// In shuffle mode, step forward in the shuffled order.
-		if (shuffledIndices.empty())
+		if (shuffledIndices_.empty())
 			return -1; // Safety check
 
-		if (currentShufflePos < static_cast<int>(shuffledIndices.size()) - 1)
+		if (currentShufflePos_ < static_cast<int>(shuffledIndices_.size()) - 1)
 		{
-			currentShufflePos++;
+			currentShufflePos_++;
 		}
 		else
 		{
 			// Option: Loop back to the start (or alternatively, reshuffle).
-			currentShufflePos = 0;
+			currentShufflePos_ = 0;
 		}
-		return shuffledIndices[currentShufflePos];
+		return shuffledIndices_[currentShufflePos_];
 	}
 	else
 	{
 		// Sequential playback when shuffle is off.
-		return (currentIndex + 1) % musicFiles.size();
+		return (currentIndex_ + 1) % musicFiles_.size();
 	}
 }
 
 bool MusicPlayer::previousTrack(int customFadeMs)
 {
-	if (musicFiles.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
+	if (musicFiles_.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
 	{
 		return false;
 	}
@@ -951,16 +951,16 @@ bool MusicPlayer::previousTrack(int customFadeMs)
 
 	int prevIndex;
 
-	if (shuffleMode)
+	if (shuffleMode_)
 	{
 		// In shuffle mode, move to the previous track in the shuffled order
-		currentShufflePos = (currentShufflePos - 1 + static_cast<int>(shuffledIndices.size())) % static_cast<int>(shuffledIndices.size());
-		prevIndex = shuffledIndices[currentShufflePos];
+		currentShufflePos_ = (currentShufflePos_ - 1 + static_cast<int>(shuffledIndices_.size())) % static_cast<int>(shuffledIndices_.size());
+		prevIndex = shuffledIndices_[currentShufflePos_];
 	}
 	else
 	{
 		// In sequential mode, move to the previous track in the list
-		prevIndex = (currentIndex - 1 + static_cast<int>(musicFiles.size())) % static_cast<int>(musicFiles.size());
+		prevIndex = (currentIndex_ - 1 + static_cast<int>(musicFiles_.size())) % static_cast<int>(musicFiles_.size());
 	}
 
 	return playMusic(prevIndex, customFadeMs);
@@ -973,7 +973,7 @@ bool MusicPlayer::isPlaying() const
 
 bool MusicPlayer::isPaused() const
 {
-	return Mix_PausedMusic() == 1 || isPendingPause;
+	return Mix_PausedMusic() == 1 || isPendingPause_;
 }
 
 void MusicPlayer::setVolume(int newVolume)
@@ -982,16 +982,16 @@ void MusicPlayer::setVolume(int newVolume)
 		return;
 
 	// Ensure volume is within SDL_Mixer's range (0-128)
-	volume = std::max(0, std::min(MIX_MAX_VOLUME, newVolume));
-	Mix_VolumeMusic(volume);
+	volume_ = std::max(0, std::min(MIX_MAX_VOLUME, newVolume));
+	Mix_VolumeMusic(volume_);
 
 	// Save to config if available
-	if (config)
+	if (config_)
 	{
-		config->setProperty("musicPlayer.volume", volume);
+		config_->setProperty("musicPlayer.volume", volume_);
 	}
 
-	LOG_INFO("MusicPlayer", "Volume set to " + std::to_string(volume));
+	LOG_INFO("MusicPlayer", "Volume set to " + std::to_string(volume_));
 }
 
 int MusicPlayer::getVolume() const
@@ -1001,9 +1001,9 @@ int MusicPlayer::getVolume() const
 
 std::string MusicPlayer::getCurrentTrackName() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(musicNames.size()))
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicNames_.size()))
 	{
-		return musicNames[currentIndex];
+		return musicNames_[currentIndex_];
 	}
 	return "";
 }
@@ -1012,9 +1012,9 @@ std::string MusicPlayer::getCurrentTrackNameWithoutExtension() const
 {
 	// First get the full filename with extension
 	std::string fullName;
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(musicNames.size()))
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicNames_.size()))
 	{
-		fullName = musicNames[currentIndex];
+		fullName = musicNames_[currentIndex_];
 	}
 	else
 	{
@@ -1036,129 +1036,129 @@ std::string MusicPlayer::getCurrentTrackNameWithoutExtension() const
 
 std::string MusicPlayer::getCurrentTrackPath() const
 {
-	if (currentIndex >= 0 && currentIndex < static_cast<int>(musicFiles.size()))
+	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
 	{
-		return musicFiles[currentIndex];
+		return musicFiles_[currentIndex_];
 	}
 	return "";
 }
 
 int MusicPlayer::getCurrentTrackIndex() const
 {
-	return currentIndex;
+	return currentIndex_;
 }
 
 int MusicPlayer::getTrackCount() const
 {
-	return static_cast<int>(musicFiles.size());
+	return static_cast<int>(musicFiles_.size());
 }
 
 void MusicPlayer::setLoop(bool loop)
 {
-	loopMode = loop;
+	loopMode_ = loop;
 
 	// If music is currently playing, adjust the loop setting
-	if (isPlaying() && currentMusic)
+	if (isPlaying() && currentMusic_)
 	{
 		Mix_HaltMusic();
-		Mix_PlayMusic(currentMusic, loopMode ? -1 : 1);
+		Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
 	}
 
 	// Save to config if available
-	if (config)
+	if (config_)
 	{
-		config->setProperty("musicPlayer.loop", loopMode);
+		config_->setProperty("musicPlayer.loop", loopMode_);
 	}
 
-	LOG_INFO("MusicPlayer", "Loop mode " + std::string(loopMode ? "enabled" : "disabled"));
+	LOG_INFO("MusicPlayer", "Loop mode " + std::string(loopMode_ ? "enabled" : "disabled"));
 }
 
 bool MusicPlayer::getLoop() const
 {
-	return loopMode;
+	return loopMode_;
 }
 
 bool MusicPlayer::shuffle()
 {
-	if (musicFiles.empty())
+	if (musicFiles_.empty())
 	{
 		return false;
 	}
 
 	// Get a random track and play it
-	std::uniform_int_distribution<size_t> dist(0, musicFiles.size() - 1);
-	auto randomIndex = static_cast<int>(dist(rng));
+	std::uniform_int_distribution<size_t> dist(0, musicFiles_.size() - 1);
+	auto randomIndex = static_cast<int>(dist(rng_));
 	return playMusic(randomIndex);
 }
 
 bool MusicPlayer::setShuffle(bool shuffle)
 {
-	shuffleMode = shuffle;
+	shuffleMode_ = shuffle;
 
-	if (shuffleMode)
+	if (shuffleMode_)
 	{
 		// Build a shuffled order for all tracks.
-		shuffledIndices.clear();
-		for (int i = 0; i < static_cast<int>(musicFiles.size()); i++) {
-			shuffledIndices.push_back(i);
+		shuffledIndices_.clear();
+		for (int i = 0; i < static_cast<int>(musicFiles_.size()); i++) {
+			shuffledIndices_.push_back(i);
 		}
-		std::shuffle(shuffledIndices.begin(), shuffledIndices.end(), rng);
+		std::shuffle(shuffledIndices_.begin(), shuffledIndices_.end(), rng_);
 
 		// If a track is currently playing, update currentShufflePos to its position in the shuffled list.
-		if (currentIndex >= 0)
+		if (currentIndex_ >= 0)
 		{
-			auto it = std::find(shuffledIndices.begin(), shuffledIndices.end(), currentIndex);
-			if (it != shuffledIndices.end())
-				currentShufflePos = static_cast<int>(std::distance(shuffledIndices.begin(), it));
+			auto it = std::find(shuffledIndices_.begin(), shuffledIndices_.end(), currentIndex_);
+			if (it != shuffledIndices_.end())
+				currentShufflePos_ = static_cast<int>(std::distance(shuffledIndices_.begin(), it));
 			else
-				currentShufflePos = 0;
+				currentShufflePos_ = 0;
 		}
 		else
 		{
-			currentShufflePos = 0;
+			currentShufflePos_ = 0;
 		}
 	}
 	else
 	{
 		// When shuffle is off, clear the shuffle order.
-		shuffledIndices.clear();
-		currentShufflePos = -1;
+		shuffledIndices_.clear();
+		currentShufflePos_ = -1;
 	}
 
 	// Save to config if available.
-	if (config)
+	if (config_)
 	{
-		config->setProperty("musicPlayer.shuffle", shuffleMode);
+		config_->setProperty("musicPlayer.shuffle", shuffleMode_);
 	}
 
-	LOG_INFO("MusicPlayer", "Shuffle mode " + std::string(shuffleMode ? "enabled" : "disabled"));
+	LOG_INFO("MusicPlayer", "Shuffle mode " + std::string(shuffleMode_ ? "enabled" : "disabled"));
 	return true;
 }
 
 bool MusicPlayer::getShuffle() const
 {
-	return shuffleMode;
+	return shuffleMode_;
 }
 
 void MusicPlayer::musicFinishedCallback()
 {
 	// This is a static callback, so we need to get the instance
-	if (instance)
+	if (instance_)
 	{
-		instance->onMusicFinished();
+		instance_->onMusicFinished();
 	}
 }
 
 void MusicPlayer::onMusicFinished()
 {
 	// Don't proceed if shutting down
-	if (isShuttingDown)
+	if (isShuttingDown_)
 	{
 		return;
 	}
 
 	// Check if this is a pause operation
-	if (isPendingPause)
+	if (isPendingPause_)
 	{
 		// This was a fade-to-pause operation
 		Mix_PauseMusic();  // Ensure paused state is set
@@ -1167,21 +1167,21 @@ void MusicPlayer::onMusicFinished()
 	}
 
 	// Check if we're waiting to change tracks after a fade
-	if (isPendingTrackChange && pendingTrackIndex >= 0)
+	if (isPendingTrackChange_ && pendingTrackIndex_ >= 0)
 	{
-		int indexToPlay = pendingTrackIndex;
-		isPendingTrackChange = false;
-		pendingTrackIndex = -1;
+		int indexToPlay = pendingTrackIndex_;
+		isPendingTrackChange_ = false;
+		pendingTrackIndex_ = -1;
 
 		LOG_INFO("MusicPlayer", "Playing next track after fade: " + std::to_string(indexToPlay));
-		playMusic(indexToPlay, fadeMs);
+		playMusic(indexToPlay, fadeMs_);
 		return;
 	}
 
 	// Normal track finished playing
 	LOG_INFO("MusicPlayer", "Track finished playing: " + getCurrentTrackName());
 
-	if (!loopMode)  // In loop mode SDL_mixer handles looping internally
+	if (!loopMode_)  // In loop mode SDL_mixer handles looping internally
 	{
 		// Play the next track
 		nextTrack();
@@ -1190,23 +1190,23 @@ void MusicPlayer::onMusicFinished()
 
 void MusicPlayer::setFadeDuration(int ms)
 {
-	fadeMs = std::max(0, ms);
+	fadeMs_ = std::max(0, ms);
 
 	// Save to config if available
-	if (config)
+	if (config_)
 	{
-		config->setProperty("musicPlayer.fadeMs", fadeMs);
+		config_->setProperty("musicPlayer.fadeMs", fadeMs_);
 	}
 }
 
 int MusicPlayer::getFadeDuration() const
 {
-	return fadeMs;
+	return fadeMs_;
 }
 
 void MusicPlayer::resetShutdownFlag()
 {
-	isShuttingDown = false;
+	isShuttingDown_ = false;
 }
 
 void MusicPlayer::shutdown()
@@ -1214,7 +1214,7 @@ void MusicPlayer::shutdown()
 	LOG_INFO("MusicPlayer", "Shutting down music player");
 
 	// Set flag first to prevent callbacks
-	isShuttingDown = true;
+	isShuttingDown_ = true;
 
 	// Stop any playing music
 	if (Mix_PlayingMusic() || Mix_PausedMusic())
@@ -1223,28 +1223,28 @@ void MusicPlayer::shutdown()
 	}
 
 	// Free resources
-	if (currentMusic)
+	if (currentMusic_)
 	{
-		Mix_FreeMusic(currentMusic);
-		currentMusic = nullptr;
+		Mix_FreeMusic(currentMusic_);
+		currentMusic_ = nullptr;
 	}
 
 	// Clear playlists
-	musicFiles.clear();
-	musicNames.clear();
+	musicFiles_.clear();
+	musicNames_.clear();
 
-	currentIndex = -1;
+	currentIndex_ = -1;
 	LOG_INFO("MusicPlayer", "Music player shutdown complete");
 }
 
 bool MusicPlayer::hasTrackChanged()
 {
 	std::string currentTrackPath = getCurrentTrackPath();
-	bool changed = !currentTrackPath.empty() && (currentTrackPath != lastCheckedTrackPath);
+	bool changed = !currentTrackPath.empty() && (currentTrackPath != lastCheckedTrackPath_);
 
 	// Update last checked track
 	if (changed) {
-		lastCheckedTrackPath = currentTrackPath;
+		lastCheckedTrackPath_ = currentTrackPath;
 	}
 
 	return changed;
@@ -1427,51 +1427,51 @@ bool MusicPlayer::getAlbumArt(int trackIndex, std::vector<unsigned char>& albumA
 	albumArtData.clear();
 
 	// Validate track index
-	if (trackIndex < 0 || trackIndex >= static_cast<int>(musicFiles.size())) {
+	if (trackIndex < 0 || trackIndex >= static_cast<int>(musicFiles_.size())) {
 		LOG_ERROR("MusicPlayer", "Invalid track index for album art: " + std::to_string(trackIndex));
 		return false;
 	}
 
 	// Get the file path of the requested track
-	std::string filePath = musicFiles[trackIndex];
+	std::string filePath = musicFiles_[trackIndex];
 
 	// Extract album art data from the file
 	bool result = extractAlbumArtFromFile(filePath, albumArtData);
 
 	if (!result || albumArtData.empty()) {
-		LOG_INFO("MusicPlayer", "No album art found in track: " + musicNames[trackIndex]);
+		LOG_INFO("MusicPlayer", "No album art found in track: " + musicNames_[trackIndex]);
 		return false;
 	}
 
-	LOG_INFO("MusicPlayer", "Extracted album art from track: " + musicNames[trackIndex]);
+	LOG_INFO("MusicPlayer", "Extracted album art from track: " + musicNames_[trackIndex]);
 	return true;
 }
 double MusicPlayer::getCurrent()
 {
-	if (!currentMusic) {
+	if (!currentMusic_) {
 		return -1.0;
 	}
 
-	return Mix_GetMusicPosition(currentMusic);
+	return Mix_GetMusicPosition(currentMusic_);
 }
 
 double MusicPlayer::getDuration()
 {
-	if (!currentMusic) {
+	if (!currentMusic_) {
 		return -1.0;
 	}
 
-	return Mix_MusicDuration(currentMusic);;
+	return Mix_MusicDuration(currentMusic_);
 }
 
 void MusicPlayer::setTrackChangeDirection(TrackChangeDirection direction)
 {
-	trackChangeDirection = direction;
+	trackChangeDirection_ = direction;
 }
 
 MusicPlayer::TrackChangeDirection MusicPlayer::getTrackChangeDirection() const
 {
-	return trackChangeDirection;
+	return trackChangeDirection_;
 }
 
 bool MusicPlayer::isFading() const
