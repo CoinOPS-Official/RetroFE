@@ -3,10 +3,10 @@ name: RetroFE Build
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     branches:
-      - main
+      - master
   workflow_dispatch:
 
 jobs:
@@ -17,6 +17,15 @@ jobs:
     # Checkout the repository
     - name: Checkout code
       uses: actions/checkout@v3
+
+    # Cache apt dependencies
+    - name: Cache apt dependencies
+      uses: actions/cache@v3
+      with:
+        path: /tmp/apt-cache
+        key: ${{ runner.os }}-apt-${{ hashFiles('**/package-lock.json') }}
+        restore-keys: |
+          ${{ runner.os }}-apt-
 
     # Install dependencies
     - name: Install dependencies
