@@ -82,7 +82,9 @@ bool MusicPlayer::initialize(Configuration& config)
 	int configVolume;
 	if (config.getProperty("musicPlayer.volume", configVolume))
 	{
-		volume_ = std::max(0, std::min(MIX_MAX_VOLUME, configVolume));
+		configVolume = std::max(0, std::min(100, configVolume));
+		// Convert from percentage (0-100) to internal volume (0-128)
+		volume_ = static_cast<int>((configVolume / 100.0f) * MIX_MAX_VOLUME + 0.5f);
 	}
 
 	// Set the music callback for handling when music finishes

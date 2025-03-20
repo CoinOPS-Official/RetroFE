@@ -34,6 +34,7 @@ public:
     void draw() override;
     void drawAlbumArt();
     SDL_Texture* loadDefaultAlbumArt();
+    void drawVolumeBar();
     void freeGraphicsMemory() override;
     void allocateGraphicsMemory() override;
     std::string_view filePath() override; // Add to match other components
@@ -75,5 +76,19 @@ private:
     SDL_Renderer* renderer_;
     int albumArtTextureWidth_;
     int albumArtTextureHeight_;
+    bool isAlbumArt_;
+
+    // Volume bar textures and data
+    SDL_Texture* volumeEmptyTexture_;
+    SDL_Texture* volumeFullTexture_;
+    SDL_Texture* volumeBarTexture_;
+    int volumeBarWidth_;
+    int volumeBarHeight_;
+    int lastVolumeValue_;
+    bool isVolumeBar_;
+
+    // Create a volume bar texture based on current volume
+    void loadVolumeBarTextures();
+    void updateVolumeBarTexture();
 
 };
