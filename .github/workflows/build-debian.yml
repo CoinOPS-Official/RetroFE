@@ -1,4 +1,4 @@
-name: RetroFE Build
+name: RetroFE Continuous Integration Build
 
 on:
   push:
@@ -22,10 +22,10 @@ jobs:
     - name: Cache apt dependencies
       uses: actions/cache@v3
       with:
-        path: /var/cache/apt/archives
-        key: ${{ runner.os }}-apt-${{ hashFiles('**/package-lock.json') }}
-        restore-keys: |
-          ${{ runner.os }}-apt-
+        path: |
+          /var/cache/apt
+          /var/lib/apt
+        key: ${{ runner.os }}-apt-cache
 
     # Install dependencies
     - name: Install dependencies
