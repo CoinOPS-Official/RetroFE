@@ -45,6 +45,7 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, albumArtTrackIndex_(-1)
 	, renderer_(nullptr)
 	, albumArtTextureWidth_(0)
+	, albumArtTextureHeight_(0)
 	, isAlbumArt_(Utils::toLower(type) == "albumart")
 	, volumeEmptyTexture_(nullptr)
 	, volumeFullTexture_(nullptr)
@@ -81,11 +82,6 @@ void MusicPlayerComponent::freeGraphicsMemory()
 {
 	Component::freeGraphicsMemory();
 
-	if (albumArtTexture_ != nullptr) {
-		SDL_DestroyTexture(albumArtTexture_);
-		albumArtTexture_ = nullptr;
-	}
-
 	// Clean up volume bar textures
 	if (volumeEmptyTexture_ != nullptr) {
 		SDL_DestroyTexture(volumeEmptyTexture_);
@@ -100,11 +96,6 @@ void MusicPlayerComponent::freeGraphicsMemory()
 	if (volumeBarTexture_ != nullptr) {
 		SDL_DestroyTexture(volumeBarTexture_);
 		volumeBarTexture_ = nullptr;
-	}
-	
-	if (albumArtTexture_ != nullptr) {
-		SDL_DestroyTexture(albumArtTexture_);
-		albumArtTexture_ = nullptr;
 	}
 
 	if (loadedComponent_ != nullptr) {
@@ -124,13 +115,38 @@ void MusicPlayerComponent::allocateGraphicsMemory()
 	}
 
 	// If this is a volume bar, load the necessary textures
-	if (isVolumeBar_ && renderer_) {
+	if (isVolumeBar_) {
 		// Load volume bar textures
 		loadVolumeBarTextures();
+
+		// Load user configuration for fade duration (in milliseconds)
+		int fadeDurationMs = 333; // Default: 333ms (1/3 second)
+
+		// Try to get user-defined fade duration from config
+		if (config_.getProperty("volumeBar.fadeDuration", fadeDurationMs) ||
+			config_.getProperty("musicPlayer.volumeBar.fadeDuration", fadeDurationMs)) {
+			// Ensure value is at least 1ms to avoid division by zero
+			fadeDurationMs = std::max(1, fadeDurationMs);
+
+			// Convert from milliseconds to seconds, then to fadeSpeed (which is 1/duration)
+			float fadeDurationSeconds = static_cast<float>(fadeDurationMs) / 1000.0f;
+			fadeSpeed_ = 1.0f / fadeDurationSeconds;
+
+			// Log the setting
+			LOG_INFO("MusicPlayerComponent",
+				"Volume bar fade duration set to " + std::to_string(fadeDurationMs) + "ms");
+		}
+
+		int fadeDelayMs = 1500; // Default: 1500ms (1.5 seconds)
+		if (config_.getProperty("volumeBar.fadeDelay", fadeDelayMs) ||
+			config_.getProperty("musicPlayer.volumeBar.fadeDelay", fadeDelayMs)) {
+			// Convert from milliseconds to seconds
+			volumeFadeDelay_ = static_cast<float>(fadeDelayMs) / 1000.0f;
+		}
 		// Don't create a loadedComponent for volbar type since we handle it directly
 	}
 	// Only create loadedComponent if this isn't a special type we handle directly
-	else if (isAlbumArt_) {
+	else {
 		// Create the component based on the specified type
 		loadedComponent_ = reloadComponent();
 
