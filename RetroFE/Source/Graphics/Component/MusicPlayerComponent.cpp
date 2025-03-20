@@ -110,7 +110,7 @@ void MusicPlayerComponent::allocateGraphicsMemory()
 	Component::allocateGraphicsMemory();
 
 	// Get the renderer if we're going to handle album art or volume bar
-	if (isAlbumArt_ || isVolumeBar_) {
+	if (isAlbumArt_ || isVolumeBar_ || type_ == "progress") {
 		renderer_ = SDL::getRenderer(baseViewInfo.Monitor);
 	}
 
@@ -397,10 +397,10 @@ bool MusicPlayerComponent::update(float dt)
 	}
 	else if (type_ == "time") {
 		// For time, update on every refresh interval
-		//currentState = std::to_string(musicPlayer_->getCurrent());
+		currentState = std::to_string(musicPlayer_->getCurrent());
 	}
-	else if (type_ == "volume") {
-
+	else if (type_ == "progress") {
+		currentState = std::to_string(musicPlayer_->getCurrent());
 	}
 	else {
 		// For track/artist/album types, use the currently playing track
@@ -463,6 +463,11 @@ void MusicPlayerComponent::draw()
 		return;
 	}
 
+	if (type_ == "progress") {
+		drawProgressBar();
+		return;
+	}
+
 	if (loadedComponent_ != nullptr) {
 		loadedComponent_->baseViewInfo = baseViewInfo;
 		if (baseViewInfo.Alpha > 0.0f) {
@@ -470,6 +475,48 @@ void MusicPlayerComponent::draw()
 		}
 	}
 }
+
+void MusicPlayerComponent::drawProgressBar()
+{
+	if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
+		return;
+	}
+
+	// Get current track progress
+	float current = static_cast<float>(musicPlayer_->getCurrent());
+	float duration = static_cast<float>(musicPlayer_->getDuration());
+
+	if (duration <= 0) {
+		return; // Avoid division by zero
+	}
+
+	float progressPercent = current / duration;
+
+	// Use layout-defined dimensions
+	float barX = baseViewInfo.XRelativeToOrigin();
+	float barY = baseViewInfo.YRelativeToOrigin();
+	float barWidth = baseViewInfo.ScaledWidth();  // Full width from layout
+	float barHeight = baseViewInfo.ScaledHeight(); // Height from layout
+
+	float filledWidth = barWidth * progressPercent;
+	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+	// Set the background bar color (black)
+	SDL_SetRenderDrawColor(renderer_, 0, 0, 0, static_cast<Uint8>(baseViewInfo.Alpha * 255));
+
+	// Draw the full background bar
+	SDL_FRect backgroundRect = { barX, barY, barWidth, barHeight };
+	SDL_RenderFillRectF(renderer_, &backgroundRect);
+
+	// Set the progress bar color (white)
+	SDL_SetRenderDrawColor(renderer_, 255, 255, 255, static_cast<Uint8>(baseViewInfo.Alpha * 255));
+
+	// Draw the filled portion (progress)
+	SDL_FRect progressRect = { barX, barY, filledWidth, barHeight };
+	SDL_RenderFillRectF(renderer_, &progressRect);
+}
+
+
 
 void MusicPlayerComponent::drawAlbumArt()
 {

@@ -32,6 +32,7 @@ public:
 
     bool update(float dt) override;
     void draw() override;
+    void drawProgressBar();
     void drawAlbumArt();
     SDL_Texture* loadDefaultAlbumArt();
     void drawVolumeBar();
