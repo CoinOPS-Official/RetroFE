@@ -43,7 +43,10 @@ jobs:
           zlib1g-dev \
           libglib2.0-0 \
           libglib2.0-dev \
-          sqlite3
+          sqlite3 \
+          libevdev-dev \
+          libminizip-dev \ 
+          libusb-1.0-0-dev
 
     # Configure the build
     - name: Configure CMake
