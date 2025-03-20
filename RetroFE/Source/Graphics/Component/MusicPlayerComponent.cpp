@@ -31,6 +31,7 @@
 
 MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMode, const std::string& type, Page& p, int monitor, FontManager* font)
 	: Component(p)
+	, currentPage_(&p)
 	, config_(config)
 	, commonMode_(commonMode)
 	, loadedComponent_(nullptr)
@@ -40,12 +41,11 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, lastState_("")
 	, refreshInterval_(0.5f)
 	, refreshTimer_(0.0f)
-	, isAlbumArt_(Utils::toLower(type) == "albumart")
 	, albumArtTexture_(nullptr)
 	, albumArtTrackIndex_(-1)
 	, renderer_(nullptr)
 	, albumArtTextureWidth_(0)
-	, albumArtTextureHeight_(0)
+	, isAlbumArt_(Utils::toLower(type) == "albumart")
 	, volumeEmptyTexture_(nullptr)
 	, volumeFullTexture_(nullptr)
 	, volumeBarTexture_(nullptr)
@@ -53,6 +53,12 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, volumeBarHeight_(0)
 	, lastVolumeValue_(-1)
 	, isVolumeBar_(Utils::toLower(type) == "volbar")
+	, currentDisplayAlpha_(0.0f)  // Start invisible
+	, targetAlpha_(0.0f)          // Start with target of invisible
+	, fadeSpeed_(3.0f)            // Fade in/out in about 1/3 second
+	, volumeStableTimer_(0.0f)    // Reset timer
+	, volumeFadeDelay_(1.5f)      // Wait 1.5 seconds before fading out
+	, volumeChanging_(false)      // Not changing initially
 {
 	// Set the monitor for this component
 	baseViewInfo.Monitor = monitor;
@@ -315,8 +321,49 @@ bool MusicPlayerComponent::update(float dt)
 		// Check if volume has changed
 		int currentVolume = musicPlayer_->getVolume();
 		if (currentVolume != lastVolumeValue_) {
+			// Volume changed - update the texture and animation state
 			updateVolumeBarTexture();
+			volumeChanging_ = true;
+			volumeStableTimer_ = 0.0f;
 		}
+		else {
+			// Volume is stable
+			volumeStableTimer_ += dt;
+
+			// If volume has been stable for the fade delay, start fading out
+			if (volumeChanging_ && volumeStableTimer_ >= volumeFadeDelay_) {
+				volumeChanging_ = false;
+			}
+		}
+
+		// Set target alpha based on current state and baseViewInfo.Alpha
+		if (volumeChanging_) {
+			// When volume is changing, target is the current baseViewInfo.Alpha
+			// This ensures we always track changes to baseViewInfo.Alpha
+			targetAlpha_ = baseViewInfo.Alpha;
+		}
+		else {
+			// When volume is stable and we've passed the delay, target is 0
+			targetAlpha_ = 0.0f;
+		}
+
+		// Animate the alpha with consistent timing
+		if (currentDisplayAlpha_ != targetAlpha_) {
+			// Calculate the maximum change amount for this frame to maintain consistent speed
+			float maxAlphaChange = dt * fadeSpeed_;
+
+			if (currentDisplayAlpha_ < targetAlpha_) {
+				// Fade in
+				float alphaChange = std::min(targetAlpha_ - currentDisplayAlpha_, maxAlphaChange);
+				currentDisplayAlpha_ += alphaChange;
+			}
+			else {
+				// Fade out
+				float alphaChange = std::min(currentDisplayAlpha_ - targetAlpha_, maxAlphaChange);
+				currentDisplayAlpha_ -= alphaChange;
+			}
+		}
+
 		return Component::update(dt);
 	}
 
@@ -483,7 +530,6 @@ SDL_Texture* MusicPlayerComponent::loadDefaultAlbumArt()
 						  "collections", "_common", "medium_artwork", "music", "default.jpg")
 	};
 
-	// Try to load each path using IMG_LoadTexture which simplifies the process
 	for (const auto& path : searchPaths) {
 		if (std::filesystem::exists(path)) {
 			SDL_Texture* texture = IMG_LoadTexture(renderer_, path.c_str());
@@ -529,10 +575,9 @@ void MusicPlayerComponent::drawVolumeBar()
 		rect.h = static_cast<float>(volumeBarHeight_);
 	}
 
-	// Use the existing SDL render method
 	SDL::renderCopyF(
 		volumeBarTexture_,
-		baseViewInfo.Alpha,
+		currentDisplayAlpha_,
 		nullptr,
 		&rect,
 		baseViewInfo,

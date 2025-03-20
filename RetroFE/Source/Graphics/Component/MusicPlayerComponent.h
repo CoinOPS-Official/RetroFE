@@ -57,7 +57,7 @@ public:
 private:
     // Find and load appropriate component based on type and state
     Component* reloadComponent();
-
+    Page* currentPage_;
     Configuration& config_;
     bool commonMode_;
     Component* loadedComponent_;
@@ -90,5 +90,13 @@ private:
     // Create a volume bar texture based on current volume
     void loadVolumeBarTextures();
     void updateVolumeBarTexture();
+
+    // Alpha animation for volume bar
+    float currentDisplayAlpha_; // Current display alpha (for fading)
+    float targetAlpha_;         // Target alpha to fade towards
+    float fadeSpeed_;           // How fast alpha changes (units per second)
+    float volumeStableTimer_;   // How long volume has been stable
+    float volumeFadeDelay_;     // How long to wait before fading out
+    bool volumeChanging_;       // Is volume currently changing
 
 };
