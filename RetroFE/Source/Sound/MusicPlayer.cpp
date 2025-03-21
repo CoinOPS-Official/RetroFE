@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
+#include <cstring>
 
 namespace fs = std::filesystem;
 
