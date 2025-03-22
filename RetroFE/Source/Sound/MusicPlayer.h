@@ -1,0 +1,169 @@
+/* This file is part of RetroFE.
+ *
+ * RetroFE is free software: you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation, either version 3 of the License, or
+ * (at your option) any later version.
+ *
+ * RetroFE is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
+ */
+#pragma once
+
+#include <string>
+#include <vector>
+#include <filesystem>
+#include <memory>
+#include <random>
+#include <atomic>
+#if (__APPLE__)
+#include <SDL2_mixer/SDL_mixer.h>
+#else
+#include <SDL2/SDL_image.h>
+#include <SDL2/SDL_mixer.h>
+#endif
+#include "../Database/Configuration.h"
+
+class MusicPlayer
+{
+public:
+    static MusicPlayer* getInstance();
+    struct TrackMetadata
+    {
+        std::string title;
+        std::string artist;
+        std::string album;
+        std::string year;
+        std::string genre;
+        std::string comment;
+        int trackNumber;
+
+        // Constructor with default values
+        TrackMetadata() : trackNumber(0) {}
+    };
+
+    enum class TrackChangeDirection {
+        NONE,
+        NEXT,
+        PREVIOUS
+    };
+
+    TrackChangeDirection getTrackChangeDirection() const;
+
+    bool isFading() const;
+
+    const TrackMetadata& getCurrentTrackMetadata() const;
+    const TrackMetadata& getTrackMetadata(int index) const;
+    size_t getTrackMetadataCount() const;
+
+    // Direct accessors for current track's metadata fields
+    std::string getCurrentTitle() const;
+    std::string getCurrentArtist() const;
+    std::string getCurrentAlbum() const;
+    std::string getCurrentYear() const;
+    std::string getCurrentGenre() const;
+    std::string getCurrentComment() const;
+    int getCurrentTrackNumber() const;
+
+    bool initialize(Configuration& config);
+    bool loadM3UPlaylist(const std::string& playlistPath);
+    void loadMusicFolderFromConfig();
+    bool loadMusicFolder(const std::string& folderPath);
+    bool playMusic(int index = -1, int customFadeMs = -1);  // -1 means play current or random track
+    double saveCurrentMusicPosition();
+    bool pauseMusic(int customFadeMs = -1);
+    bool resumeMusic(int customFadeMs = -1);
+    bool stopMusic(int customFadeMs = -1);
+    bool nextTrack(int customFadeMs = -1);
+    bool previousTrack(int customFadeMs = -1);
+    bool isPlaying() const;
+    bool isPaused() const;
+    void setVolume(int volume);  // 0-128 (SDL_Mixer range)
+    int getVolume() const;
+    std::string getCurrentTrackName() const;
+    std::string getCurrentTrackNameWithoutExtension() const;
+    std::string getCurrentTrackPath() const;
+    std::string getFormattedTrackInfo(int index = -1) const;
+    std::string getTrackArtist(int index = -1) const;
+    std::string getTrackAlbum(int index = -1) const;
+    int getCurrentTrackIndex() const;
+    int getTrackCount() const;
+    void setLoop(bool loop);
+    bool getLoop() const;
+    bool shuffle();
+    bool setShuffle(bool shuffle);
+    bool getShuffle() const;
+    void shutdown();
+
+    bool hasTrackChanged();
+
+    bool isPlayingNewTrack();
+
+
+    bool getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData);
+
+    double getCurrent();
+
+    double getDuration();
+
+    void setTrackChangeDirection(TrackChangeDirection direction);
+
+    // Audio processing for visualizers
+    static void postMixCallback(void* udata, Uint8* stream, int len);
+    void processAudioData(Uint8* stream, int len);
+    const std::vector<float>& getAudioLevels() const { return audioLevels_; }
+    int getAudioChannels() const { return audioChannels_; }
+    bool registerVisualizerCallback();
+    void unregisterVisualizerCallback();
+    bool hasVisualizer() const { return hasVisualizer_; }
+
+private:
+    MusicPlayer();
+    ~MusicPlayer();
+
+
+    std::vector<TrackMetadata> trackMetadata_;
+
+    TrackChangeDirection trackChangeDirection_;
+
+    static void musicFinishedCallback();
+    void onMusicFinished();
+    void setFadeDuration(int ms);
+    int getFadeDuration() const;
+    void resetShutdownFlag();
+    int getNextTrackIndex();
+    void loadTrack(int index);
+    bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const;
+    bool parseM3UFile(const std::string& playlistPath);
+    bool isValidAudioFile(const std::string& filePath) const;
+    static MusicPlayer* instance_;
+
+    Configuration* config_;
+    Mix_Music* currentMusic_;
+    std::vector<std::string> musicFiles_;
+    std::vector<std::string> musicNames_;
+    std::vector<int> shuffledIndices_;
+    int currentShufflePos_ = -1;
+    int currentIndex_;
+    int volume_;
+    bool loopMode_;
+    bool shuffleMode_;
+    bool isShuttingDown_;
+    std::mt19937 rng_;
+    bool isPendingPause_;
+    double pausedMusicPosition_;
+    bool isPendingTrackChange_;
+    int pendingTrackIndex_;
+    int fadeMs_;
+    std::string lastCheckedTrackPath_;
+
+    std::vector<float> audioLevels_;
+    int audioChannels_;
+    bool hasVisualizer_;
+    int sampleSize_;  // Size of each audio sample (1, 2, or 4 bytes)
+};
