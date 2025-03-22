@@ -17,11 +17,12 @@
 #include "MusicPlayer.h"
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
-#include <SDL2/SDL_image.h>
+#include <gst/pbutils/pbutils.h>  // For GstDiscoverer
 #include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <fstream>
 
 namespace fs = std::filesystem;
 
@@ -29,1588 +30,1279 @@ MusicPlayer* MusicPlayer::instance_ = nullptr;
 
 MusicPlayer* MusicPlayer::getInstance()
 {
-	if (!instance_)
-	{
-		instance_ = new MusicPlayer();
-	}
-	return instance_;
+    if (!instance_)
+    {
+        instance_ = new MusicPlayer();
+    }
+    return instance_;
 }
 
 MusicPlayer::MusicPlayer()
-	: config_(nullptr)
-	, currentMusic_(nullptr)
-	, currentIndex_(-1)
-	, volume_(MIX_MAX_VOLUME)
-	, loopMode_(false)
-	, shuffleMode_(false)
-	, isShuttingDown_(false)
-	, pausedMusicPosition_(0.0)
-	, isPendingTrackChange_(false)
-	, pendingTrackIndex_(-1)
-	, fadeMs_(1500)
-	, trackChangeDirection_(TrackChangeDirection::NONE)
-	, audioChannels_(2)  // Default to stereo
-	, hasVisualizer_(false)
-	, sampleSize_(2)  // Default to 16-bit samples
+    : pipeline_(nullptr)
+    , source_(nullptr)
+    , volumeElement_(nullptr)
+    , bus_(nullptr)
+    , config_(nullptr)
+    , currentIndex_(-1)
+    , volumeLevel_(100)
+    , loopMode_(false)
+    , shuffleMode_(false)
+    , isShuttingDown_(false)
+    , trackChangeDirection_(TrackChangeDirection::NONE)
+    , pendingTags_(nullptr)
+    , pendingTagTrackIndex_(-1) 
 {
-	// Seed the random number generator with current time
-	auto now = std::chrono::high_resolution_clock::now();
-	auto duration = now.time_since_epoch();
-	uint64_t seed = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
+    // Seed the random number generator with current time
+    auto now = std::chrono::high_resolution_clock::now();
+    auto duration = now.time_since_epoch();
+    uint64_t seed = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
 
-	// Create a seed sequence for better randomization
-	std::seed_seq seq{
-		static_cast<uint32_t>(seed & 0xFFFFFFFF),
-		static_cast<uint32_t>((seed >> 32) & 0xFFFFFFFF)
-	};
+    // Create a seed sequence for better randomization
+    std::seed_seq seq{
+        static_cast<uint32_t>(seed & 0xFFFFFFFF),
+        static_cast<uint32_t>((seed >> 32) & 0xFFFFFFFF)
+    };
 
-	rng_.seed(seq);
+    rng_.seed(seq);
 
-	audioLevels_.resize(audioChannels_, 0.0f);
+    // Create GStreamer pipeline
+    pipeline_ = gst_pipeline_new("music-player");
+    if (!pipeline_) {
+        LOG_ERROR("MusicPlayer", "Failed to create GStreamer pipeline");
+        return;
+    }
 
+    // Create playbin element (handles source, decoding, and output)
+    source_ = gst_element_factory_make("playbin", "music-source");
+    if (!source_) {
+        LOG_ERROR("MusicPlayer", "Failed to create GStreamer playbin element");
+        gst_object_unref(pipeline_);
+        pipeline_ = nullptr;
+        return;
+    }
+
+    // Add source to pipeline
+    gst_bin_add(GST_BIN(pipeline_), source_);
+
+    // Get volume element from playbin
+    g_object_get(source_, "volume", &volumeElement_, NULL);
+
+    // Get the bus for the pipeline
+    bus_ = gst_pipeline_get_bus(GST_PIPELINE(pipeline_));
+    if (bus_) {
+        // Set sync handler for bus messages
+        gst_bus_set_sync_handler(bus_, (GstBusSyncHandler)busCallback, this, NULL);
+
+        // Also watch for messages asynchronously
+        gst_bus_add_watch(bus_,
+            (GstBusFunc)([](GstBus* bus, GstMessage* msg, gpointer data) -> gboolean {
+                MusicPlayer* player = static_cast<MusicPlayer*>(data);
+                if (player) player->handleMessage(msg);
+                return TRUE;
+                }),
+            this);
+
+        gst_object_unref(bus_);
+    }
 }
 
 MusicPlayer::~MusicPlayer()
 {
-	isShuttingDown_ = true;
-	stopMusic();
-	if (currentMusic_)
-	{
-		Mix_FreeMusic(currentMusic_);
-		currentMusic_ = nullptr;
-	}
+    isShuttingDown_ = true;
+    stopMusic();
+
+    if (pipeline_) {
+        gst_element_set_state(pipeline_, GST_STATE_NULL);
+        gst_object_unref(pipeline_);
+        pipeline_ = nullptr;
+    }
 }
 
 bool MusicPlayer::initialize(Configuration& config)
 {
-	this->config_ = &config;
+    this->config_ = &config;
 
-	// Get volume from config if available
-	int configVolume;
-	if (config.getProperty("musicPlayer.volume", configVolume))
-	{
-		configVolume = std::max(0, std::min(100, configVolume));
-		// Convert from percentage (0-100) to internal volume (0-128)
-		volume_ = static_cast<int>((configVolume / 100.0f) * MIX_MAX_VOLUME + 0.5f);
-	}
+    // Get volume from config if available
+    int configVolume;
+    if (config.getProperty("musicPlayer.volume", configVolume))
+    {
+        volumeLevel_ = std::max(0, std::min(100, configVolume));
+        // Apply volume to GStreamer
+        setVolume(volumeLevel_);
+    }
 
-	// Set the music callback for handling when music finishes
-	Mix_HookMusicFinished(MusicPlayer::musicFinishedCallback);
+    // Get loop mode from config
+    bool configLoop;
+    if (config.getProperty("musicPlayer.loop", configLoop))
+    {
+        loopMode_ = configLoop;
+    }
 
-	// Set music volume
-	Mix_VolumeMusic(volume_);
+    // Get shuffle mode from config
+    bool configShuffle;
+    if (config.getProperty("musicPlayer.shuffle", configShuffle))
+    {
+        shuffleMode_ = configShuffle;
+    }
 
-	// Get loop mode from config
-	bool configLoop;
-	if (config.getProperty("musicPlayer.loop", configLoop))
-	{
-		loopMode_ = configLoop;
-	}
+    // First check if an M3U playlist is specified
+    std::string m3uPlaylist;
+    if (config.getProperty("musicPlayer.m3uplaylist", m3uPlaylist))
+    {
+        // If the path is relative, resolve it against RetroFE's path
+        if (!fs::path(m3uPlaylist).is_absolute())
+        {
+            m3uPlaylist = Utils::combinePath(Configuration::absolutePath, m3uPlaylist);
+        }
 
-	// Get shuffle mode from config
-	bool configShuffle;
-	if (config.getProperty("musicPlayer.shuffle", configShuffle))
-	{
-		shuffleMode_ = configShuffle;
-	}
+        if (loadM3UPlaylist(m3uPlaylist))
+        {
+            LOG_INFO("MusicPlayer", "Initialized with M3U playlist: " + m3uPlaylist);
+        }
+        else
+        {
+            LOG_WARNING("MusicPlayer", "Failed to load M3U playlist: " + m3uPlaylist + ". Falling back to folder loading.");
+            // Fall back to folder loading if playlist loading fails
+            loadMusicFolderFromConfig();
+        }
+    }
+    else
+    {
+        // No M3U playlist specified, use folder loading
+        loadMusicFolderFromConfig();
+    }
 
-	int configFadeMs;
-	if (config.getProperty("musicPlayer.fadeMs", configFadeMs))
-	{
-		fadeMs_ = std::max(0, configFadeMs);
-	}
+    LOG_INFO("MusicPlayer", "Initialized with volume: " + std::to_string(volumeLevel_) +
+        ", loop: " + std::to_string(loopMode_) +
+        ", shuffle: " + std::to_string(shuffleMode_) +
+        ", tracks found: " + std::to_string(musicFiles_.size()));
 
-	// First check if an M3U playlist is specified
-	std::string m3uPlaylist;
-	if (config.getProperty("musicPlayer.m3uplaylist", m3uPlaylist))
-	{
-		// If the path is relative, resolve it against RetroFE's path
-		if (!fs::path(m3uPlaylist).is_absolute())
-		{
-			m3uPlaylist = Utils::combinePath(Configuration::absolutePath, m3uPlaylist);
-		}
-
-		if (loadM3UPlaylist(m3uPlaylist))
-		{
-			LOG_INFO("MusicPlayer", "Initialized with M3U playlist: " + m3uPlaylist);
-		}
-		else
-		{
-			LOG_WARNING("MusicPlayer", "Failed to load M3U playlist: " + m3uPlaylist + ". Falling back to folder loading.");
-			// Fall back to folder loading if playlist loading fails
-			loadMusicFolderFromConfig();
-		}
-	}
-	else
-	{
-		// No M3U playlist specified, use folder loading
-		loadMusicFolderFromConfig();
-	}
-
-	LOG_INFO("MusicPlayer", "Initialized with volume: " + std::to_string(volume_) +
-		", loop: " + std::to_string(loopMode_) +
-		", shuffle: " + std::to_string(shuffleMode_) +
-		", fade: " + std::to_string(fadeMs_) + "ms" +
-		", tracks found: " + std::to_string(musicFiles_.size()));
-
-	return true;
-}
-
-bool MusicPlayer::registerVisualizerCallback()
-{
-	if (hasVisualizer_) {
-		return true;  // Already registered
-	}
-
-	// Register our post-mix callback
-	Mix_SetPostMix(MusicPlayer::postMixCallback, this);
-	hasVisualizer_ = true;
-
-	// Get format info from currently open audio device
-	int frequency;
-	Uint16 format;
-	int channels;
-	if (Mix_QuerySpec(&frequency, &format, &channels) == 1) {
-		audioChannels_ = channels;
-
-		// Determine sample size based on format
-		if (format == AUDIO_U8 || format == AUDIO_S8) {
-			sampleSize_ = 1;  // 8-bit samples
-		}
-		else if (format == AUDIO_U16LSB || format == AUDIO_S16LSB ||
-			format == AUDIO_U16MSB || format == AUDIO_S16MSB) {
-			sampleSize_ = 2;  // 16-bit samples
-		}
-		else {
-			sampleSize_ = 4;  // Assume 32-bit for other formats
-		}
-
-		// Resize audio levels array based on channels
-		audioLevels_.resize(audioChannels_, 0.0f);
-	}
-
-	LOG_INFO("MusicPlayer", "Visualizer registered with " + std::to_string(audioChannels_) +
-		" channels and " + std::to_string(sampleSize_ * 8) + "-bit samples");
-
-	return true;
-}
-
-void MusicPlayer::unregisterVisualizerCallback()
-{
-	if (!hasVisualizer_) {
-		return;  // Not registered
-	}
-
-	// Unregister the callback
-	Mix_SetPostMix(nullptr, nullptr);
-	hasVisualizer_ = false;
-
-	// Reset audio levels
-	std::fill(audioLevels_.begin(), audioLevels_.end(), 0.0f);
-
-	LOG_INFO("MusicPlayer", "Visualizer unregistered");
-}
-
-void MusicPlayer::postMixCallback(void* udata, Uint8* stream, int len)
-{
-	// This is a static callback, so we need to get the instance
-	if (udata) {
-		MusicPlayer* player = static_cast<MusicPlayer*>(udata);
-		player->processAudioData(stream, len);
-	}
-}
-
-void MusicPlayer::processAudioData(Uint8* stream, int len)
-{
-	if (!hasVisualizer_ || !stream || len <= 0) {
-		return;
-	}
-
-	// Reset audio levels
-	std::fill(audioLevels_.begin(), audioLevels_.end(), 0.0f);
-
-	// Number of samples per channel
-	int samplesPerChannel = len / (sampleSize_ * audioChannels_);
-	if (samplesPerChannel <= 0) {
-		return;
-	}
-
-	// Process each channel
-	for (int channel = 0; channel < audioChannels_; ++channel) {
-		float sum = 0.0f;
-
-		// Process samples for this channel
-		for (int i = 0; i < samplesPerChannel; ++i) {
-			// Calculate position in the stream for this sample and channel
-			int samplePos = (i * audioChannels_ + channel) * sampleSize_;
-
-			// Make sure we're within bounds
-			if (samplePos + sampleSize_ > len) {
-				break;
-			}
-
-			// Get sample value based on format
-			float sampleValue = 0.0f;
-
-			if (sampleSize_ == 1) {
-				// 8-bit sample (0-255, center at 128)
-				Uint8 val = stream[samplePos];
-				sampleValue = (static_cast<float>(val) - 128.0f) / 128.0f;
-			}
-			else if (sampleSize_ == 2) {
-				// 16-bit sample (-32768 to 32767)
-				Sint16 val = *reinterpret_cast<Sint16*>(stream + samplePos);
-				sampleValue = static_cast<float>(val) / 32768.0f;
-			}
-			else if (sampleSize_ == 4) {
-				// 32-bit sample (float -1.0 to 1.0)
-				float val = *reinterpret_cast<float*>(stream + samplePos);
-				sampleValue = val;
-			}
-
-			// Accumulate absolute value for RMS calculation
-			sum += sampleValue * sampleValue;
-		}
-
-		// Calculate RMS (Root Mean Square) value for this channel
-		float rms = std::sqrt(sum / samplesPerChannel);
-
-		// Store normalized level (0.0 - 1.0)
-		audioLevels_[channel] = std::min(1.0f, rms);
-	}
+    return true;
 }
 
 // Helper method to extract the folder loading logic
 void MusicPlayer::loadMusicFolderFromConfig()
 {
-	std::string musicFolder;
-	if (config_ && config_->getProperty("musicPlayer.folder", musicFolder))
-	{
-		loadMusicFolder(musicFolder);
-	}
-	else
-	{
-		// Default to a music directory in RetroFE's path
-		loadMusicFolder(Utils::combinePath(Configuration::absolutePath, "music"));
-	}
+    std::string musicFolder;
+    if (config_ && config_->getProperty("musicPlayer.folder", musicFolder))
+    {
+        loadMusicFolder(musicFolder);
+    }
+    else
+    {
+        // Default to a music directory in RetroFE's path
+        loadMusicFolder(Utils::combinePath(Configuration::absolutePath, "music"));
+    }
 }
 
 bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
 {
-	// Clear existing music files
-	musicFiles_.clear();
-	musicNames_.clear();
-	trackMetadata_.clear();
+    // Clear existing music files
+    musicFiles_.clear();
+    musicNames_.clear();
+    trackMetadata_.clear();
 
-	LOG_INFO("MusicPlayer", "Loading music from folder: " + folderPath);
+    LOG_INFO("MusicPlayer", "Loading music from folder: " + folderPath);
 
-	try
-	{
-		if (!fs::exists(folderPath))
-		{
-			LOG_WARNING("MusicPlayer", "Music folder doesn't exist: " + folderPath);
-			return false;
-		}
+    try
+    {
+        if (!fs::exists(folderPath))
+        {
+            LOG_WARNING("MusicPlayer", "Music folder doesn't exist: " + folderPath);
+            return false;
+        }
 
-		std::vector<std::tuple<std::string, std::string, TrackMetadata>> musicEntries;
+        std::vector<std::tuple<std::string, std::string, TrackMetadata>> musicEntries;
 
-		for (const auto& entry : fs::directory_iterator(folderPath))
-		{
-			if (entry.is_regular_file())
-			{
-				std::string ext = entry.path().extension().string();
-				std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+        for (const auto& entry : fs::directory_iterator(folderPath))
+        {
+            if (entry.is_regular_file())
+            {
+                std::string ext = entry.path().extension().string();
+                std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-				if (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".mod")
-				{
-					std::string filePath = entry.path().string();
-					std::string fileName = entry.path().filename().string();
+                if (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".mod")
+                {
+                    std::string filePath = entry.path().string();
+                    std::string fileName = entry.path().filename().string();
 
-					TrackMetadata metadata;
-					readTrackMetadata(filePath, metadata);
+                    TrackMetadata metadata;
+                    readTrackMetadata(filePath, metadata);
 
-					musicEntries.push_back(std::make_tuple(filePath, fileName, metadata));
-				}
-			}
-		}
+                    musicEntries.push_back(std::make_tuple(filePath, fileName, metadata));
+                }
+            }
+        }
 
-		// Sort entries - can sort by metadata fields if needed
-		std::sort(musicEntries.begin(), musicEntries.end(),
-			[](const auto& a, const auto& b) {
-				return std::get<1>(a) < std::get<1>(b);
-			});
+        // Sort entries - can sort by metadata fields if needed
+        std::sort(musicEntries.begin(), musicEntries.end(),
+            [](const auto& a, const auto& b) {
+                return std::get<1>(a) < std::get<1>(b);
+            });
 
-		// Unpack sorted entries
-		for (const auto& entry : musicEntries)
-		{
-			musicFiles_.push_back(std::get<0>(entry));
-			musicNames_.push_back(std::get<1>(entry));
-			trackMetadata_.push_back(std::get<2>(entry));
-		}
+        // Unpack sorted entries
+        for (const auto& entry : musicEntries)
+        {
+            musicFiles_.push_back(std::get<0>(entry));
+            musicNames_.push_back(std::get<1>(entry));
+            trackMetadata_.push_back(std::get<2>(entry));
+        }
 
-		LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles_.size()) + " music files");
-	}
-	catch (const std::exception& e)
-	{
-		LOG_ERROR("MusicPlayer", "Error scanning music directory: " + std::string(e.what()));
-		return false;
-	}
+        LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles_.size()) + " music files");
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("MusicPlayer", "Error scanning music directory: " + std::string(e.what()));
+        return false;
+    }
 
-	return !musicFiles_.empty();
+    return !musicFiles_.empty();
 }
 
 bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPath)
 {
-	// Clear existing music files
-	musicFiles_.clear();
-	musicNames_.clear();
-	trackMetadata_.clear();
+    // Clear existing music files
+    musicFiles_.clear();
+    musicNames_.clear();
+    trackMetadata_.clear();
 
-	LOG_INFO("MusicPlayer", "Loading music from M3U playlist: " + playlistPath);
+    LOG_INFO("MusicPlayer", "Loading music from M3U playlist: " + playlistPath);
 
-	if (!parseM3UFile(playlistPath))
-	{
-		LOG_ERROR("MusicPlayer", "Failed to parse M3U playlist: " + playlistPath);
-		return false;
-	}
+    if (!parseM3UFile(playlistPath))
+    {
+        LOG_ERROR("MusicPlayer", "Failed to parse M3U playlist: " + playlistPath);
+        return false;
+    }
 
-	LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles_.size()) + " music files in playlist");
-	return !musicFiles_.empty();
+    LOG_INFO("MusicPlayer", "Found " + std::to_string(musicFiles_.size()) + " music files in playlist");
+    return !musicFiles_.empty();
 }
 
 bool MusicPlayer::parseM3UFile(const std::string& playlistPath)
 {
-	try
-	{
-		if (!fs::exists(playlistPath))
-		{
-			LOG_WARNING("MusicPlayer", "M3U playlist file doesn't exist: " + playlistPath);
-			return false;
-		}
+    try
+    {
+        if (!fs::exists(playlistPath))
+        {
+            LOG_WARNING("MusicPlayer", "M3U playlist file doesn't exist: " + playlistPath);
+            return false;
+        }
 
-		std::ifstream playlistFile(playlistPath);
-		if (!playlistFile.is_open())
-		{
-			LOG_ERROR("MusicPlayer", "Failed to open M3U playlist: " + playlistPath);
-			return false;
-		}
+        std::ifstream playlistFile(playlistPath);
+        if (!playlistFile.is_open())
+        {
+            LOG_ERROR("MusicPlayer", "Failed to open M3U playlist: " + playlistPath);
+            return false;
+        }
 
-		// Get the directory of the playlist for resolving relative paths
-		fs::path playlistDir = fs::path(playlistPath).parent_path();
-		std::string line;
-		std::vector<std::tuple<std::string, std::string, TrackMetadata>> musicEntries;
+        // Get the directory of the playlist for resolving relative paths
+        fs::path playlistDir = fs::path(playlistPath).parent_path();
+        std::string line;
+        std::vector<std::tuple<std::string, std::string, TrackMetadata>> musicEntries;
 
-		while (std::getline(playlistFile, line))
-		{
-			// Skip empty lines and comments (lines starting with #)
-			if (line.empty() || line[0] == '#')
-			{
-				// Some M3U files use #EXTINF for track info, but we'll ignore that for now
-				continue;
-			}
+        while (std::getline(playlistFile, line))
+        {
+            // Skip empty lines and comments (lines starting with #)
+            if (line.empty() || line[0] == '#')
+            {
+                // Some M3U files use #EXTINF for track info, but we'll ignore that for now
+                continue;
+            }
 
-			// Process the file path
-			fs::path trackPath = line;
+            // Process the file path
+            fs::path trackPath = line;
 
-			// If the path is relative, resolve it against the playlist directory
-			if (!trackPath.is_absolute())
-			{
-				trackPath = playlistDir / trackPath;
-			}
+            // If the path is relative, resolve it against the playlist directory
+            if (!trackPath.is_absolute())
+            {
+                trackPath = playlistDir / trackPath;
+            }
 
-			// Convert to string and normalize
-			std::string filePath = trackPath.string();
+            // Convert to string and normalize
+            std::string filePath = trackPath.string();
 
-			// Check if the file exists and is a valid audio file
-			if (fs::exists(filePath) && isValidAudioFile(filePath))
-			{
-				std::string fileName = trackPath.filename().string();
+            // Check if the file exists and is a valid audio file
+            if (fs::exists(filePath) && isValidAudioFile(filePath))
+            {
+                std::string fileName = trackPath.filename().string();
 
-				TrackMetadata metadata;
-				readTrackMetadata(filePath, metadata);
+                TrackMetadata metadata;
+                readTrackMetadata(filePath, metadata);
 
-				musicEntries.push_back(std::make_tuple(filePath, fileName, metadata));
-			}
-			else
-			{
-				LOG_WARNING("MusicPlayer", "Skipping invalid or non-existent track in playlist: " + filePath);
-			}
-		}
+                musicEntries.push_back(std::make_tuple(filePath, fileName, metadata));
+            }
+            else
+            {
+                LOG_WARNING("MusicPlayer", "Skipping invalid or non-existent track in playlist: " + filePath);
+            }
+        }
 
-		// Sort entries (same as in loadMusicFolder)
-		std::sort(musicEntries.begin(), musicEntries.end(),
-			[](const auto& a, const auto& b) {
-				return std::get<1>(a) < std::get<1>(b);
-			});
+        // Sort entries (same as in loadMusicFolder)
+        std::sort(musicEntries.begin(), musicEntries.end(),
+            [](const auto& a, const auto& b) {
+                return std::get<1>(a) < std::get<1>(b);
+            });
 
-		// Unpack sorted entries
-		for (const auto& entry : musicEntries)
-		{
-			musicFiles_.push_back(std::get<0>(entry));
-			musicNames_.push_back(std::get<1>(entry));
-			trackMetadata_.push_back(std::get<2>(entry));
-		}
+        // Unpack sorted entries
+        for (const auto& entry : musicEntries)
+        {
+            musicFiles_.push_back(std::get<0>(entry));
+            musicNames_.push_back(std::get<1>(entry));
+            trackMetadata_.push_back(std::get<2>(entry));
+        }
 
-		return true;
-	}
-	catch (const std::exception& e)
-	{
-		LOG_ERROR("MusicPlayer", "Error parsing M3U playlist: " + std::string(e.what()));
-		return false;
-	}
+        return true;
+    }
+    catch (const std::exception& e)
+    {
+        LOG_ERROR("MusicPlayer", "Error parsing M3U playlist: " + std::string(e.what()));
+        return false;
+    }
 }
 
 bool MusicPlayer::isValidAudioFile(const std::string& filePath) const
 {
-	std::string ext = fs::path(filePath).extension().string();
-	std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    std::string ext = fs::path(filePath).extension().string();
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
-	return (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".mod");
+    return (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".mod");
 }
 
+// Replace the current loadTrack method with this:
 void MusicPlayer::loadTrack(int index)
 {
-	// Free any currently playing music
-	if (currentMusic_)
-	{
-		Mix_FreeMusic(currentMusic_);
-		currentMusic_ = nullptr;
-	}
+    if (index < 0 || index >= static_cast<int>(musicFiles_.size()))
+    {
+        LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
+        currentIndex_ = -1;
+        return;
+    }
 
-	if (index < 0 || index >= static_cast<int>(musicFiles_.size()))
-	{
-		LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
-		currentIndex_ = -1;
-		return;
-	}
+    // Convert file path to proper URI format
+    std::string filePath = musicFiles_[index];
+    std::string uri;
 
-	// Load the specified track
-	currentMusic_ = Mix_LoadMUS(musicFiles_[index].c_str());
-	if (!currentMusic_)
-	{
-		LOG_ERROR("MusicPlayer", "Failed to load music file: " + musicFiles_[index] + ", Error: " + Mix_GetError());
-		currentIndex_ = -1;
-		return;
-	}
+    // Check if path is already a URI
+    if (filePath.substr(0, 7) == "file://" ||
+        filePath.substr(0, 7) == "http://" ||
+        filePath.substr(0, 8) == "https://")
+    {
+        uri = filePath;
+    }
+    else
+    {
+        // Convert to absolute path if needed
+        fs::path path(filePath);
+        if (!path.is_absolute()) {
+            path = fs::absolute(path);
+        }
 
-	currentIndex_ = index;
-	LOG_INFO("MusicPlayer", "Loaded track: " + musicNames_[index]);
+        // Create proper URI with correct encoding
+        std::string absolutePath = path.string();
+
+        // Make sure path uses forward slashes
+        std::replace(absolutePath.begin(), absolutePath.end(), '\\', '/');
+
+        // Handle Windows drive letters (e.g., C:/ -> /C:/)
+        if (absolutePath.size() > 2 && absolutePath[1] == ':' && absolutePath[2] == '/') {
+            uri = "file:///" + absolutePath;
+        }
+        else {
+            // For Unix-like paths
+            uri = "file://" + absolutePath;
+        }
+    }
+
+    LOG_INFO("MusicPlayer", "Setting URI: " + uri);
+    g_object_set(source_, "uri", uri.c_str(), NULL);
+
+    currentIndex_ = index;
+    LOG_INFO("MusicPlayer", "Loaded track: " + musicNames_[index]);
 }
 
 bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const
 {
-	// Default to filename without extension as title
-	std::string fileName = fs::path(filePath).filename().string();
-	size_t lastDot = fileName.find_last_of('.');
-	if (lastDot != std::string::npos) {
-		metadata.title = fileName.substr(0, lastDot);
-	}
-	else {
-		metadata.title = fileName;
-	}
+    return false;
+}
 
-	bool metadataFound = false;
+GstBusSyncReply MusicPlayer::busCallback(GstBus* bus, GstMessage* message, gpointer data)
+{
+    MusicPlayer* player = static_cast<MusicPlayer*>(data);
+    if (player) {
+        player->handleMessage(message);
+    }
+    return GST_BUS_PASS;
+}
 
-	// Use SDL_mixer to get metadata when available
-	Mix_Music* music = Mix_LoadMUS(filePath.c_str());
-	if (music) {
-		// Get basic metadata
-		const char* title = Mix_GetMusicTitle(music);
-		const char* artist = Mix_GetMusicArtistTag(music);
-		const char* album = Mix_GetMusicAlbumTag(music);
+bool MusicPlayer::extractMetadataFromTagList(GstTagList* tags, TrackMetadata& metadata) const
+{
+    if (!tags) return false;
 
-		if (title && strlen(title) > 0) {
-			metadata.title = title;
-			metadataFound = true;
-		}
+    bool metadataUpdated = false;
 
-		if (artist && strlen(artist) > 0) {
-			metadata.artist = artist;
-			metadataFound = true;
-		}
+    // Extract title
+    gchar* title = NULL;
+    if (gst_tag_list_get_string(tags, GST_TAG_TITLE, &title)) {
+        if (title && title[0] != '\0') {
+            metadata.title = title;
+            metadataUpdated = true;
+        }
+        g_free(title);
+    }
 
-		if (album && strlen(album) > 0) {
-			metadata.album = album;
-			metadataFound = true;
-		}
+    // Extract artist
+    gchar* artist = NULL;
+    if (gst_tag_list_get_string(tags, GST_TAG_ARTIST, &artist)) {
+        if (artist && artist[0] != '\0') {
+            metadata.artist = artist;
+            metadataUpdated = true;
+        }
+        g_free(artist);
+    }
 
-		// Try to get additional tag information
-		// Note: Not all of these functions may be available depending on your SDL_mixer version
-		// Add conditionals if needed
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-		// SDL_mixer 2.6.0 or newer has more tag functions
-		const char* copyright = Mix_GetMusicCopyrightTag(music);
-		if (copyright && strlen(copyright) > 0) {
-			metadata.comment = copyright;
-			metadataFound = true;
-		}
-#endif
+    // Also check for PERFORMER tag which is sometimes used instead of ARTIST
+    if (metadata.artist.empty()) {
+        gchar* performer = NULL;
+        if (gst_tag_list_get_string(tags, GST_TAG_PERFORMER, &performer)) {
+            if (performer && performer[0] != '\0') {
+                metadata.artist = performer;
+                metadataUpdated = true;
+            }
+            g_free(performer);
+        }
+    }
 
-		Mix_FreeMusic(music);
-	}
+    // Extract album
+    gchar* album = NULL;
+    if (gst_tag_list_get_string(tags, GST_TAG_ALBUM, &album)) {
+        if (album && album[0] != '\0') {
+            metadata.album = album;
+            metadataUpdated = true;
+        }
+        g_free(album);
+    }
 
-	// If we didn't find any metadata, try to parse the filename for artist - title format
-	if (!metadataFound && metadata.artist.empty()) {
-		// Check for common patterns like "Artist - Title" or "Artist_-_Title"
-		std::string name = metadata.title;
-		size_t dashPos = name.find(" - ");
-		if (dashPos != std::string::npos) {
-			metadata.artist = name.substr(0, dashPos);
-			metadata.title = name.substr(dashPos + 3);
-		}
-		else if ((dashPos = name.find("_-_")) != std::string::npos) {
-			metadata.artist = name.substr(0, dashPos);
-			std::replace(metadata.artist.begin(), metadata.artist.end(), '_', ' ');
-			metadata.title = name.substr(dashPos + 3);
-			std::replace(metadata.title.begin(), metadata.title.end(), '_', ' ');
-		}
-	}
+    // Extract year
+    gchar* date_str = NULL;
+    if (gst_tag_list_get_string(tags, GST_TAG_DATE_TIME, &date_str)) {
+        if (date_str && date_str[0] != '\0') {
+            // Try to extract just the year from the date string
+            if (strlen(date_str) >= 4) {
+                metadata.year = std::string(date_str, 4); // Just get YYYY part
+            }
+            else {
+                metadata.year = date_str;
+            }
+            metadataUpdated = true;
+        }
+        g_free(date_str);
+    }
 
-	return true;
+    // Fallback to DATE tag if DATE_TIME didn't work
+    if (metadata.year.empty()) {
+        GDate* date = NULL;
+        if (gst_tag_list_get_date(tags, GST_TAG_DATE, &date)) {
+            if (date && g_date_valid(date)) {
+                gchar date_str[16];
+                g_date_strftime(date_str, sizeof(date_str), "%Y", date);
+                metadata.year = date_str;
+                metadataUpdated = true;
+            }
+            if (date) {
+                g_date_free(date);
+            }
+        }
+    }
+
+    // Extract genre
+    gchar* genre = NULL;
+    if (gst_tag_list_get_string(tags, GST_TAG_GENRE, &genre)) {
+        if (genre && genre[0] != '\0') {
+            metadata.genre = genre;
+            metadataUpdated = true;
+        }
+        g_free(genre);
+    }
+
+    // Extract comment
+    gchar* comment = NULL;
+    if (gst_tag_list_get_string(tags, GST_TAG_COMMENT, &comment)) {
+        if (comment && comment[0] != '\0') {
+            metadata.comment = comment;
+            metadataUpdated = true;
+        }
+        g_free(comment);
+    }
+
+    // Try DESCRIPTION if COMMENT isn't available
+    if (metadata.comment.empty()) {
+        gchar* description = NULL;
+        if (gst_tag_list_get_string(tags, GST_TAG_DESCRIPTION, &description)) {
+            if (description && description[0] != '\0') {
+                metadata.comment = description;
+                metadataUpdated = true;
+            }
+            g_free(description);
+        }
+    }
+
+    // Extract track number
+    guint track_number = 0;
+    if (gst_tag_list_get_uint(tags, GST_TAG_TRACK_NUMBER, &track_number)) {
+        metadata.trackNumber = track_number;
+        metadataUpdated = true;
+    }
+
+    return metadataUpdated;
+}
+
+void MusicPlayer::handleMessage(GstMessage* message)
+{
+    // Skip message handling if we're shutting down
+    if (isShuttingDown_) {
+        return;
+    }
+
+    switch (GST_MESSAGE_TYPE(message)) {
+    case GST_MESSAGE_EOS: {
+        // End of stream reached
+        onEos();
+        break;
+    }
+
+    case GST_MESSAGE_TAG: {
+        // New tags have been found
+        GstTagList* tags = NULL;
+        gst_message_parse_tag(message, &tags);
+
+        if (tags) {
+            std::lock_guard<std::mutex> lock(tagMutex_);
+
+            // Log a few key tags for debugging
+            gchar* title = NULL;
+            if (gst_tag_list_get_string(tags, GST_TAG_TITLE, &title)) {
+                LOG_INFO("MusicPlayer", "Tag found - Title: " + std::string(title));
+                g_free(title);
+            }
+
+            // If we already have tags for the current track, merge them
+            if (pendingTags_ && pendingTagTrackIndex_ == currentIndex_) {
+                LOG_INFO("MusicPlayer", "Merging new tags with existing tags for track: " +
+                    std::to_string(currentIndex_));
+                gst_tag_list_insert(pendingTags_, tags, GST_TAG_MERGE_PREPEND);
+                gst_tag_list_unref(tags);
+            }
+            // Otherwise, store the new tags
+            else {
+                if (pendingTags_) {
+                    gst_tag_list_unref(pendingTags_);
+                }
+                pendingTags_ = tags;
+                pendingTagTrackIndex_ = currentIndex_;
+                LOG_INFO("MusicPlayer", "Storing new tags for track: " +
+                    std::to_string(currentIndex_));
+            }
+
+            // Update current track's metadata if it matches pendingTagTrackIndex_
+            if (pendingTagTrackIndex_ >= 0 &&
+                pendingTagTrackIndex_ < static_cast<int>(trackMetadata_.size())) {
+                bool metadataUpdated = extractMetadataFromTagList(
+                    pendingTags_, trackMetadata_[pendingTagTrackIndex_]);
+
+                if (metadataUpdated) {
+                    LOG_INFO("MusicPlayer", "Updated metadata for track: " +
+                        getFormattedTrackInfo(pendingTagTrackIndex_));
+                }
+            }
+        }
+        break;
+    }
+
+    case GST_MESSAGE_ERROR: {
+        // Error occurred
+        GError* err = NULL;
+        gchar* debug_info = NULL;
+
+        gst_message_parse_error(message, &err, &debug_info);
+        std::string errorMsg = (err && err->message) ? err->message : "Unknown error";
+        std::string debugInfo = debug_info ? debug_info : "No debug info";
+
+        LOG_ERROR("MusicPlayer", "GStreamer error: " + errorMsg);
+        LOG_ERROR("MusicPlayer", "Debug details: " + debugInfo);
+
+        g_clear_error(&err);
+        g_free(debug_info);
+        break;
+    }
+
+    case GST_MESSAGE_WARNING: {
+        // Warning message
+        GError* err = NULL;
+        gchar* debug_info = NULL;
+
+        gst_message_parse_warning(message, &err, &debug_info);
+        std::string warningMsg = (err && err->message) ? err->message : "Unknown warning";
+
+        LOG_WARNING("MusicPlayer", "GStreamer warning: " + warningMsg);
+
+        g_clear_error(&err);
+        g_free(debug_info);
+        break;
+    }
+
+    case GST_MESSAGE_STATE_CHANGED: {
+        // Only log state changes for our pipeline
+        if (GST_MESSAGE_SRC(message) == GST_OBJECT(pipeline_)) {
+            GstState old_state, new_state, pending_state;
+            gst_message_parse_state_changed(message, &old_state, &new_state, &pending_state);
+
+            LOG_INFO("MusicPlayer", "Pipeline state changed from " +
+                std::string(gst_element_state_get_name(old_state)) + " to " +
+                std::string(gst_element_state_get_name(new_state)));
+        }
+        break;
+    }
+
+    case GST_MESSAGE_STREAM_START: {
+        LOG_INFO("MusicPlayer", "Stream started");
+        break;
+    }
+
+    default:
+        // Other message types - no special handling
+        break;
+    }
+}
+void MusicPlayer::onEos()
+{
+    // Called when the end of stream is reached
+    if (isShuttingDown_) {
+        return;
+    }
+
+    if (!loopMode_) {
+        // Play the next track
+        nextTrack();
+    }
+    else {
+        // For loop mode, the track should automatically restart
+        // But sometimes we need to manually restart
+        playMusic(currentIndex_);
+    }
 }
 
 const MusicPlayer::TrackMetadata& MusicPlayer::getCurrentTrackMetadata() const
 {
-	static TrackMetadata emptyMetadata;
+    static TrackMetadata emptyMetadata;
 
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[currentIndex_];
-	}
-	return emptyMetadata;
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[currentIndex_];
+    }
+    return emptyMetadata;
 }
 
 const MusicPlayer::TrackMetadata& MusicPlayer::getTrackMetadata(int index) const
 {
-	static TrackMetadata emptyMetadata;
+    static TrackMetadata emptyMetadata;
 
-	if (index >= 0 && index < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[index];
-	}
-	return emptyMetadata;
+    if (index >= 0 && index < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[index];
+    }
+    return emptyMetadata;
 }
 
 size_t MusicPlayer::getTrackMetadataCount() const
 {
-	return trackMetadata_.size();
+    return trackMetadata_.size();
 }
 
 std::string MusicPlayer::getCurrentTitle() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[currentIndex_].title;
-	}
-	return "";
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[currentIndex_].title;
+    }
+    return "";
 }
 
 std::string MusicPlayer::getCurrentArtist() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[currentIndex_].artist;
-	}
-	return "";
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[currentIndex_].artist;
+    }
+    return "";
 }
 
 std::string MusicPlayer::getCurrentAlbum() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[currentIndex_].album;
-	}
-	return "";
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[currentIndex_].album;
+    }
+    return "";
 }
 
 std::string MusicPlayer::getCurrentYear() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[currentIndex_].year;
-	}
-	return "";
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[currentIndex_].year;
+    }
+    return "";
 }
 
 std::string MusicPlayer::getCurrentGenre() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[currentIndex_].genre;
-	}
-	return "";
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[currentIndex_].genre;
+    }
+    return "";
 }
 
 std::string MusicPlayer::getCurrentComment() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[currentIndex_].comment;
-	}
-	return "";
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[currentIndex_].comment;
+    }
+    return "";
 }
 
 int MusicPlayer::getCurrentTrackNumber() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
-		return trackMetadata_[currentIndex_].trackNumber;
-	}
-	return 0;
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
+        return trackMetadata_[currentIndex_].trackNumber;
+    }
+    return 0;
 }
 
 std::string MusicPlayer::getFormattedTrackInfo(int index) const
 {
-	if (index == -1) {
-		index = currentIndex_;
-	}
+    if (index == -1) {
+        index = currentIndex_;
+    }
 
-	if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
-		return "";
-	}
+    if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
+        return "";
+    }
 
-	const auto& meta = trackMetadata_[index];
-	std::string info = meta.title;
+    const auto& meta = trackMetadata_[index];
+    std::string info = meta.title;
 
-	if (!meta.artist.empty()) {
-		info += " - " + meta.artist;
-	}
+    if (!meta.artist.empty()) {
+        info += " - " + meta.artist;
+    }
 
-	if (!meta.album.empty()) {
-		info += " (" + meta.album;
-		if (!meta.year.empty()) {
-			info += ", " + meta.year;
-		}
-		info += ")";
-	}
+    if (!meta.album.empty()) {
+        info += " (" + meta.album;
+        if (!meta.year.empty()) {
+            info += ", " + meta.year;
+        }
+        info += ")";
+    }
 
-	return info;
+    return info;
 }
 
 std::string MusicPlayer::getTrackArtist(int index) const
 {
-	if (index == -1) {
-		index = currentIndex_;
-	}
+    if (index == -1) {
+        index = currentIndex_;
+    }
 
-	if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
-		return "";
-	}
+    if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
+        return "";
+    }
 
-	return trackMetadata_[index].artist;
+    return trackMetadata_[index].artist;
 }
 
 std::string MusicPlayer::getTrackAlbum(int index) const
 {
-	if (index == -1) {
-		index = currentIndex_;
-	}
+    if (index == -1) {
+        index = currentIndex_;
+    }
 
-	if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
-		return "";
-	}
+    if (index < 0 || index >= static_cast<int>(trackMetadata_.size())) {
+        return "";
+    }
 
-	return trackMetadata_[index].album;
+    return trackMetadata_[index].album;
 }
 
 bool MusicPlayer::playMusic(int index, int customFadeMs)
 {
-	// Use default fade if -1 is passed
-	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
+    // Ignore customFadeMs as we're removing fading logic
 
-	// Validate index
-	if (index == -1)
-	{
-		// Use current or choose default as in your original code
-		if (currentIndex_ >= 0)
-		{
-			index = currentIndex_;
-		}
-		else if (shuffleMode_ && !musicFiles_.empty())
-		{
-			if (shuffledIndices_.empty())
-			{
-				setShuffle(true);
-			}
-			index = shuffledIndices_[currentShufflePos_];
-		}
-		else if (!musicFiles_.empty())
-		{
-			index = 0;
-		}
-		else
-		{
-			LOG_WARNING("MusicPlayer", "No music tracks available to play");
-			return false;
-		}
-	}
+    // Validate index
+    if (index == -1)
+    {
+        // Use current or choose default as in your original code
+        if (currentIndex_ >= 0)
+        {
+            index = currentIndex_;
+        }
+        else if (shuffleMode_ && !musicFiles_.empty())
+        {
+            if (shuffledIndices_.empty())
+            {
+                setShuffle(true);
+            }
+            index = shuffledIndices_[currentShufflePos_];
+        }
+        else if (!musicFiles_.empty())
+        {
+            index = 0;
+        }
+        else
+        {
+            LOG_WARNING("MusicPlayer", "No music tracks available to play");
+            return false;
+        }
+    }
 
-	// Check that the index is valid.
-	if (index < 0 || index >= static_cast<int>(musicFiles_.size()))
-	{
-		LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
-		return false;
-	}
+    // Check that the index is valid.
+    if (index < 0 || index >= static_cast<int>(musicFiles_.size()))
+    {
+        LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
+        return false;
+    }
 
-	// Clear any pending pause state
-	isPendingPause_ = false;
+    // Stop any currently playing music
+    if (isPlaying() || isPaused()) {
+        stopMusic();
+    }
 
-	// If music is already playing or fading, fade it out first
-	if (Mix_PlayingMusic() || Mix_FadingMusic() != MIX_NO_FADING)
-	{
-		if (useFadeMs > 0)
-		{
-			// Set up for pending track change after fade out
-			isPendingTrackChange_ = true;
-			pendingTrackIndex_ = index;
+    // Load and play the new track
+    loadTrack(index);
 
-			// Fade out current music
-			if (Mix_FadeOutMusic(useFadeMs) == 0)
-			{
-				LOG_WARNING("MusicPlayer", "Failed to fade out music, stopping immediately");
-				Mix_HaltMusic();
-			}
-			else
-			{
-				LOG_INFO("MusicPlayer", "Fading out current track before changing to new track");
-				return true; // Return true, the actual track change will happen in the callback
-			}
-		}
-		else
-		{
-			// No fade, stop immediately
-			Mix_HaltMusic();
-		}
-	}
+    // If shuffle mode is enabled, update the current shuffle position
+    if (shuffleMode_)
+    {
+        auto it = std::find(shuffledIndices_.begin(), shuffledIndices_.end(), index);
+        if (it != shuffledIndices_.end())
+        {
+            currentShufflePos_ = static_cast<int>(std::distance(shuffledIndices_.begin(), it));
+        }
+        else
+        {
+            // If for some reason the track isn't in the current shuffle order, regenerate it.
+            setShuffle(true);
+        }
+    }
 
-	// No fade or music was halted immediately, so load and play the new track
-	loadTrack(index);
+    // Start playback with error checking
+    GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+    if (ret == GST_STATE_CHANGE_FAILURE) {
+        LOG_ERROR("MusicPlayer", "Failed to play music: " + std::string(musicNames_[index]));
 
-	if (!currentMusic_)
-	{
-		isPendingTrackChange_ = false;
-		return false;
-	}
+        // Try to get more information about why it failed
+        GstMessage* msg = gst_bus_pop_filtered(gst_pipeline_get_bus(GST_PIPELINE(pipeline_)),
+            GST_MESSAGE_ERROR);
+        if (msg) {
+            handleMessage(msg);
+            gst_message_unref(msg);
+        }
 
-	// If shuffle mode is enabled, update the current shuffle position
-	if (shuffleMode_)
-	{
-		auto it = std::find(shuffledIndices_.begin(), shuffledIndices_.end(), index);
-		if (it != shuffledIndices_.end())
-		{
-			currentShufflePos_ = static_cast<int>(std::distance(shuffledIndices_.begin(), it));
-		}
-		else
-		{
-			// If for some reason the track isn't in the current shuffle order, regenerate it.
-			setShuffle(true);
-		}
-	}
+        return false;
+    }
+    else if (ret == GST_STATE_CHANGE_ASYNC) {
+        LOG_INFO("MusicPlayer", "Playback starting asynchronously");
+    }
 
-	// Play the music with fade-in if specified
-	int result;
-	if (useFadeMs > 0)
-	{
-		result = Mix_FadeInMusic(currentMusic_, loopMode_ ? -1 : 1, useFadeMs);
-		LOG_INFO("MusicPlayer", "Fading in track: " + musicNames_[index] + " over " + std::to_string(useFadeMs) + "ms");
-	}
-	else
-	{
-		result = Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
-		LOG_INFO("MusicPlayer", "Playing track: " + musicNames_[index]);
-	}
-
-	if (result == -1)
-	{
-		LOG_ERROR("MusicPlayer", "Failed to play music: " + std::string(Mix_GetError()));
-		return false;
-	}
-
-	LOG_INFO("MusicPlayer", "Now playing track: " + getFormattedTrackInfo(index));
-	isPendingTrackChange_ = false;
-	return true;
+    LOG_INFO("MusicPlayer", "Now playing track: " + getFormattedTrackInfo(index));
+    return true;
 }
+
 double MusicPlayer::saveCurrentMusicPosition()
 {
-	if (currentMusic_)
-	{
-		// Get the current position in the music in seconds
-		// If your SDL_mixer version doesn't support this, you'll need to track time manually
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-		return Mix_GetMusicPosition(currentMusic_);
-#else
-// For older SDL_mixer versions, we can't get the position
-		return 0.0;
-#endif
-	}
-	return 0.0;
+    if (pipeline_) {
+        gint64 position = 0;
+        if (gst_element_query_position(pipeline_, GST_FORMAT_TIME, &position)) {
+            return position / (double)GST_SECOND;
+        }
+    }
+    return 0.0;
 }
 
 bool MusicPlayer::pauseMusic(int customFadeMs)
 {
-	if (!isPlaying() || isPaused() || !Mix_FadingMusic() == MIX_NO_FADING)
-	{
-		return false;
-	}
+    // Ignore customFadeMs as we're removing fading logic
 
-	// Use default fade if -1 is passed
-	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
+    if (!isPlaying()) {
+        return false;
+    }
 
-	// Save current position before pausing (for possible resume with fade)
-	pausedMusicPosition_ = saveCurrentMusicPosition();
+    GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PAUSED);
+    if (ret == GST_STATE_CHANGE_FAILURE) {
+        LOG_ERROR("MusicPlayer", "Failed to pause music");
+        return false;
+    }
 
-	if (useFadeMs > 0)
-	{
-		// Set flags to indicate this is a pause operation
-		isPendingPause_ = true;
-		isPendingTrackChange_ = false;
-		pendingTrackIndex_ = -1;
-
-		// Fade out and then pause
-		if (Mix_FadeOutMusic(useFadeMs) == 0)
-		{
-			// Failed to fade out, pause immediately
-			LOG_WARNING("MusicPlayer", "Failed to fade out before pause, pausing immediately");
-			Mix_PauseMusic();
-			isPendingPause_ = false;
-		}
-		else
-		{
-			LOG_INFO("MusicPlayer", "Fading out music before pausing over " + std::to_string(useFadeMs) + "ms");
-			// The actual pause will be handled in the musicFinishedCallback
-		}
-	}
-	else
-	{
-		// No fade, pause immediately
-		Mix_PauseMusic();
-		LOG_INFO("MusicPlayer", "Music paused");
-	}
-
-	return true;
+    LOG_INFO("MusicPlayer", "Music paused");
+    return true;
 }
 
 bool MusicPlayer::resumeMusic(int customFadeMs)
 {
-	if (!Mix_FadingMusic() == MIX_NO_FADING)
-		return false;
-	
-	// Use default fade if -1 is passed
-	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
+    // Ignore customFadeMs as we're removing fading logic
 
-	// If we're in a paused state after fade-out, we need to load the track and start it
-	if (isPendingPause_)
-	{
-		isPendingPause_ = false;
+    if (!isPaused()) {
+        return false;
+    }
 
-		// If we have a saved position and the track is still valid
-		if (pausedMusicPosition_ > 0.0 && currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
-		{
-			// Load the track
-			loadTrack(currentIndex_);
+    GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+    if (ret == GST_STATE_CHANGE_FAILURE) {
+        LOG_ERROR("MusicPlayer", "Failed to resume music");
+        return false;
+    }
 
-			if (!currentMusic_)
-			{
-				LOG_ERROR("MusicPlayer", "Failed to reload track for resume");
-				return false;
-			}
-
-			// Calculate the adjusted position - add the fade duration in seconds
-			// This ensures we don't repeat music that was playing during the fade-out
-			double adjustedPosition = pausedMusicPosition_;
-
-			// Only add the fade time if it was a non-zero fade and if we're not at the beginning
-			if (fadeMs_ > 0 && pausedMusicPosition_ > 0.0)
-			{
-				// Convert fadeMs from milliseconds to seconds and add
-				adjustedPosition += fadeMs_ / 1000.0;
-
-				// Get the music length if possible to avoid going past the end
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-				double musicLength = Mix_MusicDuration(currentMusic_);
-				// If we have a valid duration and our adjusted position exceeds it
-				if (musicLength > 0 && adjustedPosition >= musicLength)
-				{
-					// If looping is on, wrap around
-					if (loopMode_)
-					{
-						adjustedPosition = std::fmod(adjustedPosition, musicLength);
-					}
-					// Otherwise cap at just before the end
-					else
-					{
-						LOG_INFO("MusicPlayer", "Adjusted position would exceed track length, playing next track instead");
-						return nextTrack(useFadeMs);
-					}
-				}
-#endif
-			}
-
-			// Start playback from the adjusted position with fade-in
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-			if (Mix_FadeInMusicPos(currentMusic_, loopMode_ ? -1 : 1, useFadeMs, adjustedPosition) == -1)
-			{
-				LOG_ERROR("MusicPlayer", "Failed to resume music with fade: " + std::string(Mix_GetError()));
-				return false;
-			}
-#else
-			if (Mix_FadeInMusic(currentMusic, loopMode ? -1 : 1, useFadeMs) == -1)
-			{
-				LOG_ERROR("MusicPlayer", "Failed to resume music with fade: " + std::string(Mix_GetError()));
-				return false;
-			}
-#endif
-
-			LOG_INFO("MusicPlayer", "Resuming track: " + musicNames_[currentIndex_] + " from adjusted position " +
-				std::to_string(adjustedPosition) + " (original: " + std::to_string(pausedMusicPosition_) +
-				") with " + std::to_string(useFadeMs) + "ms fade");
-			return true;
-		}
-		else if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
-		{
-			// Just restart the track from the beginning
-			return playMusic(currentIndex_, useFadeMs);
-		}
-		else
-		{
-			LOG_ERROR("MusicPlayer", "No valid track to resume");
-			return false;
-		}
-	}
-	else if (isPaused())
-	{
-		// Regular pause (not after fade-out), just resume
-		Mix_ResumeMusic();
-		LOG_INFO("MusicPlayer", "Music resumed");
-		return true;
-	}
-
-	return false; // Nothing to resume
+    LOG_INFO("MusicPlayer", "Music resumed");
+    return true;
 }
 
 bool MusicPlayer::stopMusic(int customFadeMs)
 {
-	if (!Mix_PlayingMusic() && !Mix_PausedMusic() && !isPendingPause_)
-	{
-		return false;
-	}
+    // Ignore customFadeMs as we're removing fading logic
 
-	// Clear any pending pause state
-	isPendingPause_ = false;
-	isPendingTrackChange_ = false;
-	pendingTrackIndex_ = -1;
+    if (!isPlaying() && !isPaused()) {
+        return false;
+    }
 
-	// Use default fade if -1 is passed
-	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
+    GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_NULL);
+    if (ret == GST_STATE_CHANGE_FAILURE) {
+        LOG_ERROR("MusicPlayer", "Failed to stop music");
+        return false;
+    }
 
-	if (useFadeMs > 0 && !isShuttingDown_)
-	{
-		// Fade out music
-		if (Mix_FadeOutMusic(useFadeMs) == 0)
-		{
-			// Failed to fade out, stop immediately
-			LOG_WARNING("MusicPlayer", "Failed to fade out music, stopping immediately");
-			Mix_HaltMusic();
-		}
-		else
-		{
-			LOG_INFO("MusicPlayer", "Fading out music over " + std::to_string(useFadeMs) + "ms");
-		}
-	}
-	else
-	{
-		// Stop immediately
-		Mix_HaltMusic();
-		LOG_INFO("MusicPlayer", "Music stopped immediately");
-	}
-
-	// Reset saved position
-	pausedMusicPosition_ = 0.0;
-
-	return true;
+    LOG_INFO("MusicPlayer", "Music stopped");
+    return true;
 }
 
 bool MusicPlayer::nextTrack(int customFadeMs)
 {
-	if (musicFiles_.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
-	{
-		return false;
-	}
+    // Ignore customFadeMs as we're removing fading logic
 
-	//trackChangeDirection = TrackChangeDirection::NEXT;
+    if (musicFiles_.empty()) {
+        return false;
+    }
 
-	int nextIndex;
+    trackChangeDirection_ = TrackChangeDirection::NEXT;
 
-	if (shuffleMode_)
-	{
-		// In shuffle mode, move to the next track in the shuffled order
-		currentShufflePos_ = (currentShufflePos_ + 1) % shuffledIndices_.size();
-		nextIndex = shuffledIndices_[currentShufflePos_];
-	}
-	else
-	{
-		// In sequential mode, move to the next track in the list
-		nextIndex = (currentIndex_ + 1) % musicFiles_.size();
-	}
+    int nextIndex;
 
-	return playMusic(nextIndex, customFadeMs);
+    if (shuffleMode_)
+    {
+        // In shuffle mode, move to the next track in the shuffled order
+        currentShufflePos_ = (currentShufflePos_ + 1) % shuffledIndices_.size();
+        nextIndex = shuffledIndices_[currentShufflePos_];
+    }
+    else
+    {
+        // In sequential mode, move to the next track in the list
+        nextIndex = (currentIndex_ + 1) % musicFiles_.size();
+    }
+
+    return playMusic(nextIndex);
 }
 
 int MusicPlayer::getNextTrackIndex()
 {
-	if (shuffleMode_)
-	{
-		// In shuffle mode, step forward in the shuffled order.
-		if (shuffledIndices_.empty())
-			return -1; // Safety check
+    if (shuffleMode_)
+    {
+        // In shuffle mode, step forward in the shuffled order.
+        if (shuffledIndices_.empty())
+            return -1; // Safety check
 
-		if (currentShufflePos_ < static_cast<int>(shuffledIndices_.size()) - 1)
-		{
-			currentShufflePos_++;
-		}
-		else
-		{
-			// Option: Loop back to the start (or alternatively, reshuffle).
-			currentShufflePos_ = 0;
-		}
-		return shuffledIndices_[currentShufflePos_];
-	}
-	else
-	{
-		// Sequential playback when shuffle is off.
-		return (currentIndex_ + 1) % musicFiles_.size();
-	}
+        int nextPos = (currentShufflePos_ + 1) % shuffledIndices_.size();
+        return shuffledIndices_[nextPos];
+    }
+    else
+    {
+        // Sequential playback when shuffle is off.
+        return (currentIndex_ + 1) % musicFiles_.size();
+    }
 }
 
 bool MusicPlayer::previousTrack(int customFadeMs)
 {
-	if (musicFiles_.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
-	{
-		return false;
-	}
+    // Ignore customFadeMs as we're removing fading logic
 
-	//trackChangeDirection = TrackChangeDirection::PREVIOUS;
+    if (musicFiles_.empty()) {
+        return false;
+    }
 
-	int prevIndex;
+    trackChangeDirection_ = TrackChangeDirection::PREVIOUS;
 
-	if (shuffleMode_)
-	{
-		// In shuffle mode, move to the previous track in the shuffled order
-		currentShufflePos_ = (currentShufflePos_ - 1 + static_cast<int>(shuffledIndices_.size())) % static_cast<int>(shuffledIndices_.size());
-		prevIndex = shuffledIndices_[currentShufflePos_];
-	}
-	else
-	{
-		// In sequential mode, move to the previous track in the list
-		prevIndex = (currentIndex_ - 1 + static_cast<int>(musicFiles_.size())) % static_cast<int>(musicFiles_.size());
-	}
+    int prevIndex;
 
-	return playMusic(prevIndex, customFadeMs);
+    if (shuffleMode_)
+    {
+        // In shuffle mode, move to the previous track in the shuffled order
+        currentShufflePos_ = (currentShufflePos_ - 1 + static_cast<int>(shuffledIndices_.size())) % static_cast<int>(shuffledIndices_.size());
+        prevIndex = shuffledIndices_[currentShufflePos_];
+    }
+    else
+    {
+        // In sequential mode, move to the previous track in the list
+        prevIndex = (currentIndex_ - 1 + static_cast<int>(musicFiles_.size())) % static_cast<int>(musicFiles_.size());
+    }
+
+    return playMusic(prevIndex);
 }
 
 bool MusicPlayer::isPlaying() const
 {
-	return Mix_PlayingMusic() == 1 && !Mix_PausedMusic();
+    GstState state;
+    gst_element_get_state(pipeline_, &state, NULL, 0);
+    return state == GST_STATE_PLAYING;
 }
 
 bool MusicPlayer::isPaused() const
 {
-	return Mix_PausedMusic() == 1 || isPendingPause_;
+    GstState state;
+    gst_element_get_state(pipeline_, &state, NULL, 0);
+    return state == GST_STATE_PAUSED;
 }
 
 void MusicPlayer::setVolume(int newVolume)
 {
-	if (Mix_FadingMusic() != MIX_NO_FADING)
-		return;
+    // Ensure volume is within range (0-100)
+    volumeLevel_ = std::max(0, std::min(100, newVolume));
 
-	// Ensure volume is within SDL_Mixer's range (0-128)
-	volume_ = std::max(0, std::min(MIX_MAX_VOLUME, newVolume));
-	Mix_VolumeMusic(volume_);
+    // Convert from 0-100 range to 0.0-1.0 for GStreamer
+    double gstVolume = volumeLevel_ / 100.0;
+    g_object_set(source_, "volume", gstVolume, NULL);
 
-	// Save to config if available
-	if (config_)
-	{
-		config_->setProperty("musicPlayer.volume", volume_);
-	}
+    // Save to config if available
+    if (config_)
+    {
+        // No conversion needed since we're using 0-100 directly
+        config_->setProperty("musicPlayer.volume", volumeLevel_);
+    }
 
-	LOG_INFO("MusicPlayer", "Volume set to " + std::to_string(volume_));
+    LOG_INFO("MusicPlayer", "Volume set to " + std::to_string(volumeLevel_) + "%");
 }
 
 int MusicPlayer::getVolume() const
 {
-	return Mix_VolumeMusic(-1);
+    return volumeLevel_; // Return cached volume value
 }
 
 std::string MusicPlayer::getCurrentTrackName() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicNames_.size()))
-	{
-		return musicNames_[currentIndex_];
-	}
-	return "";
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicNames_.size()))
+    {
+        return musicNames_[currentIndex_];
+    }
+    return "";
 }
 
 std::string MusicPlayer::getCurrentTrackNameWithoutExtension() const
 {
-	// First get the full filename with extension
-	std::string fullName;
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicNames_.size()))
-	{
-		fullName = musicNames_[currentIndex_];
-	}
-	else
-	{
-		return "";
-	}
+    // First get the full filename with extension
+    std::string fullName;
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicNames_.size()))
+    {
+        fullName = musicNames_[currentIndex_];
+    }
+    else
+    {
+        return "";
+    }
 
-	// Find the last occurrence of a dot to identify the extension
-	size_t lastDotPos = fullName.find_last_of('.');
+    // Find the last occurrence of a dot to identify the extension
+    size_t lastDotPos = fullName.find_last_of('.');
 
-	// If no dot is found, return the full filename
-	if (lastDotPos == std::string::npos)
-	{
-		return fullName;
-	}
+    // If no dot is found, return the full filename
+    if (lastDotPos == std::string::npos)
+    {
+        return fullName;
+    }
 
-	// Return everything before the last dot
-	return fullName.substr(0, lastDotPos);
+    // Return everything before the last dot
+    return fullName.substr(0, lastDotPos);
 }
 
 std::string MusicPlayer::getCurrentTrackPath() const
 {
-	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
-	{
-		return musicFiles_[currentIndex_];
-	}
-	return "";
+    if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
+    {
+        return musicFiles_[currentIndex_];
+    }
+    return "";
 }
 
 int MusicPlayer::getCurrentTrackIndex() const
 {
-	return currentIndex_;
+    return currentIndex_;
 }
 
 int MusicPlayer::getTrackCount() const
 {
-	return static_cast<int>(musicFiles_.size());
+    return static_cast<int>(musicFiles_.size());
 }
 
 void MusicPlayer::setLoop(bool loop)
 {
-	loopMode_ = loop;
+    loopMode_ = loop;
 
-	// If music is currently playing, adjust the loop setting
-	if (isPlaying() && currentMusic_)
-	{
-		Mix_HaltMusic();
-		Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
-	}
+    // Save to config if available
+    if (config_)
+    {
+        config_->setProperty("musicPlayer.loop", loopMode_);
+    }
 
-	// Save to config if available
-	if (config_)
-	{
-		config_->setProperty("musicPlayer.loop", loopMode_);
-	}
-
-	LOG_INFO("MusicPlayer", "Loop mode " + std::string(loopMode_ ? "enabled" : "disabled"));
+    LOG_INFO("MusicPlayer", "Loop mode " + std::string(loopMode_ ? "enabled" : "disabled"));
 }
 
 bool MusicPlayer::getLoop() const
 {
-	return loopMode_;
+    return loopMode_;
 }
 
 bool MusicPlayer::shuffle()
 {
-	if (musicFiles_.empty())
-	{
-		return false;
-	}
+    if (musicFiles_.empty())
+    {
+        return false;
+    }
 
-	// Get a random track and play it
-	std::uniform_int_distribution<size_t> dist(0, musicFiles_.size() - 1);
-	auto randomIndex = static_cast<int>(dist(rng_));
-	return playMusic(randomIndex);
+    // Get a random track and play it
+    std::uniform_int_distribution<size_t> dist(0, musicFiles_.size() - 1);
+    auto randomIndex = static_cast<int>(dist(rng_));
+    return playMusic(randomIndex);
 }
 
 bool MusicPlayer::setShuffle(bool shuffle)
 {
-	shuffleMode_ = shuffle;
+    shuffleMode_ = shuffle;
 
-	if (shuffleMode_)
-	{
-		// Build a shuffled order for all tracks.
-		shuffledIndices_.clear();
-		for (int i = 0; i < static_cast<int>(musicFiles_.size()); i++) {
-			shuffledIndices_.push_back(i);
-		}
-		std::shuffle(shuffledIndices_.begin(), shuffledIndices_.end(), rng_);
+    if (shuffleMode_)
+    {
+        // Build a shuffled order for all tracks.
+        shuffledIndices_.clear();
+        for (int i = 0; i < static_cast<int>(musicFiles_.size()); i++) {
+            shuffledIndices_.push_back(i);
+        }
+        std::shuffle(shuffledIndices_.begin(), shuffledIndices_.end(), rng_);
 
-		// If a track is currently playing, update currentShufflePos to its position in the shuffled list.
-		if (currentIndex_ >= 0)
-		{
-			auto it = std::find(shuffledIndices_.begin(), shuffledIndices_.end(), currentIndex_);
-			if (it != shuffledIndices_.end())
-				currentShufflePos_ = static_cast<int>(std::distance(shuffledIndices_.begin(), it));
-			else
-				currentShufflePos_ = 0;
-		}
-		else
-		{
-			currentShufflePos_ = 0;
-		}
-	}
-	else
-	{
-		// When shuffle is off, clear the shuffle order.
-		shuffledIndices_.clear();
-		currentShufflePos_ = -1;
-	}
+        // If a track is currently playing, update currentShufflePos to its position in the shuffled list.
+        if (currentIndex_ >= 0)
+        {
+            auto it = std::find(shuffledIndices_.begin(), shuffledIndices_.end(), currentIndex_);
+            if (it != shuffledIndices_.end())
+                currentShufflePos_ = static_cast<int>(std::distance(shuffledIndices_.begin(), it));
+            else
+                currentShufflePos_ = 0;
+        }
+        else
+        {
+            currentShufflePos_ = 0;
+        }
+    }
+    else
+    {
+        // When shuffle is off, clear the shuffle order.
+        shuffledIndices_.clear();
+        currentShufflePos_ = -1;
+    }
 
-	// Save to config if available.
-	if (config_)
-	{
-		config_->setProperty("musicPlayer.shuffle", shuffleMode_);
-	}
+    // Save to config if available.
+    if (config_)
+    {
+        config_->setProperty("musicPlayer.shuffle", shuffleMode_);
+    }
 
-	LOG_INFO("MusicPlayer", "Shuffle mode " + std::string(shuffleMode_ ? "enabled" : "disabled"));
-	return true;
+    LOG_INFO("MusicPlayer", "Shuffle mode " + std::string(shuffleMode_ ? "enabled" : "disabled"));
+    return true;
 }
 
 bool MusicPlayer::getShuffle() const
 {
-	return shuffleMode_;
-}
-
-void MusicPlayer::musicFinishedCallback()
-{
-	// This is a static callback, so we need to get the instance
-	if (instance_)
-	{
-		instance_->onMusicFinished();
-	}
-}
-
-void MusicPlayer::onMusicFinished()
-{
-	// Don't proceed if shutting down
-	if (isShuttingDown_)
-	{
-		return;
-	}
-
-	// Check if this is a pause operation
-	if (isPendingPause_)
-	{
-		// This was a fade-to-pause operation
-		Mix_PauseMusic();  // Ensure paused state is set
-		LOG_INFO("MusicPlayer", "Music paused after fade-out");
-		return;  // Don't continue to next track
-	}
-
-	// Check if we're waiting to change tracks after a fade
-	if (isPendingTrackChange_ && pendingTrackIndex_ >= 0)
-	{
-		int indexToPlay = pendingTrackIndex_;
-		isPendingTrackChange_ = false;
-		pendingTrackIndex_ = -1;
-
-		LOG_INFO("MusicPlayer", "Playing next track after fade: " + std::to_string(indexToPlay));
-		playMusic(indexToPlay, fadeMs_);
-		return;
-	}
-
-	// Normal track finished playing
-	LOG_INFO("MusicPlayer", "Track finished playing: " + getCurrentTrackName());
-
-	if (!loopMode_)  // In loop mode SDL_mixer handles looping internally
-	{
-		// Play the next track
-		nextTrack();
-	}
-}
-
-void MusicPlayer::setFadeDuration(int ms)
-{
-	fadeMs_ = std::max(0, ms);
-
-	// Save to config if available
-	if (config_)
-	{
-		config_->setProperty("musicPlayer.fadeMs", fadeMs_);
-	}
-}
-
-int MusicPlayer::getFadeDuration() const
-{
-	return fadeMs_;
-}
-
-void MusicPlayer::resetShutdownFlag()
-{
-	isShuttingDown_ = false;
-}
-
-void MusicPlayer::shutdown()
-{
-	LOG_INFO("MusicPlayer", "Shutting down music player");
-
-	// Set flag first to prevent callbacks
-	isShuttingDown_ = true;
-
-	if(hasVisualizer_)
-		unregisterVisualizerCallback();
-
-	// Stop any playing music
-	if (Mix_PlayingMusic() || Mix_PausedMusic())
-	{
-		Mix_HaltMusic();
-	}
-
-	// Free resources
-	if (currentMusic_)
-	{
-		Mix_FreeMusic(currentMusic_);
-		currentMusic_ = nullptr;
-	}
-
-	// Clear playlists
-	musicFiles_.clear();
-	musicNames_.clear();
-
-	currentIndex_ = -1;
-	LOG_INFO("MusicPlayer", "Music player shutdown complete");
+    return shuffleMode_;
 }
 
 bool MusicPlayer::hasTrackChanged()
 {
-	std::string currentTrackPath = getCurrentTrackPath();
-	bool changed = !currentTrackPath.empty() && (currentTrackPath != lastCheckedTrackPath_);
+    std::string currentTrackPath = getCurrentTrackPath();
+    bool changed = !currentTrackPath.empty() && (currentTrackPath != lastCheckedTrackPath_);
 
-	// Update last checked track
-	if (changed) {
-		lastCheckedTrackPath_ = currentTrackPath;
-	}
+    // Update last checked track
+    if (changed) {
+        lastCheckedTrackPath_ = currentTrackPath;
+    }
 
-	return changed;
+    return changed;
 }
 
 bool MusicPlayer::isPlayingNewTrack()
 {
-	// Only report change if music is actually playing
-	return isPlaying() && hasTrackChanged();
+    // Only report change if music is actually playing
+    return isPlaying() && hasTrackChanged();
 }
 
-bool extractAlbumArtFromFile(const std::string& filePath, std::vector<unsigned char>& albumArtData) {
-	std::ifstream file(filePath, std::ios::binary);
-	if (!file.is_open()) {
-		SDL_Log("Failed to open file: %s", filePath.c_str());
-		return false;
-	}
-
-	// Read the ID3v2 header (10 bytes)
-	std::vector<std::byte> header(10);
-	file.read(reinterpret_cast<char*>(header.data()), header.size());
-	if (file.gcount() < static_cast<std::streamsize>(header.size()) ||
-		std::memcmp(header.data(), "ID3", 3) != 0) {
-		// Not an ID3v2 file
-		return false;
-	}
-
-	// Get ID3 version
-	unsigned int majorVersion = static_cast<unsigned int>(std::to_integer<unsigned char>(header[3]));
-	SDL_Log("ID3v2.%d tag found", majorVersion);
-
-	// Get the tag size (bytes 6-9 are synchsafe integers)
-	int tagSize = 0;
-	for (int i = 0; i < 4; ++i) {
-		tagSize = (tagSize << 7) | (std::to_integer<unsigned char>(header[6 + i]) & 0x7F);
-	}
-	int tagEnd = 10 + tagSize; // End position of the tag
-
-	SDL_Log("Tag size: %d bytes", tagSize);
-
-	// Loop through frames until we reach the end of the tag.
-	while (file.tellg() < tagEnd && !file.eof()) {
-		std::vector<std::byte> frameHeader(10);
-		file.read(reinterpret_cast<char*>(frameHeader.data()), frameHeader.size());
-		if (file.gcount() < static_cast<std::streamsize>(frameHeader.size()))
-			break;
-
-		// Frame ID is in the first 4 bytes.
-		char frameID[5] = {
-			static_cast<char>(std::to_integer<unsigned char>(frameHeader[0])),
-			static_cast<char>(std::to_integer<unsigned char>(frameHeader[1])),
-			static_cast<char>(std::to_integer<unsigned char>(frameHeader[2])),
-			static_cast<char>(std::to_integer<unsigned char>(frameHeader[3])),
-			0
-		};
-
-		// Get frame size (handle different versions correctly)
-		int frameSize;
-		if (majorVersion >= 4) {
-			// ID3v2.4 uses synchsafe integers
-			frameSize = 0;
-			for (int i = 0; i < 4; ++i) {
-				frameSize = (frameSize << 7) | (std::to_integer<unsigned char>(frameHeader[4 + i]) & 0x7F);
-			}
-		}
-		else {
-			// ID3v2.3 uses regular integers
-			frameSize = (std::to_integer<unsigned char>(frameHeader[4]) << 24) |
-				(std::to_integer<unsigned char>(frameHeader[5]) << 16) |
-				(std::to_integer<unsigned char>(frameHeader[6]) << 8) |
-				(std::to_integer<unsigned char>(frameHeader[7]));
-		}
-
-		if (frameSize <= 0 || frameSize > 10000000) { // Sanity check on frame size
-			SDL_Log("Invalid frame size: %d", frameSize);
-			break;
-		}
-
-		SDL_Log("Found frame: %s, size: %d bytes", frameID, frameSize);
-
-		if (std::strcmp(frameID, "APIC") == 0) {
-			// Read the entire frame data.
-			std::vector<std::byte> frameData(frameSize);
-			file.read(reinterpret_cast<char*>(frameData.data()), frameSize);
-			if (file.gcount() < frameSize)
-				break;
-
-			size_t offset = 0;
-
-			// Skip text encoding (1 byte)
-			int textEncoding = std::to_integer<int>(frameData[offset]);
-			offset += 1;
-			SDL_Log("Text encoding: %d", textEncoding);
-
-			// Skip MIME type (null-terminated string)
-			std::string mimeType;
-			while (offset < frameData.size() && std::to_integer<unsigned char>(frameData[offset]) != 0) {
-				mimeType += static_cast<char>(std::to_integer<unsigned char>(frameData[offset]));
-				offset++;
-			}
-			offset++; // Skip the null terminator
-			SDL_Log("MIME type: %s", mimeType.c_str());
-
-			// The next byte is the picture type.
-			if (offset >= frameData.size())
-				break;
-			int pictureType = std::to_integer<unsigned char>(frameData[offset]);
-			offset++; // Move past picture type
-			SDL_Log("Picture type: %d", pictureType);
-
-			// We want either front cover (3) or any picture if desperate
-			if (pictureType != 0x03 && pictureType != 0x00) {
-				// Skip if not front cover or other picture
-				continue;
-			}
-
-			// Skip description (null-terminated string)
-			// Handle encoding properly
-			if (textEncoding == 0 || textEncoding == 3) { // ISO-8859-1 or UTF-8
-				while (offset < frameData.size() && std::to_integer<unsigned char>(frameData[offset]) != 0)
-					offset++;
-				offset++; // Skip the null terminator
-			}
-			else { // UTF-16/UTF-16BE with BOM
-				while (offset + 1 < frameData.size() &&
-					!(std::to_integer<unsigned char>(frameData[offset]) == 0 &&
-						std::to_integer<unsigned char>(frameData[offset + 1]) == 0))
-					offset += 2;
-				offset += 2; // Skip the double null terminator
-			}
-
-			if (offset < frameData.size()) {
-				// Log how much image data we're extracting
-				SDL_Log("Extracting %zu bytes of image data", frameData.size() - offset);
-
-				// Convert std::byte to unsigned char for albumArtData
-				albumArtData.resize(frameData.size() - offset);
-				for (size_t i = 0; i < albumArtData.size(); ++i) {
-					albumArtData[i] = std::to_integer<unsigned char>(frameData[offset + i]);
-				}
-
-				// Validate the image data starts with proper headers
-				if (albumArtData.size() >= 4) {
-					// Check if it's a valid JPG/PNG
-					if ((albumArtData[0] == 0xFF && albumArtData[1] == 0xD8) || // JPEG
-						(albumArtData[0] == 0x89 && albumArtData[1] == 0x50 && albumArtData[2] == 0x4E && albumArtData[3] == 0x47)) { // PNG
-						SDL_Log("Valid image header detected");
-						return true;
-					}
-					else {
-						SDL_Log("Warning: Invalid image header: %02X %02X %02X %02X",
-							albumArtData[0], albumArtData[1],
-							albumArtData[2], albumArtData[3]);
-						// Continue anyway, IMG_Load might still handle it
-						return true;
-					}
-				}
-				else {
-					SDL_Log("Image data too small: %zu bytes", albumArtData.size());
-					return false;
-				}
-			}
-			else {
-				SDL_Log("Invalid APIC frame structure");
-				return false;
-			}
-		}
-		else {
-			// Skip this frame's data if not APIC.
-			file.seekg(frameSize, std::ios::cur);
-		}
-	}
-
-	SDL_Log("No suitable album art found");
-	return false;
+bool MusicPlayer::getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData)
+{
+    return false;
 }
 
-bool MusicPlayer::getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData) {
-	// Clear the output vector first
-	albumArtData.clear();
-
-	// Validate track index
-	if (trackIndex < 0 || trackIndex >= static_cast<int>(musicFiles_.size())) {
-		LOG_ERROR("MusicPlayer", "Invalid track index for album art: " + std::to_string(trackIndex));
-		return false;
-	}
-
-	// Get the file path of the requested track
-	std::string filePath = musicFiles_[trackIndex];
-
-	// Extract album art data from the file
-	bool result = extractAlbumArtFromFile(filePath, albumArtData);
-
-	if (!result || albumArtData.empty()) {
-		LOG_INFO("MusicPlayer", "No album art found in track: " + musicNames_[trackIndex]);
-		return false;
-	}
-
-	LOG_INFO("MusicPlayer", "Extracted album art from track: " + musicNames_[trackIndex]);
-	return true;
-}
 double MusicPlayer::getCurrent()
 {
-	if (!currentMusic_) {
-		return -1.0;
-	}
+    if (!isPlaying() && !isPaused()) {
+        return -1.0;
+    }
 
-	return Mix_GetMusicPosition(currentMusic_);
+    gint64 position = 0;
+    if (gst_element_query_position(pipeline_, GST_FORMAT_TIME, &position)) {
+        return position / (double)GST_SECOND;
+    }
+
+    return -1.0;
 }
 
 double MusicPlayer::getDuration()
 {
-	if (!currentMusic_) {
-		return -1.0;
-	}
+    if (!isPlaying() && !isPaused()) {
+        return -1.0;
+    }
 
-	return Mix_MusicDuration(currentMusic_);
+    gint64 duration = 0;
+    if (gst_element_query_duration(pipeline_, GST_FORMAT_TIME, &duration)) {
+        return duration / (double)GST_SECOND;
+    }
+
+    return -1.0;
 }
 
 void MusicPlayer::setTrackChangeDirection(TrackChangeDirection direction)
 {
-	trackChangeDirection_ = direction;
+    trackChangeDirection_ = direction;
 }
 
 MusicPlayer::TrackChangeDirection MusicPlayer::getTrackChangeDirection() const
 {
-	return trackChangeDirection_;
+    return trackChangeDirection_;
 }
 
 bool MusicPlayer::isFading() const
 {
-	return Mix_FadingMusic() != MIX_NO_FADING;
+    // Without custom fading, we just return false
+    return false;
+}
+
+void MusicPlayer::shutdown()
+{
+    LOG_INFO("MusicPlayer", "Shutting down music player");
+
+    // Set flag first to prevent callbacks
+    isShuttingDown_ = true;
+
+    // Stop any playing music
+    if (isPlaying() || isPaused()) {
+        stopMusic();
+    }
+
+    // Clear playlists
+    musicFiles_.clear();
+    musicNames_.clear();
+
+    currentIndex_ = -1;
+    LOG_INFO("MusicPlayer", "Music player shutdown complete");
 }

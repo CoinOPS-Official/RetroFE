@@ -21,12 +21,8 @@
 #include <memory>
 #include <random>
 #include <atomic>
-#if (__APPLE__)
-#include <SDL2_mixer/SDL_mixer.h>
-#else
-#include <SDL2/SDL_image.h>
-#include <SDL2/SDL_mixer.h>
-#endif
+#include <mutex>
+#include <gst/gst.h>
 #include "../Database/Configuration.h"
 
 class MusicPlayer
@@ -83,7 +79,7 @@ public:
     bool previousTrack(int customFadeMs = -1);
     bool isPlaying() const;
     bool isPaused() const;
-    void setVolume(int volume);  // 0-128 (SDL_Mixer range)
+    void setVolume(int volume);
     int getVolume() const;
     std::string getCurrentTrackName() const;
     std::string getCurrentTrackNameWithoutExtension() const;
@@ -101,69 +97,56 @@ public:
     void shutdown();
 
     bool hasTrackChanged();
-
     bool isPlayingNewTrack();
-
-
     bool getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData);
-
     double getCurrent();
-
     double getDuration();
-
     void setTrackChangeDirection(TrackChangeDirection direction);
-
-    // Audio processing for visualizers
-    static void postMixCallback(void* udata, Uint8* stream, int len);
-    void processAudioData(Uint8* stream, int len);
-    const std::vector<float>& getAudioLevels() const { return audioLevels_; }
-    int getAudioChannels() const { return audioChannels_; }
-    bool registerVisualizerCallback();
-    void unregisterVisualizerCallback();
-    bool hasVisualizer() const { return hasVisualizer_; }
 
 private:
     MusicPlayer();
     ~MusicPlayer();
 
-
     std::vector<TrackMetadata> trackMetadata_;
-
     TrackChangeDirection trackChangeDirection_;
 
-    static void musicFinishedCallback();
-    void onMusicFinished();
-    void setFadeDuration(int ms);
-    int getFadeDuration() const;
-    void resetShutdownFlag();
+    // GStreamer message handling
+    static GstBusSyncReply busCallback(GstBus* bus, GstMessage* message, gpointer data);
+    void handleMessage(GstMessage* message);
+    void onEos();
+
+    // Track handling
     int getNextTrackIndex();
     void loadTrack(int index);
     bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const;
     bool parseM3UFile(const std::string& playlistPath);
     bool isValidAudioFile(const std::string& filePath) const;
+
     static MusicPlayer* instance_;
 
+    // GStreamer elements
+    GstElement* pipeline_;
+    GstElement* source_;
+    GstElement* volumeElement_; // Renamed to avoid conflict
+    GstBus* bus_;
+
+    // State and configuration
     Configuration* config_;
-    Mix_Music* currentMusic_;
     std::vector<std::string> musicFiles_;
     std::vector<std::string> musicNames_;
     std::vector<int> shuffledIndices_;
     int currentShufflePos_ = -1;
     int currentIndex_;
-    int volume_;
+    int volumeLevel_; // Renamed to avoid conflict
     bool loopMode_;
     bool shuffleMode_;
     bool isShuttingDown_;
     std::mt19937 rng_;
-    bool isPendingPause_;
-    double pausedMusicPosition_;
-    bool isPendingTrackChange_;
-    int pendingTrackIndex_;
-    int fadeMs_;
     std::string lastCheckedTrackPath_;
 
-    std::vector<float> audioLevels_;
-    int audioChannels_;
-    bool hasVisualizer_;
-    int sampleSize_;  // Size of each audio sample (1, 2, or 4 bytes)
+    // Tag extraction via message bus
+    GstTagList* pendingTags_;
+    int pendingTagTrackIndex_;
+    std::mutex tagMutex_;
+    bool extractMetadataFromTagList(GstTagList* tags, TrackMetadata& metadata) const;
 };
