@@ -34,6 +34,7 @@ public:
     bool import(const std::string& collection, const std::string& keyPrefix, const std::string& file, bool mustExist = true);
     bool getProperty(const std::string& key, std::string &value);
     bool getProperty(const std::string& key, int &value);
+    bool getProperty(const std::string& key, float& value);
     bool getProperty(const std::string& key, bool &value);
     void childKeyCrumbs(const std::string& parent, std::vector<std::string> &children);
     void setProperty(const std::string& key, const std::string& value);

@@ -20,6 +20,7 @@
 #include <filesystem>
 #include <memory>
 #include <random>
+#include <atomic>
 #if (__APPLE__)
 #include <SDL2_mixer/SDL_mixer.h>
 #else
@@ -112,6 +113,15 @@ public:
 
     void setTrackChangeDirection(TrackChangeDirection direction);
 
+    // Audio processing for visualizers
+    static void postMixCallback(void* udata, Uint8* stream, int len);
+    void processAudioData(Uint8* stream, int len);
+    const std::vector<float>& getAudioLevels() const { return audioLevels_; }
+    int getAudioChannels() const { return audioChannels_; }
+    bool registerVisualizerCallback();
+    void unregisterVisualizerCallback();
+    bool hasVisualizer() const { return hasVisualizer_; }
+
 private:
     MusicPlayer();
     ~MusicPlayer();
@@ -151,4 +161,9 @@ private:
     int pendingTrackIndex_;
     int fadeMs_;
     std::string lastCheckedTrackPath_;
+
+    std::vector<float> audioLevels_;
+    int audioChannels_;
+    bool hasVisualizer_;
+    int sampleSize_;  // Size of each audio sample (1, 2, or 4 bytes)
 };

@@ -294,6 +294,25 @@ bool Configuration::getProperty(const std::string& key, int& value)
     return retVal;
 }
 
+bool Configuration::getProperty(const std::string& key, float& value)
+{
+    std::string strValue;
+    bool retVal = getProperty(key, strValue);
+
+    if (retVal) {
+        try {
+            value = std::stof(strValue);
+        }
+        catch (const std::invalid_argument&) {
+            LOG_WARNING("RetroFE", "Invalid float format for key: " + key);
+        }
+        catch (const std::out_of_range&) {
+            LOG_WARNING("RetroFE", "Float out of range for key: " + key);
+        }
+    }
+    return retVal;
+}
+
 
 bool Configuration::getProperty(const std::string& key, bool& value)
 {

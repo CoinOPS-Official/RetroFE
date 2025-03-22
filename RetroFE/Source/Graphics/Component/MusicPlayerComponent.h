@@ -100,4 +100,23 @@ private:
     float volumeFadeDelay_;     // How long to wait before fading out
     bool volumeChanging_;       // Is volume currently changing
 
+    // VU meter data and rendering
+    bool isVuMeter_;
+    int vuBarCount_;
+    std::vector<float> vuLevels_;
+    std::vector<float> vuPeaks_;
+    float vuDecayRate_;
+    float vuPeakDecayRate_;
+    void drawVuMeter();
+    void updateVuLevels();
+
+    // VU meter theming
+    SDL_Color vuGreenColor_;
+    SDL_Color vuYellowColor_;
+    SDL_Color vuRedColor_;
+    SDL_Color vuBackgroundColor_;
+    SDL_Color vuPeakColor_;
+    float vuGreenThreshold_;  // Level threshold for green (0.0-1.0)
+    float vuYellowThreshold_; // Level threshold for yellow (0.0-1.0)
+
 };

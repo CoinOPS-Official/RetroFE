@@ -49,6 +49,9 @@ MusicPlayer::MusicPlayer()
 	, pendingTrackIndex_(-1)
 	, fadeMs_(1500)
 	, trackChangeDirection_(TrackChangeDirection::NONE)
+	, audioChannels_(2)  // Default to stereo
+	, hasVisualizer_(false)
+	, sampleSize_(2)  // Default to 16-bit samples
 {
 	// Seed the random number generator with current time
 	auto now = std::chrono::high_resolution_clock::now();
@@ -62,6 +65,9 @@ MusicPlayer::MusicPlayer()
 	};
 
 	rng_.seed(seq);
+
+	audioLevels_.resize(audioChannels_, 0.0f);
+
 }
 
 MusicPlayer::~MusicPlayer()
@@ -148,6 +154,130 @@ bool MusicPlayer::initialize(Configuration& config)
 		", tracks found: " + std::to_string(musicFiles_.size()));
 
 	return true;
+}
+
+bool MusicPlayer::registerVisualizerCallback()
+{
+	if (hasVisualizer_) {
+		return true;  // Already registered
+	}
+
+	// Register our post-mix callback
+	Mix_SetPostMix(MusicPlayer::postMixCallback, this);
+	hasVisualizer_ = true;
+
+	// Get format info from currently open audio device
+	int frequency;
+	Uint16 format;
+	int channels;
+	if (Mix_QuerySpec(&frequency, &format, &channels) == 1) {
+		audioChannels_ = channels;
+
+		// Determine sample size based on format
+		if (format == AUDIO_U8 || format == AUDIO_S8) {
+			sampleSize_ = 1;  // 8-bit samples
+		}
+		else if (format == AUDIO_U16LSB || format == AUDIO_S16LSB ||
+			format == AUDIO_U16MSB || format == AUDIO_S16MSB) {
+			sampleSize_ = 2;  // 16-bit samples
+		}
+		else {
+			sampleSize_ = 4;  // Assume 32-bit for other formats
+		}
+
+		// Resize audio levels array based on channels
+		audioLevels_.resize(audioChannels_, 0.0f);
+	}
+
+	LOG_INFO("MusicPlayer", "Visualizer registered with " + std::to_string(audioChannels_) +
+		" channels and " + std::to_string(sampleSize_ * 8) + "-bit samples");
+
+	return true;
+}
+
+void MusicPlayer::unregisterVisualizerCallback()
+{
+	if (!hasVisualizer_) {
+		return;  // Not registered
+	}
+
+	// Unregister the callback
+	Mix_SetPostMix(nullptr, nullptr);
+	hasVisualizer_ = false;
+
+	// Reset audio levels
+	std::fill(audioLevels_.begin(), audioLevels_.end(), 0.0f);
+
+	LOG_INFO("MusicPlayer", "Visualizer unregistered");
+}
+
+void MusicPlayer::postMixCallback(void* udata, Uint8* stream, int len)
+{
+	// This is a static callback, so we need to get the instance
+	if (udata) {
+		MusicPlayer* player = static_cast<MusicPlayer*>(udata);
+		player->processAudioData(stream, len);
+	}
+}
+
+void MusicPlayer::processAudioData(Uint8* stream, int len)
+{
+	if (!hasVisualizer_ || !stream || len <= 0) {
+		return;
+	}
+
+	// Reset audio levels
+	std::fill(audioLevels_.begin(), audioLevels_.end(), 0.0f);
+
+	// Number of samples per channel
+	int samplesPerChannel = len / (sampleSize_ * audioChannels_);
+	if (samplesPerChannel <= 0) {
+		return;
+	}
+
+	// Process each channel
+	for (int channel = 0; channel < audioChannels_; ++channel) {
+		float sum = 0.0f;
+
+		// Process samples for this channel
+		for (int i = 0; i < samplesPerChannel; ++i) {
+			// Calculate position in the stream for this sample and channel
+			int samplePos = (i * audioChannels_ + channel) * sampleSize_;
+
+			// Make sure we're within bounds
+			if (samplePos + sampleSize_ > len) {
+				break;
+			}
+
+			// Get sample value based on format
+			float sampleValue = 0.0f;
+
+			if (sampleSize_ == 1) {
+				// 8-bit sample (0-255, center at 128)
+				Uint8 val = stream[samplePos];
+				sampleValue = (static_cast<float>(val) - 128.0f) / 128.0f;
+			}
+			else if (sampleSize_ == 2) {
+				// 16-bit sample (-32768 to 32767)
+				Sint16 val = *reinterpret_cast<Sint16*>(stream + samplePos);
+				sampleValue = static_cast<float>(val) / 32768.0f;
+			}
+			else if (sampleSize_ == 4) {
+				// 32-bit sample (float -1.0 to 1.0)
+				float val = *reinterpret_cast<float*>(stream + samplePos);
+				sampleValue = val;
+			}
+
+			// Accumulate absolute value for RMS calculation
+			sum += sampleValue * sampleValue;
+		}
+
+		// Calculate RMS (Root Mean Square) value for this channel
+		float rms = std::sqrt(sum / samplesPerChannel);
+
+		// Store normalized level (0.0 - 1.0)
+		audioLevels_[channel] = std::min(1.0f, rms);
+	}
 }
 
 // Helper method to extract the folder loading logic
@@ -1218,6 +1348,9 @@ void MusicPlayer::shutdown()
 
 	// Set flag first to prevent callbacks
 	isShuttingDown_ = true;
+
+	if(hasVisualizer_)
+		unregisterVisualizerCallback();
 
 	// Stop any playing music
 	if (Mix_PlayingMusic() || Mix_PausedMusic())
