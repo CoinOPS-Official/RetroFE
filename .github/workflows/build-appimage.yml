@@ -1,0 +1,92 @@
+name: Linux AppImages
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        config:
+          - { os: ubuntu-24.04, arch: x86_64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.config.os }}
+    name: Build ${{ matrix.config.arch }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v2
+        with:
+          platforms: all
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Cache apt packages
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: |
+            cmake
+            libfuse2
+            libboost-all-dev
+            libcurl4-openssl-dev
+            libglew-dev
+            libopenal-dev
+            libsdl2-dev
+            libsdl2-image-dev
+            libsdl2-mixer-dev
+            libsdl2-ttf-dev
+            zlib1g-dev
+            libminizip-dev
+            libwebp-dev
+            libgstreamer1.0-dev
+            libgstreamer-plugins-base1.0-dev
+            libglib2.0-dev
+            libusb-1.0-0-dev
+            libevdev-dev
+          version: ${{ matrix.config.arch }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libfuse2 libboost-all-dev libcurl4-openssl-dev libglew-dev libopenal-dev \
+                                  libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev zlib1g-dev \
+                                  libminizip-dev libwebp-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+                                  libglib2.0-dev libusb-1.0-0-dev libevdev-dev
+
+      - name: Configure CMake
+        run: cmake RetroFE/Source -BRetroFE/Build
+
+      - name: Build
+        run: cmake --build RetroFE/Build
+
+      - name: Install linuxdeploy
+        run: |
+          if [ "${{ matrix.config.arch }}" == "arm64" ]; then
+            wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage -O linuxdeploy-arm64.AppImage
+            chmod +x linuxdeploy-arm64.AppImage
+          else
+            wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.config.arch }}.AppImage
+            chmod +x linuxdeploy-${{ matrix.config.arch }}.AppImage
+          fi
+          
+      - name: Package AppImage
+        run: |
+          ./linuxdeploy-${{ matrix.config.arch }}.AppImage \
+            --executable RetroFE/Build/retrofe \
+            --appdir RetroFE/Build/AppDir \
+            --output appimage \
+            --desktop-file Package/Environment/Linux/retrofe.desktop \
+            --icon-file Package/Environment/Common/RetroFE.png
+          if [ "${{ matrix.config.arch }}" == "arm64" ]; then
+            mv RetroFE-aarch64.AppImage RetroFE-arm64.AppImage
+          fi
+
+      - name: Upload AppImage
+        uses: actions/upload-artifact@v4
+        with:
+          name: RetroFE-${{ matrix.config.arch }}.AppImage 
+          path: RetroFE-${{ matrix.config.arch }}.AppImage
