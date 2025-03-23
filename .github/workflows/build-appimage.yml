@@ -29,36 +29,42 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: |
-            cmake
-            libfuse2
-            libboost-all-dev
-            libcurl4-openssl-dev
-            libglew-dev
+            libfuse2 
+            libboost-all-dev 
+            libcurl4-openssl-dev 
+            libglew-dev 
             libopenal-dev
-            libsdl2-dev
-            libsdl2-image-dev
-            libsdl2-mixer-dev
-            libsdl2-ttf-dev
+            cmake 
+            dos2unix 
             zlib1g-dev
-            libminizip-dev
-            libwebp-dev
-            libgstreamer1.0-dev
-            libgstreamer-plugins-base1.0-dev
+            libsdl2-2.0 
+            libsdl2-mixer-2.0
+            libsdl2-image-2.0 
+            libsdl2-ttf-2.0
+            libsdl2-dev 
+            libsdl2-mixer-dev 
+            libsdl2-image-dev 
+            libsdl2-ttf-dev
+            libgstreamer1.0-dev 
+            libgstreamer-plugins-base1.0-dev 
             libgstreamer-plugins-good1.0-dev 
             gstreamer1.0-libav
-            libglib2.0-dev
-            libusb-1.0-0-dev
+            libglib2.0-0 
+            libglib2.0-dev 
+            sqlite3 
+            libusb-1.0-0-dev 
             libevdev-dev
           version: ${{ matrix.config.arch }}
 
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libfuse2 libboost-all-dev libcurl4-openssl-dev libglew-dev libopenal-dev \
-                                  libsdl2-dev libsdl2-image-dev libsdl2-mixer-dev libsdl2-ttf-dev zlib1g-dev \
-                                  libminizip-dev libwebp-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
-                                  libgstreamer-plugins-good1.0-dev gstreamer1.0-libav \
-                                  libglib2.0-dev libusb-1.0-0-dev libevdev-dev
+          sudo apt-get install -y libfuse2 libboost-all-dev libcurl4-openssl-dev libglew-dev libopenal-dev \
+                                  cmake dos2unix zlib1g-dev \
+                                  libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
+                                  libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
+                                  libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-good1.0-dev gstreamer1.0-libav \
+                                  libglib2.0-0 libglib2.0-dev sqlite3 libusb-1.0-0-dev libevdev-dev
 
       - name: Configure CMake
         run: cmake RetroFE/Source -BRetroFE/Build
