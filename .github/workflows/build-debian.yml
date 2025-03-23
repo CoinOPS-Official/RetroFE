@@ -68,8 +68,9 @@ jobs:
           libglib2.0-0 \
           libglib2.0-dev \
           sqlite3 \
-          libevdev-dev \
           libminizip-dev \
+          libwebp-dev \
+          libevdev-dev \
           libusb-1.0-0-dev
 
     # Configure the build
