@@ -83,10 +83,10 @@ jobs:
           ./linuxdeploy-${{ matrix.config.arch }}.AppImage \
             --executable RetroFE/Build/retrofe \
             --appdir RetroFE/Build/AppDir \
+            --plugin gstreamer \
             --output appimage \
             --desktop-file Package/Environment/Linux/retrofe.desktop \
             --icon-file Package/Environment/Common/RetroFE.png
-            --plugin gstreamer
           if [ "${{ matrix.config.arch }}" == "arm64" ]; then
             mv RetroFE-aarch64.AppImage RetroFE-arm64.AppImage
           fi
