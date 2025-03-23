@@ -72,6 +72,11 @@ jobs:
             wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.config.arch }}.AppImage
             chmod +x linuxdeploy-${{ matrix.config.arch }}.AppImage
           fi
+
+      - name: Install linuxdeploy-plugin-gstreamer
+        run: |
+          wget https://raw.githubusercontent.com/linuxdeploy/linuxdeploy-plugin-gstreamer/refs/heads/master/linuxdeploy-plugin-gstreamer.sh
+          chmod +x linuxdeploy-plugin-gstreamer.sh
           
       - name: Package AppImage
         run: |
@@ -81,6 +86,7 @@ jobs:
             --output appimage \
             --desktop-file Package/Environment/Linux/retrofe.desktop \
             --icon-file Package/Environment/Common/RetroFE.png
+            --plugin gstreamer
           if [ "${{ matrix.config.arch }}" == "arm64" ]; then
             mv RetroFE-aarch64.AppImage RetroFE-arm64.AppImage
           fi
