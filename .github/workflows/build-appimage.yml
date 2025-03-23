@@ -51,7 +51,9 @@ jobs:
             gstreamer1.0-libav
             libglib2.0-0 
             libglib2.0-dev 
-            sqlite3 
+            sqlite3
+            libminizip-dev
+            libwebp-dev
             libusb-1.0-0-dev 
             libevdev-dev
           version: ${{ matrix.config.arch }}
