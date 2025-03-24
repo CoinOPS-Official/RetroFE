@@ -337,45 +337,44 @@ void MusicPlayerComponent::loadVolumeBarTextures()
 	updateVolumeBarTexture();
 }
 
-void MusicPlayerComponent::updateVolumeBarTexture()
-{
-	if (!renderer_ || !volumeEmptyTexture_ || !volumeFullTexture_ || !volumeBarTexture_) {
-		return;
-	}
-
+void MusicPlayerComponent::updateVolumeBarTexture() {
+    if (!renderer_ || !volumeEmptyTexture_ || !volumeFullTexture_ || !volumeBarTexture_) {
+        return;
+    }
+    
 	// Get current volume (0-128) and convert to percentage
 	int volumeRaw = musicPlayer_->getVolume();
 	float volumePercent = static_cast<float>(volumeRaw) / MIX_MAX_VOLUME;
 
-	// Calculate the width of the visible portion of the full texture
-	int visibleWidth = static_cast<int>(volumeBarWidth_ * volumePercent);
-
-	// Set render target to our texture
-	SDL_SetRenderTarget(renderer_, volumeBarTexture_);
-
-	// Clear the texture
-	SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
-	SDL_RenderClear(renderer_);
-
-	// Draw the full texture first (visible part based on volume)
-	if (visibleWidth > 0) {
-		SDL_Rect srcRect = { 0, 0, visibleWidth, volumeBarHeight_ };
-		SDL_Rect destRect = { 0, 0, visibleWidth, volumeBarHeight_ };
-		SDL_RenderCopy(renderer_, volumeFullTexture_, &srcRect, &destRect);
-	}
-
-	// Draw the empty texture for the remaining portion
-	if (visibleWidth < volumeBarWidth_) {
-		SDL_Rect srcRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
-		SDL_Rect destRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
-		SDL_RenderCopy(renderer_, volumeEmptyTexture_, &srcRect, &destRect);
-	}
-
-	// Reset render target
-	SDL_SetRenderTarget(renderer_, nullptr);
-
-	// Update last volume value
-	lastVolumeValue_ = volumeRaw;
+    // Calculate the width of the visible portion of the full texture
+    int visibleWidth = static_cast<int>(volumeBarWidth_ * volumePercent);
+    
+    // Set render target to our texture
+    SDL_SetRenderTarget(renderer_, volumeBarTexture_);
+    
+    // Clear the texture
+    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+    SDL_RenderClear(renderer_);
+    
+    // Draw the full texture first (visible part based on volume)
+    if (visibleWidth > 0) {
+        SDL_Rect srcRect = { 0, 0, visibleWidth, volumeBarHeight_ };
+        SDL_Rect destRect = { 0, 0, visibleWidth, volumeBarHeight_ };
+        SDL_RenderCopy(renderer_, volumeFullTexture_, &srcRect, &destRect);
+    }
+    
+    // Draw the empty texture for the remaining portion
+    if (visibleWidth < volumeBarWidth_) {
+        SDL_Rect srcRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
+        SDL_Rect destRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
+        SDL_RenderCopy(renderer_, volumeEmptyTexture_, &srcRect, &destRect);
+    }
+    
+    // Reset render target
+    SDL_SetRenderTarget(renderer_, nullptr);
+    
+    // Update last volume value (if needed for change detection)
+    lastVolumeValue_ = volumeRaw;
 }
 
 std::string_view MusicPlayerComponent::filePath()
@@ -438,13 +437,12 @@ bool MusicPlayerComponent::update(float dt)
 
 	// Special handling for volume bar
 	if (isVolumeBar_) {
-		// Check if volume has changed
-		int currentVolume = musicPlayer_->getVolume();
-		if (currentVolume != lastVolumeValue_) {
+		if (musicPlayer_->getButtonPressed()) {
 			// Volume changed - update the texture and animation state
 			updateVolumeBarTexture();
 			volumeChanging_ = true;
 			volumeStableTimer_ = 0.0f;
+			musicPlayer_->setButtonPressed(false);
 		}
 		else {
 			// Volume is stable
@@ -1030,7 +1028,7 @@ void MusicPlayerComponent::drawVolumeBar()
 Component* MusicPlayerComponent::reloadComponent()
 {
 	// Album art is handled directly, don't create a component for it
-	if (isAlbumArt_ || isVolumeBar_) {
+	if (isAlbumArt_ || isVolumeBar_ || !musicPlayer_->hasStartedPlaying()) {
 		return nullptr;
 	}
 
@@ -1180,36 +1178,6 @@ Component* MusicPlayerComponent::reloadComponent()
 	return component;
 }
 
-// Forward control functions to the music player
-void MusicPlayerComponent::skipForward()
-{
-	//musicPlayer_->next();
-}
-
-void MusicPlayerComponent::skipBackward()
-{
-	//musicPlayer_->previous();
-}
-
-void MusicPlayerComponent::skipForwardp()
-{
-	// Fast forward - seek 10 seconds forward if supported
-	//unsigned long long current = musicPlayer_->getCurrent();
-	//musicPlayer_->seekTo(current + 10000); // 10 seconds
-}
-
-void MusicPlayerComponent::skipBackwardp()
-{
-	// Rewind - seek 10 seconds backward if supported
-	//unsigned long long current = musicPlayer_->getCurrent();
-	//if (current > 10000) {
-		//musicPlayer_->seekTo(current - 10000); // 10 seconds
-	//}
-	//else {
-		//musicPlayer_->seekTo(0); // Beginning of track
-	//}
-}
-
 void MusicPlayerComponent::pause()
 {
 	if (musicPlayer_->isPlaying()) {
@@ -1220,24 +1188,14 @@ void MusicPlayerComponent::pause()
 	}
 }
 
-void MusicPlayerComponent::restart()
-{
-	//musicPlayer_->seekTo(0); // Go to beginning of track
-	//if (!musicPlayer_->isPlaying()) {
-	//    musicPlayer_->play();
-	//}
-}
-
 unsigned long long MusicPlayerComponent::getCurrent()
 {
-	return 1;
-	//return musicPlayer_->getCurrent();
+	return static_cast<unsigned long long>(musicPlayer_->getCurrent());
 }
 
 unsigned long long MusicPlayerComponent::getDuration()
 {
-	return 1;
-	//return musicPlayer_->getDuration();
+	return static_cast<unsigned long long>(musicPlayer_->getDuration());
 }
 
 bool MusicPlayerComponent::isPaused()

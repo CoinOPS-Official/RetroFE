@@ -22,6 +22,7 @@
 #include <chrono>
 #include <cstddef>
 #include <cstring>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -39,19 +40,30 @@ MusicPlayer* MusicPlayer::getInstance()
 MusicPlayer::MusicPlayer()
 	: config_(nullptr)
 	, currentMusic_(nullptr)
+	, musicFiles_()               // default empty vector
+	, musicNames_()               // default empty vector
+	, shuffledIndices_()          // default empty vector
+	, currentShufflePos_(-1)
 	, currentIndex_(-1)
 	, volume_(MIX_MAX_VOLUME)
 	, loopMode_(false)
 	, shuffleMode_(false)
 	, isShuttingDown_(false)
+	, rng_()                    // will be seeded below
+	, isPendingPause_(false)
 	, pausedMusicPosition_(0.0)
 	, isPendingTrackChange_(false)
 	, pendingTrackIndex_(-1)
 	, fadeMs_(1500)
-	, trackChangeDirection_(TrackChangeDirection::NONE)
-	, audioChannels_(2)  // Default to stereo
+	, previousVolume_(volume_)
+	, buttonPressed_(false)
+	, lastCheckedTrackPath_("")
+	, trackChangeDirection_(TrackChangeDirection::NONE)  // Reinserted here
+	, hasStartedPlaying_(false)
+	, audioLevels_()              // default empty vector
+	, audioChannels_(2)           // Default to stereo
 	, hasVisualizer_(false)
-	, sampleSize_(2)  // Default to 16-bit samples
+	, sampleSize_(2)              // Default to 16-bit samples
 {
 	// Seed the random number generator with current time
 	auto now = std::chrono::high_resolution_clock::now();
@@ -819,8 +831,15 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 
 	LOG_INFO("MusicPlayer", "Now playing track: " + getFormattedTrackInfo(index));
 	isPendingTrackChange_ = false;
+	
+	if (!hasStartedPlaying_)
+	{
+		hasStartedPlaying_ = true;
+	}
+	
 	return true;
 }
+
 double MusicPlayer::saveCurrentMusicPosition()
 {
 	if (currentMusic_)
@@ -914,7 +933,7 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 			if (fadeMs_ > 0 && pausedMusicPosition_ > 0.0)
 			{
 				// Convert fadeMs from milliseconds to seconds and add
-				adjustedPosition += fadeMs_ / 1000.0;
+				adjustedPosition += useFadeMs / 1000.0;
 
 				// Get the music length if possible to avoid going past the end
 #if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
@@ -1130,6 +1149,58 @@ void MusicPlayer::setVolume(int newVolume)
 int MusicPlayer::getVolume() const
 {
 	return Mix_VolumeMusic(-1);
+}
+
+void MusicPlayer::fadeToVolume(int targetPercent)
+{
+	// Clamp target percentage between 0 and 100.
+	targetPercent = std::max(0, std::min(100, targetPercent));
+	// Convert percentage to Mix_VolumeMusic range.
+	int targetVolume = static_cast<int>((targetPercent / 100.0f) * MIX_MAX_VOLUME + 0.5f);
+
+	// Save the current volume (in the 0-128 range) for later restoration.
+	previousVolume_ = getVolume();
+
+	// Determine the number of steps for a smooth fade.
+	const int steps = 50;
+	int sleepDuration = (fadeMs_ > 0) ? (fadeMs_ / steps) : 0;
+
+	// Launch a detached thread to perform the fade.
+	std::thread([this, targetVolume, steps, sleepDuration]() {
+		int startVolume = getVolume();
+		for (int i = 0; i <= steps; ++i)
+		{
+			// Linear interpolation between startVolume and targetVolume.
+			float t = static_cast<float>(i) / steps;
+			int newVolume = static_cast<int>(startVolume + t * (targetVolume - startVolume));
+			Mix_VolumeMusic(newVolume);
+			if (sleepDuration > 0)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
+			}
+		}
+		}).detach();
+}
+
+void MusicPlayer::fadeBackToPreviousVolume()
+{
+	int targetVolume = previousVolume_;
+	const int steps = 50;
+	int sleepDuration = (fadeMs_ > 0) ? (fadeMs_ / steps) : 0;
+
+	std::thread([this, targetVolume, steps, sleepDuration]() {
+		int startVolume = getVolume();
+		for (int i = 0; i <= steps; ++i)
+		{
+			float t = static_cast<float>(i) / steps;
+			int newVolume = static_cast<int>(startVolume + t * (targetVolume - startVolume));
+			Mix_VolumeMusic(newVolume);
+			if (sleepDuration > 0)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
+			}
+		}
+		}).detach();
 }
 
 std::string MusicPlayer::getCurrentTrackName() const
@@ -1613,4 +1684,17 @@ MusicPlayer::TrackChangeDirection MusicPlayer::getTrackChangeDirection() const
 bool MusicPlayer::isFading() const
 {
 	return Mix_FadingMusic() != MIX_NO_FADING;
+}
+
+bool MusicPlayer::hasStartedPlaying() const
+{
+	return hasStartedPlaying_;
+}
+
+void MusicPlayer::setButtonPressed(bool buttonPressed) {
+	buttonPressed_ = buttonPressed;
+}
+
+bool MusicPlayer::getButtonPressed() {
+	return buttonPressed_;
 }

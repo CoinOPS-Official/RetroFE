@@ -32,7 +32,11 @@
 class MusicPlayer
 {
 public:
+    // Singleton & Basic Setup
     static MusicPlayer* getInstance();
+    bool hasStartedPlaying() const;  // Returns true once the first track begins playing
+
+    // Track Metadata Structure
     struct TrackMetadata
     {
         std::string title;
@@ -43,25 +47,67 @@ public:
         std::string comment;
         int trackNumber;
 
-        // Constructor with default values
         TrackMetadata() : trackNumber(0) {}
     };
 
+    // Enum for track change direction
     enum class TrackChangeDirection {
         NONE,
         NEXT,
         PREVIOUS
     };
 
-    TrackChangeDirection getTrackChangeDirection() const;
+    // Initialization & Shutdown
+    bool initialize(Configuration& config);
+    void shutdown();
 
-    bool isFading() const;
+    // Playlist & Folder Loading
+    bool loadM3UPlaylist(const std::string& playlistPath);
+    void loadMusicFolderFromConfig();
+    bool loadMusicFolder(const std::string& folderPath);
 
+    // Playback Control
+    bool playMusic(int index = -1, int customFadeMs = -1);  // -1 means use current or random track
+    bool pauseMusic(int customFadeMs = -1);
+    bool resumeMusic(int customFadeMs = -1);
+    bool stopMusic(int customFadeMs = -1);
+    bool nextTrack(int customFadeMs = -1);
+    bool previousTrack(int customFadeMs = -1);
+    bool isPlaying() const;
+    bool isPaused() const;
+    double saveCurrentMusicPosition();
+    double getCurrent();    // Current playback position (sec)
+    double getDuration();   // Duration of current track (sec)
+    bool getButtonPressed();
+    void setButtonPressed(bool buttonPressed);
+
+    // Volume & Loop Settings
+    void setVolume(int volume);  // 0-128 (SDL_Mixer range)
+    int getVolume() const;
+    void fadeToVolume(int targetPercent);
+    void fadeBackToPreviousVolume();
+    void setLoop(bool loop);
+    bool getLoop() const;
+
+    // Shuffle Controls
+    bool shuffle();
+    bool setShuffle(bool shuffle);
+    bool getShuffle() const;
+
+    // Track Navigation & Identification
+    int getCurrentTrackIndex() const;
+    int getTrackCount() const;
+    std::string getCurrentTrackName() const;
+    std::string getCurrentTrackNameWithoutExtension() const;
+    std::string getCurrentTrackPath() const;
+    std::string getFormattedTrackInfo(int index = -1) const;
+    std::string getTrackArtist(int index = -1) const;
+    std::string getTrackAlbum(int index = -1) const;
+
+    // Detailed Metadata Access
     const TrackMetadata& getCurrentTrackMetadata() const;
     const TrackMetadata& getTrackMetadata(int index) const;
     size_t getTrackMetadataCount() const;
-
-    // Direct accessors for current track's metadata fields
     std::string getCurrentTitle() const;
     std::string getCurrentArtist() const;
     std::string getCurrentAlbum() const;
@@ -70,50 +116,17 @@ public:
     std::string getCurrentComment() const;
     int getCurrentTrackNumber() const;
 
-    bool initialize(Configuration& config);
-    bool loadM3UPlaylist(const std::string& playlistPath);
-    void loadMusicFolderFromConfig();
-    bool loadMusicFolder(const std::string& folderPath);
-    bool playMusic(int index = -1, int customFadeMs = -1);  // -1 means play current or random track
-    double saveCurrentMusicPosition();
-    bool pauseMusic(int customFadeMs = -1);
-    bool resumeMusic(int customFadeMs = -1);
-    bool stopMusic(int customFadeMs = -1);
-    bool nextTrack(int customFadeMs = -1);
-    bool previousTrack(int customFadeMs = -1);
-    bool isPlaying() const;
-    bool isPaused() const;
-    void setVolume(int volume);  // 0-128 (SDL_Mixer range)
-    int getVolume() const;
-    std::string getCurrentTrackName() const;
-    std::string getCurrentTrackNameWithoutExtension() const;
-    std::string getCurrentTrackPath() const;
-    std::string getFormattedTrackInfo(int index = -1) const;
-    std::string getTrackArtist(int index = -1) const;
-    std::string getTrackAlbum(int index = -1) const;
-    int getCurrentTrackIndex() const;
-    int getTrackCount() const;
-    void setLoop(bool loop);
-    bool getLoop() const;
-    bool shuffle();
-    bool setShuffle(bool shuffle);
-    bool getShuffle() const;
-    void shutdown();
-
+    // Track Change State
+    TrackChangeDirection getTrackChangeDirection() const;
+    bool isFading() const;
+    void setTrackChangeDirection(TrackChangeDirection direction);
     bool hasTrackChanged();
-
     bool isPlayingNewTrack();
 
-
+    // Album Art Extraction
     bool getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData);
 
-    double getCurrent();
-
-    double getDuration();
-
-    void setTrackChangeDirection(TrackChangeDirection direction);
-
-    // Audio processing for visualizers
+    // Audio Visualization & Processing
     static void postMixCallback(void* udata, Uint8* stream, int len);
     void processAudioData(Uint8* stream, int len);
     const std::vector<float>& getAudioLevels() const { return audioLevels_; }
@@ -123,32 +136,33 @@ public:
     bool hasVisualizer() const { return hasVisualizer_; }
 
 private:
+    // Constructors / Destructors
     MusicPlayer();
     ~MusicPlayer();
 
-
-    std::vector<TrackMetadata> trackMetadata_;
-
-    TrackChangeDirection trackChangeDirection_;
-
-    static void musicFinishedCallback();
-    void onMusicFinished();
-    void setFadeDuration(int ms);
-    int getFadeDuration() const;
-    void resetShutdownFlag();
-    int getNextTrackIndex();
+    // Private Helper Functions
     void loadTrack(int index);
     bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const;
     bool parseM3UFile(const std::string& playlistPath);
     bool isValidAudioFile(const std::string& filePath) const;
+    void setFadeDuration(int ms);
+    int getFadeDuration() const;
+    void resetShutdownFlag();
+    int getNextTrackIndex();
+    static void musicFinishedCallback();
+    void onMusicFinished();
+
+    // Singleton Instance
     static MusicPlayer* instance_;
 
+    // Configuration & Playback State
     Configuration* config_;
     Mix_Music* currentMusic_;
     std::vector<std::string> musicFiles_;
     std::vector<std::string> musicNames_;
+    std::vector<TrackMetadata> trackMetadata_;
     std::vector<int> shuffledIndices_;
-    int currentShufflePos_ = -1;
+    int currentShufflePos_;
     int currentIndex_;
     int volume_;
     bool loopMode_;
@@ -160,10 +174,15 @@ private:
     bool isPendingTrackChange_;
     int pendingTrackIndex_;
     int fadeMs_;
+    int previousVolume_;
+    bool buttonPressed_;
     std::string lastCheckedTrackPath_;
+    TrackChangeDirection trackChangeDirection_;
+    bool hasStartedPlaying_;
 
+    // Audio Visualization Members
     std::vector<float> audioLevels_;
     int audioChannels_;
     bool hasVisualizer_;
-    int sampleSize_;  // Size of each audio sample (1, 2, or 4 bytes)
+    int sampleSize_;  // 1, 2, or 4 bytes per sample
 };

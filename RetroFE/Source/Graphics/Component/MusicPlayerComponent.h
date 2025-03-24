@@ -41,12 +41,7 @@ public:
     std::string_view filePath() override; // Add to match other components
 
     // Control functions for interacting with the music player
-    void skipForward() override;
-    void skipBackward() override;
-    void skipForwardp() override;
-    void skipBackwardp() override;
     void pause() override;
-    void restart() override;
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
