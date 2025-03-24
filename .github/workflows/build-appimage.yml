@@ -29,11 +29,6 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: |
-            libfuse2 
-            libboost-all-dev 
-            libcurl4-openssl-dev 
-            libglew-dev 
-            libopenal-dev
             cmake 
             dos2unix 
             zlib1g-dev
@@ -65,8 +60,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libfuse2 libboost-all-dev libcurl4-openssl-dev libglew-dev libopenal-dev \
-                                  cmake dos2unix zlib1g-dev \
+          sudo apt-get install -y cmake dos2unix zlib1g-dev \
                                   libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
                                   libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
                                   libgstreamer1.0 libgstreamer-plugins-base1.0 libgstreamer-plugins-good1.0 gstreamer1.0-libav \
