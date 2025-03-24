@@ -462,30 +462,33 @@ void ReloadableText::ReloadTexture()
         ss << text;
     }
 
-    // Update the tracked attributes
-    bool typeChanged = (currentType_ != type_);
-    bool valueChanged = (currentValue_ != ss.str());
+    const std::string newText = ss.str();
 
-    if (!typeChanged && !valueChanged && imageInst_ != nullptr)
-    {
-        // No changes and the image instance already exists, so no need to recreate it
+    bool typeChanged = (currentType_ != type_);
+    bool valueChanged = (currentValue_ != newText);
+
+    currentType_ = type_;
+    currentValue_ = newText;
+
+    if (!typeChanged && !valueChanged && imageInst_ != nullptr) {
         return;
     }
 
-    // Delete the old component if a new one is required or if it's missing
-    if (imageInst_ != nullptr)
-    {
+    if (imageInst_) {
+        if (!typeChanged && valueChanged) {
+            // Only the text changed — reuse component
+            imageInst_->setText(newText);
+            return;
+        }
+
+        // Type changed or reallocation needed
+        imageInst_->freeGraphicsMemory();
         delete imageInst_;
         imageInst_ = nullptr;
     }
 
-    currentType_ = type_;
-    currentValue_ = ss.str();
-
-    // Create a new image instance
-    if (!ss.str().empty())
-    {
-        imageInst_ = new Text(ss.str(), page, fontInst_, baseViewInfo.Monitor);
+    if (!newText.empty()) {
+        imageInst_ = new Text(newText, page, fontInst_, baseViewInfo.Monitor);
     }
 }
 

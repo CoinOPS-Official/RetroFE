@@ -70,8 +70,7 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, vuBackgroundColor_({ 40, 40, 40, 255 })
 	, vuPeakColor_({ 255, 255, 255, 255 })
 	, vuGreenThreshold_(0.4f)
-	, vuYellowThreshold_(0.6f)
-{
+	, vuYellowThreshold_(0.6f) {
 	// Set the monitor for this component
 	baseViewInfo.Monitor = monitor;
 
@@ -84,13 +83,11 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	allocateGraphicsMemory();
 }
 
-MusicPlayerComponent::~MusicPlayerComponent()
-{
+MusicPlayerComponent::~MusicPlayerComponent() {
 	freeGraphicsMemory();
 }
 
-void MusicPlayerComponent::freeGraphicsMemory()
-{
+void MusicPlayerComponent::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
 
 	// Clean up volume bar textures
@@ -114,10 +111,15 @@ void MusicPlayerComponent::freeGraphicsMemory()
 		delete loadedComponent_;
 		loadedComponent_ = nullptr;
 	}
+
+	if (cachedTextComponent_) {
+		cachedTextComponent_->freeGraphicsMemory();
+		delete cachedTextComponent_;
+		cachedTextComponent_ = nullptr;
+	}
 }
 
-void MusicPlayerComponent::allocateGraphicsMemory()
-{
+void MusicPlayerComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
 
 	// Get the renderer if we're going to handle album art or volume bar
@@ -241,8 +243,7 @@ void MusicPlayerComponent::allocateGraphicsMemory()
 	}
 }
 
-void MusicPlayerComponent::loadVolumeBarTextures()
-{
+void MusicPlayerComponent::loadVolumeBarTextures() {
 	// Get layout name from config
 	std::string layoutName;
 	config_.getProperty(OPTION_LAYOUT, layoutName);
@@ -268,7 +269,7 @@ void MusicPlayerComponent::loadVolumeBarTextures()
 
 	for (const auto& basePath : searchPaths) {
 		// Look for empty.png/jpg
-		std::vector<std::string> extensions = {".png", ".jpg", ".jpeg"};
+		std::vector<std::string> extensions = { ".png", ".jpg", ".jpeg" };
 		for (const auto& ext : extensions) {
 			std::string path = Utils::combinePath(basePath, "empty" + ext);
 			if (std::filesystem::exists(path)) {
@@ -377,16 +378,14 @@ void MusicPlayerComponent::updateVolumeBarTexture() {
 	lastVolumeValue_ = volumeRaw;
 }
 
-std::string_view MusicPlayerComponent::filePath()
-{
+std::string_view MusicPlayerComponent::filePath() {
 	if (loadedComponent_ != nullptr) {
 		return loadedComponent_->filePath();
 	}
 	return "";
 }
 
-bool MusicPlayerComponent::update(float dt)
-{
+bool MusicPlayerComponent::update(float dt) {
 	// Update refresh timer
 	refreshTimer_ += dt;
 
@@ -507,32 +506,11 @@ bool MusicPlayerComponent::update(float dt)
 		currentState = musicPlayer_->getFormattedTrackInfo();
 	}
 
-	// Check if update is needed (state changed or refresh interval elapsed)
-	bool needsUpdate = (currentState != lastState_) 
-		|| (refreshTimer_ >= refreshInterval_) 
-		|| type_ == "volume";
-
-	if (needsUpdate) {
-		// Reset timer
+	if ((currentState != lastState_) || (refreshTimer_ >= refreshInterval_)) {
 		refreshTimer_ = 0.0f;
-
-		// Update state tracking
 		lastState_ = currentState;
 
-		// Recreate the component based on current state
-		Component* newComponent = reloadComponent();
-
-		if (newComponent != nullptr) {
-			// Replace existing component if needed
-			if (newComponent != loadedComponent_) {
-				if (loadedComponent_ != nullptr) {
-					loadedComponent_->freeGraphicsMemory();
-					delete loadedComponent_;
-				}
-				loadedComponent_ = newComponent;
-				loadedComponent_->allocateGraphicsMemory();
-			}
-		}
+		reloadComponent(); // Just updates cachedTextComponent_
 	}
 
 	// Update the loaded component
@@ -543,8 +521,7 @@ bool MusicPlayerComponent::update(float dt)
 	return Component::update(dt);
 }
 
-void MusicPlayerComponent::draw()
-{
+void MusicPlayerComponent::draw() {
 	Component::draw();
 
 	if (isVuMeter_) {
@@ -575,16 +552,15 @@ void MusicPlayerComponent::draw()
 		return;
 	}
 
-	if (loadedComponent_ != nullptr) {
-		loadedComponent_->baseViewInfo = baseViewInfo;
+	if (cachedTextComponent_) {
+		cachedTextComponent_->baseViewInfo = baseViewInfo;
 		if (baseViewInfo.Alpha > 0.0f) {
-			loadedComponent_->draw();
+			cachedTextComponent_->draw();
 		}
 	}
 }
 
-void MusicPlayerComponent::updateVuLevels()
-{
+void MusicPlayerComponent::updateVuLevels() {
 	// Get audio levels from the music player
 	const std::vector<float>& audioLevels = musicPlayer_->getAudioLevels();
 	int channels = musicPlayer_->getAudioChannels();
@@ -725,8 +701,7 @@ void MusicPlayerComponent::updateVuLevels()
 	}
 }
 
-void MusicPlayerComponent::drawVuMeter()
-{
+void MusicPlayerComponent::drawVuMeter() {
 	if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
 		return;
 	}
@@ -850,8 +825,7 @@ void MusicPlayerComponent::drawVuMeter()
 }
 
 
-void MusicPlayerComponent::drawProgressBar()
-{
+void MusicPlayerComponent::drawProgressBar() {
 	if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
 		return;
 	}
@@ -892,8 +866,7 @@ void MusicPlayerComponent::drawProgressBar()
 
 
 
-void MusicPlayerComponent::drawAlbumArt()
-{
+void MusicPlayerComponent::drawAlbumArt() {
 	if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
 		return;
 	}
@@ -949,8 +922,7 @@ void MusicPlayerComponent::drawAlbumArt()
 	}
 }
 
-SDL_Texture* MusicPlayerComponent::loadDefaultAlbumArt()
-{
+SDL_Texture* MusicPlayerComponent::loadDefaultAlbumArt() {
 	// Get layout name from config
 	std::string layoutName;
 	config_.getProperty(OPTION_LAYOUT, layoutName);
@@ -984,8 +956,7 @@ SDL_Texture* MusicPlayerComponent::loadDefaultAlbumArt()
 	return nullptr;
 }
 
-void MusicPlayerComponent::drawVolumeBar()
-{
+void MusicPlayerComponent::drawVolumeBar() {
 	if (!renderer_ || !volumeBarTexture_ || baseViewInfo.Alpha <= 0.0f) {
 		return;
 	}
@@ -1023,8 +994,7 @@ void MusicPlayerComponent::drawVolumeBar()
 	);
 }
 
-Component* MusicPlayerComponent::reloadComponent()
-{
+Component* MusicPlayerComponent::reloadComponent() {
 	// Album art is handled directly, don't create a component for it
 	if (isAlbumArt_ || isVolumeBar_ || !musicPlayer_->hasStartedPlaying()) {
 		return nullptr;
@@ -1072,71 +1042,97 @@ Component* MusicPlayerComponent::reloadComponent()
 	}
 	else if (typeLC == "filename") {
 		std::string fileName = musicPlayer_->getCurrentTrackNameWithoutExtension();
-		if (fileName.empty()) {
-			fileName = "";
+
+		if (cachedTextComponent_) {
+			cachedTextComponent_->setText(fileName);
+			return cachedTextComponent_;
 		}
-		return new Text(fileName, page, font_, baseViewInfo.Monitor);
+
+		cachedTextComponent_ = new Text(fileName, page, font_, baseViewInfo.Monitor);
+		return cachedTextComponent_;
 	}
 	else if (typeLC == "trackinfo") {
-		// For track text, create a Text component directly
 		std::string trackName = musicPlayer_->getFormattedTrackInfo();
 		if (trackName.empty()) {
 			trackName = "No track playing";
 		}
-		return new Text(trackName, page, font_, baseViewInfo.Monitor);
+
+		if (cachedTextComponent_) {
+			cachedTextComponent_->setText(trackName);
+			return cachedTextComponent_;
+		}
+
+		cachedTextComponent_ = new Text(trackName, page, font_, baseViewInfo.Monitor);
+		return cachedTextComponent_;
 	}
 	else if (typeLC == "title") {
 		std::string titleName = musicPlayer_->getCurrentTitle();
 		if (titleName.empty()) {
 			titleName = "Unknown";
 		}
-		return new Text(titleName, page, font_, baseViewInfo.Monitor);
+
+		if (cachedTextComponent_) {
+			cachedTextComponent_->setText(titleName);
+			return cachedTextComponent_;
+		}
+
+		cachedTextComponent_ = new Text(titleName, page, font_, baseViewInfo.Monitor);
+		return cachedTextComponent_;
 	}
 	else if (typeLC == "artist") {
 		std::string artistName = musicPlayer_->getCurrentArtist();
 		if (artistName.empty()) {
 			artistName = "Unknown Artist";
 		}
-		return new Text(artistName, page, font_, baseViewInfo.Monitor);
+
+		if (cachedTextComponent_) {
+			cachedTextComponent_->setText(artistName);
+			return cachedTextComponent_;
+		}
+
+		cachedTextComponent_ = new Text(artistName, page, font_, baseViewInfo.Monitor);
+		return cachedTextComponent_;
 	}
 	else if (typeLC == "album") {
 		std::string albumName = musicPlayer_->getCurrentAlbum();
 		if (albumName.empty()) {
 			albumName = "Unknown Album";
 		}
-		return new Text(albumName, page, font_, baseViewInfo.Monitor);
+
+		if (cachedTextComponent_) {
+			cachedTextComponent_->setText(albumName);
+			return cachedTextComponent_;
+		}
+
+		cachedTextComponent_ = new Text(albumName, page, font_, baseViewInfo.Monitor);
+		return cachedTextComponent_;
 	}
 	else if (typeLC == "time") {
-		// Format time based on duration length
 		auto [currentSec, durationSec] = musicPlayer_->getCurrentAndDurationSec();
 
 		if (currentSec < 0)
 			return nullptr;
 
-		// Calculate minutes and remaining seconds
 		int currentMin = currentSec / 60;
 		int currentRemSec = currentSec % 60;
 		int durationMin = durationSec / 60;
 		int durationRemSec = durationSec % 60;
 
 		std::stringstream ss;
+		int minWidth = durationMin >= 10 ? 2 : 1;
 
-		// Determine if we need to pad minutes with zeros based on duration minutes
-		int minWidth = 1; // Default no padding
-
-		// If duration minutes is 10 or more, use padding
-		if (durationMin >= 10) {
-			minWidth = 2; // Use 2 digits for minutes
-		}
-
-		// Format minutes with conditional padding
 		ss << std::setfill('0') << std::setw(minWidth) << currentMin << ":"
-			<< std::setfill('0') << std::setw(2) << currentRemSec // Seconds always use 2 digits
-			<< "/"
+			<< std::setfill('0') << std::setw(2) << currentRemSec << "/"
 			<< std::setfill('0') << std::setw(minWidth) << durationMin << ":"
 			<< std::setfill('0') << std::setw(2) << durationRemSec;
 
-		return new Text(ss.str(), page, font_, baseViewInfo.Monitor);
+		if (cachedTextComponent_) {
+			cachedTextComponent_->setText(ss.str());
+			return cachedTextComponent_;
+		}
+
+		cachedTextComponent_ = new Text(ss.str(), page, font_, baseViewInfo.Monitor);
+		return cachedTextComponent_;
 	}
 	else if (typeLC == "progress") {
 
@@ -1146,8 +1142,14 @@ Component* MusicPlayerComponent::reloadComponent()
 		int volumePercentage = static_cast<int>((volumeRaw / 128.0f) * 100.0f + 0.5f);
 		std::string volumeStr = std::to_string(volumePercentage);
 
-		return new Text(volumeStr, page, font_, baseViewInfo.Monitor);
-}
+		if (cachedTextComponent_) {
+			cachedTextComponent_->setText(volumeStr);
+			return cachedTextComponent_;
+		}
+
+		cachedTextComponent_ = new Text(volumeStr, page, font_, baseViewInfo.Monitor);
+		return cachedTextComponent_;
+	}
 	else {
 		// Default basename for other types
 		basename = typeLC;
@@ -1175,8 +1177,7 @@ Component* MusicPlayerComponent::reloadComponent()
 	return component;
 }
 
-void MusicPlayerComponent::pause()
-{
+void MusicPlayerComponent::pause() {
 	if (musicPlayer_->isPlaying()) {
 		musicPlayer_->pauseMusic();
 	}
@@ -1185,22 +1186,18 @@ void MusicPlayerComponent::pause()
 	}
 }
 
-unsigned long long MusicPlayerComponent::getCurrent()
-{
+unsigned long long MusicPlayerComponent::getCurrent() {
 	return static_cast<unsigned long long>(musicPlayer_->getCurrent());
 }
 
-unsigned long long MusicPlayerComponent::getDuration()
-{
+unsigned long long MusicPlayerComponent::getDuration() {
 	return static_cast<unsigned long long>(musicPlayer_->getDuration());
 }
 
-bool MusicPlayerComponent::isPaused()
-{
+bool MusicPlayerComponent::isPaused() {
 	return musicPlayer_->isPaused();
 }
 
-bool MusicPlayerComponent::isPlaying()
-{
+bool MusicPlayerComponent::isPlaying() {
 	return musicPlayer_->isPlaying();
 }
