@@ -1276,6 +1276,58 @@ int MusicPlayer::getVolume() const {
 	return Mix_VolumeMusic(-1);
 }
 
+void MusicPlayer::fadeToVolume(int targetPercent)
+{
+	// Clamp target percentage between 0 and 100.
+	targetPercent = std::max(0, std::min(100, targetPercent));
+	// Convert percentage to Mix_VolumeMusic range.
+	int targetVolume = static_cast<int>((targetPercent / 100.0f) * MIX_MAX_VOLUME + 0.5f);
+
+	// Save the current volume (in the 0-128 range) for later restoration.
+	previousVolume_ = getVolume();
+
+	// Determine the number of steps for a smooth fade.
+	const int steps = 50;
+	int sleepDuration = (fadeMs_ > 0) ? (fadeMs_ / steps) : 0;
+
+	// Launch a detached thread to perform the fade.
+	std::thread([this, targetVolume, steps, sleepDuration]() {
+		int startVolume = getVolume();
+		for (int i = 0; i <= steps; ++i)
+		{
+			// Linear interpolation between startVolume and targetVolume.
+			float t = static_cast<float>(i) / steps;
+			int newVolume = static_cast<int>(startVolume + t * (targetVolume - startVolume));
+			Mix_VolumeMusic(newVolume);
+			if (sleepDuration > 0)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
+			}
+		}
+		}).detach();
+}
+
+void MusicPlayer::fadeBackToPreviousVolume()
+{
+	int targetVolume = previousVolume_;
+	const int steps = 50;
+	int sleepDuration = (fadeMs_ > 0) ? (fadeMs_ / steps) : 0;
+
+	std::thread([this, targetVolume, steps, sleepDuration]() {
+		int startVolume = getVolume();
+		for (int i = 0; i <= steps; ++i)
+		{
+			float t = static_cast<float>(i) / steps;
+			int newVolume = static_cast<int>(startVolume + t * (targetVolume - startVolume));
+			Mix_VolumeMusic(newVolume);
+			if (sleepDuration > 0)
+			{
+				std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
+			}
+		}
+		}).detach();
+}
+
 void MusicPlayer::fadeToVolume(int targetVolume, int customFadeMs) {
 	int durationMs = (customFadeMs >= 0) ? customFadeMs : fadeMs_;
 	targetVolume = std::max(0, std::min(MIX_MAX_VOLUME, targetVolume));
