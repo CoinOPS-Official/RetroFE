@@ -78,11 +78,14 @@ public:
     double saveCurrentMusicPosition();
     double getCurrent();    // Current playback position (sec)
     double getDuration();   // Duration of current track (sec)
+    std::pair<int, int> getCurrentAndDurationSec();
     bool getButtonPressed();
     void setButtonPressed(bool buttonPressed);
 
     // Volume & Loop Settings
     void setVolume(int volume);  // 0-128 (SDL_Mixer range)
+    void setLogicalVolume(int v);
+    int getLogicalVolume();
     int getVolume() const;
     void fadeToVolume(int targetPercent);
     void fadeBackToPreviousVolume();
@@ -165,6 +168,7 @@ private:
     int currentShufflePos_;
     int currentIndex_;
     int volume_;
+    int logicalVolume_;
     bool loopMode_;
     bool shuffleMode_;
     bool isShuttingDown_;

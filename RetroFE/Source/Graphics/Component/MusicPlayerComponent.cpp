@@ -39,7 +39,7 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, musicPlayer_(MusicPlayer::getInstance())
 	, font_(font)
 	, lastState_("")
-	, refreshInterval_(0.5f)
+	, refreshInterval_(0.25f)
 	, refreshTimer_(0.0f)
 	, albumArtTexture_(nullptr)
 	, albumArtTrackIndex_(-1)
@@ -338,43 +338,43 @@ void MusicPlayerComponent::loadVolumeBarTextures()
 }
 
 void MusicPlayerComponent::updateVolumeBarTexture() {
-    if (!renderer_ || !volumeEmptyTexture_ || !volumeFullTexture_ || !volumeBarTexture_) {
-        return;
-    }
-    
-	// Get current volume (0-128) and convert to percentage
-	int volumeRaw = musicPlayer_->getVolume();
-	float volumePercent = static_cast<float>(volumeRaw) / MIX_MAX_VOLUME;
+	if (!renderer_ || !volumeEmptyTexture_ || !volumeFullTexture_ || !volumeBarTexture_) {
+		return;
+	}
 
-    // Calculate the width of the visible portion of the full texture
-    int visibleWidth = static_cast<int>(volumeBarWidth_ * volumePercent);
-    
-    // Set render target to our texture
-    SDL_SetRenderTarget(renderer_, volumeBarTexture_);
-    
-    // Clear the texture
-    SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
-    SDL_RenderClear(renderer_);
-    
-    // Draw the full texture first (visible part based on volume)
-    if (visibleWidth > 0) {
-        SDL_Rect srcRect = { 0, 0, visibleWidth, volumeBarHeight_ };
-        SDL_Rect destRect = { 0, 0, visibleWidth, volumeBarHeight_ };
-        SDL_RenderCopy(renderer_, volumeFullTexture_, &srcRect, &destRect);
-    }
-    
-    // Draw the empty texture for the remaining portion
-    if (visibleWidth < volumeBarWidth_) {
-        SDL_Rect srcRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
-        SDL_Rect destRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
-        SDL_RenderCopy(renderer_, volumeEmptyTexture_, &srcRect, &destRect);
-    }
-    
-    // Reset render target
-    SDL_SetRenderTarget(renderer_, nullptr);
-    
-    // Update last volume value (if needed for change detection)
-    lastVolumeValue_ = volumeRaw;
+	// Get raw volume (0–128)
+	int volumeRaw = musicPlayer_->getLogicalVolume();
+	volumeRaw = std::clamp(volumeRaw, 0, 128); // Just in case
+
+	// Compute visible width proportionally (integer math)
+	int visibleWidth = (volumeBarWidth_ * volumeRaw) / 128;
+
+	// Set render target to volume bar texture
+	SDL_SetRenderTarget(renderer_, volumeBarTexture_);
+
+	// Clear with full transparency
+	SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+	SDL_RenderClear(renderer_);
+
+	// Draw full portion only if volume > 0
+	if (visibleWidth > 0) {
+		SDL_Rect srcRect = { 0, 0, visibleWidth, volumeBarHeight_ };
+		SDL_Rect dstRect = { 0, 0, visibleWidth, volumeBarHeight_ };
+		SDL_RenderCopy(renderer_, volumeFullTexture_, &srcRect, &dstRect);
+	}
+
+	// Draw empty portion only if volume < 128
+	if (visibleWidth < volumeBarWidth_) {
+		SDL_Rect srcRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
+		SDL_Rect dstRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
+		SDL_RenderCopy(renderer_, volumeEmptyTexture_, &srcRect, &dstRect);
+	}
+
+	// Reset render target
+	SDL_SetRenderTarget(renderer_, nullptr);
+
+	// Save last volume value
+	lastVolumeValue_ = volumeRaw;
 }
 
 std::string_view MusicPlayerComponent::filePath()
@@ -438,52 +438,50 @@ bool MusicPlayerComponent::update(float dt)
 	// Special handling for volume bar
 	if (isVolumeBar_) {
 		if (musicPlayer_->getButtonPressed()) {
-			// Volume changed - update the texture and animation state
+			// Volume changed by user input — refresh bar
 			updateVolumeBarTexture();
 			volumeChanging_ = true;
 			volumeStableTimer_ = 0.0f;
 			musicPlayer_->setButtonPressed(false);
 		}
 		else {
-			// Volume is stable
+			// No user input — increment stable timer
 			volumeStableTimer_ += dt;
 
-			// If volume has been stable for the fade delay, start fading out
+			// After delay, stop considering it "changing"
 			if (volumeChanging_ && volumeStableTimer_ >= volumeFadeDelay_) {
 				volumeChanging_ = false;
 			}
 		}
 
-		// Set target alpha based on current state and baseViewInfo.Alpha
-		if (volumeChanging_) {
-			// When volume is changing, target is the current baseViewInfo.Alpha
-			// This ensures we always track changes to baseViewInfo.Alpha
-			targetAlpha_ = baseViewInfo.Alpha;
+		// Respect layout alpha override — this takes precedence
+		if (baseViewInfo.Alpha <= 0.0f) {
+			// Layout says: fully invisible — suppress our own fade logic
+			targetAlpha_ = 0.0f;
+			currentDisplayAlpha_ = 0.0f;  // Ensure alpha is clamped
+			volumeStableTimer_ = 0.0f;    // Reset timer
+			volumeChanging_ = false;     // Cancel any ongoing fade
 		}
 		else {
-			// When volume is stable and we've passed the delay, target is 0
-			targetAlpha_ = 0.0f;
-		}
+			// Layout allows visibility — resume our logic
+			targetAlpha_ = volumeChanging_ ? baseViewInfo.Alpha : 0.0f;
 
-		// Animate the alpha with consistent timing
-		if (currentDisplayAlpha_ != targetAlpha_) {
-			// Calculate the maximum change amount for this frame to maintain consistent speed
-			float maxAlphaChange = dt * fadeSpeed_;
+			// Animate current alpha toward target
+			if (currentDisplayAlpha_ != targetAlpha_) {
+				float maxAlphaChange = dt * fadeSpeed_;
 
-			if (currentDisplayAlpha_ < targetAlpha_) {
-				// Fade in
-				float alphaChange = std::min(targetAlpha_ - currentDisplayAlpha_, maxAlphaChange);
-				currentDisplayAlpha_ += alphaChange;
-			}
-			else {
-				// Fade out
-				float alphaChange = std::min(currentDisplayAlpha_ - targetAlpha_, maxAlphaChange);
-				currentDisplayAlpha_ -= alphaChange;
+				if (currentDisplayAlpha_ < targetAlpha_) {
+					currentDisplayAlpha_ = std::min(currentDisplayAlpha_ + maxAlphaChange, targetAlpha_);
+				}
+				else {
+					currentDisplayAlpha_ = std::max(currentDisplayAlpha_ - maxAlphaChange, targetAlpha_);
+				}
 			}
 		}
 
 		return Component::update(dt);
 	}
+
 
 	// Determine current state
 	std::string currentState;
@@ -1110,8 +1108,7 @@ Component* MusicPlayerComponent::reloadComponent()
 	}
 	else if (typeLC == "time") {
 		// Format time based on duration length
-		int currentSec = static_cast<int>(musicPlayer_->getCurrent());
-		int durationSec = static_cast<int>(musicPlayer_->getDuration());
+		auto [currentSec, durationSec] = musicPlayer_->getCurrentAndDurationSec();
 
 		if (currentSec < 0)
 			return nullptr;

@@ -46,6 +46,7 @@ MusicPlayer::MusicPlayer()
 	, currentShufflePos_(-1)
 	, currentIndex_(-1)
 	, volume_(MIX_MAX_VOLUME)
+	, logicalVolume_(volume_)
 	, loopMode_(false)
 	, shuffleMode_(false)
 	, isShuttingDown_(false)
@@ -679,13 +680,13 @@ std::string MusicPlayer::getFormattedTrackInfo(int index) const
 		info += " - " + meta.artist;
 	}
 
-	if (!meta.album.empty()) {
-		info += " (" + meta.album;
-		if (!meta.year.empty()) {
-			info += ", " + meta.year;
-		}
-		info += ")";
-	}
+//	if (!meta.album.empty()) {
+	//	info += " (" + meta.album;
+	//	if (!meta.year.empty()) {
+	//		info += ", " + meta.year;
+	//	}
+	//	info += ")";
+	//}
 
 	return info;
 }
@@ -1145,6 +1146,24 @@ void MusicPlayer::setVolume(int newVolume)
 
 	LOG_INFO("MusicPlayer", "Volume set to " + std::to_string(volume_));
 }
+
+void MusicPlayer::setLogicalVolume(int v) {
+	logicalVolume_ = std::clamp(v, 0, 128);
+	float normalized = static_cast<float>(logicalVolume_) / 128.0f;
+
+	// Map to dB from -60dB (very quiet) to 0dB (full)
+	float dB = normalized * 60.0f - 60.0f;
+	float gain = std::pow(10.0f, dB / 20.0f); // Convert dB to linear scale
+
+	int finalVolume = static_cast<int>(gain * 128.0f + 0.5f);
+
+	Mix_VolumeMusic(finalVolume);
+}
+
+int MusicPlayer::getLogicalVolume() {
+	return logicalVolume_;
+}
+
 
 int MusicPlayer::getVolume() const
 {
@@ -1669,6 +1688,14 @@ double MusicPlayer::getDuration()
 	}
 
 	return Mix_MusicDuration(currentMusic_);
+}
+
+std::pair<int, int> MusicPlayer::getCurrentAndDurationSec() {
+	if (!currentMusic_) return { -1, -1 };
+	return {
+		static_cast<int>(Mix_GetMusicPosition(currentMusic_)),
+		static_cast<int>(Mix_MusicDuration(currentMusic_))
+	};
 }
 
 void MusicPlayer::setTrackChangeDirection(TrackChangeDirection direction)
