@@ -2627,16 +2627,22 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 		{
 			musicPlayer_->playMusic();
 		}
+		// Reset attract mode
+		attract_.reset();
 		break;
 
 	case UserInput::KeyCodeMusicNext:
 		musicPlayer_->setTrackChangeDirection(MusicPlayer::TrackChangeDirection::NEXT);
 		musicPlayer_->nextTrack();
+		// Reset attract mode
+		attract_.reset();
 		break;
 
 	case UserInput::KeyCodeMusicPrev:
 		musicPlayer_->setTrackChangeDirection(MusicPlayer::TrackChangeDirection::PREVIOUS);
 		musicPlayer_->previousTrack();
+		// Reset attract mode
+		attract_.reset();
 		break;
 
 	case UserInput::KeyCodeMusicVolumeUp:
@@ -2645,7 +2651,8 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 		int newLogical = std::min(128, current + 1);
 		musicPlayer_->setButtonPressed(true);
 		musicPlayer_->setLogicalVolume(newLogical);
-	
+		// Reset attract mode
+		attract_.reset();
 	}
 	break;
 
@@ -2655,6 +2662,8 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 		int newLogical = std::max(0, current - 1);
 		musicPlayer_->setButtonPressed(true);
 		musicPlayer_->setLogicalVolume(newLogical);
+		// Reset attract mode
+		attract_.reset();
 	}
 	break;
 
