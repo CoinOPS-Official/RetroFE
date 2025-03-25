@@ -2665,6 +2665,9 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 	case UserInput::KeyCodeMusicToggleLoop:
 		musicPlayer_->setLoop(!musicPlayer_->getLoop());
 		break;
+	
+	default:
+		break; // Do nothing for other key codes
 	}
 }
 
