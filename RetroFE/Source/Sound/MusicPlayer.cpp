@@ -1149,28 +1149,17 @@ void MusicPlayer::setVolume(int newVolume)
 
 void MusicPlayer::setLogicalVolume(int v) {
 	logicalVolume_ = std::clamp(v, 0, 128);
+	if (logicalVolume_ == 0) {
+		Mix_VolumeMusic(0);
+		return;
+	}
 	float normalized = static_cast<float>(logicalVolume_) / 128.0f;
-
-	// Use a custom curve that's less aggressive
-	// This approach gives a more balanced volume distribution
-	// Adjust the constants to get the desired behavior
-
-	// Option 1: Milder logarithmic curve
-	float minDb = -40.0f; // Less dramatic minimum (was -60dB)
-	float dB = (normalized * normalized) * -minDb + minDb;
-
-	// Convert dB to linear scale
+	float dB = normalized * 40.0f - 40.0f;
 	float gain = std::pow(10.0f, dB / 20.0f);
-
-	// Apply to SDL mixer's range with a small offset to ensure
-	// we don't have complete silence except at volume 0
-	int finalVolume = static_cast<int>((gain * 126.0f) + 2.0f + 0.5f);
-
-	// Ensure boundaries
-	finalVolume = std::clamp(finalVolume, 0, 128);
-
+	int finalVolume = static_cast<int>(gain * 128.0f + 0.5f);
 	Mix_VolumeMusic(finalVolume);
 }
+
 
 int MusicPlayer::getLogicalVolume() {
 	return logicalVolume_;
