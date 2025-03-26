@@ -28,6 +28,7 @@
 #include "../../SDL.h"
 #include <sstream>
 #include <iomanip>
+#include <algorithm>
 
 MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMode, const std::string& type, Page& p, int monitor, FontManager* font)
 	: Component(p)
