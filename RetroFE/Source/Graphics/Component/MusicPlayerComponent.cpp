@@ -42,6 +42,8 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, lastState_("")
 	, refreshInterval_(0.25f)
 	, refreshTimer_(0.0f)
+	, directionDisplayTimer_(0.0f)
+	, directionDisplayDuration_(0.5f)
 	, albumArtTexture_(nullptr)
 	, albumArtTrackIndex_(-1)
 	, renderer_(nullptr)
@@ -480,7 +482,41 @@ bool MusicPlayerComponent::update(float dt) {
 	std::string currentState;
 
 	if (type_ == "state") {
-		currentState = musicPlayer_->isPlaying() ? "playing" : "paused";
+		// Get the unified state
+		auto state = musicPlayer_->getPlaybackState();
+		// Convert the state to a string representation.
+		switch (state) {
+			case MusicPlayer::PlaybackState::NEXT:
+			currentState = "next";
+			break;
+			case MusicPlayer::PlaybackState::PREVIOUS:
+			currentState = "previous";
+			break;
+			case MusicPlayer::PlaybackState::PLAYING:
+			currentState = "playing";
+			break;
+			case MusicPlayer::PlaybackState::PAUSED:
+			currentState = "paused";
+			break;
+			default:
+			currentState = "unknown";
+			break;
+		}
+
+		// For NEXT/PREVIOUS, display the directional state for a set duration.
+		if (state == MusicPlayer::PlaybackState::NEXT || state == MusicPlayer::PlaybackState::PREVIOUS) {
+			directionDisplayTimer_ = directionDisplayDuration_;
+		}
+		else {
+			if (directionDisplayTimer_ > 0.0f) {
+				directionDisplayTimer_ -= dt;
+				if (directionDisplayTimer_ <= 0.0f && musicPlayer_->getPlaybackState() != MusicPlayer::PlaybackState::PAUSED) {
+					// After timer expiration, revert to playing state.
+					musicPlayer_->setPlaybackState(MusicPlayer::PlaybackState::PLAYING);
+					currentState = "playing";
+				}
+			}
+		}
 	}
 	else if (type_ == "shuffle") {
 		currentState = musicPlayer_->getShuffle() ? "on" : "off";
@@ -1016,31 +1052,31 @@ Component* MusicPlayerComponent::reloadComponent() {
 
 	// Determine the basename based on component type
 	if (typeLC == "state") {
-		// Check if we need to reset the direction - do this when fading has completed
-		MusicPlayer::TrackChangeDirection direction = musicPlayer_->getTrackChangeDirection();
+		// Use the unified PlaybackState from MusicPlayer.
+		MusicPlayer::PlaybackState state = musicPlayer_->getPlaybackState();
 
-		// If we have a direction set and fading has completed, reset the direction
-		if (direction != MusicPlayer::TrackChangeDirection::NONE && !musicPlayer_->isFading()) {
-			// Only reset if we're actually playing music (not in a paused state)
+		// If we have a directional state (NEXT or PREVIOUS) and fading is done,
+		// reset the state to PLAYING if music is playing.
+		if ((state == MusicPlayer::PlaybackState::NEXT || state == MusicPlayer::PlaybackState::PREVIOUS) &&
+			!musicPlayer_->isFading()) {
 			if (musicPlayer_->isPlaying()) {
-				musicPlayer_->setTrackChangeDirection(MusicPlayer::TrackChangeDirection::NONE);
+				musicPlayer_->setPlaybackState(MusicPlayer::PlaybackState::PLAYING);
 			}
 		}
+		// Update our local copy of the state.
+		state = musicPlayer_->getPlaybackState();
 
-		// Get the potentially updated direction after reset check
-		direction = musicPlayer_->getTrackChangeDirection();
-
-		// Set basename based on priority: direction indicators first, then play state
-		if (direction == MusicPlayer::TrackChangeDirection::NEXT) {
+		// Set basename based on the unified state.
+		if (state == MusicPlayer::PlaybackState::NEXT) {
 			basename = "next";
 		}
-		else if (direction == MusicPlayer::TrackChangeDirection::PREVIOUS) {
+		else if (state == MusicPlayer::PlaybackState::PREVIOUS) {
 			basename = "previous";
 		}
-		else if (musicPlayer_->isPlaying()) {
+		else if (state == MusicPlayer::PlaybackState::PLAYING) {
 			basename = "playing";
 		}
-		else if (musicPlayer_->isPaused()) {
+		else if (state == MusicPlayer::PlaybackState::PAUSED) {
 			basename = "paused";
 		}
 	}

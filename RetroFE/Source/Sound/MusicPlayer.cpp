@@ -39,6 +39,7 @@ MusicPlayer* MusicPlayer::getInstance()
 
 MusicPlayer::MusicPlayer()
 	: config_(nullptr)
+	, playbackState_(PlaybackState::NONE)
 	, currentMusic_(nullptr)
 	, musicFiles_()               // default empty vector
 	, musicNames_()               // default empty vector
@@ -59,7 +60,6 @@ MusicPlayer::MusicPlayer()
 	, previousVolume_(volume_)
 	, buttonPressed_(false)
 	, lastCheckedTrackPath_("")
-	, trackChangeDirection_(TrackChangeDirection::NONE)  // Reinserted here
 	, hasStartedPlaying_(false)
 	, audioLevels_()              // default empty vector
 	, audioChannels_(2)           // Default to stereo
@@ -830,6 +830,7 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 		return false;
 	}
 
+	setPlaybackState(PlaybackState::PLAYING);
 	LOG_INFO("MusicPlayer", "Now playing track: " + getFormattedTrackInfo(index));
 	isPendingTrackChange_ = false;
 	
@@ -897,7 +898,7 @@ bool MusicPlayer::pauseMusic(int customFadeMs)
 		Mix_PauseMusic();
 		LOG_INFO("MusicPlayer", "Music paused");
 	}
-
+	setPlaybackState(PlaybackState::PAUSED);
 	return true;
 }
 
@@ -975,6 +976,7 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 			LOG_INFO("MusicPlayer", "Resuming track: " + musicNames_[currentIndex_] + " from adjusted position " +
 				std::to_string(adjustedPosition) + " (original: " + std::to_string(pausedMusicPosition_) +
 				") with " + std::to_string(useFadeMs) + "ms fade");
+			setPlaybackState(PlaybackState::PLAYING);
 			return true;
 		}
 		else if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
@@ -993,6 +995,7 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 		// Regular pause (not after fade-out), just resume
 		Mix_ResumeMusic();
 		LOG_INFO("MusicPlayer", "Music resumed");
+		setPlaybackState(PlaybackState::PLAYING);
 		return true;
 	}
 
@@ -1048,8 +1051,6 @@ bool MusicPlayer::nextTrack(int customFadeMs)
 		return false;
 	}
 
-	//trackChangeDirection = TrackChangeDirection::NEXT;
-
 	int nextIndex;
 
 	if (shuffleMode_)
@@ -1063,7 +1064,7 @@ bool MusicPlayer::nextTrack(int customFadeMs)
 		// In sequential mode, move to the next track in the list
 		nextIndex = (currentIndex_ + 1) % musicFiles_.size();
 	}
-
+	setPlaybackState(PlaybackState::NEXT);
 	return playMusic(nextIndex, customFadeMs);
 }
 
@@ -1100,8 +1101,6 @@ bool MusicPlayer::previousTrack(int customFadeMs)
 		return false;
 	}
 
-	//trackChangeDirection = TrackChangeDirection::PREVIOUS;
-
 	int prevIndex;
 
 	if (shuffleMode_)
@@ -1115,7 +1114,7 @@ bool MusicPlayer::previousTrack(int customFadeMs)
 		// In sequential mode, move to the previous track in the list
 		prevIndex = (currentIndex_ - 1 + static_cast<int>(musicFiles_.size())) % static_cast<int>(musicFiles_.size());
 	}
-
+	setPlaybackState(PlaybackState::PREVIOUS);
 	return playMusic(prevIndex, customFadeMs);
 }
 
@@ -1697,16 +1696,6 @@ std::pair<int, int> MusicPlayer::getCurrentAndDurationSec() {
 		static_cast<int>(Mix_GetMusicPosition(currentMusic_)),
 		static_cast<int>(Mix_MusicDuration(currentMusic_))
 	};
-}
-
-void MusicPlayer::setTrackChangeDirection(TrackChangeDirection direction)
-{
-	trackChangeDirection_ = direction;
-}
-
-MusicPlayer::TrackChangeDirection MusicPlayer::getTrackChangeDirection() const
-{
-	return trackChangeDirection_;
 }
 
 bool MusicPlayer::isFading() const

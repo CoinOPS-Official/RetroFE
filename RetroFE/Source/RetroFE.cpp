@@ -2632,14 +2632,12 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 		break;
 
 	case UserInput::KeyCodeMusicNext:
-		musicPlayer_->setTrackChangeDirection(MusicPlayer::TrackChangeDirection::NEXT);
 		musicPlayer_->nextTrack();
 		// Reset attract mode
 		attract_.reset();
 		break;
 
 	case UserInput::KeyCodeMusicPrev:
-		musicPlayer_->setTrackChangeDirection(MusicPlayer::TrackChangeDirection::PREVIOUS);
 		musicPlayer_->previousTrack();
 		// Reset attract mode
 		attract_.reset();

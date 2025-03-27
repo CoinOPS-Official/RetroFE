@@ -31,6 +31,7 @@ public:
     ~MusicPlayerComponent() override;
 
     bool update(float dt) override;
+    void triggerImmediateUpdate();
     void draw() override;
     void drawProgressBar();
     void drawAlbumArt();
@@ -66,6 +67,8 @@ private:
     std::string lastState_;  // Tracks the last state (playing/paused/etc.)
     float refreshInterval_;  // How often to update in seconds
     float refreshTimer_;
+    float directionDisplayTimer_;
+    const float directionDisplayDuration_;
 
     // Album art tracking
     SDL_Texture* albumArtTexture_;

@@ -50,12 +50,18 @@ public:
         TrackMetadata() : trackNumber(0) {}
     };
 
+
     // Enum for track change direction
-    enum class TrackChangeDirection {
+    enum class PlaybackState {
         NONE,
+        PLAYING,
+        PAUSED,
         NEXT,
         PREVIOUS
     };
+
+    void setPlaybackState(PlaybackState state) { playbackState_ = state; }
+    PlaybackState getPlaybackState() const { return playbackState_; }
 
     // Initialization & Shutdown
     bool initialize(Configuration& config);
@@ -120,9 +126,7 @@ public:
     int getCurrentTrackNumber() const;
 
     // Track Change State
-    TrackChangeDirection getTrackChangeDirection() const;
     bool isFading() const;
-    void setTrackChangeDirection(TrackChangeDirection direction);
     bool hasTrackChanged();
     bool isPlayingNewTrack();
 
@@ -142,6 +146,8 @@ private:
     // Constructors / Destructors
     MusicPlayer();
     ~MusicPlayer();
+
+    PlaybackState playbackState_;
 
     // Private Helper Functions
     void loadTrack(int index);
@@ -181,7 +187,6 @@ private:
     int previousVolume_;
     bool buttonPressed_;
     std::string lastCheckedTrackPath_;
-    TrackChangeDirection trackChangeDirection_;
     bool hasStartedPlaying_;
 
     // Audio Visualization Members
