@@ -425,6 +425,7 @@ bool MusicPlayerComponent::update(float dt) {
 				albumArtTrackIndex_ = currentTrackIndex;
 				lastState_ = std::to_string(currentTrackIndex); // Update state to track index
 			}
+			loadAlbumArt();
 		}
 
 		return Component::update(dt);
@@ -557,6 +558,27 @@ bool MusicPlayerComponent::update(float dt) {
 	}
 
 	return Component::update(dt);
+}
+
+void MusicPlayerComponent::loadAlbumArt() {
+	// Try to get album art from the music player
+	std::vector<unsigned char> albumArtData;
+	if (musicPlayer_->getAlbumArt(albumArtTrackIndex_, albumArtData) && !albumArtData.empty()) {
+		SDL_RWops* rw = SDL_RWFromConstMem(albumArtData.data(), static_cast<int>(albumArtData.size()));
+		if (rw) {
+			albumArtTexture_ = IMG_LoadTexture_RW(renderer_, rw, 1); // 1 means auto-close
+			if (albumArtTexture_) {
+				SDL_QueryTexture(albumArtTexture_, nullptr, nullptr,
+					&albumArtTextureWidth_, &albumArtTextureHeight_);
+				baseViewInfo.ImageWidth = static_cast<float>(albumArtTextureWidth_);
+				baseViewInfo.ImageHeight = static_cast<float>(albumArtTextureHeight_);
+				LOG_INFO("MusicPlayerComponent", "Created album art texture");
+				return;
+			}
+		}
+	}
+	// Fallback: load default album art if none found or on error
+	albumArtTexture_ = loadDefaultAlbumArt();
 }
 
 void MusicPlayerComponent::draw() {
@@ -917,45 +939,13 @@ void MusicPlayerComponent::drawAlbumArt() {
 		return;
 	}
 
-	// Try to get album art texture if we don't have one
-	if (albumArtTexture_ == nullptr && albumArtTrackIndex_ >= 0) {
-		// Get album art from the music player
-		std::vector<unsigned char> albumArtData;
-		if (musicPlayer_->getAlbumArt(albumArtTrackIndex_, albumArtData) && !albumArtData.empty()) {
-			// Convert album art data to texture using SDL_image
-			SDL_RWops* rw = SDL_RWFromConstMem(albumArtData.data(), static_cast<int>(albumArtData.size()));
-			if (rw) {
-				// Use IMG_LoadTexture_RW which simplifies the process
-				albumArtTexture_ = IMG_LoadTexture_RW(renderer_, rw, 1); // 1 means auto-close
-
-				if (albumArtTexture_) {
-					// Get texture dimensions
-					SDL_QueryTexture(albumArtTexture_, nullptr, nullptr,
-						&albumArtTextureWidth_, &albumArtTextureHeight_);
-					baseViewInfo.ImageWidth = static_cast<float>(albumArtTextureWidth_);
-					baseViewInfo.ImageHeight = static_cast<float>(albumArtTextureHeight_);
-					LOG_INFO("MusicPlayerComponent", "Created album art texture");
-				}
-			}
-		}
-
-		// If no album art found or texture creation failed, try to load default
-		if (albumArtTexture_ == nullptr) {
-			albumArtTexture_ = loadDefaultAlbumArt();
-		}
-	}
-
-	// Draw the album art if we have a texture
+	// Since update(dt) is responsible for loading, simply render if the texture exists.
 	if (albumArtTexture_ != nullptr) {
 		SDL_FRect rect;
-
-		// Use the baseViewInfo for position and size calculations
 		rect.x = baseViewInfo.XRelativeToOrigin();
 		rect.y = baseViewInfo.YRelativeToOrigin();
-		rect.h = baseViewInfo.ScaledHeight();
 		rect.w = baseViewInfo.ScaledWidth();
-
-		// Use the existing SDL render method
+		rect.h = baseViewInfo.ScaledHeight();
 		SDL::renderCopyF(
 			albumArtTexture_,
 			baseViewInfo.Alpha,

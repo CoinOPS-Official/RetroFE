@@ -77,6 +77,7 @@ private:
     int albumArtTextureWidth_;
     int albumArtTextureHeight_;
     bool isAlbumArt_;
+    void loadAlbumArt();
 
     // Volume bar textures and data
     SDL_Texture* volumeEmptyTexture_;
