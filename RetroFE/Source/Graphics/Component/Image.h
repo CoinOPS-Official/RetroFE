@@ -23,10 +23,14 @@
 #include <SDL2_image/SDL_image.h>
 #include <webp/decode.h>
 #include <webp/demux.h>
-#else
+#elif defined(_WIN32) 
 #include <SDL_image.h>
 #include <decode.h>
 #include <demux.h>
+#else  // Assume Linux
+#include <SDL_image.h>
+#include <webp/decode.h>
+#include <webp/demux.h>
 #endif
 #include <unordered_map>
 #include <unordered_set>
