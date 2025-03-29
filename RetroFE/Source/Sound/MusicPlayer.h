@@ -81,6 +81,7 @@ public:
     bool previousTrack(int customFadeMs = -1);
     bool isPlaying() const;
     bool isPaused() const;
+    void changeVolume(bool increase);
     double saveCurrentMusicPosition();
     double getCurrent();    // Current playback position (sec)
     double getDuration();   // Duration of current track (sec)
@@ -188,6 +189,8 @@ private:
     bool buttonPressed_;
     std::string lastCheckedTrackPath_;
     bool hasStartedPlaying_;
+    Uint64 lastVolumeChangeTime_;
+    Uint64 volumeChangeIntervalMs_;
 
     // Audio Visualization Members
     std::vector<float> audioLevels_;

@@ -39,7 +39,6 @@ MusicPlayer* MusicPlayer::getInstance()
 
 MusicPlayer::MusicPlayer()
 	: config_(nullptr)
-	, playbackState_(PlaybackState::NONE)
 	, currentMusic_(nullptr)
 	, musicFiles_()               // default empty vector
 	, musicNames_()               // default empty vector
@@ -61,9 +60,10 @@ MusicPlayer::MusicPlayer()
 	, buttonPressed_(false)
 	, lastCheckedTrackPath_("")
 	, hasStartedPlaying_(false)
-	, audioLevels_()              // default empty vector
+	, lastVolumeChangeTime_(0)
+	, volumeChangeIntervalMs_(0)
+	, audioLevels_()
 	, audioChannels_(2)           // Default to stereo
-	, hasVisualizer_(false)
 	, sampleSize_(2)              // Default to 16-bit samples
 {
 	// Seed the random number generator with current time
@@ -132,6 +132,15 @@ bool MusicPlayer::initialize(Configuration& config)
 	{
 		fadeMs_ = std::max(0, configFadeMs);
 	}
+
+	// --- New Code: Get user-defined volume delay ---
+	int configVolumeDelay;
+	if (config.getProperty("musicPlayer.volumeDelay", configVolumeDelay))
+	{
+		// Clamp to range 0 - 50 milliseconds.
+		volumeChangeIntervalMs_ = std::max(0, std::min(50, configVolumeDelay));
+	}
+	// --------------------------------------------------
 
 	// First check if an M3U playlist is specified
 	std::string m3uPlaylist;
@@ -1126,6 +1135,27 @@ bool MusicPlayer::isPlaying() const
 bool MusicPlayer::isPaused() const
 {
 	return Mix_PausedMusic() == 1 || isPendingPause_;
+}
+
+void MusicPlayer::changeVolume(bool increase) {
+	Uint64 now = SDL_GetTicks64();
+	if (now - lastVolumeChangeTime_ < volumeChangeIntervalMs_) {
+		// Not enough time has passed since the last change
+		return;
+	}
+	lastVolumeChangeTime_ = now;
+
+	int currentVolume = getLogicalVolume();
+	int newVolume;
+	if (increase) {
+		newVolume = std::min(128, currentVolume + 1);
+	}
+	else {
+		newVolume = std::max(0, currentVolume - 1);
+	}
+
+	setLogicalVolume(newVolume);
+	setButtonPressed(true); // Trigger volume bar update
 }
 
 void MusicPlayer::setVolume(int newVolume)

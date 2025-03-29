@@ -2645,10 +2645,7 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 
 	case UserInput::KeyCodeMusicVolumeUp:
 	{
-		int current = musicPlayer_->getLogicalVolume();
-		int newLogical = std::min(128, current + 1);
-		musicPlayer_->setButtonPressed(true);
-		musicPlayer_->setLogicalVolume(newLogical);
+		musicPlayer_->changeVolume(true);
 		// Reset attract mode
 		attract_.reset();
 	}
@@ -2656,10 +2653,7 @@ void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
 
 	case UserInput::KeyCodeMusicVolumeDown:
 	{
-		int current = musicPlayer_->getLogicalVolume();
-		int newLogical = std::max(0, current - 1);
-		musicPlayer_->setButtonPressed(true);
-		musicPlayer_->setLogicalVolume(newLogical);
+		musicPlayer_->changeVolume(false);
 		// Reset attract mode
 		attract_.reset();
 	}
