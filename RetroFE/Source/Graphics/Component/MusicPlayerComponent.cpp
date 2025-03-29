@@ -385,6 +385,9 @@ bool MusicPlayerComponent::update(float dt) {
 	// Update refresh timer
 	refreshTimer_ += dt;
 
+	if (!musicPlayer_->hasStartedPlaying())
+		return Component::update(dt);
+
 	if (isVuMeter_) {
 		// Update the VU levels
 		updateVuLevels();
