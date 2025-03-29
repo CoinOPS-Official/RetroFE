@@ -58,7 +58,7 @@ Download the source code
 
 Setup Environment (to setup necessary variables and paths to compile in visual studio)
 
-	cd retrofe
+	cd RetroFE
 
 Generate visual studio solution files
 
@@ -106,7 +106,7 @@ Download the source code
 
 Generate your gcc make files
 
-	cd retrofe
+	cd RetroFE
 	cmake RetroFE/Source -BRetroFE/Build
 
 Compile RetroFE
@@ -153,7 +153,7 @@ Download the source code
 
 Generate your gcc make files
 
-	cd retrofe
+	cd RetroFE
 	cmake RetroFE/Source -BRetroFE/Build
 
 Compile RetroFE
