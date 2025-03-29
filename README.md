@@ -83,7 +83,7 @@ libglib2.0-0 libglib2.0-dev sqlite3 libminizip-dev libwebp-dev libusb-1.0-0-dev 
 
 #### Fedora
 ```bash
-sudo dnf install git gcc-c++ cmake dos2unix zlib-devel \
+sudo dnf install -y git gcc-c++ cmake dos2unix zlib-devel \
 SDL2 SDL2_mixer SDL2_image SDL2_ttf \
 SDL2-devel SDL2_mixer-devel SDL2_image-devel SDL2_ttf-devel \
 gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-libav \
