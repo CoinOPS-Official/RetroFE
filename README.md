@@ -87,7 +87,8 @@ sudo dnf install git gcc-c++ cmake dos2unix zlib-devel \
 SDL2 SDL2_mixer SDL2_image SDL2_ttf \
 SDL2-devel SDL2_mixer-devel SDL2_image-devel SDL2_ttf-devel \
 gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-libav \
-libglib2 glib2-devel sqlite minizip-devel libwebp-devel libusb1-devel libevdev-devel
+glib2 glib2-devel sqlite-devel minizip-devel libwebp-devel libusb1-devel libevdev-devel \
+zlib libusb1 libevdev
 ```
 
 #### Arch
