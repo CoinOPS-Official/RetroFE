@@ -55,7 +55,7 @@ jobs:
             libusb-1.0-0
             libusb-1.0-0-dev
             libevdev-dev
-          version: ${{ matrix.config.arch }}
+          version: ${{ matrix.config.os }}
 
       - name: Install dependencies
         run: |
