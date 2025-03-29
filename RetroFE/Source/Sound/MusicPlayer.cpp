@@ -19,7 +19,6 @@
 #include "../Utility/Utils.h"
 #include <SDL2/SDL_image.h>
 #include <algorithm>
-#include <chrono>
 #include <cstddef>
 #include <cstring>
 #include <thread>
@@ -67,16 +66,11 @@ MusicPlayer::MusicPlayer()
 	, sampleSize_(2)              // Default to 16-bit samples
 {
 	// Seed the random number generator with current time
-	auto now = std::chrono::high_resolution_clock::now();
-	auto duration = now.time_since_epoch();
-	uint64_t seed = std::chrono::duration_cast<std::chrono::nanoseconds>(duration).count();
-
-	// Create a seed sequence for better randomization
+	uint64_t seed = SDL_GetTicks64();
 	std::seed_seq seq{
 		static_cast<uint32_t>(seed & 0xFFFFFFFF),
 		static_cast<uint32_t>((seed >> 32) & 0xFFFFFFFF)
 	};
-
 	rng_.seed(seq);
 
 	audioLevels_.resize(audioChannels_, 0.0f);
