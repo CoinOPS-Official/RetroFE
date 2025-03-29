@@ -28,7 +28,7 @@
 #include <decode.h>
 #include <demux.h>
 #else  // Assume Linux
-#include <SDL_image.h>
+#include <SDL2/SDL_image.h>
 #include <webp/decode.h>
 #include <webp/demux.h>
 #endif
