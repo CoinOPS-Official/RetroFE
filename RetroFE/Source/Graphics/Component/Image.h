@@ -25,8 +25,8 @@
 #include <webp/demux.h>
 #else
 #include <SDL_image.h>
-#include <decode.h>
-#include <demux.h>
+#include <webp/decode.h>
+#include <webp/demux.h>
 #endif
 #include <unordered_map>
 #include <unordered_set>
