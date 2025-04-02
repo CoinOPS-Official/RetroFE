@@ -102,6 +102,12 @@ void Configuration::initialize()
             buffer[len] = '\0'; // Null-terminate the result
             sPath = Utils::getDirectory(buffer);
         }
+
+	// Check if running as an AppImage
+        const char* appImagePath = std::getenv("APPIMAGE");
+        if (appImagePath != nullptr) {
+            sPath = Utils::getDirectory(appImagePath);
+        }
 #endif
 
         absolutePath = sPath;

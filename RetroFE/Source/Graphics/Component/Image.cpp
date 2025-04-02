@@ -19,14 +19,18 @@
 #include "../../SDL.h"           // Ensure this header declares SDL::getRenderer and SDL::getMutex
 #include "../../Utility/Log.h"
 
-#if (__APPLE__)
+#ifdef __APPLE__
 #include <SDL2_image/SDL_image.h>
 #include <webp/decode.h>
 #include <webp/demux.h>
-#else
-#include <SDL2/SDL_image.h>
+#elif defined(_WIN32) 
+#include <SDL_image.h>
 #include <decode.h>
 #include <demux.h>
+#else  // Assume Linux
+#include <SDL2/SDL_image.h>
+#include <webp/decode.h>
+#include <webp/demux.h>
 #endif
 
 #include <string_view>

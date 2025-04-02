@@ -1,37 +1,53 @@
-name: RetroFE Build
+name: RetroFE Continuous Integration Build
 
 on:
   push:
     branches:
-      - main
+      - master
   pull_request:
     branches:
-      - main
-  workflow_dispatch:
+      - master
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
 
     steps:
     # Checkout the repository
     - name: Checkout code
       uses: actions/checkout@v3
 
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: |
+          cmake
+          dos2unix
+          zlib1g-dev
+          libsdl2-dev
+          libsdl2-mixer-dev
+          libsdl2-image-dev
+          libsdl2-ttf-dev
+          libgstreamer1.0-dev
+          libgstreamer-plugins-base1.0-dev
+          libgstreamer-plugins-good1.0-dev
+          gstreamer1.0-libav
+          libglib2.0-dev
+          sqlite3
+          libminizip-dev
+          libwebp-dev
+          libevdev-dev
+          libusb-1.0-0-dev
+        version: 1.0
+
     # Install dependencies
     - name: Install dependencies
       run: |
         sudo apt-get update
         sudo apt-get install -y \
-          git \
-          g++ \
           cmake \
           dos2unix \
           zlib1g-dev \
-          libsdl2-2.0 \
-          libsdl2-mixer-2.0 \
-          libsdl2-image-2.0 \
-          libsdl2-ttf-2.0 \
           libsdl2-dev \
           libsdl2-mixer-dev \
           libsdl2-image-dev \
@@ -40,10 +56,12 @@ jobs:
           libgstreamer-plugins-base1.0-dev \
           libgstreamer-plugins-good1.0-dev \
           gstreamer1.0-libav \
-          zlib1g-dev \
-          libglib2.0-0 \
           libglib2.0-dev \
-          sqlite3
+          sqlite3 \
+          libminizip-dev \
+          libwebp-dev \
+          libevdev-dev \
+          libusb-1.0-0-dev
 
     # Configure the build
     - name: Configure CMake
