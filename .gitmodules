@@ -1,0 +1,3 @@
+[submodule "Package/Environment/Windows/retrofe"]
+	path = Package/Environment/Windows/retrofe
+	url = https://github.com/CoinOPS-official/RetroFE-windows-deps.git
