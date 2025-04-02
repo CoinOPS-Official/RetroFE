@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 ### Changed
 ### Fixed
 
+## [10.34.6] - 2025-04-02
+### Added
+### Changed
+### Fixed
+- Made the Xcode project portable
+
 ## [10.34.5] - 2024-02-18
 
 ### Added
