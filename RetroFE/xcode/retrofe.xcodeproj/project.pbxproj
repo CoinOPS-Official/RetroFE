@@ -468,7 +468,7 @@
 				Base,
 			);
 			mainGroup = 339216F6BFE147B7B7F1B1E4;
-			projectDirPath = /Users/aiden/Documents/Github/RetroFE/RetroFE/Source;
+			projectDirPath = ../Source;
 			projectRoot = "";
 			targets = (
 				28DEFA88B73A4CA1825D0DDC /* retrofe */,
