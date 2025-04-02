@@ -596,7 +596,7 @@
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
 				SDKROOT = macosx;
-				SYMROOT = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build;
+				SYMROOT = "$(PROJECT_DIR)/../xcode/build";
 			};
 			name = Release;
 		};
@@ -650,7 +650,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = RetroFE;
 				PRODUCT_NAME = RetroFE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				TARGET_TEMP_DIR = "/Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build/retrofe.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
 			};
 			name = Release;
 		};
@@ -705,7 +704,6 @@
 				PRODUCT_BUNDLE_IDENTIFIER = RetroFE;
 				PRODUCT_NAME = RetroFE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
-				TARGET_TEMP_DIR = "/Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build/retrofe.build/$(CONFIGURATION)$(EFFECTIVE_PLATFORM_NAME)";
 			};
 			name = Debug;
 		};
@@ -734,7 +732,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
-				SYMROOT = /Users/aiden/Documents/Github/RetroFE/RetroFE/xcode/build;
+				SYMROOT = "$(PROJECT_DIR)/../xcode/build";
 			};
 			name = Debug;
 		};
