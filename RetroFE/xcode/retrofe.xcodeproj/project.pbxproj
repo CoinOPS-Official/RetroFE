@@ -60,6 +60,8 @@
 		DF07B3E52B2A14CE00B732CF /* GStreamer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; };
 		DF07B3E62B2A14CE00B732CF /* GStreamer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DF2B282E2B683F2E00A22011 /* GlobalOpts.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DF2B282C2B683F2E00A22011 /* GlobalOpts.cpp */; };
+		DF4D84E02D9D5E5500104410 /* MusicPlayer.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DF4D84DF2D9D5E5500104410 /* MusicPlayer.cpp */; };
+		DF4D84E22D9D5E6000104410 /* MusicPlayerComponent.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DF4D84E12D9D5E6000104410 /* MusicPlayerComponent.cpp */; };
 		DF87A17A2B152AAB00548E78 /* RetroFE.png in Resources */ = {isa = PBXBuildFile; fileRef = DF87A1792B152AA400548E78 /* RetroFE.png */; };
 		DFC83C8A2D57973600AA7522 /* webp.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFC83C882D57973600AA7522 /* webp.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DFC83C8B2D57973600AA7522 /* libusb-1.0.0.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFC83C892D57973600AA7522 /* libusb-1.0.0.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -188,6 +190,10 @@
 		DF07B3E42B2A14CE00B732CF /* GStreamer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GStreamer.framework; path = ../ThirdPartyMac/GStreamer.framework; sourceTree = "<group>"; };
 		DF2B282C2B683F2E00A22011 /* GlobalOpts.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = GlobalOpts.cpp; path = Database/GlobalOpts.cpp; sourceTree = "<group>"; };
 		DF2B282D2B683F2E00A22011 /* GlobalOpts.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GlobalOpts.h; path = Database/GlobalOpts.h; sourceTree = "<group>"; };
+		DF4D84DF2D9D5E5500104410 /* MusicPlayer.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = MusicPlayer.cpp; path = Sound/MusicPlayer.cpp; sourceTree = "<group>"; };
+		DF4D84E12D9D5E6000104410 /* MusicPlayerComponent.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = MusicPlayerComponent.cpp; path = Graphics/Component/MusicPlayerComponent.cpp; sourceTree = "<group>"; };
+		DF4D84E32D9D5E6B00104410 /* MusicPlayerComponent.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = MusicPlayerComponent.h; path = Graphics/Component/MusicPlayerComponent.h; sourceTree = "<group>"; };
+		DF4D84E42D9D5E7300104410 /* MusicPlayer.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = MusicPlayer.h; path = Sound/MusicPlayer.h; sourceTree = "<group>"; };
 		DF87A1792B152AA400548E78 /* RetroFE.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = RetroFE.png; path = ../../Package/Environment/Common/RetroFE.png; sourceTree = "<group>"; };
 		DFC83C862D5796C400AA7522 /* CollectionInfoBuilder.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = CollectionInfoBuilder.cpp; path = Collection/CollectionInfoBuilder.cpp; sourceTree = "<group>"; };
 		DFC83C882D57973600AA7522 /* webp.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = webp.framework; path = ../ThirdPartyMac/webp.framework; sourceTree = "<group>"; };
@@ -302,6 +308,8 @@
 				DFC83C952D579B6100AA7522 /* Metadata.h */,
 				A439BE1557574981A00E8313 /* MetadataDatabase.h */,
 				E068482BE58D4293AB7C541D /* MouseButtonHandler.h */,
+				DF4D84E42D9D5E7300104410 /* MusicPlayer.h */,
+				DF4D84E32D9D5E6B00104410 /* MusicPlayerComponent.h */,
 				12BF4352BCFF41758DA92D86 /* Page.h */,
 				41EA3E9FBEB9441ABFA62BF1 /* PageBuilder.h */,
 				DFC83C9B2D579D3100AA7522 /* ReloadableHiscores.h */,
@@ -370,7 +378,6 @@
 		F1EBF96675C5443E881F32F0 /* Source Files */ = {
 			isa = PBXGroup;
 			children = (
-				DFC83C9C2D579D7F00AA7522 /* VideoPool.cpp */,
 				265E7B256A954D8793198331 /* Animation.cpp */,
 				F7BFDD750A8D4FD2BD04E3E8 /* AnimationEvents.cpp */,
 				C10786B3822040D9BB915594 /* AttractMode.cpp */,
@@ -401,6 +408,8 @@
 				F23BC20492D84B5F8ACB6AA0 /* MenuParser.cpp */,
 				77848D7AD6354A199ED9DEAF /* MetadataDatabase.cpp */,
 				5BE2DB1B42B5406981272867 /* MouseButtonHandler.cpp */,
+				DF4D84DF2D9D5E5500104410 /* MusicPlayer.cpp */,
+				DF4D84E12D9D5E6000104410 /* MusicPlayerComponent.cpp */,
 				AD426A12CF1C43358CC9F6CE /* Page.cpp */,
 				A55969FD734F4923ADE5A6B9 /* PageBuilder.cpp */,
 				DFC83C992D579D2B00AA7522 /* ReloadableHiscores.cpp */,
@@ -422,6 +431,7 @@
 				5C2402E96D2D400793F40054 /* VideoBuilder.cpp */,
 				F83482D74B334D73A7832224 /* VideoComponent.cpp */,
 				A1A2A509107048D78E451632 /* VideoFactory.cpp */,
+				DFC83C9C2D579D7F00AA7522 /* VideoPool.cpp */,
 				4AE8BEDF614B479688422071 /* ViewInfo.cpp */,
 				F916B85C7BF943D3AD1C1864 /* CollectionInfoBuilder.cpp */,
 			);
@@ -535,6 +545,7 @@
 				FF9D1396B0DD42E4822D0657 /* Tween.cpp in Sources */,
 				DFF5D9582B6F9EFA005E9600 /* ThreadPool.cpp in Sources */,
 				516567856F9048499ECB7208 /* TweenSet.cpp in Sources */,
+				DF4D84E02D9D5E5500104410 /* MusicPlayer.cpp in Sources */,
 				6EC24D1FB1AA4DD8A981E54A /* Component.cpp in Sources */,
 				B6A3D783C1AF4CD798EBBDDA /* Container.cpp in Sources */,
 				3C1EAA65CDC04D80A105A4D3 /* Image.cpp in Sources */,
@@ -553,6 +564,7 @@
 				FEC7E2567C954EC295AC1C94 /* FontCache.cpp in Sources */,
 				260456C56F8545EBA1082E33 /* Page.cpp in Sources */,
 				A8B5CA925EC049F788150D46 /* PageBuilder.cpp in Sources */,
+				DF4D84E22D9D5E6000104410 /* MusicPlayerComponent.cpp in Sources */,
 				274AF9AE37B744F58D51EB13 /* ViewInfo.cpp in Sources */,
 				B332BB68337544B4B47814BA /* Main.cpp in Sources */,
 				99242A2BB8BA4919A4202B9C /* Menu.cpp in Sources */,
