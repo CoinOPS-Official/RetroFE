@@ -56,6 +56,10 @@ Download the source code
 
 	git clone https://github.com/CoinOPS-Official/RetroFE.git
 
+Gather submodule for DLLs
+
+ 	git submodule update --init --recursive
+
 Setup Environment (to setup necessary variables and paths to compile in visual studio)
 
 	cd RetroFE
