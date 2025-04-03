@@ -412,7 +412,7 @@ bool MusicPlayerComponent::update(float dt) {
 		int currentTrackIndex = musicPlayer_->getCurrentTrackIndex();
 
 		// Check if track has changed or refresh timeout
-		bool needsUpdate = (currentTrackIndex != albumArtTrackIndex_) || (refreshTimer_ >= refreshInterval_);
+		bool needsUpdate = (currentTrackIndex != albumArtTrackIndex_) && (refreshTimer_ >= refreshInterval_);
 
 		if (needsUpdate) {
 			refreshTimer_ = 0.0f;
