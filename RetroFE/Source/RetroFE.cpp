@@ -200,6 +200,13 @@ void RetroFE::initializeMusicPlayer()
 	config_.getProperty("musicPlayer.enabled", musicPlayerEnabled);
 	if (musicPlayerEnabled)
 	{
+		if(Mix_Init(MIX_INIT_MP3) != 8){
+			LOG_ERROR("MusicPlayer", "Failed to initialize SDL_mixer for MP3 support");
+		}
+		else
+		{
+			LOG_INFO("MusicPlayer", "SDL_mixer initialized for MP3 support");
+		}
 		musicPlayer_ = MusicPlayer::getInstance();
 		if (!musicPlayer_->initialize(config_))
 		{
