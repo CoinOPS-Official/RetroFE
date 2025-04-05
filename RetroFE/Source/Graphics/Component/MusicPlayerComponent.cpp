@@ -73,7 +73,9 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, vuBackgroundColor_({ 40, 40, 40, 255 })
 	, vuPeakColor_({ 255, 255, 255, 255 })
 	, vuGreenThreshold_(0.4f)
-	, vuYellowThreshold_(0.6f) {
+	, vuYellowThreshold_(0.6f)
+	, totalSegments_{0}
+	, useSegmentedVolume_{false}{
 	// Set the monitor for this component
 	baseViewInfo.Monitor = monitor;
 
@@ -247,25 +249,21 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 	// Base paths for volume bar images
 	std::vector<std::string> searchPaths;
 
-	// If we have a collection name, look there first
 	std::string collectionName;
 	if (config_.getProperty("collection", collectionName) && !collectionName.empty()) {
 		searchPaths.push_back(Utils::combinePath(Configuration::absolutePath, "layouts", layoutName,
 			"collections", collectionName, "volbar"));
 	}
 
-	// Then check common locations
 	searchPaths.push_back(Utils::combinePath(Configuration::absolutePath, "layouts", layoutName,
 		"collections", "_common", "medium_artwork", "volbar"));
 	searchPaths.push_back(Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "volbar"));
 
 	// Find empty and full images
-	std::string emptyPath;
-	std::string fullPath;
+	std::string emptyPath, fullPath;
+	std::vector<std::string> extensions = { ".png", ".jpg", ".jpeg" };
 
 	for (const auto& basePath : searchPaths) {
-		// Look for empty.png/jpg
-		std::vector<std::string> extensions = { ".png", ".jpg", ".jpeg" };
 		for (const auto& ext : extensions) {
 			std::string path = Utils::combinePath(basePath, "empty" + ext);
 			if (std::filesystem::exists(path)) {
@@ -273,8 +271,6 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 				break;
 			}
 		}
-
-		// Look for full.png/jpg
 		for (const auto& ext : extensions) {
 			std::string path = Utils::combinePath(basePath, "full" + ext);
 			if (std::filesystem::exists(path)) {
@@ -282,39 +278,73 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 				break;
 			}
 		}
-
-		if (!emptyPath.empty() && !fullPath.empty()) {
-			break; // Found both, no need to check further paths
-		}
+		if (!emptyPath.empty() && !fullPath.empty()) break;
 	}
 
-	// If we couldn't find the images, log an error
 	if (emptyPath.empty() || fullPath.empty()) {
 		LOG_ERROR("MusicPlayerComponent", "Could not find empty.png and full.png for volume bar");
 		return;
 	}
 
-	// Load textures
+	// Load empty texture directly
 	volumeEmptyTexture_ = IMG_LoadTexture(renderer_, emptyPath.c_str());
-	volumeFullTexture_ = IMG_LoadTexture(renderer_, fullPath.c_str());
 
-	if (!volumeEmptyTexture_ || !volumeFullTexture_) {
-		LOG_ERROR("MusicPlayerComponent", "Failed to load volume bar textures");
+	SDL_Surface* fullSurfaceRaw = IMG_Load(fullPath.c_str());
+	if (!fullSurfaceRaw || !volumeEmptyTexture_) {
+		LOG_ERROR("MusicPlayerComponent", "Failed to load volume bar assets");
+		if (fullSurfaceRaw) SDL_FreeSurface(fullSurfaceRaw);
 		if (volumeEmptyTexture_) {
 			SDL_DestroyTexture(volumeEmptyTexture_);
 			volumeEmptyTexture_ = nullptr;
 		}
-		if (volumeFullTexture_) {
-			SDL_DestroyTexture(volumeFullTexture_);
-			volumeFullTexture_ = nullptr;
-		}
 		return;
 	}
 
-	// Get texture dimensions - both should have the same size
-	SDL_QueryTexture(volumeFullTexture_, nullptr, nullptr, &volumeBarWidth_, &volumeBarHeight_);
+	// Convert to 32-bit RGBA format
+	SDL_Surface* fullSurface = SDL_ConvertSurfaceFormat(fullSurfaceRaw, SDL_PIXELFORMAT_RGBA8888, 0);
+	SDL_FreeSurface(fullSurfaceRaw); // no longer needed
+	if (!fullSurface) {
+		LOG_ERROR("MusicPlayerComponent", "Failed to convert full surface to RGBA8888");
+		SDL_DestroyTexture(volumeEmptyTexture_);
+		volumeEmptyTexture_ = nullptr;
+		return;
+	}
 
-	// Create the render target texture
+
+	totalSegments_ = detectSegmentsFromSurface(fullSurface);
+	if (totalSegments_ > 0) {
+		// As long as we detected segments and it's a reasonable number, use segmented mode
+		// (Add an upper sanity limit to avoid extremely small segments)
+		if (totalSegments_ <= 50) {  // Arbitrary upper limit to avoid unreasonable segment counts
+			useSegmentedVolume_ = true;
+			LOG_INFO("MusicPlayerComponent", "Using segmented volume bar with " + std::to_string(totalSegments_) + " segments");
+		}
+		else {
+			LOG_WARNING("MusicPlayerComponent", "Segment count too high (" + std::to_string(totalSegments_) + "), using proportional volume bar");
+			totalSegments_ = 0;
+			useSegmentedVolume_ = false;
+		}
+	}
+	else {
+		LOG_INFO("MusicPlayerComponent", "No segments detected, using proportional volume bar");
+		totalSegments_ = 0;
+		useSegmentedVolume_ = false;
+	}
+
+	// Convert surface to texture
+	volumeFullTexture_ = SDL_CreateTextureFromSurface(renderer_, fullSurface);
+	volumeBarWidth_ = fullSurface->w;
+	volumeBarHeight_ = fullSurface->h;
+	SDL_FreeSurface(fullSurface);
+
+	if (!volumeFullTexture_) {
+		LOG_ERROR("MusicPlayerComponent", "Failed to create texture from full surface");
+		SDL_DestroyTexture(volumeEmptyTexture_);
+		volumeEmptyTexture_ = nullptr;
+		return;
+	}
+
+	// Create the render target
 	volumeBarTexture_ = SDL_CreateTexture(
 		renderer_,
 		SDL_PIXELFORMAT_RGBA8888,
@@ -330,8 +360,157 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 		LOG_ERROR("MusicPlayerComponent", "Failed to create volume bar render target texture");
 	}
 
-	// Initial update of the texture
 	updateVolumeBarTexture();
+}
+
+int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
+	if (!surface || !surface->pixels) {
+		LOG_ERROR("MusicPlayerComponent", "Invalid surface or pixel data");
+		return 0;
+	}
+
+	int texW = surface->w;
+	int texH = surface->h;
+
+	// Ensure the surface is in a compatible format
+	if (surface->format->BytesPerPixel != 4) {
+		LOG_ERROR("MusicPlayerComponent", "Surface format is not 32-bit, cannot detect segments");
+		return 0;
+	}
+
+	const Uint8 alphaThreshold = 32;  // Pixels with alpha below this are considered transparent
+
+	// Lock surface if needed
+	if (SDL_MUSTLOCK(surface)) {
+		SDL_LockSurface(surface);
+	}
+
+	// Check multiple rows to find the one with the most likely segment pattern
+	// We'll store the best result found
+	int bestSegmentCount = 0;
+	std::vector<int> bestSegmentStarts;
+
+	// Sample rows at different positions throughout the image height
+	// Try more rows for taller images
+	int numRowsToCheck = std::min(20, texH); // Cap at 20 rows to avoid excessive processing
+
+	for (int rowNum = 0; rowNum < numRowsToCheck; rowNum++) {
+		// Sample rows at regular intervals throughout the height
+		int y = (texH * rowNum) / numRowsToCheck;
+
+		// Skip rows that are too close to the edges (may contain frame borders)
+		if (y < texH * 0.1 || y > texH * 0.9) {
+			continue;
+		}
+
+		// Access the row's pixel data
+		Uint8* pixelData = static_cast<Uint8*>(surface->pixels);
+		Uint32* row = reinterpret_cast<Uint32*>(pixelData + y * surface->pitch);
+
+		// For this row, find segments
+		std::vector<int> segmentStartXs;
+		bool inSolidSegment = false;
+		int currentSegmentWidth = 0;
+		int lastSegmentStart = -1;
+
+		// Scan this row for segments
+		for (int x = 0; x < texW; ++x) {
+			Uint32 pixel = row[x];
+			Uint8 r, g, b, a;
+			SDL_GetRGBA(pixel, surface->format, &r, &g, &b, &a);
+
+			bool isVisible = (a > alphaThreshold);
+
+			// State transition: entering a solid segment
+			if (isVisible && !inSolidSegment) {
+				inSolidSegment = true;
+				lastSegmentStart = x;
+				currentSegmentWidth = 1;
+			}
+			// Continuing a solid segment
+			else if (isVisible && inSolidSegment) {
+				currentSegmentWidth++;
+			}
+			// State transition: exiting a solid segment
+			else if (!isVisible && inSolidSegment) {
+				inSolidSegment = false;
+
+				// Only count segments of reasonable width (not single pixels)
+				if (currentSegmentWidth >= 2) {
+					segmentStartXs.push_back(lastSegmentStart);
+				}
+				currentSegmentWidth = 0;
+			}
+		}
+
+		// Handle case where the image ends with a solid segment
+		if (inSolidSegment && currentSegmentWidth >= 2) {
+			segmentStartXs.push_back(lastSegmentStart);
+		}
+
+		// We need at least 2 segments to consider this a valid segmented bar
+		if (segmentStartXs.size() < 2) {
+			continue; // Skip this row, not enough segments
+		}
+
+		// Validate that segments are evenly spaced
+		bool evenlySpaced = true;
+		double averageSpacing = 0.0;
+		std::vector<int> spacings;
+
+		// Calculate spacings between segments
+		for (size_t i = 1; i < segmentStartXs.size(); ++i) {
+			int spacing = segmentStartXs[i] - segmentStartXs[i - 1];
+			spacings.push_back(spacing);
+			averageSpacing += spacing;
+		}
+
+		if (!spacings.empty()) {
+			averageSpacing /= spacings.size();
+
+			// Calculate standard deviation to measure consistency
+			double varianceSum = 0.0;
+			for (int spacing : spacings) {
+				double diff = spacing - averageSpacing;
+				varianceSum += diff * diff;
+			}
+			double stdDev = std::sqrt(varianceSum / spacings.size());
+
+			// If standard deviation is too high relative to average spacing,
+			// segments aren't evenly spaced
+			if (stdDev > (averageSpacing * 0.2)) { // Allow 20% variation
+				evenlySpaced = false;
+			}
+		}
+
+		// If segments are evenly spaced and we found more than before, update best result
+		if (evenlySpaced && segmentStartXs.size() > bestSegmentCount) {
+			bestSegmentCount = static_cast<int>(segmentStartXs.size());
+			bestSegmentStarts = segmentStartXs;
+
+			// If we found a good number of segments, we can stop early
+			if (bestSegmentCount >= 10) {
+				LOG_INFO("MusicPlayerComponent", "Found good segment pattern at row " + std::to_string(y) +
+					" with " + std::to_string(bestSegmentCount) + " segments");
+				break;
+			}
+		}
+	}
+
+	// Unlock surface
+	if (SDL_MUSTLOCK(surface)) {
+		SDL_UnlockSurface(surface);
+	}
+
+	if (bestSegmentCount > 0) {
+		LOG_INFO("MusicPlayerComponent", "Detected " + std::to_string(bestSegmentCount) +
+			" segments in volume bar image");
+	}
+	else {
+		LOG_INFO("MusicPlayerComponent", "No segments detected in volume bar image");
+	}
+
+	return bestSegmentCount;
 }
 
 void MusicPlayerComponent::updateVolumeBarTexture() {
@@ -339,38 +518,50 @@ void MusicPlayerComponent::updateVolumeBarTexture() {
 		return;
 	}
 
-	// Get raw volume (0–128)
-	int volumeRaw = musicPlayer_->getLogicalVolume();
-	volumeRaw = std::clamp(volumeRaw, 0, 128); // Just in case
+	int volumeRaw = std::clamp(musicPlayer_->getLogicalVolume(), 0, 128);
 
-	// Compute visible width proportionally (integer math)
-	int visibleWidth = (volumeBarWidth_ * volumeRaw) / 128;
-
-	// Set render target to volume bar texture
 	SDL_SetRenderTarget(renderer_, volumeBarTexture_);
-
-	// Clear with full transparency
 	SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
 	SDL_RenderClear(renderer_);
 
-	// Draw full portion only if volume > 0
-	if (visibleWidth > 0) {
-		SDL_Rect srcRect = { 0, 0, visibleWidth, volumeBarHeight_ };
-		SDL_Rect dstRect = { 0, 0, visibleWidth, volumeBarHeight_ };
-		SDL_RenderCopy(renderer_, volumeFullTexture_, &srcRect, &dstRect);
+	if (useSegmentedVolume_ && totalSegments_ > 0) {
+		int segmentWidth = volumeBarWidth_ / totalSegments_;
+		int activeSegments = (volumeRaw * totalSegments_) / 128;
+
+		for (int i = 0; i < totalSegments_; ++i) {
+			SDL_Rect rect = {
+				i * segmentWidth,
+				0,
+				segmentWidth,
+				volumeBarHeight_
+			};
+
+			if (i < activeSegments) {
+				SDL_RenderCopy(renderer_, volumeFullTexture_, &rect, &rect);
+			}
+			else {
+				SDL_RenderCopy(renderer_, volumeEmptyTexture_, &rect, &rect);
+			}
+		}
+	}
+	else {
+		// Fallback: proportional fill
+		int visibleWidth = (volumeBarWidth_ * volumeRaw) / 128;
+
+		if (visibleWidth > 0) {
+			SDL_Rect src = { 0, 0, visibleWidth, volumeBarHeight_ };
+			SDL_Rect dst = { 0, 0, visibleWidth, volumeBarHeight_ };
+			SDL_RenderCopy(renderer_, volumeFullTexture_, &src, &dst);
+		}
+
+		if (visibleWidth < volumeBarWidth_) {
+			SDL_Rect src = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
+			SDL_Rect dst = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
+			SDL_RenderCopy(renderer_, volumeEmptyTexture_, &src, &dst);
+		}
 	}
 
-	// Draw empty portion only if volume < 128
-	if (visibleWidth < volumeBarWidth_) {
-		SDL_Rect srcRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
-		SDL_Rect dstRect = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
-		SDL_RenderCopy(renderer_, volumeEmptyTexture_, &srcRect, &dstRect);
-	}
-
-	// Reset render target
 	SDL_SetRenderTarget(renderer_, nullptr);
-
-	// Save last volume value
 	lastVolumeValue_ = volumeRaw;
 }
 

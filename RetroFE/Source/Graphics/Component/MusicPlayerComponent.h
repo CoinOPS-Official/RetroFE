@@ -90,6 +90,7 @@ private:
 
     // Create a volume bar texture based on current volume
     void loadVolumeBarTextures();
+    int detectSegmentsFromSurface(SDL_Surface* surface);
     void updateVolumeBarTexture();
 
     // Alpha animation for volume bar
@@ -118,5 +119,8 @@ private:
     SDL_Color vuPeakColor_;
     float vuGreenThreshold_;  // Level threshold for green (0.0-1.0)
     float vuYellowThreshold_; // Level threshold for yellow (0.0-1.0)
+
+    int totalSegments_;
+    bool useSegmentedVolume_;
 
 };
