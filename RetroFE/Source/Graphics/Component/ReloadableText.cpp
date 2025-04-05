@@ -18,6 +18,7 @@
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
 #include "../../Database/Configuration.h"
+#include "../../Sound/MusicPlayer.h"
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
@@ -64,6 +65,16 @@ bool ReloadableText::update(float dt)
         if (now - lastFileReloadTime_ >= fileDebounceDuration_) {
             ReloadTexture();
             lastFileReloadTime_ = now;
+        }
+    }
+    else if (type_ == "trackInfo")
+    {
+        // Get the MusicPlayer instance
+        MusicPlayer* musicPlayer = MusicPlayer::getInstance();
+
+        // Check if the music player exists and if the track has changed
+        if (musicPlayer && (musicPlayer->hasTrackChanged())) {
+            ReloadTexture();
         }
     }
     // needs to be ran at the end to prevent the NewItemSelected flag from being detected
@@ -175,6 +186,30 @@ void ReloadableText::ReloadTexture()
         {
             LOG_ERROR("ReloadableText", "Failed to open file: " + filePath_);
             return;
+        }
+    }
+    else if (type_ == "trackInfo") {
+        MusicPlayer const* musicPlayer = MusicPlayer::getInstance();
+
+        if (!musicPlayer || musicPlayer->getCurrentTrackName().empty()) {
+            text = "";
+        }
+        else {
+            // Simply get the current information - no need to compare with previous state
+            std::string currentArtist = musicPlayer->getCurrentArtist();
+            std::string currentTitle = musicPlayer->getCurrentTitle();
+
+            // Format the display text
+            if (!currentArtist.empty() && !currentTitle.empty()) {
+                text = currentArtist + " - " + currentTitle;
+            }
+            else if (!currentTitle.empty()) {
+                text = currentTitle;
+            }
+            else {
+                // Fallback to track name
+                text = musicPlayer->getCurrentTrackName();
+            }
         }
     }
     else if (type_ == "time") {
@@ -427,30 +462,33 @@ void ReloadableText::ReloadTexture()
         ss << text;
     }
 
-    // Update the tracked attributes
-    bool typeChanged = (currentType_ != type_);
-    bool valueChanged = (currentValue_ != ss.str());
+    const std::string newText = ss.str();
 
-    if (!typeChanged && !valueChanged && imageInst_ != nullptr)
-    {
-        // No changes and the image instance already exists, so no need to recreate it
+    bool typeChanged = (currentType_ != type_);
+    bool valueChanged = (currentValue_ != newText);
+
+    currentType_ = type_;
+    currentValue_ = newText;
+
+    if (!typeChanged && !valueChanged && imageInst_ != nullptr) {
         return;
     }
 
-    // Delete the old component if a new one is required or if it's missing
-    if (imageInst_ != nullptr)
-    {
+    if (imageInst_) {
+        if (!typeChanged && valueChanged) {
+            // Only the text changed — reuse component
+            imageInst_->setText(newText);
+            return;
+        }
+
+        // Type changed or reallocation needed
+        imageInst_->freeGraphicsMemory();
         delete imageInst_;
         imageInst_ = nullptr;
     }
 
-    currentType_ = type_;
-    currentValue_ = ss.str();
-
-    // Create a new image instance
-    if (!ss.str().empty())
-    {
-        imageInst_ = new Text(ss.str(), page, fontInst_, baseViewInfo.Monitor);
+    if (!newText.empty()) {
+        imageInst_ = new Text(newText, page, fontInst_, baseViewInfo.Monitor);
     }
 }
 
