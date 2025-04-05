@@ -380,7 +380,7 @@ int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 		return 0;
 	}
 
-	const Uint8 alphaThreshold = 32;  // Pixels with alpha below this are considered transparent
+	const Uint8 alphaThreshold = 50;  // Pixels with alpha below this are considered transparent
 
 	// Lock surface if needed
 	if (SDL_MUSTLOCK(surface)) {
