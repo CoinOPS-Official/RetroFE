@@ -599,30 +599,20 @@ bool MusicPlayerComponent::update(float dt) {
 		return Component::update(dt);
 	}
 
-
 	// Special handling for album art
-	if (isAlbumArt_) {
+	if (isAlbumArt_ && refreshTimer_ >= refreshInterval_) {
+		refreshTimer_ = 0.0f;
 		int currentTrackIndex = musicPlayer_->getCurrentTrackIndex();
 
-		// Check if track has changed or refresh timeout
-		bool needsUpdate = (currentTrackIndex != albumArtTrackIndex_) && (refreshTimer_ >= refreshInterval_);
-
-		if (needsUpdate) {
-			refreshTimer_ = 0.0f;
-
-			// If track changed, reset texture reference to trigger reload
-			if (currentTrackIndex != albumArtTrackIndex_) {
-				// Free old texture if needed
-				if (albumArtTexture_ != nullptr) {
-					SDL_DestroyTexture(albumArtTexture_);
-					albumArtTexture_ = nullptr;
-				}
-
-				albumArtTrackIndex_ = currentTrackIndex;
-				lastState_ = std::to_string(currentTrackIndex); // Update state to track index
+		if (currentTrackIndex != albumArtTrackIndex_) {
+			if (albumArtTexture_ != nullptr) {
+				SDL_DestroyTexture(albumArtTexture_);
+				albumArtTexture_ = nullptr;
 			}
-			loadAlbumArt();
+			albumArtTrackIndex_ = currentTrackIndex;
+			lastState_ = std::to_string(currentTrackIndex);
 		}
+		loadAlbumArt();
 
 		return Component::update(dt);
 	}
@@ -759,26 +749,23 @@ bool MusicPlayerComponent::update(float dt) {
 void MusicPlayerComponent::draw() {
 	Component::draw();
 
+	// If the overall alpha is 0, there's no need to draw any components.
+	if (baseViewInfo.Alpha <= 0.0f) {
+		return;
+	}
+
 	if (isVuMeter_) {
-		if (baseViewInfo.Alpha > 0.0f) {
-			drawVuMeter();
-		}
+		drawVuMeter();
 		return;
 	}
 
-	// For album art, handle drawing directly
 	if (isAlbumArt_) {
-		if (baseViewInfo.Alpha > 0.0f) {
-			drawAlbumArt();
-		}
+		drawAlbumArt();
 		return;
 	}
 
-	// For volume bar, handle drawing directly
 	if (isVolumeBar_) {
-		if (baseViewInfo.Alpha > 0.0f) {
-			drawVolumeBar();
-		}
+		drawVolumeBar();
 		return;
 	}
 
@@ -787,21 +774,17 @@ void MusicPlayerComponent::draw() {
 		return;
 	}
 
-	// Draw the text component if it exists...
+	// Draw text component if it exists; otherwise, use the loaded component.
 	if (cachedTextComponent_) {
 		cachedTextComponent_->baseViewInfo = baseViewInfo;
-		if (baseViewInfo.Alpha > 0.0f) {
-			cachedTextComponent_->draw();
-		}
+		cachedTextComponent_->draw();
 	}
-	// Otherwise, fall back to the loaded component if available.
 	else if (loadedComponent_ != nullptr) {
 		loadedComponent_->baseViewInfo = baseViewInfo;
-		if (baseViewInfo.Alpha > 0.0f) {
-			loadedComponent_->draw();
-		}
+		loadedComponent_->draw();
 	}
 }
+
 
 void MusicPlayerComponent::updateVuLevels() {
 	// Get audio levels from the music player
