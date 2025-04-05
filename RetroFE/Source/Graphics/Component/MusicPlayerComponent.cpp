@@ -335,6 +335,8 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 	volumeFullTexture_ = SDL_CreateTextureFromSurface(renderer_, fullSurface);
 	volumeBarWidth_ = fullSurface->w;
 	volumeBarHeight_ = fullSurface->h;
+	baseViewInfo.ImageWidth = static_cast<float>(volumeBarWidth_);
+	baseViewInfo.ImageHeight = static_cast<float>(volumeBarHeight_);
 	SDL_FreeSurface(fullSurface);
 
 	if (!volumeFullTexture_) {
@@ -1199,21 +1201,8 @@ void MusicPlayerComponent::drawVolumeBar() {
 	// Use the baseViewInfo for position and size calculations
 	rect.x = baseViewInfo.XRelativeToOrigin();
 	rect.y = baseViewInfo.YRelativeToOrigin();
-
-	// Use the specified dimensions in the layout, or the texture dimensions if not specified
-	if (baseViewInfo.Width > 0) {
-		rect.w = baseViewInfo.ScaledWidth();
-	}
-	else {
-		rect.w = static_cast<float>(volumeBarWidth_);
-	}
-
-	if (baseViewInfo.Height > 0) {
-		rect.h = baseViewInfo.ScaledHeight();
-	}
-	else {
-		rect.h = static_cast<float>(volumeBarHeight_);
-	}
+	rect.w = baseViewInfo.ScaledWidth();
+	rect.h = baseViewInfo.ScaledHeight();
 
 	SDL::renderCopyF(
 		volumeBarTexture_,
