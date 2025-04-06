@@ -17,7 +17,7 @@
 		DF010F002B4DDDAA0062DCCA /* SDL2.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFF91E9C2B260B5B00507957 /* SDL2.framework */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		DF07B3E52B2A14CE00B732CF /* GStreamer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; };
 		DF07B3E62B2A14CE00B732CF /* GStreamer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
-		DF7798102DA2A04100A609F2 /*  in Resources */ = {isa = PBXBuildFile; fileRef = DF77980F2DA2A04100A609F2 /*  */; };
+		DF7798102DA2A04100A609F2 /* Source in Resources */ = {isa = PBXBuildFile; fileRef = DF77980F2DA2A04100A609F2 /* Source */; };
 		DFC83C8A2D57973600AA7522 /* webp.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFC83C882D57973600AA7522 /* webp.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DFC83C8B2D57973600AA7522 /* libusb-1.0.0.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFC83C892D57973600AA7522 /* libusb-1.0.0.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
 		DFC83C8D2D5797A200AA7522 /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DFC83C8C2D5797A200AA7522 /* IOKit.framework */; };
@@ -55,7 +55,7 @@
 		DF010EF72B4DD8150062DCCA /* libSystem.B.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libSystem.B.tbd; path = ../../../../../../../Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.0.sdk/usr/lib/libSystem.B.tbd; sourceTree = SOURCE_ROOT; };
 		DF010EF82B4DD81C0062DCCA /* libz.1.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libz.1.tbd; path = ../../../../../../../Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.0.sdk/usr/lib/libz.1.tbd; sourceTree = SOURCE_ROOT; };
 		DF07B3E42B2A14CE00B732CF /* GStreamer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GStreamer.framework; path = ../ThirdPartyMac/GStreamer.framework; sourceTree = SOURCE_ROOT; };
-		DF77980F2DA2A04100A609F2 /*  */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ""; sourceTree = "<group>"; };
+		DF77980F2DA2A04100A609F2 /* Source */ = {isa = PBXFileReference; lastKnownFileType = folder; name = Source; sourceTree = "<group>"; };
 		DFC83C882D57973600AA7522 /* webp.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = webp.framework; path = ../ThirdPartyMac/webp.framework; sourceTree = SOURCE_ROOT; };
 		DFC83C892D57973600AA7522 /* libusb-1.0.0.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = "libusb-1.0.0.dylib"; path = "../ThirdPartyMac/libusb-1.0.0.dylib"; sourceTree = SOURCE_ROOT; };
 		DFC83C8C2D5797A200AA7522 /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = ../../../../../../../Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.0.sdk/System/Library/Frameworks/IOKit.framework; sourceTree = SOURCE_ROOT; };
@@ -91,7 +91,7 @@
 		339216F6BFE147B7B7F1B1E4 = {
 			isa = PBXGroup;
 			children = (
-				DF77980F2DA2A04100A609F2 /*  */,
+				DF77980F2DA2A04100A609F2 /* Source */,
 				DA3165AA0ABC4ABCBAD49511 /* Products */,
 				D0A78259C0704D50B83B5260 /* Frameworks */,
 			);
@@ -178,7 +178,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				DF7798102DA2A04100A609F2 /*  in Resources */,
+				DF7798102DA2A04100A609F2 /* Source in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
