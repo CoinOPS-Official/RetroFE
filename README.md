@@ -147,7 +147,7 @@ Open the Xcodeproj in `RetroFE/xcode` and build target
 brew install git gcc cmake dos2unix zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer \
-glib sqlite3
+glib sqlite3 minizip webp libusb
 ```
 
 ### Download and compile the source code
