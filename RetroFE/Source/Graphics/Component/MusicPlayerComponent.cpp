@@ -611,8 +611,8 @@ bool MusicPlayerComponent::update(float dt) {
 			}
 			albumArtTrackIndex_ = currentTrackIndex;
 			lastState_ = std::to_string(currentTrackIndex);
+			loadAlbumArt();
 		}
-		loadAlbumArt();
 
 		return Component::update(dt);
 	}
