@@ -27,6 +27,7 @@
 #include "Graphics/Component/ScrollingList.h"
 #include "Graphics/Page.h"
 #include "Graphics/PageBuilder.h"
+#include "Sound/MusicPlayer.h"
 #include "Menu/Menu.h"
 #include "SDL.h"
 #include "Utility/Log.h"
@@ -41,6 +42,7 @@
 #include <string>
 #include <tuple>
 #include <vector>
+#include <cmath>
 #if (__APPLE__)
 #include <SDL2_ttf/SDL_ttf.h>
 #else
@@ -70,7 +72,7 @@ RetroFE::RetroFE(Configuration& c)
 	: initialized(false), initializeError(false), initializeThread(NULL), config_(c), db_(NULL), metadb_(NULL),
 	input_(config_), currentPage_(NULL), keyInputDisable_(0), currentTime_(0), lastLaunchReturnTime_(0),
 	keyLastTime_(0), keyDelayTime_(.3f), reboot_(false), kioskLock_(false), paused_(false), buildInfo_(false),
-	collectionInfo_(false), gameInfo_(false)
+	collectionInfo_(false), gameInfo_(false), musicPlayer_(nullptr)
 {
 	menuMode_ = false;
 	attractMode_ = false;
@@ -178,6 +180,9 @@ int RetroFE::initialize(void* context)
 		return -1;
 	}
 
+	instance->initializeMusicPlayer();
+
+
 	// Initialize HiScores
 	std::string zipPath = Utils::combinePath(Configuration::absolutePath, "hi2txt", "hi2txt_defaults.zip");
 	std::string overridePath = Utils::combinePath(Configuration::absolutePath, "hi2txt", "scores");
@@ -188,24 +193,80 @@ int RetroFE::initialize(void* context)
 	return 0;
 }
 
+void RetroFE::initializeMusicPlayer()
+{
+	// Initialize music player
+	bool musicPlayerEnabled = false;
+	config_.getProperty("musicPlayer.enabled", musicPlayerEnabled);
+	if (musicPlayerEnabled)
+	{
+		if(Mix_Init(MIX_INIT_MP3) != 8){
+			LOG_ERROR("MusicPlayer", "Failed to initialize SDL_mixer for MP3 support");
+		}
+		else
+		{
+			LOG_INFO("MusicPlayer", "SDL_mixer initialized for MP3 support");
+		}
+		musicPlayer_ = MusicPlayer::getInstance();
+		if (!musicPlayer_->initialize(config_))
+		{
+			LOG_ERROR("RetroFE", "Failed to initialize music player");
+		}
+		else
+		{
+			LOG_INFO("RetroFE", "Music player initialized successfully");
+		}
+	}
+	else {
+		LOG_INFO("RetroFE", "Music player disabled by configuration");
+	}
+}
+
 // Launch a game/program
 void RetroFE::launchEnter()
 {
 	currentPage_->setIsLaunched(true);
 	// Disable window focus
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_FALSE);
-	// Free the textures, and take down SDL if unloadSDL flag is set
+	// Free textures and shut down SDL if unloadSDL flag is set
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
 	if (unloadSDL)
 	{
 		freeGraphicsMemory();
 	}
-	// If on MacOS disable relative mouse mode to handoff mouse to game/program
 #ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_FALSE);
 #endif
 
+	if (musicPlayer_) {
+		bool musicPlayerPlayInGame = false;
+		config_.getProperty("musicPlayer.playInGame", musicPlayerPlayInGame);
+		if (musicPlayerPlayInGame)
+		{
+			int musicPlayerPlayInGameVol = -1;
+			if (config_.getProperty("musicPlayer.playInGameVol", musicPlayerPlayInGameVol))
+			{
+				// Only proceed if the value is in the valid range (0–100).
+				if (musicPlayerPlayInGameVol >= 0 && musicPlayerPlayInGameVol <= 100)
+				{
+					// Get current volume (0–128) and convert to percentage (0–100)
+					int currentVolume = musicPlayer_->getVolume();
+					int currentVolumePercent = static_cast<int>((currentVolume / static_cast<float>(MIX_MAX_VOLUME)) * 100.0f + 0.5f);
+
+					// Only perform the fade if the current volume is greater than or equal to the target.
+					if (currentVolumePercent >= musicPlayerPlayInGameVol) {
+						musicPlayer_->fadeToVolume(musicPlayerPlayInGameVol);
+					}
+					// Otherwise, no fade is performed.
+				}
+			}
+		}
+		else
+		{
+			musicPlayer_->pauseMusic();
+		}
+	}
 #ifdef WIN32
 	Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 75, 0);
 #endif
@@ -215,7 +276,6 @@ void RetroFE::launchEnter()
 void RetroFE::launchExit()
 {
 	currentPage_->setIsLaunched(false);
-	// Set up SDL, and load the textures if unloadSDL flag is set
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
 	if (unloadSDL)
@@ -223,12 +283,10 @@ void RetroFE::launchExit()
 		allocateGraphicsMemory();
 	}
 
-	// Restore the SDL settings
 	SDL_RestoreWindow(SDL::getWindow(0));
 	SDL_RaiseWindow(SDL::getWindow(0));
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_TRUE);
 
-	// Empty event queue, but handle joystick add/remove events
 	SDL_Event e;
 	while (SDL_PollEvent(&e))
 	{
@@ -238,30 +296,51 @@ void RetroFE::launchExit()
 		}
 	}
 	input_.resetStates();
-	//attract_.reset();
 	currentPage_->updateReloadables(0);
 	currentPage_->onNewItemSelected();
-	currentPage_->reallocateMenuSpritePoints(false); // skip updating playlist menu
+	currentPage_->reallocateMenuSpritePoints(false);
 
-	// Restore time settings
 	currentTime_ = static_cast<float>(SDL_GetTicks()) / 1000;
 	keyLastTime_ = currentTime_;
 	lastLaunchReturnTime_ = currentTime_;
 
 #ifndef __APPLE__
-	// If not MacOS, warp cursor top right. game/program may warp elsewhere
 	SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0), 0);
 #endif
+
+	bool musicPlayerPlayInGame = false;
+	config_.getProperty("musicPlayer.playInGame", musicPlayerPlayInGame);
+	if (musicPlayer_ && musicPlayerPlayInGame)
+	{
+		int musicPlayerPlayInGameVol = -1;
+		if (config_.getProperty("musicPlayer.playInGameVol", musicPlayerPlayInGameVol))
+		{
+			if (musicPlayerPlayInGameVol >= 0 && musicPlayerPlayInGameVol <= 100)
+			{
+				// Convert the target volume from percentage to MIX's range (0–128)
+				int targetMixVolume = static_cast<int>((musicPlayerPlayInGameVol / 100.0f) * MIX_MAX_VOLUME + 0.5f);
+				// Allow for a small rounding tolerance
+				if (std::abs(musicPlayer_->getVolume() - targetMixVolume) <= 1)
+				{
+					// Restore the previous volume that was stored when fadeToVolume was called.
+					musicPlayer_->fadeBackToPreviousVolume();
+				}
+				// Otherwise, do nothing (i.e. no fade-back is needed).
+			}
+		}
+	}
+	else if (musicPlayer_ && !musicPlayerPlayInGame)
+	{
+		musicPlayer_->resumeMusic();
+	}
 
 #ifdef WIN32
 	Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 76, 0);
 #endif
-	// If on MacOS enable relative mouse mode
 #ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 #endif
 }
-
 // Free the textures, and optionall take down SDL
 void RetroFE::freeGraphicsMemory()
 {
@@ -338,6 +417,11 @@ bool RetroFE::deInitialize()
 	{
 		delete db_;
 		db_ = nullptr;
+	}
+
+	if (musicPlayer_)
+	{
+		musicPlayer_->shutdown();
 	}
 
 	initialized = false;
@@ -485,7 +569,7 @@ bool RetroFE::run()
 	config_.getProperty(OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS, attractModeLaunchMinMaxScrolls);
 	std::vector<std::string> attMinMaxVec;
 	Utils::listToVector(attractModeLaunchMinMaxScrolls, attMinMaxVec, ',');
-	
+
 	attract_.idleTime = static_cast<float>(attractModeTime);
 	attract_.idleNextTime = static_cast<float>(attractModeNextTime);
 	attract_.idlePlaylistTime = static_cast<float>(attractModePlaylistTime);
@@ -751,6 +835,27 @@ bool RetroFE::run()
 				currentPage_->reallocateMenuSpritePoints();  // Update playlist menu
 
 				splashMode = false;
+
+				if (musicPlayer_) {
+					// Check if music should auto-start
+					bool autoStart = false;
+					if (config_.getProperty("musicPlayer.autostart", autoStart) && autoStart)
+					{
+						LOG_INFO("RetroFE", "Auto-starting music player");
+						bool shuffle = true;
+						config_.getProperty("musicPlayer.shuffle", shuffle);
+
+						if (shuffle)
+						{
+							musicPlayer_->shuffle();
+						}
+						else
+						{
+							musicPlayer_->playMusic(0); // Start with first track
+						}
+					}
+				}
+
 				state = RETROFE_LOAD_ART;
 			}
 			break;
@@ -1152,7 +1257,7 @@ bool RetroFE::run()
 					lastMenuPlaylists_[collectionName] = currentPage_->getPlaylistName();
 				}
 				config_.setProperty("lastCollection", collectionName);
-				
+
 				state = RETROFE_PLAYLIST_REQUEST;
 				if (quickListCollection != "" && quickListCollection != collectionName)
 				{
@@ -2089,7 +2194,8 @@ bool RetroFE::run()
 
 					currentPage_->allocateGraphicsMemory();
 					currentPage_->setLocked(kioskLock_);
-				} else {
+				}
+				else {
 					// Same layout case - just pop collection
 					if (!currentPage_->popCollection()) {
 						LOG_ERROR("RetroFE", "Failed to pop collection during back navigation");
@@ -2108,7 +2214,8 @@ bool RetroFE::run()
 				if (std::string settingPrefix = "collections." + currentPage_->getCollectionName() + ".";
 					config_.propertyExists(settingPrefix + OPTION_AUTOPLAYLIST)) {
 					config_.getProperty(settingPrefix + OPTION_AUTOPLAYLIST, autoPlaylist);
-				} else {
+				}
+				else {
 					config_.getProperty(OPTION_AUTOPLAYLIST, autoPlaylist);
 				}
 
@@ -2120,7 +2227,7 @@ bool RetroFE::run()
 				// Check if we should return to remembered playlist
 				bool rememberMenu = false;
 				config_.getProperty(OPTION_REMEMBERMENU, rememberMenu);
-				bool returnToRememberedPlaylist = rememberMenu && 
+				bool returnToRememberedPlaylist = rememberMenu &&
 					lastMenuPlaylists_.find(collectionName) != lastMenuPlaylists_.end();
 
 				// Set appropriate playlist
@@ -2131,7 +2238,8 @@ bool RetroFE::run()
 					if (lastMenuOffsets_.find(collectionName) != lastMenuOffsets_.end()) {
 						currentPage_->setScrollOffsetIndex(lastMenuOffsets_[collectionName]);
 					}
-				} else {
+				}
+				else {
 					// Use auto playlist with fallback to "all"
 					currentPage_->selectPlaylist(autoPlaylist);
 					if (currentPage_->getPlaylistName() != autoPlaylist) {
@@ -2505,6 +2613,72 @@ void RetroFE::goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleV
 	}
 }
 
+// Add this function implementation to RetroFE.cpp
+void RetroFE::handleMusicControls(UserInput::KeyCode_E input)
+{
+	if (!musicPlayer_) {
+		return;
+	}
+	switch (input)
+	{
+	case UserInput::KeyCodeMusicPlayPause:
+		if (musicPlayer_->isPlaying())
+		{
+			musicPlayer_->pauseMusic();
+		}
+		else if (musicPlayer_->isPaused())
+		{
+			musicPlayer_->resumeMusic();
+		}
+		else
+		{
+			musicPlayer_->playMusic();
+		}
+		// Reset attract mode
+		attract_.reset();
+		break;
+
+	case UserInput::KeyCodeMusicNext:
+		musicPlayer_->nextTrack();
+		// Reset attract mode
+		attract_.reset();
+		break;
+
+	case UserInput::KeyCodeMusicPrev:
+		musicPlayer_->previousTrack();
+		// Reset attract mode
+		attract_.reset();
+		break;
+
+	case UserInput::KeyCodeMusicVolumeUp:
+	{
+		musicPlayer_->changeVolume(true);
+		// Reset attract mode
+		attract_.reset();
+	}
+	break;
+
+	case UserInput::KeyCodeMusicVolumeDown:
+	{
+		musicPlayer_->changeVolume(false);
+		// Reset attract mode
+		attract_.reset();
+	}
+	break;
+
+	case UserInput::KeyCodeMusicToggleShuffle:
+		musicPlayer_->setShuffle(!musicPlayer_->getShuffle());
+		break;
+
+	case UserInput::KeyCodeMusicToggleLoop:
+		musicPlayer_->setLoop(!musicPlayer_->getLoop());
+		break;
+	
+	default:
+		break; // Do nothing for other key codes
+	}
+}
+
 // Process the user input
 RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 {
@@ -2534,6 +2708,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			break;
 		}
 	}
+
+
 
 	if (screensaver && ssExitInputs[e.type])
 	{
@@ -2655,9 +2831,53 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		}
 	}
 
+	if (input_.keystate(UserInput::KeyCodeMusicVolumeUp))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicVolumeUp);
+		return state;
+	}
+	else if (input_.keystate(UserInput::KeyCodeMusicVolumeDown))
+	{
+		keyLastTime_ = currentTime_;
+		handleMusicControls(UserInput::KeyCodeMusicVolumeDown);
+		return state;
+	}
+
 	// don't wait for idle
 	if (currentTime_ - keyLastTime_ > keyDelayTime_)
 	{
+		if (input_.keystate(UserInput::KeyCodeMusicPlayPause))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicPlayPause);
+			return state;
+		}
+		else if (input_.keystate(UserInput::KeyCodeMusicNext))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicNext);
+			return state;
+		}
+		else if (input_.keystate(UserInput::KeyCodeMusicPrev))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicPrev);
+			return state;
+		}
+		else if (input_.keystate(UserInput::KeyCodeMusicToggleShuffle))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicToggleShuffle);
+			return state;
+		}
+		else if (input_.keystate(UserInput::KeyCodeMusicToggleLoop))
+		{
+			keyLastTime_ = currentTime_;
+			handleMusicControls(UserInput::KeyCodeMusicToggleLoop);
+			return state;
+		}
+
 		// lock or unlock playlist/collection/menu nav and fav toggle
 		if (page->isIdle() && input_.keystate(UserInput::KeyCodeKisok))
 		{
@@ -3170,6 +3390,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			}
 		}
 	}
+
 
 	if (state != RETROFE_IDLE)
 	{
