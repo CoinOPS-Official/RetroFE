@@ -63,6 +63,7 @@ MusicPlayer::MusicPlayer()
 	, volumeChangeIntervalMs_(0)
 	, audioLevels_()
 	, audioChannels_(2)           // Default to stereo
+	, hasVisualizer_(false)
 	, sampleSize_(2)              // Default to 16-bit samples
 {
 	// Seed the random number generator with current time
