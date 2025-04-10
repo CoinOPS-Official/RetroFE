@@ -109,7 +109,13 @@ private:
     float vuDecayRate_;
     float vuPeakDecayRate_;
     void drawVuMeter();
+    void createVuMeterTextureIfNeeded();
+    void updateVuMeterTexture();
     void updateVuLevels();
+    SDL_Texture* vuMeterTexture_; // Target texture for VU meter rendering
+    int vuMeterTextureWidth_;
+    int vuMeterTextureHeight_;
+    bool vuMeterNeedsUpdate_; // Flag to track when texture update is needed
 
     // VU meter theming
     SDL_Color vuGreenColor_;

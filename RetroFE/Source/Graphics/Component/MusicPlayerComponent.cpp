@@ -67,6 +67,10 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, vuBarCount_(40)  // Default number of bars
 	, vuDecayRate_(2.0f)  // How quickly the bars fall
 	, vuPeakDecayRate_(0.4f)  // How quickly the peak markers fall
+	, vuMeterTexture_(nullptr)
+	, vuMeterTextureWidth_(0)
+	, vuMeterTextureHeight_(0)
+	, vuMeterNeedsUpdate_(true)
 	, vuGreenColor_({ 0, 220, 0, 255 })
 	, vuYellowColor_({ 220, 220, 0, 255 })
 	, vuRedColor_({ 220, 0, 0, 255 })
@@ -107,6 +111,11 @@ void MusicPlayerComponent::freeGraphicsMemory() {
 	if (volumeBarTexture_ != nullptr) {
 		SDL_DestroyTexture(volumeBarTexture_);
 		volumeBarTexture_ = nullptr;
+	}
+
+	if (vuMeterTexture_ != nullptr) {
+		SDL_DestroyTexture(vuMeterTexture_);
+		vuMeterTexture_ = nullptr;
 	}
 
 	if (loadedComponent_ != nullptr) {
@@ -596,6 +605,9 @@ bool MusicPlayerComponent::update(float dt) {
 			}
 		}
 
+		// Flag texture needs update
+		vuMeterNeedsUpdate_ = true;
+
 		return Component::update(dt);
 	}
 
@@ -786,6 +798,171 @@ void MusicPlayerComponent::draw() {
 }
 
 
+void MusicPlayerComponent::createVuMeterTextureIfNeeded() {
+	if (!renderer_ || vuMeterTexture_ != nullptr) {
+		return; // Already created or renderer not available
+	}
+
+	// Get the dimensions from baseViewInfo
+	vuMeterTextureWidth_ = static_cast<int>(baseViewInfo.ScaledWidth());
+	vuMeterTextureHeight_ = static_cast<int>(baseViewInfo.ScaledHeight());
+
+	// Ensure we have valid dimensions
+	if (vuMeterTextureWidth_ <= 0 || vuMeterTextureHeight_ <= 0) {
+		return;
+	}
+
+	// Create the render target texture
+	vuMeterTexture_ = SDL_CreateTexture(
+		renderer_,
+		SDL_PIXELFORMAT_RGBA8888,
+		SDL_TEXTUREACCESS_TARGET,
+		vuMeterTextureWidth_,
+		vuMeterTextureHeight_
+	);
+
+	if (vuMeterTexture_) {
+		SDL_SetTextureBlendMode(vuMeterTexture_, SDL_BLENDMODE_BLEND);
+		vuMeterNeedsUpdate_ = true;
+	}
+	else {
+		LOG_ERROR("MusicPlayerComponent", "Failed to create VU meter texture");
+	}
+}
+
+// Add new method to update the VU meter texture
+void MusicPlayerComponent::updateVuMeterTexture() {
+	if (!renderer_ || !vuMeterTexture_ || !vuMeterNeedsUpdate_) {
+		return;
+	}
+
+	// Save current render target
+	SDL_Texture* previousTarget = SDL_GetRenderTarget(renderer_);
+
+	// Set the VU meter texture as the render target
+	SDL_SetRenderTarget(renderer_, vuMeterTexture_);
+
+	// Clear the texture
+	SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+	SDL_RenderClear(renderer_);
+
+	// Calculate bar dimensions
+	float barWidth = vuMeterTextureWidth_ / static_cast<float>(vuBarCount_);
+	float barSpacing = barWidth * 0.1f; // 10% of bar width for spacing
+	float actualBarWidth = barWidth - barSpacing;
+
+	// Set blend mode for transparency
+	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
+
+	// Draw each bar to the texture
+	for (int i = 0; i < vuBarCount_; i++) {
+		float barX = i * barWidth;
+
+		// Calculate the height of this bar based on its level
+		float barHeight = vuMeterTextureHeight_ * vuLevels_[i];
+		float peakHeight = vuMeterTextureHeight_ * vuPeaks_[i];
+
+		// Background/border for bar
+		SDL_SetRenderDrawColor(
+			renderer_,
+			vuBackgroundColor_.r,
+			vuBackgroundColor_.g,
+			vuBackgroundColor_.b,
+			255 // Full opacity on the texture
+		);
+		SDL_FRect bgRect = { barX, 0, actualBarWidth, static_cast<float>(vuMeterTextureHeight_) };
+		SDL_RenderFillRectF(renderer_, &bgRect);
+
+		// Calculate zone heights based on thresholds
+		float greenZone = vuMeterTextureHeight_ * vuGreenThreshold_;
+		float yellowZone = vuMeterTextureHeight_ * (vuYellowThreshold_ - vuGreenThreshold_);
+		float redZone = vuMeterTextureHeight_ * (1.0f - vuYellowThreshold_);
+
+		// Draw the green segment
+		if (barHeight > 0) {
+			SDL_SetRenderDrawColor(
+				renderer_,
+				vuGreenColor_.r,
+				vuGreenColor_.g,
+				vuGreenColor_.b,
+				255 // Full opacity on the texture
+			);
+			float segmentHeight = std::min(barHeight, greenZone);
+			SDL_FRect greenRect = {
+				barX + barSpacing * 0.5f,
+				vuMeterTextureHeight_ - segmentHeight,
+				actualBarWidth - barSpacing,
+				segmentHeight
+			};
+			SDL_RenderFillRectF(renderer_, &greenRect);
+		}
+
+		// Draw the yellow segment
+		if (barHeight > greenZone) {
+			SDL_SetRenderDrawColor(
+				renderer_,
+				vuYellowColor_.r,
+				vuYellowColor_.g,
+				vuYellowColor_.b,
+				255 // Full opacity on the texture
+			);
+			float segmentHeight = std::min(barHeight - greenZone, yellowZone);
+			SDL_FRect yellowRect = {
+				barX + barSpacing * 0.5f,
+				vuMeterTextureHeight_ - greenZone - segmentHeight,
+				actualBarWidth - barSpacing,
+				segmentHeight
+			};
+			SDL_RenderFillRectF(renderer_, &yellowRect);
+		}
+
+		// Draw the red segment
+		if (barHeight > greenZone + yellowZone) {
+			SDL_SetRenderDrawColor(
+				renderer_,
+				vuRedColor_.r,
+				vuRedColor_.g,
+				vuRedColor_.b,
+				255 // Full opacity on the texture
+			);
+			float segmentHeight = std::min(barHeight - greenZone - yellowZone, redZone);
+			SDL_FRect redRect = {
+				barX + barSpacing * 0.5f,
+				vuMeterTextureHeight_ - greenZone - yellowZone - segmentHeight,
+				actualBarWidth - barSpacing,
+				segmentHeight
+			};
+			SDL_RenderFillRectF(renderer_, &redRect);
+		}
+
+		// Draw peak marker
+		if (peakHeight > 0 && peakHeight >= barHeight) {
+			SDL_SetRenderDrawColor(
+				renderer_,
+				vuPeakColor_.r,
+				vuPeakColor_.g,
+				vuPeakColor_.b,
+				255 // Full opacity on the texture
+			);
+
+			SDL_FRect peakRect = {
+				barX + barSpacing * 0.5f,
+				vuMeterTextureHeight_ - peakHeight - 2,
+				actualBarWidth - barSpacing,
+				2 // 2-pixel height for the peak marker
+			};
+			SDL_RenderFillRectF(renderer_, &peakRect);
+		}
+	}
+
+	// Restore previous render target
+	SDL_SetRenderTarget(renderer_, previousTarget);
+
+	// Mark as updated
+	vuMeterNeedsUpdate_ = false;
+}
+
+
 void MusicPlayerComponent::updateVuLevels() {
 	// Get audio levels from the music player
 	const std::vector<float>& audioLevels = musicPlayer_->getAudioLevels();
@@ -928,128 +1105,40 @@ void MusicPlayerComponent::updateVuLevels() {
 }
 
 void MusicPlayerComponent::drawVuMeter() {
-	if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
+	if (!renderer_ || baseViewInfo.Alpha <= 0.0f || !musicPlayer_->hasStartedPlaying()) {
 		return;
 	}
 
-	// Calculate the dimensions and position of the VU meter
-	float meterX = baseViewInfo.XRelativeToOrigin();
-	float meterY = baseViewInfo.YRelativeToOrigin();
-	float meterWidth = baseViewInfo.ScaledWidth();
-	float meterHeight = baseViewInfo.ScaledHeight();
+	// Create texture if needed
+	createVuMeterTextureIfNeeded();
 
-	// Calculate bar dimensions
-	float barWidth = meterWidth / vuBarCount_;
-	float barSpacing = barWidth * 0.1f; // 10% of bar width for spacing
-	float actualBarWidth = barWidth - barSpacing;
-
-	// Set blend mode for transparency
-	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
-
-	// Draw each bar
-	for (int i = 0; i < vuBarCount_; i++) {
-		float barX = meterX + i * barWidth;
-
-		// Calculate the height of this bar based on its level
-		float barHeight = meterHeight * vuLevels_[i];
-		float peakHeight = meterHeight * vuPeaks_[i];
-
-		// Background/border for bar
-		SDL_SetRenderDrawColor(
-			renderer_,
-			vuBackgroundColor_.r,
-			vuBackgroundColor_.g,
-			vuBackgroundColor_.b,
-			static_cast<Uint8>(baseViewInfo.Alpha * 255)
-		);
-		SDL_FRect bgRect = { barX, meterY, actualBarWidth, meterHeight };
-		SDL_RenderFillRectF(renderer_, &bgRect);
-
-		// Calculate zone heights based on thresholds
-		float greenZone = meterHeight * vuGreenThreshold_;
-		float yellowZone = meterHeight * (vuYellowThreshold_ - vuGreenThreshold_);
-		float redZone = meterHeight * (1.0f - vuYellowThreshold_);
-
-		// Draw the green segment
-		if (barHeight > 0) {
-			SDL_SetRenderDrawColor(
-				renderer_,
-				vuGreenColor_.r,
-				vuGreenColor_.g,
-				vuGreenColor_.b,
-				static_cast<Uint8>(baseViewInfo.Alpha * 255)
-			);
-			float segmentHeight = std::min(barHeight, greenZone);
-			SDL_FRect greenRect = {
-				barX + barSpacing * 0.5f,
-				meterY + meterHeight - segmentHeight,
-				actualBarWidth - barSpacing,
-				segmentHeight
-			};
-			SDL_RenderFillRectF(renderer_, &greenRect);
-		}
-
-		// Draw the yellow segment
-		if (barHeight > greenZone) {
-			SDL_SetRenderDrawColor(
-				renderer_,
-				vuYellowColor_.r,
-				vuYellowColor_.g,
-				vuYellowColor_.b,
-				static_cast<Uint8>(baseViewInfo.Alpha * 255)
-			);
-			float segmentHeight = std::min(barHeight - greenZone, yellowZone);
-			SDL_FRect yellowRect = {
-				barX + barSpacing * 0.5f,
-				meterY + meterHeight - greenZone - segmentHeight,
-				actualBarWidth - barSpacing,
-				segmentHeight
-			};
-			SDL_RenderFillRectF(renderer_, &yellowRect);
-		}
-
-		// Draw the red segment
-		if (barHeight > greenZone + yellowZone) {
-			SDL_SetRenderDrawColor(
-				renderer_,
-				vuRedColor_.r,
-				vuRedColor_.g,
-				vuRedColor_.b,
-				static_cast<Uint8>(baseViewInfo.Alpha * 255)
-			);
-			float segmentHeight = std::min(barHeight - greenZone - yellowZone, redZone);
-			SDL_FRect redRect = {
-				barX + barSpacing * 0.5f,
-				meterY + meterHeight - greenZone - yellowZone - segmentHeight,
-				actualBarWidth - barSpacing,
-				segmentHeight
-			};
-			SDL_RenderFillRectF(renderer_, &redRect);
-		}
-
-		// Draw peak marker
-		if (peakHeight > 0 && peakHeight >= barHeight) {
-			// Use custom peak color
-			SDL_SetRenderDrawColor(
-				renderer_,
-				vuPeakColor_.r,
-				vuPeakColor_.g,
-				vuPeakColor_.b,
-				static_cast<Uint8>(baseViewInfo.Alpha * 255)
-			);
-
-			// Draw the peak marker as a thin line
-			SDL_FRect peakRect = {
-				barX + barSpacing * 0.5f,
-				meterY + meterHeight - peakHeight - 2,
-				actualBarWidth - barSpacing,
-				2 // 2-pixel height for the peak marker
-			};
-			SDL_RenderFillRectF(renderer_, &peakRect);
-		}
+	// If texture creation failed, return
+	if (!vuMeterTexture_) {
+		return;
 	}
-}
 
+	// Update the texture if needed
+	if (vuMeterNeedsUpdate_) {
+		updateVuMeterTexture();
+	}
+
+	// Draw the texture
+	SDL_FRect rect;
+	rect.x = baseViewInfo.XRelativeToOrigin();
+	rect.y = baseViewInfo.YRelativeToOrigin();
+	rect.w = baseViewInfo.ScaledWidth();
+	rect.h = baseViewInfo.ScaledHeight();
+
+	SDL::renderCopyF(
+		vuMeterTexture_,
+		baseViewInfo.Alpha,
+		nullptr,
+		&rect,
+		baseViewInfo,
+		page.getLayoutWidth(baseViewInfo.Monitor),
+		page.getLayoutHeight(baseViewInfo.Monitor)
+	);
+}
 
 void MusicPlayerComponent::drawProgressBar() {
 	if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
