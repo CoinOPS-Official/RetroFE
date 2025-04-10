@@ -54,7 +54,6 @@ public:
 private:
     // Find and load appropriate component based on type and state
     Component* reloadComponent();
-    Text* cachedTextComponent_ = nullptr;
     Page* currentPage_;
     Configuration& config_;
     bool commonMode_;

@@ -123,7 +123,6 @@ void MusicPlayerComponent::freeGraphicsMemory() {
 		delete loadedComponent_;
 		loadedComponent_ = nullptr;
 	}
-	cachedTextComponent_ = nullptr;
 }
 
 void MusicPlayerComponent::allocateGraphicsMemory() {
@@ -786,12 +785,7 @@ void MusicPlayerComponent::draw() {
 		return;
 	}
 
-	// Draw text component if it exists; otherwise, use the loaded component.
-	if (cachedTextComponent_) {
-		cachedTextComponent_->baseViewInfo = baseViewInfo;
-		cachedTextComponent_->draw();
-	}
-	else if (loadedComponent_ != nullptr) {
+    if (loadedComponent_ != nullptr) {
 		loadedComponent_->baseViewInfo = baseViewInfo;
 		loadedComponent_->draw();
 	}
@@ -1336,16 +1330,12 @@ Component* MusicPlayerComponent::reloadComponent() {
 	else if (typeLC == "filename") {
 		std::string fileName = musicPlayer_->getCurrentTrackNameWithoutExtension();
 
-		if (cachedTextComponent_) {
-			cachedTextComponent_->setText(fileName);
+		if (loadedComponent_) {
+			loadedComponent_->setText(fileName);
 		}
 		else {
-			cachedTextComponent_ = new Text(fileName, page, font_, baseViewInfo.Monitor);
+			loadedComponent_ = new Text(fileName, page, font_, baseViewInfo.Monitor);
 		}
-		// Now assign the text component as the single owner.
-		loadedComponent_ = cachedTextComponent_;
-		// Clear cachedTextComponent_ so only loadedComponent_ owns it.
-		cachedTextComponent_ = nullptr;
 		return loadedComponent_;
 	}
 	else if (typeLC == "trackinfo") {
@@ -1354,16 +1344,12 @@ Component* MusicPlayerComponent::reloadComponent() {
 			trackName = "No track playing";
 		}
 
-		if (cachedTextComponent_) {
-			cachedTextComponent_->setText(trackName);
+		if (loadedComponent_) {
+			loadedComponent_->setText(trackName);
 		}
 		else {
-			cachedTextComponent_ = new Text(trackName, page, font_, baseViewInfo.Monitor);
+			loadedComponent_ = new Text(trackName, page, font_, baseViewInfo.Monitor);
 		}
-		// Now assign the text component as the single owner.
-		loadedComponent_ = cachedTextComponent_;
-		// Clear cachedTextComponent_ so only loadedComponent_ owns it.
-		cachedTextComponent_ = nullptr;
 		return loadedComponent_;
 	}
 	else if (typeLC == "title") {
@@ -1371,17 +1357,12 @@ Component* MusicPlayerComponent::reloadComponent() {
 		if (titleName.empty()) {
 			titleName = "Unknown";
 		}
-
-		if (cachedTextComponent_) {
-			cachedTextComponent_->setText(titleName);
+		if (loadedComponent_) {
+			loadedComponent_->setText(titleName);
 		}
 		else {
-			cachedTextComponent_ = new Text(titleName, page, font_, baseViewInfo.Monitor);
+			loadedComponent_ = new Text(titleName, page, font_, baseViewInfo.Monitor);
 		}
-		// Now assign the text component as the single owner.
-		loadedComponent_ = cachedTextComponent_;
-		// Clear cachedTextComponent_ so only loadedComponent_ owns it.
-		cachedTextComponent_ = nullptr;
 		return loadedComponent_;
 	}
 	else if (typeLC == "artist") {
@@ -1390,16 +1371,12 @@ Component* MusicPlayerComponent::reloadComponent() {
 			artistName = "Unknown Artist";
 		}
 
-		if (cachedTextComponent_) {
-			cachedTextComponent_->setText(artistName);
+		if (loadedComponent_) {
+			loadedComponent_->setText(artistName);
 		}
 		else {
-			cachedTextComponent_ = new Text(artistName, page, font_, baseViewInfo.Monitor);
+			loadedComponent_ = new Text(artistName, page, font_, baseViewInfo.Monitor);
 		}
-		// Now assign the text component as the single owner.
-		loadedComponent_ = cachedTextComponent_;
-		// Clear cachedTextComponent_ so only loadedComponent_ owns it.
-		cachedTextComponent_ = nullptr;
 		return loadedComponent_;
 	}
 	else if (typeLC == "album") {
@@ -1408,16 +1385,12 @@ Component* MusicPlayerComponent::reloadComponent() {
 			albumName = "Unknown Album";
 		}
 
-		if (cachedTextComponent_) {
-			cachedTextComponent_->setText(albumName);
+		if (loadedComponent_) {
+			loadedComponent_->setText(albumName);
 		}
 		else {
-			cachedTextComponent_ = new Text(albumName, page, font_, baseViewInfo.Monitor);
+			loadedComponent_ = new Text(albumName, page, font_, baseViewInfo.Monitor);
 		}
-		// Now assign the text component as the single owner.
-		loadedComponent_ = cachedTextComponent_;
-		// Clear cachedTextComponent_ so only loadedComponent_ owns it.
-		cachedTextComponent_ = nullptr;
 		return loadedComponent_;
 	}
 	else if (typeLC == "time") {
@@ -1439,16 +1412,12 @@ Component* MusicPlayerComponent::reloadComponent() {
 			<< std::setfill('0') << std::setw(minWidth) << durationMin << ":"
 			<< std::setfill('0') << std::setw(2) << durationRemSec;
 
-		if (cachedTextComponent_) {
-			cachedTextComponent_->setText(ss.str());
+		if (loadedComponent_) {
+			loadedComponent_->setText(ss.str());
 		}
 		else {
-			cachedTextComponent_ = new Text(ss.str(), page, font_, baseViewInfo.Monitor);
+			loadedComponent_ = new Text(ss.str(), page, font_, baseViewInfo.Monitor);
 		}
-		// Now assign the text component as the single owner.
-		loadedComponent_ = cachedTextComponent_;
-		// Clear cachedTextComponent_ so only loadedComponent_ owns it.
-		cachedTextComponent_ = nullptr;
 		return loadedComponent_;
 	}
 	else if (typeLC == "progress") {
@@ -1459,16 +1428,12 @@ Component* MusicPlayerComponent::reloadComponent() {
 		int volumePercentage = static_cast<int>((volumeRaw / 128.0f) * 100.0f + 0.5f);
 		std::string volumeStr = std::to_string(volumePercentage);
 
-		if (cachedTextComponent_) {
-			cachedTextComponent_->setText(volumeStr);
+		if (loadedComponent_) {
+			loadedComponent_->setText(volumeStr);
 		}
 		else {
-			cachedTextComponent_ = new Text(volumeStr, page, font_, baseViewInfo.Monitor);
+			loadedComponent_ = new Text(volumeStr, page, font_, baseViewInfo.Monitor);
 		}
-		// Now assign the text component as the single owner.
-		loadedComponent_ = cachedTextComponent_;
-		// Clear cachedTextComponent_ so only loadedComponent_ owns it.
-		cachedTextComponent_ = nullptr;
 		return loadedComponent_;
 	}
 	else {
