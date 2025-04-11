@@ -133,6 +133,12 @@ Download the following .dmg and place all .framework's in `RetroFE/ThirdPartyMac
 * Install Gstreamer (https://gstreamer.freedesktop.org/download/#macos)
 * * For Gstreamer both runtime and dev packages are needed, they are installed to `Macintosh HD/Library/Frameworks` and should be moved to `RetroFE/ThirdPartyMac`
 
+### Install headers
+
+```bash
+brew install minizip libusb
+```
+
 ### Download and compile the source code
 Download the source code
 
