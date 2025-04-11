@@ -41,10 +41,12 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#if (__APPLE__)
+#if __has_include(<SDL2/SDL_ttf.h>)
+#include <SDL2/SDL_ttf.h>
+#elif __has_include(<SDL2_ttf/SDL_ttf.h>)
 #include <SDL2_ttf/SDL_ttf.h>
 #else
-#include <SDL2/SDL_ttf.h>
+#error "Cannot find SDL_ttf header"
 #endif
 
 #if defined(__linux) || defined(__APPLE__)

@@ -18,10 +18,12 @@
 #include "../SDL.h"
 #include "../Utility/Log.h"
 #include "Font.h"
-#if (__APPLE__)
+#if __has_include(<SDL2/SDL_ttf.h>)
+#include <SDL2/SDL_ttf.h>
+#elif __has_include(<SDL2_ttf/SDL_ttf.h>)
 #include <SDL2_ttf/SDL_ttf.h>
 #else
-#include <SDL2/SDL_ttf.h>
+#error "Cannot find SDL_ttf header"
 #endif
 #include <sstream>
 #include <memory>

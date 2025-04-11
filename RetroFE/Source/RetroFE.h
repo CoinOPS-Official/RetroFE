@@ -26,10 +26,12 @@
 #include "Video/VideoFactory.h"
 #include "Video/GStreamerVideo.h"
 #include <SDL2/SDL.h>
-#if (__APPLE__)
-    #include <SDL2_ttf/SDL_ttf.h>
+#if __has_include(<SDL2/SDL_ttf.h>)
+#include <SDL2/SDL_ttf.h>
+#elif __has_include(<SDL2_ttf/SDL_ttf.h>)
+#include <SDL2_ttf/SDL_ttf.h>
 #else
-    #include <SDL2/SDL_ttf.h>
+#error "Cannot find SDL_ttf header"
 #endif
 #include <list>
 #include <stack>
