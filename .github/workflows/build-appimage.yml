@@ -24,6 +24,9 @@ jobs:
             cmake 
             dos2unix 
             zlib1g-dev
+            libglib2.0-0 
+            libglib2.0-dev 
+            libblas-dev
             libsdl2-2.0 
             libsdl2-mixer-2.0
             libsdl2-image-2.0 
@@ -38,8 +41,6 @@ jobs:
             gstreamer1.0-plugins-base 
             gstreamer1.0-plugins-good
             gstreamer1.0-libav
-            libglib2.0-0 
-            libglib2.0-dev 
             sqlite3 
             libminizip-dev 
             libwebp-dev 
