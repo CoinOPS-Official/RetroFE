@@ -119,7 +119,7 @@ Compile RetroFE
 
 #   Building for MacOS #
 
-# Install Homebrew
+## Install Homebrew
 
 Both methods use Homebrew in some capacity (https://brew.sh)
 
