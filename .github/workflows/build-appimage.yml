@@ -10,7 +10,6 @@ jobs:
         config:
           - { os: ubuntu-24.04, arch: x86_64 }
           - { os: ubuntu-24.04-arm, arch: arm64 }
-          # - { os: ubuntu-22.04-arm, arch: arm64 } # Raspberry Pi OS Target, SDL2 suite needs to be built for raspios
     runs-on: ${{ matrix.config.os }}
     name: Build ${{ matrix.config.os }}
 
@@ -68,13 +67,8 @@ jobs:
 
       - name: Install linuxdeploy
         run: |
-          if [ "${{ matrix.config.arch }}" == "arm64" ]; then
-            wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-aarch64.AppImage -O linuxdeploy-arm64.AppImage
-            chmod +x linuxdeploy-arm64.AppImage
-          else
-            wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.config.arch }}.AppImage
-            chmod +x linuxdeploy-${{ matrix.config.arch }}.AppImage
-          fi
+          wget https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-${{ matrix.config.arch == 'arm64' && 'aarch64' || matrix.config.arch }}.AppImage -O linuxdeploy-${{ matrix.config.arch }}.AppImage
+          chmod +x linuxdeploy-${{ matrix.config.arch }}.AppImage
           
       - name: Install linuxdeploy-plugin-gstreamer
         run: |
@@ -91,29 +85,10 @@ jobs:
             --desktop-file Package/Environment/Linux/retrofe.desktop \
             --icon-file Package/Environment/Common/RetroFE.png
           if [ "${{ matrix.config.arch }}" == "arm64" ]; then
-            if [ "${{ matrix.config.os }}" == "ubuntu-24.04-arm" ]; then
-              mv RetroFE-aarch64.AppImage RetroFE-arm64.AppImage
-            elif [ "${{ matrix.config.os }}" == "ubuntu-22.04-arm" ]; then
-              mv RetroFE-aarch64.AppImage RetroFE-raspi.AppImage
-            fi
+            mv RetroFE-aarch64.AppImage RetroFE-arm64.AppImage
           fi
-    
-      - name: Upload ARM64 AppImage
-        if: ${{ matrix.config.arch == 'arm64' && matrix.config.os == 'ubuntu-24.04-arm' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: RetroFE-arm64.AppImage
-          path: RetroFE-arm64.AppImage
       
-      - name: Upload Raspi AppImage
-        if: ${{ matrix.config.arch == 'arm64' && matrix.config.os == 'ubuntu-22.04-arm' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: RetroFE-raspi.AppImage
-          path: RetroFE-raspi.AppImage
-      
-      - name: Upload Other Arch AppImage
-        if: ${{ matrix.config.arch != 'arm64' }}
+      - name: Upload ${{ matrix.config.arch }} Arch AppImage
         uses: actions/upload-artifact@v4
         with:
           name: RetroFE-${{ matrix.config.arch }}.AppImage
