@@ -40,7 +40,6 @@ jobs:
             gstreamer1.0-plugins-base 
             gstreamer1.0-plugins-good
             gstreamer1.0-libav
-            sqlite3 
             libminizip-dev 
             libwebp-dev 
             libusb-1.0-0
@@ -57,7 +56,7 @@ jobs:
             libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
             libgstreamer1.0 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
             gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
-            sqlite3 libminizip-dev libwebp-dev libusb-1.0-0 libusb-1.0-0-dev libevdev-dev
+            libminizip-dev libwebp-dev libusb-1.0-0 libusb-1.0-0-dev libevdev-dev
 
       - name: Configure CMake
         run: cmake RetroFE/Source -BRetroFE/Build

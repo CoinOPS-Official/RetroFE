@@ -45,7 +45,6 @@ jobs:
           libgstreamer-plugins-good1.0-dev
           gstreamer1.0-libav
           libglib2.0-dev
-          sqlite3
           libminizip-dev
           libwebp-dev
           libevdev-dev
@@ -69,7 +68,6 @@ jobs:
           libgstreamer-plugins-good1.0-dev \
           gstreamer1.0-libav \
           libglib2.0-dev \
-          sqlite3 \
           libminizip-dev \
           libwebp-dev \
           libevdev-dev \

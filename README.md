@@ -82,7 +82,7 @@ sudo apt-get install git g++ cmake dos2unix zlib1g-dev \
 libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
 libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-good1.0-dev gstreamer1.0-libav \
-libglib2.0-0 libglib2.0-dev sqlite3 libminizip-dev libwebp-dev libusb-1.0-0-dev libevdev-dev
+libglib2.0-0 libglib2.0-dev libminizip-dev libwebp-dev libusb-1.0-0-dev libevdev-dev
 ```
 
 #### Fedora
@@ -91,7 +91,7 @@ sudo dnf install -y git gcc-c++ cmake dos2unix zlib-devel \
 SDL2 SDL2_mixer SDL2_image SDL2_ttf \
 SDL2-devel SDL2_mixer-devel SDL2_image-devel SDL2_ttf-devel \
 gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-libav \
-glib2 glib2-devel sqlite-devel minizip-devel libwebp-devel libusb1-devel libevdev-devel \
+glib2 glib2-devel minizip-devel libwebp-devel libusb1-devel libevdev-devel \
 zlib libusb1 libevdev
 ```
 
@@ -100,7 +100,7 @@ zlib libusb1 libevdev
 sudo pacman -S git gcc cmake dos2unix zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer gst-plugins-base gst-plugins-good gst-libav \
-glib2 sqlite minizip libwebp libusb libevdev
+glib2 minizip libwebp libusb libevdev
 ```
 
 ### Download and compile the source code
@@ -147,7 +147,7 @@ Open the Xcodeproj in `RetroFE/xcode` and build target
 brew install git gcc cmake dos2unix zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer \
-glib sqlite3 minizip webp libusb
+glib minizip webp libusb
 ```
 
 ### Download and compile the source code
