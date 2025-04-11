@@ -25,8 +25,7 @@ jobs:
             dos2unix 
             zlib1g-dev
             libglib2.0-0 
-            libglib2.0-dev 
-            libblas-dev
+            libglib2.0-dev
             libsdl2-2.0 
             libsdl2-mixer-2.0
             libsdl2-image-2.0 
@@ -48,6 +47,17 @@ jobs:
             libusb-1.0-0-dev
             libevdev-dev
           version: ${{ matrix.config.os }}
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake dos2unix \
+            zlib1g-dev libglib2.0-0 libglib2.0-dev \
+            libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
+            libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
+            libgstreamer1.0 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            gstreamer1.0-plugins-base gstreamer1.0-plugins-good gstreamer1.0-libav \
+            sqlite3 libminizip-dev libwebp-dev libusb-1.0-0 libusb-1.0-0-dev libevdev-dev
 
       - name: Configure CMake
         run: cmake RetroFE/Source -BRetroFE/Build
