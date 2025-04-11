@@ -31,7 +31,7 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 ## System Requirements
 * OS
     * Windows (10 or higher)
-    * Linux
+    * Linux (AppImage requires libc 2.38 or higher)
     * macOS (11 Big Sur or higher)
 	* Unix-like systems other than Linux are not officially supported but may work
 * Processor
