@@ -138,7 +138,10 @@ Download the source code
 
 	git clone https://github.com/CoinOPS-Official/RetroFE.git
 
-Open the Xcodeproj in `RetroFE/xcode` and build target
+Open the Xcodeproj in `RetroFE/xcode` and build target or
+
+	cd RetroFE/RetroFE/xcode
+	xcodebuild -project retrofe.xcodeproj
 
 ## Single Architecture Binaries
 ### Install libraries
