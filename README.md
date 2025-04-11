@@ -118,6 +118,11 @@ Compile RetroFE
 	cmake --build RetroFE/Build
 
 #   Building for MacOS #
+
+# Install Homebrew
+
+Both methods use Homebrew in some capacity (https://brew.sh)
+
 ## Universal2 Binaries
 
 An Xcode project has been created to build universal binaries (x86_64 and arm64)
@@ -130,8 +135,10 @@ Download the following .dmg and place all .framework's in `RetroFE/ThirdPartyMac
 * Install SDL2\_image (https://github.com/libsdl-org/SDL_image/releases/latest)
 * Install SDL2\_mixer (https://github.com/libsdl-org/SDL_mixer/releases/latest)
 * Install SDL2\_ttf (https://github.com/libsdl-org/SDL_ttf/releases/latest)
-* Install Gstreamer (https://gstreamer.freedesktop.org/download/#macos)
-* * For Gstreamer both runtime and dev packages are needed, they are installed to `Macintosh HD/Library/Frameworks` and should be moved to `RetroFE/ThirdPartyMac`
+* Install Gstreamer, both runtime and dev packages are needed, they are installed to `Macintosh HD/Library/Frameworks` and should be copied to `RetroFE/ThirdPartyMac`
+```bash
+brew install --cask gstreamer-runtime gstreamer-development
+```
 
 ### Install headers
 
