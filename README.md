@@ -143,14 +143,14 @@ An Xcode project has been created to build universal binaries (x86_64 and arm64)
 
 Download the following .dmg and place all .framework's in `RetroFE/ThirdPartyMac`
 
-* Install SDL2 (https://github.com/libsdl-org/SDL/releases/latest)
-* Install SDL2\_image (https://github.com/libsdl-org/SDL_image/releases/latest)
-* Install SDL2\_mixer (https://github.com/libsdl-org/SDL_mixer/releases/latest)
-* Install SDL2\_ttf (https://github.com/libsdl-org/SDL_ttf/releases/latest)
-* Install Gstreamer, both runtime and dev packages are needed, they are installed to `Macintosh HD/Library/Frameworks` and should be copied to `RetroFE/ThirdPartyMac`
-```bash
-brew install --cask gstreamer-runtime gstreamer-development
-```
+* Install SDL2 (https://github.com/libsdl-org/SDL/releases/download/release-2.32.4/SDL2-2.32.4.dmg)
+* Install SDL2\_image (https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.8/SDL2_image-2.8.8.dmg)
+* Install SDL2\_mixer (https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.1/SDL2_mixer-2.8.1.dmg)
+  * Also copy `webp.framework` from `/optional` to `RetroFE/ThirdPartyMac`
+* Install SDL2\_ttf (https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-2.24.0.dmg)
+* Install Gstreamer, they are installed to `Macintosh HD/Library/Frameworks` and should be copied to `RetroFE/ThirdPartyMac`
+  * (https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-1.22.12-universal.pkg)
+  * (https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-devel-1.22.12-universal.pkg)
 
 ### Download and compile the source code
 Download the source code
