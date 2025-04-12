@@ -22,6 +22,8 @@
 #include <cstddef>
 #include <cstring>
 #include <thread>
+#include <iomanip>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -1507,196 +1509,385 @@ bool MusicPlayer::isPlayingNewTrack()
 	return isPlaying() && hasTrackChanged();
 }
 
-bool extractAlbumArtFromFile(const std::string& filePath, std::vector<unsigned char>& albumArtData) {
-	std::ifstream file(filePath, std::ios::binary);
-	if (!file.is_open()) {
-		SDL_Log("Failed to open file: %s", filePath.c_str());
-		return false;
-	}
+static bool extractAlbumArtFromFile(const std::string& filePath, std::vector<unsigned char>& albumArtData) {
+	try {
+		// Clear the output vector first
+		albumArtData.clear();
 
-	// Read the ID3v2 header (10 bytes)
-	std::vector<std::byte> header(10);
-	file.read(reinterpret_cast<char*>(header.data()), header.size());
-	if (file.gcount() < static_cast<std::streamsize>(header.size()) ||
-		std::memcmp(header.data(), "ID3", 3) != 0) {
-		// Not an ID3v2 file
-		return false;
-	}
+		std::ifstream file(filePath, std::ios::binary);
+		if (!file.is_open()) {
+			LOG_ERROR("MusicPlayer", "Failed to open file: " + filePath);
+			return false;
+		}
 
-	// Get ID3 version
-	unsigned int majorVersion = static_cast<unsigned int>(std::to_integer<unsigned char>(header[3]));
-	SDL_Log("ID3v2.%d tag found", majorVersion);
+		// Get file size for validation
+		file.seekg(0, std::ios::end);
+		std::streamsize fileSize = file.tellg();
+		file.seekg(0, std::ios::beg);
 
-	// Get the tag size (bytes 6-9 are synchsafe integers)
-	int tagSize = 0;
-	for (int i = 0; i < 4; ++i) {
-		tagSize = (tagSize << 7) | (std::to_integer<unsigned char>(header[6 + i]) & 0x7F);
-	}
-	int tagEnd = 10 + tagSize; // End position of the tag
+		// Ensure file is large enough for ID3 header
+		if (fileSize < 10) {
+			LOG_INFO("MusicPlayer", "File too small to contain ID3 tags: " + filePath);
+			return false;
+		}
 
-	SDL_Log("Tag size: %d bytes", tagSize);
+		// Read the ID3v2 header (10 bytes)
+		std::vector<std::byte> header;
+		try {
+			header.resize(10);
+			file.read(reinterpret_cast<char*>(header.data()), header.size());
+		}
+		catch (const std::bad_alloc& e) {
+			LOG_ERROR("MusicPlayer", "Memory allocation failed for ID3 header: " + std::string(e.what()));
+			return false;
+		}
 
-	// Loop through frames until we reach the end of the tag.
-	while (file.tellg() < tagEnd && !file.eof()) {
-		std::vector<std::byte> frameHeader(10);
-		file.read(reinterpret_cast<char*>(frameHeader.data()), frameHeader.size());
-		if (file.gcount() < static_cast<std::streamsize>(frameHeader.size()))
-			break;
+		if (file.gcount() < static_cast<std::streamsize>(header.size()) ||
+			std::memcmp(header.data(), "ID3", 3) != 0) {
+			// Not an ID3v2 file
+			return false;
+		}
 
-		// Frame ID is in the first 4 bytes.
-		char frameID[5] = {
-			static_cast<char>(std::to_integer<unsigned char>(frameHeader[0])),
-			static_cast<char>(std::to_integer<unsigned char>(frameHeader[1])),
-			static_cast<char>(std::to_integer<unsigned char>(frameHeader[2])),
-			static_cast<char>(std::to_integer<unsigned char>(frameHeader[3])),
-			0
-		};
+		// Get ID3 version
+		unsigned int majorVersion = static_cast<unsigned int>(std::to_integer<unsigned char>(header[3]));
+		LOG_INFO("MusicPlayer", "ID3v2." + std::to_string(majorVersion) + " tag found");
 
-		// Get frame size (handle different versions correctly)
-		int frameSize;
-		if (majorVersion >= 4) {
-			// ID3v2.4 uses synchsafe integers
-			frameSize = 0;
-			for (int i = 0; i < 4; ++i) {
-				frameSize = (frameSize << 7) | (std::to_integer<unsigned char>(frameHeader[4 + i]) & 0x7F);
+		// Get the tag size (bytes 6-9 are synchsafe integers)
+		int tagSize = 0;
+		for (int i = 0; i < 4; ++i) {
+			tagSize = (tagSize << 7) | (std::to_integer<unsigned char>(header[6 + i]) & 0x7F);
+		}
+
+		// Sanity check on tag size
+		if (tagSize <= 0 || tagSize > 100000000) { // 100MB limit
+			LOG_WARNING("MusicPlayer", "Invalid tag size: " + std::to_string(tagSize) + " bytes");
+			return false;
+		}
+
+		// Make sure tag doesn't claim to be larger than the file
+		if (tagSize > fileSize - 10) {
+			LOG_WARNING("MusicPlayer", "Tag size exceeds file size: " +
+				std::to_string(tagSize) + " > " + std::to_string(static_cast<long long>(fileSize - 10)));
+			return false;
+		}
+
+		int tagEnd = 10 + tagSize; // End position of the tag
+		LOG_INFO("MusicPlayer", "Tag size: " + std::to_string(tagSize) + " bytes");
+
+		// Loop through frames until we reach the end of the tag.
+		while (file.tellg() < tagEnd && !file.eof()) {
+			// Check if we have enough bytes left for a frame header
+			if (tagEnd - file.tellg() < 10) {
+				LOG_INFO("MusicPlayer", "Not enough data for frame header");
+				break;
 			}
-		}
-		else {
-			// ID3v2.3 uses regular integers
-			frameSize = (std::to_integer<unsigned char>(frameHeader[4]) << 24) |
-				(std::to_integer<unsigned char>(frameHeader[5]) << 16) |
-				(std::to_integer<unsigned char>(frameHeader[6]) << 8) |
-				(std::to_integer<unsigned char>(frameHeader[7]));
-		}
 
-		if (frameSize <= 0 || frameSize > 10000000) { // Sanity check on frame size
-			SDL_Log("Invalid frame size: %d", frameSize);
-			break;
-		}
+			std::vector<std::byte> frameHeader;
+			try {
+				frameHeader.resize(10);
+				file.read(reinterpret_cast<char*>(frameHeader.data()), frameHeader.size());
+			}
+			catch (const std::bad_alloc& e) {
+				LOG_ERROR("MusicPlayer", "Memory allocation failed for frame header: " + std::string(e.what()));
+				return false;
+			}
 
-		SDL_Log("Found frame: %s, size: %d bytes", frameID, frameSize);
-
-		if (std::strcmp(frameID, "APIC") == 0) {
-			// Read the entire frame data.
-			std::vector<std::byte> frameData(frameSize);
-			file.read(reinterpret_cast<char*>(frameData.data()), frameSize);
-			if (file.gcount() < frameSize)
+			if (file.gcount() < static_cast<std::streamsize>(frameHeader.size()))
 				break;
 
-			size_t offset = 0;
-
-			// Skip text encoding (1 byte)
-			int textEncoding = std::to_integer<int>(frameData[offset]);
-			offset += 1;
-			SDL_Log("Text encoding: %d", textEncoding);
-
-			// Skip MIME type (null-terminated string)
-			std::string mimeType;
-			while (offset < frameData.size() && std::to_integer<unsigned char>(frameData[offset]) != 0) {
-				mimeType += static_cast<char>(std::to_integer<unsigned char>(frameData[offset]));
-				offset++;
+			// Frame ID is in the first 4 bytes.
+			char frameID[5] = { 0 };
+			for (int i = 0; i < 4; i++) {
+				char c = static_cast<char>(std::to_integer<unsigned char>(frameHeader[i]));
+				// Valid frame IDs only contain A-Z and 0-9
+				if ((c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')) {
+					frameID[i] = c;
+				}
+				else {
+					// Invalid frame ID character
+					LOG_WARNING("MusicPlayer", "Invalid frame ID character: " +
+						std::string(1, c) + " (" + std::to_string(static_cast<int>(c)) + ")");
+					frameID[0] = 0; // Mark as invalid
+					break;
+				}
 			}
-			offset++; // Skip the null terminator
-			SDL_Log("MIME type: %s", mimeType.c_str());
 
-			// The next byte is the picture type.
-			if (offset >= frameData.size())
+			// If invalid frame ID, we might have reached padding or corrupt data
+			if (frameID[0] == 0) {
+				LOG_INFO("MusicPlayer", "Invalid frame ID, skipping remainder of tag");
 				break;
-			int pictureType = std::to_integer<unsigned char>(frameData[offset]);
-			offset++; // Move past picture type
-			SDL_Log("Picture type: %d", pictureType);
-
-			// We want either front cover (3) or any picture if desperate
-			if (pictureType != 0x03 && pictureType != 0x00) {
-				// Skip if not front cover or other picture
-				continue;
 			}
 
-			// Skip description (null-terminated string)
-			// Handle encoding properly
-			if (textEncoding == 0 || textEncoding == 3) { // ISO-8859-1 or UTF-8
-				while (offset < frameData.size() && std::to_integer<unsigned char>(frameData[offset]) != 0)
-					offset++;
-				offset++; // Skip the null terminator
+			// Get frame size (handle different versions correctly)
+			int frameSize;
+			if (majorVersion >= 4) {
+				// ID3v2.4 uses synchsafe integers
+				frameSize = 0;
+				for (int i = 0; i < 4; ++i) {
+					frameSize = (frameSize << 7) | (std::to_integer<unsigned char>(frameHeader[4 + i]) & 0x7F);
+				}
 			}
-			else { // UTF-16/UTF-16BE with BOM
-				while (offset + 1 < frameData.size() &&
-					!(std::to_integer<unsigned char>(frameData[offset]) == 0 &&
-						std::to_integer<unsigned char>(frameData[offset + 1]) == 0))
-					offset += 2;
-				offset += 2; // Skip the double null terminator
+			else {
+				// ID3v2.3 uses regular integers
+				frameSize = (std::to_integer<unsigned char>(frameHeader[4]) << 24) |
+					(std::to_integer<unsigned char>(frameHeader[5]) << 16) |
+					(std::to_integer<unsigned char>(frameHeader[6]) << 8) |
+					(std::to_integer<unsigned char>(frameHeader[7]));
 			}
 
-			if (offset < frameData.size()) {
-				// Log how much image data we're extracting
-				SDL_Log("Extracting %zu bytes of image data", frameData.size() - offset);
+			// Validate frame size
+			if (frameSize <= 0 || frameSize > 10000000) { // 10MB limit per frame
+				LOG_WARNING("MusicPlayer", "Invalid frame size: " + std::to_string(frameSize));
+				break;
+			}
 
-				// Convert std::byte to unsigned char for albumArtData
-				albumArtData.resize(frameData.size() - offset);
-				for (size_t i = 0; i < albumArtData.size(); ++i) {
-					albumArtData[i] = std::to_integer<unsigned char>(frameData[offset + i]);
+			// Check if frame size exceeds remaining tag data
+			if (frameSize > tagEnd - file.tellg()) {
+				LOG_WARNING("MusicPlayer", "Frame size exceeds remaining tag data: " +
+					std::to_string(frameSize) + " > " + std::to_string(static_cast<long long>(tagEnd - file.tellg())));
+				break;
+			}
+
+			LOG_INFO("MusicPlayer", "Found frame: " + std::string(frameID) +
+				", size: " + std::to_string(frameSize) + " bytes");
+
+			if (std::strcmp(frameID, "APIC") == 0) {
+				// Read the entire frame data.
+				std::vector<std::byte> frameData;
+				try {
+					frameData.resize(frameSize);
+					file.read(reinterpret_cast<char*>(frameData.data()), frameSize);
+				}
+				catch (const std::bad_alloc& e) {
+					LOG_ERROR("MusicPlayer", "Memory allocation failed for APIC frame data: " + std::string(e.what()));
+					return false;
 				}
 
-				// Validate the image data starts with proper headers
-				if (albumArtData.size() >= 4) {
-					// Check if it's a valid JPG/PNG
-					if ((albumArtData[0] == 0xFF && albumArtData[1] == 0xD8) || // JPEG
-						(albumArtData[0] == 0x89 && albumArtData[1] == 0x50 && albumArtData[2] == 0x4E && albumArtData[3] == 0x47)) { // PNG
-						SDL_Log("Valid image header detected");
-						return true;
+				if (file.gcount() < frameSize)
+					break;
+
+				size_t offset = 0;
+
+				// Ensure we don't read past the frame data
+				if (offset >= frameData.size()) {
+					LOG_WARNING("MusicPlayer", "Premature end of APIC frame data");
+					break;
+				}
+
+				// Skip text encoding (1 byte)
+				int textEncoding = std::to_integer<int>(frameData[offset]);
+				offset += 1;
+				LOG_INFO("MusicPlayer", "Text encoding: " + std::to_string(textEncoding));
+
+				// Skip MIME type (null-terminated string)
+				std::string mimeType;
+				while (offset < frameData.size() && std::to_integer<unsigned char>(frameData[offset]) != 0) {
+					mimeType += static_cast<char>(std::to_integer<unsigned char>(frameData[offset]));
+					offset++;
+					// Sanity check on MIME type length
+					if (mimeType.length() > 100) {
+						LOG_WARNING("MusicPlayer", "MIME type too long, probably corrupt data");
+						return false;
+					}
+				}
+
+				// Check if we reached end of data before null terminator
+				if (offset >= frameData.size()) {
+					LOG_WARNING("MusicPlayer", "MIME type not null-terminated");
+					break;
+				}
+
+				offset++; // Skip the null terminator
+				LOG_INFO("MusicPlayer", "MIME type: " + mimeType);
+
+				// The next byte is the picture type.
+				if (offset >= frameData.size()) {
+					LOG_WARNING("MusicPlayer", "Premature end of APIC frame data after MIME type");
+					break;
+				}
+
+				int pictureType = std::to_integer<unsigned char>(frameData[offset]);
+				offset++; // Move past picture type
+				LOG_INFO("MusicPlayer", "Picture type: " + std::to_string(pictureType));
+
+				// We want either front cover (3) or any picture if desperate
+				if (pictureType != 0x03 && pictureType != 0x00) {
+					// Skip if not front cover or other picture
+					continue;
+				}
+
+				// Skip description (null-terminated string)
+				// Handle encoding properly
+				if (textEncoding == 0 || textEncoding == 3) { // ISO-8859-1 or UTF-8
+					// Set a reasonable limit for description scanning to prevent infinite loops
+					size_t scanLimit = std::min(frameData.size() - offset, static_cast<size_t>(1000));
+					size_t scanned = 0;
+
+					while (offset < frameData.size() && std::to_integer<unsigned char>(frameData[offset]) != 0) {
+						offset++;
+						scanned++;
+						if (scanned >= scanLimit) {
+							LOG_WARNING("MusicPlayer", "Description too long or not null-terminated");
+							return false;
+						}
+					}
+
+					// Ensure we didn't reach end of data before null terminator
+					if (offset >= frameData.size()) {
+						LOG_WARNING("MusicPlayer", "Description not null-terminated");
+						break;
+					}
+
+					offset++; // Skip the null terminator
+				}
+				else { // UTF-16/UTF-16BE with BOM
+					// Set a reasonable limit for description scanning
+					size_t scanLimit = std::min(frameData.size() - offset, static_cast<size_t>(2000));
+					size_t scanned = 0;
+
+					while (offset + 1 < frameData.size() &&
+						!(std::to_integer<unsigned char>(frameData[offset]) == 0 &&
+							std::to_integer<unsigned char>(frameData[offset + 1]) == 0)) {
+						offset += 2;
+						scanned += 2;
+						if (scanned >= scanLimit) {
+							LOG_WARNING("MusicPlayer", "UTF-16 description too long or not null-terminated");
+							return false;
+						}
+					}
+
+					// Ensure we didn't reach end of data before double null terminator
+					if (offset + 1 >= frameData.size()) {
+						LOG_WARNING("MusicPlayer", "UTF-16 description not properly null-terminated");
+						break;
+					}
+
+					offset += 2; // Skip the double null terminator
+				}
+
+				if (offset < frameData.size()) {
+					// Calculate remaining bytes for image data
+					size_t imageDataSize = frameData.size() - offset;
+
+					// Check we have enough data for a meaningful image
+					if (imageDataSize < 100) { // Arbitrary minimum size for a valid image
+						LOG_WARNING("MusicPlayer", "Image data too small: " + std::to_string(imageDataSize) + " bytes");
+						return false;
+					}
+
+					// Log how much image data we're extracting
+					LOG_INFO("MusicPlayer", "Extracting " + std::to_string(imageDataSize) + " bytes of image data");
+
+					try {
+						// Convert std::byte to unsigned char for albumArtData
+						albumArtData.resize(imageDataSize);
+						for (size_t i = 0; i < albumArtData.size(); ++i) {
+							albumArtData[i] = std::to_integer<unsigned char>(frameData[offset + i]);
+						}
+					}
+					catch (const std::bad_alloc& e) {
+						LOG_ERROR("MusicPlayer", "Memory allocation failed for album art data: " + std::string(e.what()));
+						return false;
+					}
+
+					// Validate the image data starts with proper headers
+					if (albumArtData.size() >= 4) {
+						// Check if it's a valid JPG/PNG
+						if ((albumArtData[0] == 0xFF && albumArtData[1] == 0xD8) || // JPEG
+							(albumArtData[0] == 0x89 && albumArtData[1] == 0x50 && albumArtData[2] == 0x4E && albumArtData[3] == 0x47)) { // PNG
+							LOG_INFO("MusicPlayer", "Valid image header detected");
+							return true;
+						}
+						else {
+							// Format the hex values using stringstream
+							std::stringstream ss;
+							ss << std::hex << std::uppercase << std::setfill('0')
+								<< std::setw(2) << static_cast<int>(albumArtData[0]) << " "
+								<< std::setw(2) << static_cast<int>(albumArtData[1]) << " "
+								<< std::setw(2) << static_cast<int>(albumArtData[2]) << " "
+								<< std::setw(2) << static_cast<int>(albumArtData[3]);
+
+							LOG_WARNING("MusicPlayer", "Warning: Invalid image header: " + ss.str());
+							// Continue anyway, IMG_Load might still handle it
+							return true;
+						}
 					}
 					else {
-						SDL_Log("Warning: Invalid image header: %02X %02X %02X %02X",
-							albumArtData[0], albumArtData[1],
-							albumArtData[2], albumArtData[3]);
-						// Continue anyway, IMG_Load might still handle it
-						return true;
+						LOG_WARNING("MusicPlayer", "Image data too small: " + std::to_string(albumArtData.size()) + " bytes");
+						return false;
 					}
 				}
 				else {
-					SDL_Log("Image data too small: %zu bytes", albumArtData.size());
+					LOG_WARNING("MusicPlayer", "Invalid APIC frame structure");
 					return false;
 				}
 			}
 			else {
-				SDL_Log("Invalid APIC frame structure");
-				return false;
+				// Skip this frame's data if not APIC.
+				file.seekg(frameSize, std::ios::cur);
+
+				// Check if seek operation succeeded
+				if (file.fail()) {
+					LOG_WARNING("MusicPlayer", "Failed to seek past frame data");
+					break;
+				}
 			}
 		}
-		else {
-			// Skip this frame's data if not APIC.
-			file.seekg(frameSize, std::ios::cur);
-		}
-	}
 
-	SDL_Log("No suitable album art found");
-	return false;
+		LOG_INFO("MusicPlayer", "No suitable album art found");
+		return false;
+	}
+	catch (const std::exception& e) {
+		LOG_ERROR("MusicPlayer", "Exception extracting album art: " + std::string(e.what()));
+		return false;
+	}
+	catch (...) {
+		LOG_ERROR("MusicPlayer", "Unknown exception extracting album art");
+		return false;
+	}
 }
 
 bool MusicPlayer::getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData) {
-	// Clear the output vector first
-	albumArtData.clear();
+	try {
+		// Clear the output vector first
+		albumArtData.clear();
 
-	// Validate track index
-	if (trackIndex < 0 || trackIndex >= static_cast<int>(musicFiles_.size())) {
-		LOG_ERROR("MusicPlayer", "Invalid track index for album art: " + std::to_string(trackIndex));
+		// Validate track index
+		if (trackIndex < 0 || trackIndex >= static_cast<int>(musicFiles_.size())) {
+			LOG_ERROR("MusicPlayer", "Invalid track index for album art: " + std::to_string(trackIndex));
+			return false;
+		}
+
+		// Get the file path of the requested track
+		std::string filePath = musicFiles_[trackIndex];
+
+		// Check if file exists
+		if (!std::filesystem::exists(filePath)) {
+			LOG_ERROR("MusicPlayer", "Track file does not exist: " + filePath);
+			return false;
+		}
+
+		// Extract album art data from the file
+		bool result = extractAlbumArtFromFile(filePath, albumArtData);
+
+		if (!result || albumArtData.empty()) {
+			LOG_INFO("MusicPlayer", "No album art found in track: " + musicNames_[trackIndex]);
+			return false;
+		}
+
+		LOG_INFO("MusicPlayer", "Extracted album art from track: " + musicNames_[trackIndex]);
+		return true;
+	}
+	catch (const std::exception& e) {
+		LOG_ERROR("MusicPlayer", "Exception getting album art: " + std::string(e.what()));
 		return false;
 	}
-
-	// Get the file path of the requested track
-	std::string filePath = musicFiles_[trackIndex];
-
-	// Extract album art data from the file
-	bool result = extractAlbumArtFromFile(filePath, albumArtData);
-
-	if (!result || albumArtData.empty()) {
-		LOG_INFO("MusicPlayer", "No album art found in track: " + musicNames_[trackIndex]);
+	catch (...) {
+		LOG_ERROR("MusicPlayer", "Unknown exception getting album art");
 		return false;
 	}
-
-	LOG_INFO("MusicPlayer", "Extracted album art from track: " + musicNames_[trackIndex]);
-	return true;
 }
+
 double MusicPlayer::getCurrent()
 {
 	if (!currentMusic_) {
