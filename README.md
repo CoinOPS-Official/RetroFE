@@ -139,34 +139,52 @@ Both methods use Homebrew in some capacity (https://brew.sh)
 
 An Xcode project has been created to build universal binaries (x86_64 and arm64)
 
+### Download the source code
+
+	git clone https://github.com/CoinOPS-Official/RetroFE.git
+
 ### Install libraries
 
-Download the following .dmg and place all .framework's in `RetroFE/ThirdPartyMac`
-
-* Install SDL2 (https://github.com/libsdl-org/SDL/releases/download/release-2.32.4/SDL2-2.32.4.dmg)
-* Install SDL2\_image (https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.8/SDL2_image-2.8.8.dmg)
-* Install SDL2\_mixer (https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.1/SDL2_mixer-2.8.1.dmg)
-  * Also copy `webp.framework` from `/optional` to `RetroFE/ThirdPartyMac`
-* Install SDL2\_ttf (https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-2.24.0.dmg)
-* Install Gstreamer, they are installed to `Macintosh HD/Library/Frameworks` and should be copied to `RetroFE/ThirdPartyMac`
-  * (https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-1.22.12-universal.pkg)
-  * (https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-devel-1.22.12-universal.pkg)
- 
+	curl -LO https://github.com/libsdl-org/SDL/releases/download/release-2.32.4/SDL2-2.32.4.dmg
+	curl -LO https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.8/SDL2_image-2.8.8.dmg
+	curl -LO https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.1/SDL2_mixer-2.8.1.dmg
+	curl -LO https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-2.24.0.dmg
+	curl -LO https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-1.22.12-universal.pkg
+	curl -LO https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-devel-1.22.12-universal.pkg
+	
+	sudo installer -pkg gstreamer-1.0-1.22.12-universal.pkg -target /
+	sudo installer -pkg gstreamer-1.0-devel-1.22.12-universal.pkg -target /
+	
+	hdiutil attach SDL2-2.32.4.dmg
+	cp -R /Volumes/SDL2/SDL2.framework RetroFE/RetroFE/ThirdPartyMac/
+	hdiutil detach /Volumes/SDL2
+	
+	hdiutil attach SDL2_image-2.8.8.dmg
+	cp -R /Volumes/SDL2_image/SDL2_image.framework RetroFE/RetroFE/ThirdPartyMac/
+	cp -R /Volumes/SDL2_image/optional/webp.framework RetroFE/RetroFE/ThirdPartyMac/
+	hdiutil detach /Volumes/SDL2_image
+	
+	hdiutil attach SDL2_mixer-2.8.1.dmg
+	cp -R /Volumes/SDL2_mixer/SDL2_mixer.framework RetroFE/RetroFE/ThirdPartyMac/
+	hdiutil detach /Volumes/SDL2_mixer
+	
+	hdiutil attach SDL2_ttf-2.24.0.dmg
+	cp -R /Volumes/SDL2_ttf/SDL2_ttf.framework RetroFE/RetroFE/ThirdPartyMac/
+	hdiutil detach /Volumes/SDL2_ttf
+	
+	cp -R /Library/Frameworks/GStreamer.framework RetroFE/RetroFE/ThirdPartyMac/
+	
 ### Install headers
 
  ```bash
  brew install minizip libusb
  ```
 
-### Download and compile the source code
-Download the source code
-
-	git clone https://github.com/CoinOPS-Official/RetroFE.git
-
+### Compile the source code
 Open the Xcodeproj in `RetroFE/xcode` and build target or
 
-	cd RetroFE/RetroFE/xcode
-	xcodebuild -project retrofe.xcodeproj
+	cd RetroFE/
+	xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
 
 ## Single Architecture Binaries
 ### Install libraries
