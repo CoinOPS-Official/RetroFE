@@ -79,6 +79,10 @@ jobs:
       - name: Copy GStreamer framework
         run: cp -R /Library/Frameworks/GStreamer.framework RetroFE/ThirdPartyMac/
 
+      - name: Debug - get size
+        run: |
+          du -sh RetroFE/ThirdPartyMac/*
+
       - name: Install Homebrew dependencies
         run: |
           brew install minizip libusb
@@ -90,7 +94,7 @@ jobs:
         run: | 
           chmod +x Scripts/macOS/delete_gstreamer_unused_libs.sh
           Scripts/macOS/delete_gstreamer_unused_libs.sh RetroFE/Build/Release/RetroFE.app/Contents/Frameworks/GStreamer.framework/Versions/1.0/lib
-
+      
       - name: Upload RetroFE.app
         uses: actions/upload-artifact@v4
         with:
