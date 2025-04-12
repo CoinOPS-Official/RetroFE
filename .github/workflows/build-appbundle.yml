@@ -95,7 +95,7 @@ jobs:
       - name: Upload RetroFE.app
         uses: actions/upload-artifact@v4
         with:
-          name: RetroFE-universal.app
-          path: RetroFE/Build/Release/RetroFE.app
+          name: RetroFE.app
+          path: RetroFE/Build/Release/
 
           
