@@ -40,16 +40,28 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
     * A reasonably modern graphics card (Direct3D 11+ / OpenGL 4+ / Metal on MacOS)
 
 #   Building for Windows #
-### Install libraries
- 
-* Install Python (https://www.python.org/downloads/windows/)
-* Install sphinx with python (https://www.sphinx-doc.org/en/1.6.5/install.html)
-* Install visual studio 2019 (https://visualstudio.microsoft.com/downloads/)
-* Install Microsoft Windows SDK for Windows 10 and .net Framework 4 (https://developer.microsoft.com/nl-nl/windows/downloads/windows-10-sdk/)
-* Install cmake (https://cmake.org/download/)
-* Install git (https://git-scm.com/download/win)
-* Install 7zip (https://www.7-zip.org/)
-* Install gstreamer and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+### Install Requirements
+
+	winget install -e --id Microsoft.VisualStudio.2022.Community &&
+	winget install -e --id Microsoft.WindowsSDK.10.0.26100 &&
+	winget install -e --id Microsoft.DotNet.Framework.DeveloperPack_4 &&
+	winget install -e --id Kitware.CMake &&
+	winget install -e --id Git.Git
+
+* Install gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+
+Python 3 - Optional - Read below
+
+  	winget install -e --id Python.Python.3.11
+
+Alternatively, manually install
+  
+* Visual Studio Community (https://visualstudio.microsoft.com/downloads)
+* Microsoft Windows SDK and .NET Framework 4 for Windows 10 and higher (https://developer.microsoft.com/windows/downloads/windows-sdk)
+* CMake (https://cmake.org/download)
+* Git (https://git-scm.com/downloads/win)
+* Python 3 (https://www.python.org/downloads/windows)
+* gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
 
 ### Download and compile the source code
 Download the source code
