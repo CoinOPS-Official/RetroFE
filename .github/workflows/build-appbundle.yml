@@ -55,30 +55,30 @@ jobs:
         run: |
           ls -la
           hdiutil attach SDL2-2.32.4.dmg
-          cp -R /Volumes/SDL2/SDL2.framework ./RetroFE/RetroFE/ThirdPartyMac
+          cp -R /Volumes/SDL2/SDL2.framework ./RetroFE/RetroFE/ThirdPartyMac/
           hdiutil detach /Volumes/SDL2
 
       - name: Attach and copy SDL2_image framework
         run: |
           hdiutil attach SDL2_image-2.8.8.dmg
-          cp -R /Volumes/SDL2_image/SDL2_image.framework ./RetroFE/RetroFE/ThirdPartyMac
-          cp -R /Volumes/SDL2_image/optional/webp.framework ./RetroFE/RetroFE/ThirdPartyMac
+          cp -R /Volumes/SDL2_image/SDL2_image.framework ./RetroFE/RetroFE/ThirdPartyMac/
+          cp -R /Volumes/SDL2_image/optional/webp.framework ./RetroFE/RetroFE/ThirdPartyMac/
           hdiutil detach /Volumes/SDL2_image
 
       - name: Attach and copy SDL2_mixer framework
         run: |
           hdiutil attach SDL2_mixer-2.8.1.dmg
-          cp -R /Volumes/SDL2_mixer/SDL2_mixer.framework ./RetroFE/RetroFE/ThirdPartyMac
+          cp -R /Volumes/SDL2_mixer/SDL2_mixer.framework ./RetroFE/RetroFE/ThirdPartyMac/
           hdiutil detach /Volumes/SDL2_mixer
 
       - name: Attach and copy SDL2_ttf framework
         run: |
           hdiutil attach SDL2_ttf-2.24.0.dmg
-          cp -R /Volumes/SDL2_ttf/SDL2_ttf.framework ./RetroFE/RetroFE/ThirdPartyMac
+          cp -R /Volumes/SDL2_ttf/SDL2_ttf.framework ./RetroFE/RetroFE/ThirdPartyMac/
           hdiutil detach /Volumes/SDL2_ttf
 
       - name: Copy GStreamer framework
-        run: cp -R /Library/Frameworks/GStreamer.framework ./RetroFE/RetroFE/ThirdPartyMac
+        run: cp -R /Library/Frameworks/GStreamer.framework ./RetroFE/RetroFE/ThirdPartyMac/
 
       - name: Install Homebrew dependencies
         run: |
