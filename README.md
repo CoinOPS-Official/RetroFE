@@ -31,7 +31,7 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 ## System Requirements
 * OS
     * Windows (10 or higher)
-    * Linux
+    * Linux (AppImage requires libc 2.38 or higher)
     * macOS (11 Big Sur or higher)
 	* Unix-like systems other than Linux are not officially supported but may work
 * Processor
@@ -40,29 +40,41 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
     * A reasonably modern graphics card (Direct3D 11+ / OpenGL 4+ / Metal on MacOS)
 
 #   Building for Windows #
-### Install libraries
- 
-* Install Python (https://www.python.org/downloads/windows/)
-* Install sphinx with python (https://www.sphinx-doc.org/en/1.6.5/install.html)
-* Install visual studio 2019 (https://visualstudio.microsoft.com/downloads/)
-* Install Microsoft Windows SDK for Windows 10 and .net Framework 4 (https://developer.microsoft.com/nl-nl/windows/downloads/windows-10-sdk/)
-* Install cmake (https://cmake.org/download/)
-* Install git (https://git-scm.com/download/win)
-* Install 7zip (https://www.7-zip.org/)
-* Install gstreamer and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+### Install Requirements
+
+	winget install -e --id Microsoft.VisualStudio.2022.Community &&
+	winget install -e --id Microsoft.WindowsSDK.10.0.26100 &&
+	winget install -e --id Microsoft.DotNet.Framework.DeveloperPack_4 &&
+	winget install -e --id Kitware.CMake &&
+	winget install -e --id Git.Git
+
+* Install gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+
+Python 3 - Optional - Read below
+
+  	winget install -e --id Python.Python.3.11
+
+Alternatively, manually install
+  
+* Visual Studio Community (https://visualstudio.microsoft.com/downloads)
+* Microsoft Windows SDK and .NET Framework 4 for Windows 10 and higher (https://developer.microsoft.com/windows/downloads/windows-sdk)
+* CMake (https://cmake.org/download)
+* Git (https://git-scm.com/downloads/win)
+* Python 3 (https://www.python.org/downloads/windows)
+* gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
 
 ### Download and compile the source code
 Download the source code
 
 	git clone https://github.com/CoinOPS-Official/RetroFE.git
 
-Gather submodule for DLLs
-
- 	git submodule update --init --recursive
-
 Setup Environment (to setup necessary variables and paths to compile in visual studio)
 
 	cd RetroFE
+
+Gather submodule for DLLs
+
+ 	git submodule update --init --recursive
 
 Generate visual studio solution files
 
@@ -78,29 +90,29 @@ Compile RetroFE
 
  #### Debian
 ```bash
-sudo apt-get install git g++ cmake dos2unix zlib1g-dev \
+sudo apt-get install git g++ cmake zlib1g-dev \
 libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
 libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-good1.0-dev gstreamer1.0-libav \
-libglib2.0-0 libglib2.0-dev sqlite3 libminizip-dev libwebp-dev libusb-1.0-0-dev libevdev-dev
+libglib2.0-0 libglib2.0-dev libminizip-dev libwebp-dev libusb-1.0-0-dev libevdev-dev
 ```
 
 #### Fedora
 ```bash
-sudo dnf install -y git gcc-c++ cmake dos2unix zlib-devel \
+sudo dnf install -y git gcc-c++ cmake zlib-devel \
 SDL2 SDL2_mixer SDL2_image SDL2_ttf \
 SDL2-devel SDL2_mixer-devel SDL2_image-devel SDL2_ttf-devel \
 gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-libav \
-glib2 glib2-devel sqlite-devel minizip-devel libwebp-devel libusb1-devel libevdev-devel \
+glib2 glib2-devel minizip-devel libwebp-devel libusb1-devel libevdev-devel \
 zlib libusb1 libevdev
 ```
 
 #### Arch
 ```bash
-sudo pacman -S git gcc cmake dos2unix zlib \
+sudo pacman -S git gcc cmake zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer gst-plugins-base gst-plugins-good gst-libav \
-glib2 sqlite minizip libwebp libusb libevdev
+glib2 minizip libwebp libusb libevdev
 ```
 
 ### Download and compile the source code
@@ -118,6 +130,11 @@ Compile RetroFE
 	cmake --build RetroFE/Build
 
 #   Building for MacOS #
+
+## Install Homebrew
+
+Both methods use Homebrew in some capacity (https://brew.sh)
+
 ## Universal2 Binaries
 
 An Xcode project has been created to build universal binaries (x86_64 and arm64)
@@ -126,28 +143,39 @@ An Xcode project has been created to build universal binaries (x86_64 and arm64)
 
 Download the following .dmg and place all .framework's in `RetroFE/ThirdPartyMac`
 
-* Install SDL2 (https://github.com/libsdl-org/SDL/releases/latest)
-* Install SDL2\_image (https://github.com/libsdl-org/SDL_image/releases/latest)
-* Install SDL2\_mixer (https://github.com/libsdl-org/SDL_mixer/releases/latest)
-* Install SDL2\_ttf (https://github.com/libsdl-org/SDL_ttf/releases/latest)
-* Install Gstreamer (https://gstreamer.freedesktop.org/download/#macos)
-* * For Gstreamer both runtime and dev packages are needed, they are installed to `Macintosh HD/Library/Frameworks` and should be moved to `RetroFE/ThirdPartyMac`
+* Install SDL2 (https://github.com/libsdl-org/SDL/releases/download/release-2.32.4/SDL2-2.32.4.dmg)
+* Install SDL2\_image (https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.8/SDL2_image-2.8.8.dmg)
+* Install SDL2\_mixer (https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.1/SDL2_mixer-2.8.1.dmg)
+  * Also copy `webp.framework` from `/optional` to `RetroFE/ThirdPartyMac`
+* Install SDL2\_ttf (https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-2.24.0.dmg)
+* Install Gstreamer, they are installed to `Macintosh HD/Library/Frameworks` and should be copied to `RetroFE/ThirdPartyMac`
+  * (https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-1.22.12-universal.pkg)
+  * (https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-devel-1.22.12-universal.pkg)
+ 
+### Install headers
+
+ ```bash
+ brew install minizip libusb
+ ```
 
 ### Download and compile the source code
 Download the source code
 
 	git clone https://github.com/CoinOPS-Official/RetroFE.git
 
-Open the Xcodeproj in `RetroFE/xcode` and build target
+Open the Xcodeproj in `RetroFE/xcode` and build target or
+
+	cd RetroFE/RetroFE/xcode
+	xcodebuild -project retrofe.xcodeproj
 
 ## Single Architecture Binaries
 ### Install libraries
 
 ```bash
-brew install git gcc cmake dos2unix zlib \
+brew install git gcc cmake zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer \
-glib sqlite3 minizip webp libusb
+glib minizip webp libusb
 ```
 
 ### Download and compile the source code

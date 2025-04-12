@@ -44,11 +44,6 @@ if(WIN32)
         set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.8.2")
         set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.6.3")
         set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.20.2")
-    elseif(MINGW)
-        set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-2.30.0-mingw/x86_64-w64-mingw32")
-        set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.8.2-mingw/x86_64-w64-mingw32")
-        set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.6.3-mingw/x86_64-w64-mingw32")
-        set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.20.2-mingw/x86_64-w64-mingw32")
     endif()
 
     set(ZLIB_ROOT "${RETROFE_THIRD_PARTY_DIR}/zlib13-dll")
@@ -333,10 +328,6 @@ if(APPLE)
     # Set up macOS-specific properties
     set_target_properties(retrofe PROPERTIES OUTPUT_NAME "retrofe-${GIT_COMMIT_NO}")
     set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
-endif()
-
-if(MINGW)
-    set(CMAKE_EXE_LINKER_FLAGS "-static-libgcc -static-libstdc++ -lmingw32 -mwindows")
 endif()
 
 add_definitions(-DRETROFE_VERSION_MAJOR=${VERSION_MAJOR})
