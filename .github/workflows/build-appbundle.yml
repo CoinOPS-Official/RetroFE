@@ -5,6 +5,7 @@ on:
 jobs:
   build:
     runs-on: macos-14
+    name: Build macos-14-universal
 
     steps:
       - name: Check out repository code
@@ -24,7 +25,7 @@ jobs:
           restore-keys: |
             macos-dependencies-
 
-      - name: Download dependencies (if not cached)
+      - name: Download dependencies
         run: |
           if [ ! -f "SDL2-2.32.4.dmg" ]; then
             curl -LO https://github.com/libsdl-org/SDL/releases/download/release-2.32.4/SDL2-2.32.4.dmg
@@ -52,6 +53,7 @@ jobs:
 
       - name: Attach and copy SDL2 framework
         run: |
+          ls -la
           hdiutil attach SDL2-2.32.4.dmg
           cp -R /Volumes/SDL2/SDL2.framework ./RetroFE/RetroFE/ThirdPartyMac
           hdiutil detach /Volumes/SDL2
