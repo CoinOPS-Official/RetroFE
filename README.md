@@ -78,7 +78,7 @@ Compile RetroFE
 
  #### Debian
 ```bash
-sudo apt-get install git g++ cmake dos2unix zlib1g-dev \
+sudo apt-get install git g++ cmake zlib1g-dev \
 libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
 libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-good1.0-dev gstreamer1.0-libav \
@@ -87,7 +87,7 @@ libglib2.0-0 libglib2.0-dev libminizip-dev libwebp-dev libusb-1.0-0-dev libevdev
 
 #### Fedora
 ```bash
-sudo dnf install -y git gcc-c++ cmake dos2unix zlib-devel \
+sudo dnf install -y git gcc-c++ cmake zlib-devel \
 SDL2 SDL2_mixer SDL2_image SDL2_ttf \
 SDL2-devel SDL2_mixer-devel SDL2_image-devel SDL2_ttf-devel \
 gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-libav \
@@ -97,7 +97,7 @@ zlib libusb1 libevdev
 
 #### Arch
 ```bash
-sudo pacman -S git gcc cmake dos2unix zlib \
+sudo pacman -S git gcc cmake zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer gst-plugins-base gst-plugins-good gst-libav \
 glib2 minizip libwebp libusb libevdev
@@ -154,7 +154,7 @@ Open the Xcodeproj in `RetroFE/xcode` and build target or
 ### Install libraries
 
 ```bash
-brew install git gcc cmake dos2unix zlib \
+brew install git gcc cmake zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer \
 glib minizip webp libusb

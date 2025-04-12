@@ -21,8 +21,7 @@ jobs:
         uses: awalsh128/cache-apt-pkgs-action@latest
         with:
           packages: |
-            cmake 
-            dos2unix 
+            cmake
             zlib1g-dev
             libglib2.0-0 
             libglib2.0-dev
@@ -50,7 +49,7 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake dos2unix \
+          sudo apt-get install -y cmake \
             zlib1g-dev libglib2.0-0 libglib2.0-dev \
             libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
             libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \

@@ -34,7 +34,6 @@ jobs:
       with:
         packages: |
           cmake
-          dos2unix
           zlib1g-dev
           libsdl2-dev
           libsdl2-mixer-dev
@@ -57,7 +56,6 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y \
           cmake \
-          dos2unix \
           zlib1g-dev \
           libsdl2-dev \
           libsdl2-mixer-dev \
