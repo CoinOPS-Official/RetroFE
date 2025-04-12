@@ -180,6 +180,7 @@ An Xcode project has been created to build universal binaries (x86_64 and arm64)
  brew install minizip libusb
  ```
 
+### Compile the source code
 Open the Xcodeproj in `RetroFE/xcode` and build target or
 
 	cd RetroFE/
