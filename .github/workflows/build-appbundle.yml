@@ -77,7 +77,8 @@ jobs:
           hdiutil detach /Volumes/SDL2_ttf
 
       - name: Copy GStreamer framework
-        run: cp -R /Library/Frameworks/GStreamer.framework RetroFE/ThirdPartyMac/
+        run: | 
+          cp -R /Library/Frameworks/GStreamer.framework RetroFE/ThirdPartyMac/
 
       - name: Debug - get size
         run: |
@@ -88,7 +89,8 @@ jobs:
           brew install minizip create-dmg
 
       - name: Build project with Xcode
-        run: xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
+        run: | 
+          xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
 
       - name: Debug - get size
         run: |
@@ -98,13 +100,15 @@ jobs:
         run: | 
           chmod +x Scripts/macOS/delete_gstreamer_unused_libs.sh
           Scripts/macOS/delete_gstreamer_unused_libs.sh RetroFE/Build/Release/RetroFE.app/Contents/Frameworks/GStreamer.framework/Versions/1.0/lib
+          rm -rf RetroFE/Build/Release/RetroFE.app/Contents/Frameworks/GStreamer.framework/Versions/1.0/include
 
       - name: Debug - get size
         run: |
           du -sh RetroFE/Build/Release/RetroFE.app
 
       - name: Create RetroFE.dmg
-        run: create-dmg "RetroFE.dmg" RetroFE/Build/Release/    
+        run: | 
+          create-dmg "RetroFE.dmg" RetroFE/Build/Release/    
       
       - name: Upload RetroFE.dmg
         uses: actions/upload-artifact@v4
