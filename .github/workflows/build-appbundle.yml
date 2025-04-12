@@ -1,0 +1,100 @@
+name: macOS App Bundles
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+    name: Build macos-14-universal
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ./SDL2-2.32.4.dmg
+            ./SDL2_image-2.8.8.dmg
+            ./SDL2_mixer-2.8.1.dmg
+            ./SDL2_ttf-2.24.0.dmg
+            ./gstreamer-1.0-1.22.12-universal.pkg
+            ./gstreamer-1.0-devel-1.22.12-universal.pkg
+          key: macos-dependencies-${{ hashFiles('**/build-appbundle.yml') }}
+          restore-keys: |
+            macos-dependencies-
+
+      - name: Download dependencies
+        run: |
+          if [ ! -f "SDL2-2.32.4.dmg" ]; then
+            curl -LO https://github.com/libsdl-org/SDL/releases/download/release-2.32.4/SDL2-2.32.4.dmg
+          fi
+          if [ ! -f "SDL2_image-2.8.8.dmg" ]; then
+            curl -LO https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.8/SDL2_image-2.8.8.dmg
+          fi
+          if [ ! -f "SDL2_mixer-2.8.1.dmg" ]; then
+            curl -LO https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.1/SDL2_mixer-2.8.1.dmg
+          fi
+          if [ ! -f "SDL2_ttf-2.24.0.dmg" ]; then
+            curl -LO https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-2.24.0.dmg
+          fi
+          if [ ! -f "gstreamer-1.0-1.22.12-universal.pkg" ]; then
+            curl -LO https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-1.22.12-universal.pkg
+          fi
+          if [ ! -f "gstreamer-1.0-devel-1.22.12-universal.pkg" ]; then
+            curl -LO https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-devel-1.22.12-universal.pkg
+          fi
+
+      - name: Install GStreamer packages
+        run: |
+          sudo installer -pkg gstreamer-1.0-1.22.12-universal.pkg -target /
+          sudo installer -pkg gstreamer-1.0-devel-1.22.12-universal.pkg -target /
+
+      - name: Attach and copy SDL2 framework
+        run: |
+          hdiutil attach SDL2-2.32.4.dmg
+          cp -R /Volumes/SDL2/SDL2.framework RetroFE/ThirdPartyMac/
+          hdiutil detach /Volumes/SDL2
+
+      - name: Attach and copy SDL2_image framework
+        run: |
+          hdiutil attach SDL2_image-2.8.8.dmg
+          cp -R /Volumes/SDL2_image/SDL2_image.framework RetroFE/ThirdPartyMac/
+          cp -R /Volumes/SDL2_image/optional/webp.framework RetroFE/ThirdPartyMac/
+          hdiutil detach /Volumes/SDL2_image
+
+      - name: Attach and copy SDL2_mixer framework
+        run: |
+          hdiutil attach SDL2_mixer-2.8.1.dmg
+          cp -R /Volumes/SDL2_mixer/SDL2_mixer.framework RetroFE/ThirdPartyMac/
+          hdiutil detach /Volumes/SDL2_mixer
+
+      - name: Attach and copy SDL2_ttf framework
+        run: |
+          hdiutil attach SDL2_ttf-2.24.0.dmg
+          cp -R /Volumes/SDL2_ttf/SDL2_ttf.framework RetroFE/ThirdPartyMac/
+          hdiutil detach /Volumes/SDL2_ttf
+
+      - name: Copy GStreamer framework
+        run: cp -R /Library/Frameworks/GStreamer.framework RetroFE/ThirdPartyMac/
+
+      - name: Install Homebrew dependencies
+        run: |
+          brew install minizip libusb
+
+      - name: Build project with Xcode
+        run: xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
+
+      - name: Post build GStreamer.framework slimming
+        run: | 
+          chmod +x Scripts/macOS/delete_gstreamer_unused_libs.sh
+          Scripts/macOS/delete_gstreamer_unused_libs.sh RetroFE/Build/Release/RetroFE.app/Contents/Frameworks/GStreamer.framework/Versions/1.0/lib
+
+      - name: Upload RetroFE.app
+        uses: actions/upload-artifact@v4
+        with:
+          name: RetroFE.app
+          path: RetroFE/Build/Release/
+
+          
