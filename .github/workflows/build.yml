@@ -8,6 +8,7 @@ on:
       - '.github/**'
       - 'Package/**'
       - 'docs/**'
+      - 'Scripts/**'
       - 'README.md'
       - 'CHANGELOG.md'
   pull_request:
@@ -17,6 +18,7 @@ on:
       - '.github/**'
       - 'Package/**'
       - 'docs/**'
+      - 'Scripts/**'
       - 'README.md'
       - 'CHANGELOG.md'
       
