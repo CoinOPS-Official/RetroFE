@@ -90,10 +90,18 @@ jobs:
       - name: Build project with Xcode
         run: xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
 
+      - name: Debug - get size
+        run: |
+          du -sh RetroFE/Build/Release/RetroFE.app
+
       - name: Post build GStreamer.framework slimming
         run: | 
           chmod +x Scripts/macOS/delete_gstreamer_unused_libs.sh
           Scripts/macOS/delete_gstreamer_unused_libs.sh RetroFE/Build/Release/RetroFE.app/Contents/Frameworks/GStreamer.framework/Versions/1.0/lib
+
+      - name: Debug - get size
+        run: |
+          du -sh RetroFE/Build/Release/RetroFE.app
       
       - name: Upload RetroFE.app
         uses: actions/upload-artifact@v4
