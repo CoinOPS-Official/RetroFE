@@ -87,6 +87,11 @@ jobs:
       - name: Build project with Xcode
         run: xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
 
+      - name: Post build GStreamer.framework slimming
+        run: | 
+          chmod +x Scripts/macOS/delete_gstreamer_unused_libs.sh
+          Scripts/macOS/delete_gstreamer_unused_libs.sh
+
       - name: Upload RetroFE.app
         uses: actions/upload-artifact@v4
         with:
