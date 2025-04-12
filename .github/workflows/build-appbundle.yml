@@ -85,7 +85,7 @@ jobs:
 
       - name: Install Homebrew dependencies
         run: |
-          brew install minizip libusb
+          brew install minizip create-dmg
 
       - name: Build project with Xcode
         run: xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
@@ -102,11 +102,14 @@ jobs:
       - name: Debug - get size
         run: |
           du -sh RetroFE/Build/Release/RetroFE.app
+
+      - name: Create RetroFE.dmg
+        run: create-dmg "RetroFE.dmg" RetroFE/Build/Release/    
       
-      - name: Upload RetroFE.app
+      - name: Upload RetroFE.dmg
         uses: actions/upload-artifact@v4
         with:
-          name: RetroFE.app
-          path: RetroFE/Build/Release/
+          name: RetroFE.dmg
+          path: RetroFE.dmg
 
           
