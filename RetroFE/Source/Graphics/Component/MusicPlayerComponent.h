@@ -75,6 +75,7 @@ private:
     SDL_Renderer* renderer_;
     int albumArtTextureWidth_;
     int albumArtTextureHeight_;
+    bool albumArtNeedsUpdate_;
     bool isAlbumArt_;
     void loadAlbumArt();
 
@@ -85,6 +86,7 @@ private:
     int volumeBarWidth_;
     int volumeBarHeight_;
     int lastVolumeValue_;
+    bool volumeBarNeedsUpdate_;
     bool isVolumeBar_;
 
     // Create a volume bar texture based on current volume

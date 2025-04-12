@@ -49,6 +49,7 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, renderer_(nullptr)
 	, albumArtTextureWidth_(0)
 	, albumArtTextureHeight_(0)
+	, albumArtNeedsUpdate_{ false }
 	, isAlbumArt_(Utils::toLower(type) == "albumart")
 	, volumeEmptyTexture_(nullptr)
 	, volumeFullTexture_(nullptr)
@@ -56,6 +57,7 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, volumeBarWidth_(0)
 	, volumeBarHeight_(0)
 	, lastVolumeValue_(-1)
+	, volumeBarNeedsUpdate_{ false }
 	, isVolumeBar_(Utils::toLower(type) == "volbar")
 	, currentDisplayAlpha_(0.0f)  // Start invisible
 	, targetAlpha_(0.0f)          // Start with target of invisible
@@ -78,8 +80,8 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, vuPeakColor_({ 255, 255, 255, 255 })
 	, vuGreenThreshold_(0.4f)
 	, vuYellowThreshold_(0.6f)
-	, totalSegments_{0}
-	, useSegmentedVolume_{false}{
+	, totalSegments_{ 0 }
+	, useSegmentedVolume_{ false } {
 	// Set the monitor for this component
 	baseViewInfo.Monitor = monitor;
 
@@ -528,6 +530,8 @@ void MusicPlayerComponent::updateVolumeBarTexture() {
 		return;
 	}
 
+	SDL_Texture* previousTarget = SDL::getRenderTarget(baseViewInfo.Monitor);
+
 	int volumeRaw = std::clamp(musicPlayer_->getLogicalVolume(), 0, 128);
 
 	SDL_SetRenderTarget(renderer_, volumeBarTexture_);
@@ -571,7 +575,7 @@ void MusicPlayerComponent::updateVolumeBarTexture() {
 		}
 	}
 
-	SDL_SetRenderTarget(renderer_, nullptr);
+	SDL_SetRenderTarget(renderer_, previousTarget);
 	lastVolumeValue_ = volumeRaw;
 }
 
@@ -616,47 +620,52 @@ bool MusicPlayerComponent::update(float dt) {
 		int currentTrackIndex = musicPlayer_->getCurrentTrackIndex();
 
 		if (currentTrackIndex != albumArtTrackIndex_) {
-			if (albumArtTexture_ != nullptr) {
-				SDL_DestroyTexture(albumArtTexture_);
-				albumArtTexture_ = nullptr;
-			}
 			albumArtTrackIndex_ = currentTrackIndex;
+			albumArtNeedsUpdate_ = true;
 			lastState_ = std::to_string(currentTrackIndex);
-			loadAlbumArt();
 		}
-
 		return Component::update(dt);
 	}
 
-	// Special handling for volume bar
 	if (isVolumeBar_) {
-		if (musicPlayer_->getButtonPressed()) {
-			// Volume changed by user input — refresh bar
-			updateVolumeBarTexture();
+		int volumeRaw = std::clamp(musicPlayer_->getLogicalVolume(), 0, 128);
+		bool buttonPressed = musicPlayer_->getButtonPressed();
+		bool volumeChanged = (volumeRaw != lastVolumeValue_);
+
+		// Always update last volume value so we have the correct value
+		// for when we rebuild the texture
+		if (volumeChanged) {
+			lastVolumeValue_ = volumeRaw;
+			volumeBarNeedsUpdate_ = true;
+		}
+
+		// Handle visibility state
+		if (volumeChanged || buttonPressed) {
+			// Reset visibility state for either volume changes or button presses
 			volumeChanging_ = true;
 			volumeStableTimer_ = 0.0f;
-			musicPlayer_->setButtonPressed(false);
+
+			if (buttonPressed) {
+				musicPlayer_->setButtonPressed(false);
+			}
 		}
-		else {
-			// No user input — increment stable timer
+		// Only count down the timer if we're not actively changing
+		else if (volumeChanging_) {
 			volumeStableTimer_ += dt;
 
 			// After delay, stop considering it "changing"
-			if (volumeChanging_ && volumeStableTimer_ >= volumeFadeDelay_) {
+			if (volumeStableTimer_ >= volumeFadeDelay_) {
 				volumeChanging_ = false;
 			}
 		}
 
-		// Respect layout alpha override — this takes precedence
+		// Alpha calculation
 		if (baseViewInfo.Alpha <= 0.0f) {
-			// Layout says: fully invisible — suppress our own fade logic
+			// Layout says fully invisible
 			targetAlpha_ = 0.0f;
-			currentDisplayAlpha_ = 0.0f;  // Ensure alpha is clamped
-			volumeStableTimer_ = 0.0f;    // Reset timer
-			volumeChanging_ = false;     // Cancel any ongoing fade
+			currentDisplayAlpha_ = 0.0f;
 		}
 		else {
-			// Layout allows visibility — resume our logic
 			targetAlpha_ = volumeChanging_ ? baseViewInfo.Alpha : 0.0f;
 
 			// Animate current alpha toward target
@@ -674,7 +683,6 @@ bool MusicPlayerComponent::update(float dt) {
 
 		return Component::update(dt);
 	}
-
 
 	// Determine current state
 	std::string currentState;
@@ -765,6 +773,18 @@ void MusicPlayerComponent::draw() {
 		return;
 	}
 
+	// Update album art if needed
+	if (isAlbumArt_ && albumArtNeedsUpdate_) {
+		loadAlbumArt();
+		albumArtNeedsUpdate_ = false;
+	}
+
+	// Update volume bar texture if needed
+	if (isVolumeBar_ && volumeBarNeedsUpdate_) {
+		updateVolumeBarTexture();
+		volumeBarNeedsUpdate_ = false;
+	}
+
 	if (isVuMeter_) {
 		drawVuMeter();
 		return;
@@ -785,7 +805,7 @@ void MusicPlayerComponent::draw() {
 		return;
 	}
 
-    if (loadedComponent_ != nullptr) {
+	if (loadedComponent_ != nullptr) {
 		loadedComponent_->baseViewInfo = baseViewInfo;
 		loadedComponent_->draw();
 	}
@@ -831,7 +851,7 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 	}
 
 	// Save current render target
-	SDL_Texture* previousTarget = SDL_GetRenderTarget(renderer_);
+	SDL_Texture* previousTarget = SDL::getRenderTarget(baseViewInfo.Monitor);
 
 	// Set the VU meter texture as the render target
 	SDL_SetRenderTarget(renderer_, vuMeterTexture_);
@@ -1099,7 +1119,7 @@ void MusicPlayerComponent::updateVuLevels() {
 }
 
 void MusicPlayerComponent::drawVuMeter() {
-	if (!renderer_ || baseViewInfo.Alpha <= 0.0f || !musicPlayer_->hasStartedPlaying()) {
+	if (!renderer_ || !musicPlayer_->hasStartedPlaying()) {
 		return;
 	}
 
@@ -1135,7 +1155,7 @@ void MusicPlayerComponent::drawVuMeter() {
 }
 
 void MusicPlayerComponent::drawProgressBar() {
-	if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
+	if (!renderer_) {
 		return;
 	}
 
@@ -1176,7 +1196,7 @@ void MusicPlayerComponent::drawProgressBar() {
 
 
 void MusicPlayerComponent::drawAlbumArt() {
-	if (!renderer_ || baseViewInfo.Alpha <= 0.0f) {
+	if (!renderer_) {
 		return;
 	}
 
@@ -1200,6 +1220,10 @@ void MusicPlayerComponent::drawAlbumArt() {
 }
 
 void MusicPlayerComponent::loadAlbumArt() {
+	if (albumArtTexture_ != nullptr) {
+		SDL_DestroyTexture(albumArtTexture_);
+		albumArtTexture_ = nullptr;
+	}
 	// Try to get album art from the music player
 	std::vector<unsigned char> albumArtData;
 	if (musicPlayer_->getAlbumArt(albumArtTrackIndex_, albumArtData) && !albumArtData.empty()) {
@@ -1257,7 +1281,7 @@ SDL_Texture* MusicPlayerComponent::loadDefaultAlbumArt() {
 }
 
 void MusicPlayerComponent::drawVolumeBar() {
-	if (!renderer_ || !volumeBarTexture_ || baseViewInfo.Alpha <= 0.0f) {
+	if (!renderer_ || !volumeBarTexture_) {
 		return;
 	}
 
