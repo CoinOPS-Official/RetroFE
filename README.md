@@ -31,7 +31,7 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 ## System Requirements
 * OS
     * Windows (10 or higher)
-    * Linux
+    * Linux (AppImage requires libc 2.38 or higher)
     * macOS (11 Big Sur or higher)
 	* Unix-like systems other than Linux are not officially supported but may work
 * Processor
@@ -40,16 +40,28 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
     * A reasonably modern graphics card (Direct3D 11+ / OpenGL 4+ / Metal on MacOS)
 
 #   Building for Windows #
-### Install libraries
- 
-* Install Python (https://www.python.org/downloads/windows/)
-* Install sphinx with python (https://www.sphinx-doc.org/en/1.6.5/install.html)
-* Install visual studio 2019 (https://visualstudio.microsoft.com/downloads/)
-* Install Microsoft Windows SDK for Windows 10 and .net Framework 4 (https://developer.microsoft.com/nl-nl/windows/downloads/windows-10-sdk/)
-* Install cmake (https://cmake.org/download/)
-* Install git (https://git-scm.com/download/win)
-* Install 7zip (https://www.7-zip.org/)
-* Install gstreamer and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+### Install Requirements
+
+	winget install -e --id Microsoft.VisualStudio.2022.Community &&
+	winget install -e --id Microsoft.WindowsSDK.10.0.26100 &&
+	winget install -e --id Microsoft.DotNet.Framework.DeveloperPack_4 &&
+	winget install -e --id Kitware.CMake &&
+	winget install -e --id Git.Git
+
+* Install gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+
+Python 3 - Optional - Read below
+
+  	winget install -e --id Python.Python.3.11
+
+Alternatively, manually install
+  
+* Visual Studio Community (https://visualstudio.microsoft.com/downloads)
+* Microsoft Windows SDK and .NET Framework 4 for Windows 10 and higher (https://developer.microsoft.com/windows/downloads/windows-sdk)
+* CMake (https://cmake.org/download)
+* Git (https://git-scm.com/downloads/win)
+* Python 3 (https://www.python.org/downloads/windows)
+* gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
 
 ### Download and compile the source code
 Download the source code
@@ -78,7 +90,7 @@ Compile RetroFE
 
  #### Debian
 ```bash
-sudo apt-get install git g++ cmake dos2unix zlib1g-dev \
+sudo apt-get install git g++ cmake zlib1g-dev \
 libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
 libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
 libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-good1.0-dev gstreamer1.0-libav \
@@ -87,7 +99,7 @@ libglib2.0-0 libglib2.0-dev libminizip-dev libwebp-dev libusb-1.0-0-dev libevdev
 
 #### Fedora
 ```bash
-sudo dnf install -y git gcc-c++ cmake dos2unix zlib-devel \
+sudo dnf install -y git gcc-c++ cmake zlib-devel \
 SDL2 SDL2_mixer SDL2_image SDL2_ttf \
 SDL2-devel SDL2_mixer-devel SDL2_image-devel SDL2_ttf-devel \
 gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-libav \
@@ -97,7 +109,7 @@ zlib libusb1 libevdev
 
 #### Arch
 ```bash
-sudo pacman -S git gcc cmake dos2unix zlib \
+sudo pacman -S git gcc cmake zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer gst-plugins-base gst-plugins-good gst-libav \
 glib2 minizip libwebp libusb libevdev
@@ -119,7 +131,7 @@ Compile RetroFE
 
 #   Building for MacOS #
 
-# Install Homebrew
+## Install Homebrew
 
 Both methods use Homebrew in some capacity (https://brew.sh)
 
@@ -160,7 +172,7 @@ Open the Xcodeproj in `RetroFE/xcode` and build target or
 ### Install libraries
 
 ```bash
-brew install git gcc cmake dos2unix zlib \
+brew install git gcc cmake zlib \
 sdl2 sdl2_mixer sdl2_image sdl2_ttf \
 gstreamer \
 glib minizip webp libusb
