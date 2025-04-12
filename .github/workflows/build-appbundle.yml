@@ -53,7 +53,6 @@ jobs:
 
       - name: Attach and copy SDL2 framework
         run: |
-          ls -la RetroFE/
           hdiutil attach SDL2-2.32.4.dmg
           cp -R /Volumes/SDL2/SDL2.framework RetroFE/ThirdPartyMac/
           hdiutil detach /Volumes/SDL2
