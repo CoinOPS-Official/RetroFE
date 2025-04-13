@@ -16,10 +16,12 @@
 #pragma once
 
 #include <string>
-#if (__APPLE__)
-    #include <SDL2_mixer/SDL_mixer.h>
+#if __has_include(<SDL2/SDL_mixer.h>)
+#include <SDL2/SDL_mixer.h>
+#elif __has_include(<SDL2_mixer/SDL_mixer.h>)
+#include <SDL2_mixer/SDL_mixer.h>
 #else
-    #include <SDL2/SDL_mixer.h>
+#error "Cannot find SDL_mixer header"
 #endif
 
 class Sound
