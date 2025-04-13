@@ -8,6 +8,9 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(RETROFE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(RETROFE_THIRD_PARTY_DIR "${RETROFE_DIR}/ThirdParty")
 list(APPEND CMAKE_MODULE_PATH "${RETROFE_DIR}/CMake")
+include("${RETROFE_DIR}/CMake/Versioning.cmake")
+
+message(STATUS "Building RetroFE Version ${RETROFE_VERSION_DESCRIBE}-${RETROFE_VERSION_PATCH}")
 
 ##############################################################
 # Setup some variables to help find external libraries

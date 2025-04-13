@@ -1,0 +1,42 @@
+cmake_minimum_required(VERSION 3.10)
+
+find_package(Git)
+if(GIT_FOUND)
+    # Get the Git commit numerically i.e. "199"
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-list --count HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_COMMIT_NO
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+
+    # Get the Git short hash i.e. "b5c50ca"
+    execute_process(
+        COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        OUTPUT_VARIABLE GIT_SHORT_HASH
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+    )
+endif()
+
+string(TIMESTAMP RETROFE_BUILD_DATE "%Y-%m-%d" UTC)
+
+# version number
+set(RETROFE_VERSION_MAJOR "2504")
+set(RETROFE_VERSION_MINOR "0")
+set(RETROFE_VERSION_PATCH ${GIT_SHORT_HASH})
+
+# If RetroFE is not built from a repo, default the version info
+if(NOT GIT_SHORT_HASH)
+    set(RETROFE_VERSION_PATCH 0)
+endif()
+
+set(RETROFE_VERSION_DESCRIBE "${RETROFE_VERSION_MAJOR}.${RETROFE_VERSION_MINOR}")
+
+add_compile_definitions(
+    RETROFE_VERSION_MAJOR="${RETROFE_VERSION_MAJOR}"
+    RETROFE_VERSION_MINOR="${RETROFE_VERSION_MINOR}"
+    RETROFE_VERSION_PATCH="${RETROFE_VERSION_PATCH}"
+    RETROFE_VERSION_DESCRIBE="${RETROFE_VERSION_DESCRIBE}"
+    RETROFE_BUILD_DATE="${RETROFE_BUILD_DATE}"
+)
