@@ -186,6 +186,7 @@
 		DF07B3E42B2A14CE00B732CF /* GStreamer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GStreamer.framework; path = ../ThirdPartyMac/GStreamer.framework; sourceTree = SOURCE_ROOT; };
 		DF2B282C2B683F2E00A22011 /* GlobalOpts.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = GlobalOpts.cpp; path = Database/GlobalOpts.cpp; sourceTree = SOURCE_ROOT; };
 		DF2B282D2B683F2E00A22011 /* GlobalOpts.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GlobalOpts.h; path = Database/GlobalOpts.h; sourceTree = SOURCE_ROOT; };
+		DF5A44672DABDD0B005892D0 /* versioning.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = autogen/versioning.h; sourceTree = "<group>"; };
 		DF87A1792B152AA400548E78 /* RetroFE.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = RetroFE.png; path = ../../Package/Environment/Common/RetroFE.png; sourceTree = "<group>"; };
 		DFC83C862D5796C400AA7522 /* CollectionInfoBuilder.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = CollectionInfoBuilder.cpp; path = Collection/CollectionInfoBuilder.cpp; sourceTree = SOURCE_ROOT; };
 		DFC83C882D57973600AA7522 /* webp.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = webp.framework; path = ../ThirdPartyMac/webp.framework; sourceTree = SOURCE_ROOT; };
@@ -316,6 +317,7 @@
 				1A054F9D5F574151A8D39C1E /* TweenTypes.h */,
 				4B747ED75DE343C9816139B4 /* UserInput.h */,
 				A3802B28E231477DBAD771E0 /* Utils.h */,
+				DF5A44672DABDD0B005892D0 /* versioning.h */,
 				13BFB75C2B0C419DA620A836 /* VideoBuilder.h */,
 				74E506D70B7B42B194599016 /* VideoComponent.h */,
 				3BC313ADA5DC4A779D50FDCA /* VideoFactory.h */,
@@ -498,7 +500,7 @@
 			outputPaths = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/sh;
+			shellPath = /bin/zsh;
 			shellScript = "# Type a script or drag a script file from your workspace to insert its path.\n${PROJECT_DIR}/../xcode/embed_commit.sh\n${PROJECT_DIR}/../xcode/delete_gstreamer_static_libs.sh\n";
 		};
 /* End PBXShellScriptBuildPhase section */
