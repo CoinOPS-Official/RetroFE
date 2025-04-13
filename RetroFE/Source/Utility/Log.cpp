@@ -18,14 +18,17 @@
 #include <iostream>
 #include <sstream>
 #include <ctime>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
 #include "../Database/Configuration.h"
 #include "../Database/GlobalOpts.h"
 
 std::ofstream Logger::writeFileStream_;
-std::streambuf* Logger::cerrStream_ = NULL;
-std::streambuf* Logger::coutStream_ = NULL;
+std::streambuf* Logger::cerrStream_ = nullptr;
+std::streambuf* Logger::coutStream_ = nullptr;
 std::mutex Logger::writeMutex_;
-Configuration* Logger::config_ = NULL;
+Configuration* Logger::config_ = nullptr;
 
 bool Logger::initialize(std::string file, Configuration* config)
 {
@@ -59,8 +62,9 @@ void Logger::deInitialize()
 
 void Logger::write(Zone zone, const std::string& component, const std::string& message)
 {
-    std::lock_guard<std::mutex> guard(writeMutex_); // Locks the mutex here
-    std::string zoneStr = zoneToString(zone);
+    std::scoped_lock lock(writeMutex_); // Ensures thread safety
+
+    std::string zoneStr(zoneToString(zone)); // Explicit conversion from string_view to string
 
     std::time_t rawtime = std::time(NULL);
     struct tm const* timeinfo = std::localtime(&rawtime);
@@ -74,65 +78,130 @@ void Logger::write(Zone zone, const std::string& component, const std::string& m
     std::cout.flush();
 }
 
-
-bool Logger::isLevelEnabled(const std::string& zone) {
-    static bool isInitialized = false;
-    static bool isDebugEnabled = false;
-    static bool isInfoEnabled = false;
-    static bool isNoticeEnabled = false;
-    static bool isWarningEnabled = false;
-    static bool isErrorEnabled = false;
-	static bool isFileCacheEnabled = false;
+bool Logger::isLevelEnabled(const std::string& zone, const std::string& component) {
+    static std::once_flag initFlag;
+    static std::unordered_map<std::string, bool> globalFilters;
+    static std::unordered_map<std::string, std::unordered_set<std::string>> categoryFilters;
+    static std::unordered_set<std::string> allEnabledCategories;
+    static std::unordered_set<std::string> allExcludedCategories;
+    static bool allowAll = false;
+    static bool allowNone = false;
     static std::string level;
 
     if (!config_) return false;
 
-    if (!isInitialized) {
+    std::call_once(initFlag, []() {
         Logger::config_->getProperty(OPTION_LOG, level);
-        isInitialized = true;
 
         std::stringstream ss(level);
         std::string token;
         while (std::getline(ss, token, ',')) {
-            if (token == "DEBUG") isDebugEnabled = true;
-            else if (token == "INFO") isInfoEnabled = true;
-            else if (token == "NOTICE") isNoticeEnabled = true;
-            else if (token == "WARNING") isWarningEnabled = true;
-            else if (token == "ERROR") isErrorEnabled = true;
-			else if (token == "FILECACHE") isFileCacheEnabled = true;
-            else if (token == "ALL") {
-                isDebugEnabled = isInfoEnabled = isNoticeEnabled = isWarningEnabled = isErrorEnabled = isFileCacheEnabled = true;
-                break;
+            size_t colonPos = token.find(':');
+
+            if (token == "ALL") {
+                allowAll = true;
+                return;
             }
+            if (token == "NONE") {
+                allowNone = true;
+                return;
+            }
+
+            bool isExclusion = (token[0] == '-');
+            std::string logLevel = isExclusion ? token.substr(1) : token;
+
+            if (colonPos != std::string::npos) {
+                // Split by `:` to support multiple categories per level
+                std::istringstream categoryStream(token);
+                std::vector<std::string> parts;
+                std::string part;
+
+                while (std::getline(categoryStream, part, ':')) {
+                    parts.push_back(part);
+                }
+
+                if (parts.size() > 1) {
+                    std::string logLevel = parts[0];
+
+                    if (logLevel == "ALL") {
+                        for (size_t i = 1; i < parts.size(); i++) {
+                            if (isExclusion) {
+                                allExcludedCategories.insert(parts[i]); // Exclude all logs from this category
+                            } else {
+                                allEnabledCategories.insert(parts[i]); // Enable all logs for this category
+                            }
+                        }
+                    } else {
+                        for (size_t i = 1; i < parts.size(); i++) {
+                            if (isExclusion) {
+                                categoryFilters["-" + logLevel].insert(parts[i]); // Exclude this category
+                            } else {
+                                categoryFilters[logLevel].insert(parts[i]); // Enable this category
+                            }
+                        }
+                    }
+                }
+            } else {
+                if (isExclusion) {
+                    globalFilters.erase(logLevel); // Remove from global filters
+                } else {
+                    globalFilters[logLevel] = true;
+                }
+            }
+        }
+        });
+
+    // If ALL is enabled, always return true unless explicitly excluded
+    if (allowAll) {
+        if (allExcludedCategories.find(component) != allExcludedCategories.end()) {
+            return false; // Explicitly excluded component
+        }
+        return true;
+    }
+
+    // If NONE is set, always return false
+    if (allowNone) {
+        return false;
+    }
+
+    // Check if the component is enabled for ALL levels
+    if (allEnabledCategories.find(component) != allEnabledCategories.end()) {
+        return true; // `ALL:component` enabled it
+    }
+
+    // Check if the log level is explicitly disabled for this category
+    auto excludedIt = categoryFilters.find("-" + zone);
+    if (excludedIt != categoryFilters.end()) {
+        if (excludedIt->second.find(component) != excludedIt->second.end()) {
+            return false; // Explicitly disabled
         }
     }
 
-    if (zone == "DEBUG") return isDebugEnabled;
-    else if (zone == "INFO") return isInfoEnabled;
-    else if (zone == "NOTICE") return isNoticeEnabled;
-    else if (zone == "WARNING") return isWarningEnabled;
-    else if (zone == "ERROR") return isErrorEnabled;
-    else if (zone == "FILECACHE") return isFileCacheEnabled;
+    // Check if the log level is globally enabled
+    if (globalFilters.find(zone) != globalFilters.end()) {
+        return true;
+    }
+
+    // Check if the log level is enabled for the specific component
+    auto it = categoryFilters.find(zone);
+    if (it != categoryFilters.end()) {
+        if (it->second.find(component) != it->second.end()) {
+            return true;  // Component-specific log level is enabled
+        }
+    }
 
     return false;
 }
 
-std::string Logger::zoneToString(Zone zone)
+constexpr std::string_view Logger::zoneToString(Zone zone)
 {
     switch (zone) {
-    case ZONE_INFO:
-        return "INFO";
-    case ZONE_DEBUG:
-        return "DEBUG";
-    case ZONE_NOTICE:
-        return "NOTICE";
-    case ZONE_WARNING:
-        return "WARNING";
-    case ZONE_ERROR:
-        return "ERROR";
-    case ZONE_FILECACHE:
-		return "FILECACHE";
-    default:
-        return "UNKNOWN";
+    case ZONE_INFO: return "INFO";
+    case ZONE_DEBUG: return "DEBUG";
+    case ZONE_NOTICE: return "NOTICE";
+    case ZONE_WARNING: return "WARNING";
+    case ZONE_ERROR: return "ERROR";
+    case ZONE_FILECACHE: return "FILECACHE";
+    default: return "UNKNOWN";
     }
 }

@@ -330,7 +330,7 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
 
 bool MetadataDatabase::importMamelist(const std::string& filename, const std::string& collectionName)
 {
-    rapidxml::xml_document<> doc;
+    auto doc = std::make_unique<rapidxml::xml_document<>>();
     rapidxml::xml_node<> const* rootNode;
     char* error = nullptr;
     sqlite3* handle = db_.handle;
@@ -344,9 +344,9 @@ bool MetadataDatabase::importMamelist(const std::string& filename, const std::st
 
     buffer.push_back('\0');
 
-    doc.parse<0>(&buffer[0]);
+    doc->parse<0>(&buffer[0]);
 
-    rootNode = doc.first_node("mame");
+    rootNode = doc->first_node("mame");
 
     if (!rootNode) {
         LOG_ERROR("Metadata", "Does not appear to be a MameList file (missing <mame> tag)");

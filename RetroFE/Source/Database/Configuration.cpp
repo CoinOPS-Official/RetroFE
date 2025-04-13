@@ -102,6 +102,12 @@ void Configuration::initialize()
             buffer[len] = '\0'; // Null-terminate the result
             sPath = Utils::getDirectory(buffer);
         }
+
+	// Check if running as an AppImage
+        const char* appImagePath = std::getenv("APPIMAGE");
+        if (appImagePath != nullptr) {
+            sPath = Utils::getDirectory(appImagePath);
+        }
 #endif
 
         absolutePath = sPath;
@@ -250,28 +256,30 @@ bool Configuration::getRawProperty(const std::string& key, std::string& value)
 
 bool Configuration::getProperty(const std::string& key, std::string& value)
 {
+    static std::string baseMediaPath = Utils::combinePath(absolutePath, "collections");
+    static std::string baseItemPath = Utils::combinePath(absolutePath, "collections");
+
+    // Optional: If properties might override base paths, check this once
+    static bool basePathsInitialized = false;
+    if (!basePathsInitialized) {
+        getRawProperty("baseMediaPath", baseMediaPath);
+        getRawProperty("baseItemPath", baseItemPath);
+        basePathsInitialized = true;
+    }
+
     bool retVal = getRawProperty(key, value);
-
-    std::string baseMediaPath = absolutePath;
-    std::string baseItemPath = absolutePath;
-
-    baseMediaPath = Utils::combinePath(absolutePath, "collections");
-    baseItemPath = Utils::combinePath(absolutePath, "collections");
-
-    getRawProperty("baseMediaPath", baseMediaPath);
-    getRawProperty("baseItemPath", baseItemPath);
-
     std::string_view valueView(value);
 
+    // Only perform replacement if necessary
     if (valueView.find("%BASE_MEDIA_PATH%") != std::string_view::npos) {
         value = Utils::replace(value, "%BASE_MEDIA_PATH%", baseMediaPath);
     }
     if (valueView.find("%BASE_ITEM_PATH%") != std::string_view::npos) {
         value = Utils::replace(value, "%BASE_ITEM_PATH%", baseItemPath);
     }
+
     return retVal;
 }
-
 
 bool Configuration::getProperty(const std::string& key, int& value)
 {
@@ -311,6 +319,19 @@ void Configuration::setProperty(const std::string& key, const std::string& value
     properties_[key] = value;
 }
 
+void Configuration::setProperty(const std::string& key, const int& value)
+{
+    properties_[key] = std::to_string(value);
+}
+
+void Configuration::setProperty(const std::string& key, const bool& value)
+{
+    if (value)
+        properties_[key] = "true";
+    else
+        properties_[key] = "false";
+}
+
 bool Configuration::propertiesEmpty() const
 {
     return properties_.empty();
@@ -324,10 +345,11 @@ bool Configuration::propertyExists(const std::string& key)
 bool Configuration::propertyPrefixExists(const std::string& key)
 {
     std::string search = key + ".";
-    auto it = properties_.lower_bound(search);
 
-    if (it != properties_.end() && it->first.compare(0, search.length(), search) == 0) {
-        return true;
+    for (const auto& [propertyKey, propertyValue] : properties_) {
+        if (propertyKey.compare(0, search.length(), search) == 0) {
+            return true;
+        }
     }
 
     return false;
@@ -337,19 +359,19 @@ bool Configuration::propertyPrefixExists(const std::string& key)
 void Configuration::childKeyCrumbs(const std::string& parent, std::vector<std::string>& children)
 {
     std::string search = parent + ".";
-    auto it = properties_.lower_bound(search);
     std::set<std::string> uniqueChildren;
 
-    while (it != properties_.end() && it->first.compare(0, search.length(), search) == 0) {
-        std::string crumb = it->first.substr(search.length());
-        std::size_t end = crumb.find_first_of(".");
+    for (const auto& [propertyKey, propertyValue] : properties_) {
+        if (propertyKey.compare(0, search.length(), search) == 0) {
+            std::string crumb = propertyKey.substr(search.length());
+            std::size_t end = crumb.find_first_of(".");
 
-        if (end != std::string::npos) {
-            crumb = crumb.substr(0, end);
+            if (end != std::string::npos) {
+                crumb = crumb.substr(0, end);
+            }
+
+            uniqueChildren.insert(crumb);
         }
-
-        uniqueChildren.insert(crumb);
-        ++it;
     }
 
     children.assign(uniqueChildren.begin(), uniqueChildren.end());
@@ -406,7 +428,7 @@ void Configuration::getMediaPropertyAbsolutePath(const std::string& collectionNa
 
     // use user-overridden base media path if it was specified
     std::string baseMediaPath;
-    if(!getPropertyAbsolutePath("baseMediaPath", baseMediaPath)) {
+    if(!getPropertyAbsolutePath(OPTION_BASEMEDIAPATH, baseMediaPath)) {
         // base media path was not specified, assume media files are in the collection
         baseMediaPath = Utils::combinePath(absolutePath, "collections");
     }
@@ -428,7 +450,7 @@ void Configuration::getCollectionAbsolutePath(const std::string& collectionName,
     }
 
     std::string baseItemPath;
-    if(getPropertyAbsolutePath("baseItemPath", baseItemPath)) {
+    if(getPropertyAbsolutePath(OPTION_BASEITEMPATH, baseItemPath)) {
         value = Utils::combinePath(baseItemPath, collectionName);
         return;
     }

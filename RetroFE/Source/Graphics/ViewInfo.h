@@ -20,7 +20,7 @@
 #include <map>
 #include <cfloat>
 
-class Font;
+class FontManager;
 
 class ViewInfo
 {
@@ -56,7 +56,7 @@ public:
     float        ImageWidth{ 0 };
     float        ImageHeight{ 0 };
     float        FontSize{ -1 };
-    Font* font{ nullptr };
+    FontManager* font{ nullptr };
     float        Angle{ 0 };
     float        Alpha{ 1 };
     unsigned int Layer{ 0 };

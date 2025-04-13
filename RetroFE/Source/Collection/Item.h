@@ -47,6 +47,7 @@ public:
     std::string playlist;
     std::string lastPlayed{ "0" };
     int playCount{ 0 };
+    double timeSpent{ 0.0 };
     bool        isFavorite{ false };
     CollectionInfo* collectionInfo{ nullptr };
     bool leaf{ true };

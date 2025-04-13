@@ -28,8 +28,9 @@ class ReloadableMedia : public Component
 {
 public:
     ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, [[maybe_unused]] bool menuMode, const std::string& type, const std::string& imageType,
-        Page& p, int displayOffset, bool isVideo, Font* font, bool jukebox, int jukeboxNumLoops, int randomSelect);
+        Page& p, int displayOffset, bool isVideo, FontManager* font, bool jukebox, int jukeboxNumLoops, int randomSelect);
     ~ReloadableMedia() override;
+    void enableTextureCache_(bool value);
     bool update(float dt) override;
     void draw() override;
     void freeGraphicsMemory() override;
@@ -57,21 +58,21 @@ private:
     int randomSelect_;
     Component* loadedComponent_{ nullptr };
     bool isVideo_;
-    Font* FfntInst_;
+    FontManager* FfntInst_;
     bool textFallback_{ false };
     std::string type_;
-    std::string currentCollection_;
     int displayOffset_;
     std::string imageType_;
     bool jukebox_;
     int  jukeboxNumLoops_;
     int numberOfImages_{ 27 };
+	bool useTextureCache_{ false };
     
     static inline const std::vector<std::string> imageExtensions = {
 #ifdef WIN32
-        "png", "jpg", "jpeg"
+        "png", "gif", "jpg", "jpeg"
 #else
-        "png", "PNG", "jpg", "JPG", "jpeg", "JPEG",
+        "png", "PNG", "gif", "GIF", "jpg", "JPG", "jpeg", "JPEG",
 #endif
     };
 

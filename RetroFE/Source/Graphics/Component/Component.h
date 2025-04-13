@@ -34,6 +34,7 @@ public:
     virtual void allocateGraphicsMemory();
     virtual void deInitializeFonts();
     virtual void initializeFonts();
+    const std::string& getAnimationRequestedType() const;
     void triggerEvent(const std::string_view& event, int menuIndex = -1);
     void setPlaylist(const std::string_view& name );
     void setNewItemSelected();
@@ -41,6 +42,7 @@ public:
     bool isIdle() const;
     bool isAttractIdle() const;
     bool isMenuScrolling() const;
+    bool isPlaylistScrolling() const;
     bool newItemSelected;
     bool newScrollItemSelected;
     void setId( int id );
@@ -48,7 +50,7 @@ public:
     virtual std::string_view filePath();
     virtual bool update(float dt);
     virtual void draw();
-    void setTweens(AnimationEvents *set);
+    void setTweens(std::shared_ptr<AnimationEvents> set);
     virtual bool isPlaying();
     virtual bool isJukeboxPlaying();
     virtual void skipForward( ) {};
@@ -68,8 +70,8 @@ public:
     bool getAnimationDoneRemove() const;
     void setPauseOnScroll(bool value);
     bool getPauseOnScroll() const;
-    virtual void setText(const std::string& text, int id = -1) {};
-    virtual void setImage(const std::string& filePath, int id = -1) {};
+    virtual void setText(const std::string&, int = -1) {};
+    virtual void setImage(const std::string&, int = -1) {};
     int getId( ) const;
     std::string playlistName;
     
@@ -80,10 +82,9 @@ protected:
 private:
 
     bool animate();
-    bool tweenSequencingComplete();
 
-    AnimationEvents *tweens_;
-    Animation *currentTweens_;
+    std::shared_ptr<AnimationEvents> tweens_; // Use shared_ptr for tweens_
+    std::weak_ptr<Animation> currentTweens_; // Use shared_ptr instead of raw pointer
     SDL_Texture *backgroundTexture_;
     bool         pauseOnScroll_;
     ViewInfo     storeViewInfo_;

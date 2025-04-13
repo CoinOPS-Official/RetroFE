@@ -11,6 +11,21 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 [@arghs15](https://github.com/arghs15)
 [@bluestang2006](https://github.com/bluestang2006)
 
+## Version TBA
+### Added
+- Window to display if splash.xml is invalid [@aidenjbass](https://github.com/aidenjbass)
+- Added subtractive logging values, ie ALL,-INFO is all logging but INFO [@aidenjbass](https://github.com/aidenjbass)
+- Added playlist menu scroll and select using up/down for Hor and left/right for Vert [@monkofthefunk](https://github.com/monkofthefunk)
+
+### Changed
+### Fixed
+
+## [10.34.6] - 2025-04-02
+### Added
+### Changed
+### Fixed
+- Made the Xcode project portable
+
 ## [10.34.5] - 2024-02-18
 
 ### Added
@@ -35,7 +50,7 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 - Placed jbKey's behind a jukebox key to not bother mapping [@aidenjbass](https://github.com/aidenjbass)
 - Rebuilt the layout getter in pageBuilder [@aidenjbass](https://github.com/aidenjbass)
 
-## [10.34.4] - 2024-02-03
+## [10.34.4] - 2024-02-03 - The Forgotten Universe Atarashii Release
 
 ### Added
 - local launchers that are restricted to their own collections [@inigomontoya](https://github.com/inigomontoya)

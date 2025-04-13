@@ -18,10 +18,12 @@
 #include "Component/Image.h"
 #include "FontCache.h"
 #include <SDL2/SDL.h>
-#if (__APPLE__)
-    #include <SDL2_mixer/SDL_mixer.h>
+#if __has_include(<SDL2/SDL_mixer.h>)
+#include <SDL2/SDL_mixer.h>
+#elif __has_include(<SDL2_mixer/SDL_mixer.h>)
+#include <SDL2_mixer/SDL_mixer.h>
 #else
-    #include <SDL2/SDL_mixer.h>
+#error "Cannot find SDL_mixer header"
 #endif
 #include <rapidxml.hpp>
 #include <vector>
@@ -32,7 +34,7 @@ class ScrollingList;
 class Page;
 class ViewInfo;
 class Configuration;
-class Font;
+class FontManager;
 
 class PageBuilder
 {
@@ -57,14 +59,14 @@ private:
     FontCache *fontCache_;
     bool isMenu_;
 
-    Font *addFont(const rapidxml::xml_node<> *component, const rapidxml::xml_node<> *defaults, int monitor);
+    FontManager *addFont(const rapidxml::xml_node<> *component, const rapidxml::xml_node<> *defaults, int monitor);
     void loadReloadableImages(const rapidxml::xml_node<> *layout, const std::string& tagName, Page *page);
     float getVerticalAlignment(const rapidxml::xml_attribute<> *attribute, float valueIfNull) const;
     float getHorizontalAlignment(const rapidxml::xml_attribute<> *attribute, float valueIfNull) const;
     void buildViewInfo(rapidxml::xml_node<> *componentXml, ViewInfo &info, rapidxml::xml_node<> *defaultXml = nullptr);
     bool buildComponents(rapidxml::xml_node<> *layout, Page *page, const std::string&);
     void loadTweens(Component *c, rapidxml::xml_node<> *componentXml);
-    AnimationEvents *createTweenInstance(rapidxml::xml_node<> *componentXml);
+    std::shared_ptr<AnimationEvents> createTweenInstance(rapidxml::xml_node<>* componentXml);
     void buildTweenSet(AnimationEvents *tweens, rapidxml::xml_node<> *componentXml, const std::string& tagName, const std::string& tweenName);
     ScrollingList * buildMenu(rapidxml::xml_node<> *menuXml, Page &p, int monitor);
     void buildCustomMenu(ScrollingList *menu, const rapidxml::xml_node<> *menuXml, rapidxml::xml_node<> *itemDefaults);

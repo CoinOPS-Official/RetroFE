@@ -26,10 +26,12 @@
 #include "Video/VideoFactory.h"
 #include "Video/GStreamerVideo.h"
 #include <SDL2/SDL.h>
-#if (__APPLE__)
-    #include <SDL2_ttf/SDL_ttf.h>
+#if __has_include(<SDL2/SDL_ttf.h>)
+#include <SDL2/SDL_ttf.h>
+#elif __has_include(<SDL2_ttf/SDL_ttf.h>)
+#include <SDL2_ttf/SDL_ttf.h>
 #else
-    #include <SDL2/SDL_ttf.h>
+#error "Cannot find SDL_ttf header"
 #endif
 #include <list>
 #include <stack>
@@ -37,7 +39,7 @@
 #include <string>
 #include "Graphics/Page.h"
 #ifdef WIN32
-    #include <windows.h>
+    #include <Windows.h>
 #endif
 
 
@@ -59,8 +61,9 @@ public:
     void     launchEnter( );
     void     launchExit( );
     std::vector<std::string>     getPlaylistCycle();
-    void selectRandomOnFirstCycle();
     bool getAttractModeCyclePlaylist();
+    MetadataDatabase* getMetaDb();
+
 
 
 private:
@@ -113,6 +116,8 @@ private:
         RETROFE_COLLECTION_DOWN_ENTER,
         RETROFE_COLLECTION_DOWN_SCROLL,
         RETROFE_HANDLE_MENUENTRY,
+        RETROFE_ATTRACT_LAUNCH_ENTER,
+        RETROFE_ATTRACT_LAUNCH_REQUEST,        
         RETROFE_LAUNCH_ENTER,
         RETROFE_LAUNCH_REQUEST,
         RETROFE_LAUNCH_EXIT,
@@ -124,6 +129,9 @@ private:
         RETROFE_MENUMODE_START_LOAD_ART,
         RETROFE_MENUMODE_START_ENTER,
        // RETROFE_GAMEINFO_REQUEST,
+        RETROFE_QUICKLIST_REQUEST,
+        RETROFE_QUICKLIST_PAGE_REQUEST,
+        RETROFE_QUICKLIST_PAGE_MENU_EXIT,
         RETROFE_SETTINGS_REQUEST,
         RETROFE_SETTINGS_PAGE_REQUEST,
         RETROFE_SETTINGS_PAGE_MENU_EXIT,
@@ -138,6 +146,8 @@ private:
         RETROFE_NEW,
         RETROFE_QUIT_REQUEST,
         RETROFE_QUIT,
+        RETROFE_SCROLL_PLAYLIST_FORWARD,
+        RETROFE_SCROLL_PLAYLIST_BACK,
     };
 
     void            render();
@@ -160,7 +170,6 @@ private:
 	void            saveRetroFEState( ) const;
     std::string getLayoutFileName();
     void resetInfoToggle();
-
 
     Configuration     &config_;
     DB                *db_;
@@ -186,10 +195,10 @@ private:
     bool                buildInfo_;
     bool                collectionInfo_;
     bool                gameInfo_;
-    bool playlistCycledOnce_;
 	std::string        firstPlaylist_;
     std::map<std::string, bool> lkupAttractModeSkipPlaylist_;
     std::map<std::string, size_t> lastMenuOffsets_;
     std::map<std::string, std::string>  lastMenuPlaylists_;
     std::vector<std::string> cycleVector_;
+    std::filesystem::file_time_type lastHiFileModifiedTime_{};
 };

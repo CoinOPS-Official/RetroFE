@@ -27,6 +27,7 @@
 #include "VideoComponent.h"
 #include "ReloadableMedia.h"
 #include "Text.h"
+#include "../../Video/VideoPool.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
 #include "../../Collection/Item.h"
@@ -35,15 +36,19 @@
 #include "../../SDL.h"
 #include "../ViewInfo.h"
 #include <math.h>
-#if (__APPLE__)
-    #include <SDL2_image/SDL_image.h>
+#if __has_include(<SDL2/SDL_image.h>)
+#include <SDL2/SDL_image.h>
+#elif __has_include(<SDL2_image/SDL_image.h>)
+#include <SDL2_image/SDL_image.h>
 #else
-    #include <SDL2/SDL_image.h>
+#error "Cannot find SDL_image header"
 #endif
 #include <sstream>
 #include <cctype>
 #include <iomanip>
 #include <algorithm>
+
+int ScrollingList::nextListId = 0;
 
 ScrollingList::ScrollingList( Configuration &c,
                               Page          &p,
@@ -51,10 +56,11 @@ ScrollingList::ScrollingList( Configuration &c,
                               bool           commonMode,
                               bool          playlistType,
                               bool          selectedImage,
-                              Font          *font,
+                              FontManager          *font,
                               const std::string    &layoutKey,
                               const std::string    &imageType,
-                              const std::string    &videoType)
+                              const std::string    &videoType,
+                              bool          useTextureCaching)
     : Component( p )
     , layoutMode_( layoutMode )
     , commonMode_( commonMode )
@@ -65,19 +71,36 @@ ScrollingList::ScrollingList( Configuration &c,
     , layoutKey_( layoutKey )
     , imageType_( imageType )
     , videoType_( videoType )
- {
+    , components_()
+    , useTextureCaching_(useTextureCaching)
+{
+    listId_ = nextListId++;
 }
 
 
-ScrollingList::~ScrollingList()
-{
+ScrollingList::~ScrollingList() {
+    clearPoints();
     destroyItems();
-    while (!scrollPoints_->empty()) // Using empty() here for clarity.
-    {
-        ViewInfo* scrollPoint = scrollPoints_->back();
-        delete scrollPoint;
-        scrollPoints_->pop_back();
+}
+
+int ScrollingList::getListId() const {
+    return listId_;
+}
+
+void ScrollingList::clearPoints() {
+    if (scrollPoints_) {
+        while (!scrollPoints_->empty()) {
+            ViewInfo* scrollPoint = scrollPoints_->back();
+            delete scrollPoint;
+            scrollPoints_->pop_back();
+        }
+        delete scrollPoints_;
+        scrollPoints_ = nullptr;
     }
+}
+
+void ScrollingList::clearTweenPoints() {
+    tweenPoints_.reset(); // Using reset to clear the shared pointer
 }
 
 const std::vector<Item*>& ScrollingList::getItems() const
@@ -159,8 +182,7 @@ void ScrollingList::deallocateSpritePoints( )
     }
 }
 
-void ScrollingList::allocateSpritePoints()
-{
+void ScrollingList::allocateSpritePoints() {
     if (!items_ || items_->empty()) return;
     if (!scrollPoints_ || scrollPoints_->empty()) return;
     if (components_.empty()) return;
@@ -194,35 +216,48 @@ void ScrollingList::allocateSpritePoints()
 
 void ScrollingList::destroyItems()
 {
-    size_t componentSize = components_.size();
+    auto& data = components_.raw();
+    size_t componentSize = data.size();
 
+    // Clean up the pool - listId_ will always be valid
+    LOG_DEBUG("ScrollingList", "Cleaning up video pool for list: " + std::to_string(listId_));
+    VideoPool::cleanup(baseViewInfo.Monitor, listId_);
+
+    // Delete all components
     for (unsigned int i = 0; i < componentSize; ++i) {
-        if (Component* component = components_[i]) {
-            component->freeGraphicsMemory();
+        if (Component* component = data[i]) {
             delete component;
+            data[i] = nullptr;
         }
-        components_[i] = NULL;
     }
 }
 
-void ScrollingList::setPoints( std::vector<ViewInfo *> *scrollPoints, std::vector<AnimationEvents *> *tweenPoints )
-{
+
+void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
+    std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints) {
+    clearPoints();
+    clearTweenPoints();
+
     scrollPoints_ = scrollPoints;
-    tweenPoints_  = tweenPoints;
+    tweenPoints_ = tweenPoints;
 
-    // empty out the list as we will resize it
-    components_.clear( );
+    size_t size = (scrollPoints_) ? scrollPoints_->size() : 0;
 
-    size_t size = 0;
+    // Initialize or reset the CircularBuffer
+    components_.initialize(size);
 
-    if ( scrollPoints ) {
-        size = scrollPoints_->size();
+    // No need to manually set to nullptr as initialize already does that
+    // Initialize all components to nullptr (redundant if initialize sets them to nullptr)
+    // for (size_t i = 0; i < size; ++i) {
+    //     components_.raw()[i] = nullptr;
+    // }
+
+    if (items_) {
+        itemIndex_ = loopDecrement(0, selectedOffsetIndex_, items_->size());
     }
-    components_.resize(size);
 
-    if ( items_ ) {
-        itemIndex_ = loopDecrement( 0, selectedOffsetIndex_, items_->size());
-    }
+    // Allocate and initialize components
+    allocateSpritePoints();
 }
 
 size_t ScrollingList::getScrollOffsetIndex( ) const
@@ -478,12 +513,17 @@ void ScrollingList::allocateGraphicsMemory( )
     allocateSpritePoints( );
 }
 
-void ScrollingList::freeGraphicsMemory( )
+void ScrollingList::freeGraphicsMemory()
 {
-    Component::freeGraphicsMemory( );
+    Component::freeGraphicsMemory();
     scrollPeriod_ = 0;
-    
-    deallocateSpritePoints( );
+    // Clean up components
+    deallocateSpritePoints();
+
+    // Clean up the video pool for this list
+    if (listId_ != -1) {
+        VideoPool::cleanup(baseViewInfo.Monitor, listId_);
+    }
 }
 
 void ScrollingList::triggerEnterEvent( )
@@ -642,11 +682,8 @@ size_t ScrollingList::getSize() const
     return items_->size();
 }
 
-void ScrollingList::resetTweens(Component* c, AnimationEvents* sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const {
-    if (!c) return;
-    if (!sets) return;
-    if (!currentViewInfo) return;
-    if (!nextViewInfo) return;
+void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const {
+    if (!c || !sets || !currentViewInfo || !nextViewInfo) return;
 
     currentViewInfo->ImageHeight = c->baseViewInfo.ImageHeight;
     currentViewInfo->ImageWidth = c->baseViewInfo.ImageWidth;
@@ -656,33 +693,32 @@ void ScrollingList::resetTweens(Component* c, AnimationEvents* sets, ViewInfo* c
 
     c->setTweens(sets);
 
-    Animation* scrollTween = sets->getAnimation("menuScroll");
+    std::shared_ptr<Animation> scrollTween = sets->getAnimation("menuScroll");
     scrollTween->Clear();
     c->baseViewInfo = *currentViewInfo;
 
-    // Use std::make_unique to create a unique_ptr for the TweenSet
     auto set = std::make_unique<TweenSet>();
-    // don't trigger video restart if scrolling fast 
-    if (currentViewInfo->Restart && scrollPeriod_ > minScrollTime_)
+    if (currentViewInfo->Restart && scrollPeriod_ > minScrollTime_) {
         set->push(std::make_unique<Tween>(TWEEN_PROPERTY_RESTART, LINEAR, currentViewInfo->Restart, nextViewInfo->Restart, 0));
+    }
 
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_HEIGHT, LINEAR, currentViewInfo->Height, nextViewInfo->Height, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_WIDTH, LINEAR, currentViewInfo->Width, nextViewInfo->Width, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ANGLE, LINEAR, currentViewInfo->Angle, nextViewInfo->Angle, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ALPHA, LINEAR, currentViewInfo->Alpha, nextViewInfo->Alpha, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X, LINEAR, currentViewInfo->X, nextViewInfo->X, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y, LINEAR, currentViewInfo->Y, nextViewInfo->Y, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_ORIGIN, LINEAR, currentViewInfo->XOrigin, nextViewInfo->XOrigin, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, currentViewInfo->YOrigin, nextViewInfo->YOrigin, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_OFFSET, LINEAR, currentViewInfo->XOffset, nextViewInfo->XOffset, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_OFFSET, LINEAR, currentViewInfo->YOffset, nextViewInfo->YOffset, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_FONT_SIZE, LINEAR, currentViewInfo->FontSize, nextViewInfo->FontSize, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, currentViewInfo->BackgroundAlpha, nextViewInfo->BackgroundAlpha, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, currentViewInfo->MaxWidth, nextViewInfo->MaxWidth, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, currentViewInfo->MaxHeight, nextViewInfo->MaxHeight, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_LAYER, LINEAR, currentViewInfo->Layer, nextViewInfo->Layer, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_VOLUME, LINEAR, currentViewInfo->Volume, nextViewInfo->Volume, scrollTime ) );
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MONITOR, LINEAR, currentViewInfo->Monitor, nextViewInfo->Monitor, scrollTime ) );
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_HEIGHT, LINEAR, currentViewInfo->Height, nextViewInfo->Height, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_WIDTH, LINEAR, currentViewInfo->Width, nextViewInfo->Width, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ANGLE, LINEAR, currentViewInfo->Angle, nextViewInfo->Angle, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ALPHA, LINEAR, currentViewInfo->Alpha, nextViewInfo->Alpha, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X, LINEAR, currentViewInfo->X, nextViewInfo->X, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y, LINEAR, currentViewInfo->Y, nextViewInfo->Y, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_ORIGIN, LINEAR, currentViewInfo->XOrigin, nextViewInfo->XOrigin, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, currentViewInfo->YOrigin, nextViewInfo->YOrigin, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_OFFSET, LINEAR, currentViewInfo->XOffset, nextViewInfo->XOffset, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_OFFSET, LINEAR, currentViewInfo->YOffset, nextViewInfo->YOffset, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_FONT_SIZE, LINEAR, currentViewInfo->FontSize, nextViewInfo->FontSize, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, currentViewInfo->BackgroundAlpha, nextViewInfo->BackgroundAlpha, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, currentViewInfo->MaxWidth, nextViewInfo->MaxWidth, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, currentViewInfo->MaxHeight, nextViewInfo->MaxHeight, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_LAYER, LINEAR, currentViewInfo->Layer, nextViewInfo->Layer, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_VOLUME, LINEAR, currentViewInfo->Volume, nextViewInfo->Volume, scrollTime));
+    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MONITOR, LINEAR, currentViewInfo->Monitor, nextViewInfo->Monitor, scrollTime));
 
     scrollTween->Push(std::move(set));
 }
@@ -767,11 +803,11 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
         // Create video or image
         if (!t) {
             if (videoType_ != "null") {
-                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
+                t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
             }
             else {
                 std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
-                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
 
@@ -791,11 +827,11 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
             if (!t) {
                 if (videoType_ != "null") {
-                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor);
+                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1,  false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
                 }
                 else {
                     std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
-                    t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+                    t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
                 }
             }
         }
@@ -826,15 +862,15 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
             }
         }
         if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor);
+            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
         }
         else {
             name = imageType_;
             if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
             if (!t) {
-                t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
     }
@@ -842,15 +878,15 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
     // check rom directory path for art
     if ( !t ) {
         if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor);
+            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
         }
         else {
             name = imageType_;
             if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(item->filepath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(item->filepath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
             if (!t) {
-                t = imageBuild.CreateImage(item->filepath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(item->filepath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
     }
@@ -878,7 +914,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
             // Try to create image
             std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
-            t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+            t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
 
             // Check sub-collection path for art if needed
             if (!t && !commonMode_) {
@@ -893,7 +929,7 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
                 // Try to create image again
                 imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
-                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
 
@@ -918,10 +954,10 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
             if ( !t ) {
                 name = imageType_;
                 if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
                 }
                 if (!t) {
-                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
                 }
             }
         }
@@ -929,10 +965,10 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
         if ( !t ) {
             name = imageType_;
             if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(item->filepath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(item->filepath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
             if (!t) {
-                t = imageBuild.CreateImage(item->filepath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive);
+                t = imageBuild.CreateImage(item->filepath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
 
@@ -950,7 +986,6 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
     return true;
 }
-
 void ScrollingList::buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) {
     imagePath = Utils::combinePath(base, subPath, "medium_artwork", mediaType);
     videoPath = Utils::combinePath(imagePath, "medium_artwork", videoType);
@@ -969,16 +1004,8 @@ void ScrollingList::deallocateTexture( size_t index )
     }
 }
 
-void ScrollingList::draw(unsigned int layer)
-{
-    size_t componentSize = components_.size();
-    
-    if (componentSize == 0) return;
-
-    for (unsigned int i = 0; i < componentSize; ++i) {
-        Component *c = components_[i];
-        if (c && c->baseViewInfo.Layer == layer) c->draw();
-    }
+const std::vector<Component*>& ScrollingList::getComponents() const {
+    return components_.raw();
 }
 
 bool ScrollingList::isScrollingListIdle()
@@ -1029,33 +1056,40 @@ bool ScrollingList::isFastScrolling() const
 
 void ScrollingList::scroll(bool forward)
 {
-    // Exit conditions
-    if (playlistType_ || !items_ || items_->empty() || !scrollPoints_ || scrollPoints_->empty())
+    // Exit conditions: if no items or scroll points, return.
+    if (!items_ || items_->empty() || !scrollPoints_ || scrollPoints_->empty())
         return;
 
+    // Ensure that scrollPeriod is not below the minimum.
     if (scrollPeriod_ < minScrollTime_)
         scrollPeriod_ = minScrollTime_;
 
     size_t itemsSize = items_->size();
     size_t scrollPointsSize = scrollPoints_->size();
 
-    // Replace the item that's scrolled out
-    Item const *itemToScroll;
+    // Determine which component is exiting based on the logical order.
+    size_t exitIndex = forward ? 0 : scrollPoints_->size() - 1;
+
+    // Determine the new item to load into the exiting slot.
+    Item const* itemToScroll = nullptr;
     if (forward) {
-        itemToScroll = (*items_)[loopIncrement(itemIndex_, scrollPointsSize, itemsSize)];
+        // Use loopIncrement to get the item that follows the currently visible block.
+        itemToScroll = (*items_)[ loopIncrement(itemIndex_, scrollPointsSize, itemsSize) ];
+        // Advance the index.
         itemIndex_ = loopIncrement(itemIndex_, 1, itemsSize);
-        deallocateTexture(0);
-        allocateTexture(0, itemToScroll);
     }
     else {
-        itemToScroll = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
+        itemToScroll = (*items_)[ loopDecrement(itemIndex_, 1, itemsSize) ];
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
-        deallocateTexture(loopDecrement(0, 1, components_.size()));
-        allocateTexture(loopDecrement(0, 1, components_.size()), itemToScroll);
     }
 
-    // Set the animations
-    for (size_t index = 0; index < scrollPointsSize; ++index)  // Renamed from 'i' to 'index'
+    // Only deallocate (i.e. reset/recycle) the component that is exiting.
+    deallocateTexture(exitIndex);
+    // Then allocate new media (video or image) into that slot.
+    allocateTexture(exitIndex, itemToScroll);
+
+    // Update the animations (tweening) for each visible component.
+    for (size_t index = 0; index < scrollPointsSize; ++index)
     {
         size_t nextIndex;
         if (forward) {
@@ -1065,11 +1099,11 @@ void ScrollingList::scroll(bool forward)
             nextIndex = (index == scrollPointsSize - 1) ? 0 : index + 1;
         }
 
-        Component* component = components_[index];  // Renamed from 'c' to 'component' for clarity
+        Component* component = components_[index];  // components_ operator[] gives the logical ordering.
         if (component) {
-            auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
+            auto& nextTweenPoint     = (*tweenPoints_)[nextIndex];
             auto& currentScrollPoint = (*scrollPoints_)[index];
-            auto& nextScrollPoint = (*scrollPoints_)[nextIndex];
+            auto& nextScrollPoint    = (*scrollPoints_)[nextIndex];
 
             component->allocateGraphicsMemory();
             resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
@@ -1078,17 +1112,8 @@ void ScrollingList::scroll(bool forward)
         }
     }
 
-    // Reorder the components using std::rotate
-    if (forward) {
-        // For forward scroll, rotate left (move the first element to the end)
-        std::rotate(components_.begin(), components_.begin() + 1, components_.end());
-    }
-    else {
-        // For backward scroll, rotate right (move the last element to the beginning)
-        std::rotate(components_.rbegin(), components_.rbegin() + 1, components_.rend());
-    }
-
-    return;
+    // Rotate the RotatableView so that the logical order is updated.
+    components_.rotate(forward);
 }
 
 bool ScrollingList::isPlaylist() const

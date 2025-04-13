@@ -20,14 +20,11 @@ then
     COMMIT=$(git --git-dir="${PROJECT_DIR}/../../.git" rev-parse HEAD)
 
     TAG=$(strip-pre $(git describe --tags --match 'v[0-9]*' --abbrev=0 --exact-match 2> /dev/null || true))
-    FULL_VERSION=$(strip-v $(git describe --tags --match 'v[0-9]*' --always --dirty))
+    FULL_VERSION=$(strip-v $(git describe --tags --match 'v[0-9]*' --always ))
     BUILD=$(echo -n $(git rev-list HEAD | wc -l))
     
-    SHORT_VERSION="${TAG:-${FULL_VERSION}}"
-
-    # defaults write "${PLIST}" "CFBundleShortVersionString" -string "${SHORT_VERSION}"
     defaults write "${PLIST}" "CFBundleVersion"            -string "${BUILD}"
-    # defaults write "${PLIST}" "Commit"                     -string "${COMMIT}"
+    # defaults write "${PLIST}" "Commit"                     -string "${GIT_SHORT_HASH}"
 
 else
     echo "warning: Building outside Git. Leaving version number untouched."

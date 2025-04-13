@@ -16,8 +16,8 @@
 
 #include "AnimationEvents.h"
 #include <string>
-
-
+#include <memory>
+#include <map>
 
 AnimationEvents::AnimationEvents() = default;
 
@@ -26,15 +26,15 @@ AnimationEvents::~AnimationEvents()
     clear();
 }
 
-Animation *AnimationEvents::getAnimation(const std::string& tween)
+std::shared_ptr<Animation> AnimationEvents::getAnimation(const std::string& tween)
 {
     return getAnimation(tween, -1);
 }
 
-Animation* AnimationEvents::getAnimation(const std::string& tween, int index)
+std::shared_ptr<Animation> AnimationEvents::getAnimation(const std::string& tween, int index)
 {
     if (animationMap_.find(tween) == animationMap_.end())
-        animationMap_[tween][-1] = new Animation();
+        animationMap_[tween][-1] = std::make_shared<Animation>();
 
     if (animationMap_[tween].find(index) == animationMap_[tween].end())
         index = -1;
@@ -42,26 +42,17 @@ Animation* AnimationEvents::getAnimation(const std::string& tween, int index)
     return animationMap_[tween][index];
 }
 
-
-void AnimationEvents::setAnimation(const std::string& tween, int index, Animation *animation)
+void AnimationEvents::setAnimation(const std::string& tween, int index, std::shared_ptr<Animation> animation)
 {
-    if(animationMap_[tween].find(index) != animationMap_[tween].end())
-    {
-        delete animationMap_[tween][index];
-    }
-    animationMap_[tween][index] = animation;
+    animationMap_[tween][index] = std::move(animation);
 }
-
 
 void AnimationEvents::clear()
 {
-    for (auto& [key, innerMap] : animationMap_) // This is the structured binding declaration
-    {
-        for (auto const& [innerKey, animation] : innerMap) // Another structured binding
-        {
-            delete animation;
-        }
-        innerMap.clear();
-    }
-    animationMap_.clear();
+    animationMap_.clear(); // std::unique_ptr will automatically clean up
+}
+
+// Getter for animationMap_
+const std::map<std::string, std::map<int, std::shared_ptr<Animation>>>& AnimationEvents::getAnimationMap() const {
+    return animationMap_;
 }

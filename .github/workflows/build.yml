@@ -1,0 +1,82 @@
+name: RetroFE Continuous Integration Build
+
+on:
+  push:
+    branches:
+      - master
+    paths-ignore:
+      - '.github/**'
+      - 'Package/**'
+      - 'docs/**'
+      - 'Scripts/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
+  pull_request:
+    branches:
+      - master
+    paths-ignore:
+      - '.github/**'
+      - 'Package/**'
+      - 'docs/**'
+      - 'Scripts/**'
+      - 'README.md'
+      - 'CHANGELOG.md'
+      
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+
+    steps:
+    # Checkout the repository
+    - name: Checkout code
+      uses: actions/checkout@v3
+
+    - name: Cache apt packages
+      uses: awalsh128/cache-apt-pkgs-action@latest
+      with:
+        packages: |
+          cmake
+          zlib1g-dev
+          libsdl2-dev
+          libsdl2-mixer-dev
+          libsdl2-image-dev
+          libsdl2-ttf-dev
+          libgstreamer1.0-dev
+          libgstreamer-plugins-base1.0-dev
+          libgstreamer-plugins-good1.0-dev
+          gstreamer1.0-libav
+          libglib2.0-dev
+          libminizip-dev
+          libwebp-dev
+          libevdev-dev
+          libusb-1.0-0-dev
+        version: 1.0
+
+    # Install dependencies
+    - name: Install dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y \
+          cmake \
+          zlib1g-dev \
+          libsdl2-dev \
+          libsdl2-mixer-dev \
+          libsdl2-image-dev \
+          libsdl2-ttf-dev \
+          libgstreamer1.0-dev \
+          libgstreamer-plugins-base1.0-dev \
+          libgstreamer-plugins-good1.0-dev \
+          gstreamer1.0-libav \
+          libglib2.0-dev \
+          libminizip-dev \
+          libwebp-dev \
+          libevdev-dev \
+          libusb-1.0-0-dev
+
+    # Configure the build
+    - name: Configure CMake
+      run: cmake RetroFE/Source -BRetroFE/Build
+
+    # Build the project
+    - name: Build
+      run: cmake --build RetroFE/Build

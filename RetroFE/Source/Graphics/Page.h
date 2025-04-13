@@ -40,8 +40,9 @@ public:
     {
         ScrollDirectionForward,
         ScrollDirectionBack,
-        ScrollDirectionIdle
-
+        ScrollDirectionIdle,
+        ScrollDirectionPlaylistForward,
+        ScrollDirectionPlaylistBack,
     };
 
     Page(Configuration &c, int layoutWidth, int layoutHeight );
@@ -122,6 +123,7 @@ public:
     std::string controlsType() const;
     void setControlsType(const std::string& type);
     void  menuScroll();
+    void playlistScroll();
     void  highlightEnter();
     void  highlightExit();
     void  playlistEnter();
@@ -150,11 +152,13 @@ public:
     void  togglePlaylist();
     void  reallocateMenuSpritePoints(bool updatePlaylistMenu = true) const;
     bool  isMenuScrolling() const;
+    bool isPlaylistScrolling() const;
+    bool isGamesScrolling() const;
     bool  isPlaying() const;
     void  resetScrollPeriod() const;
     void  updateScrollPeriod() const;
     bool  isMenuFastScrolling() const;
-    void  scroll(bool forward);
+    void  scroll(bool forward, bool playlist);
     bool  hasSubs();
     int   getLayoutWidth(int layout);
     int   getLayoutHeight(int layout);
@@ -176,6 +180,8 @@ public:
     bool isLocked() const;
     ScrollingList* getPlaylistMenu();
     void setPlaylistMenu(ScrollingList*);
+    void setIsLaunched(bool isLaunched);
+    bool getIsLaunched();
     bool playlistExists(const std::string&);
     void setSelectedItem();
     bool fromPreviousPlaylist = false;
@@ -184,6 +190,7 @@ public:
 
 private:
     void playlistChange();
+    std::string lastPlaylistName_;
     std::string collectionName_;
     Configuration &config_;
     std::string controlsType_;
@@ -210,12 +217,14 @@ private:
     CollectionVector_T deleteCollections_;
 
     static const unsigned int NUM_LAYERS = 20;
-    std::vector<Component *> LayerComponents;
+    std::vector<std::vector<Component*>> LayerComponents_; // Grouped by layer
     std::list<ScrollingList *> deleteMenuList_;
     std::list<CollectionInfo *> deleteCollectionList_;
     std::map<std::string, size_t> lastPlaylistOffsets_;
 
     bool scrollActive_;
+    bool playlistScrollActive_;
+    bool gameScrollActive_;
 
     Item *selectedItem_;
     Text *textStatusComponent_;
@@ -231,5 +240,6 @@ private:
     std::vector<int> layoutHeightByMonitor_;
     bool jukebox_;
     bool useThreading_;
+    bool isLaunched_ = false;
 
 };

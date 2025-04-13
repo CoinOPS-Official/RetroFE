@@ -28,11 +28,11 @@ public:
     Animation(const Animation& copy);
     Animation& operator=(const Animation& other);
     ~Animation();
-    void Push(std::unique_ptr<TweenSet> set);
+    void Push(std::shared_ptr<TweenSet> set);
     void Clear();
     std::vector<TweenSet *> *tweenSets();
-    TweenSet *tweenSet(unsigned int index);
+    std::shared_ptr<TweenSet> tweenSet(unsigned int index);
     size_t size() const;
 private:
-    std::vector<std::unique_ptr<TweenSet>> animationVector_;
+    std::vector<std::shared_ptr<TweenSet>> animationVector_;
 };
