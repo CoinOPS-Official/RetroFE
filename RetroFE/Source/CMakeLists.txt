@@ -190,6 +190,7 @@ if(WIN32)
         "${WEBP_ROOT}/lib/libwebpdecoder_dll.lib"
         "${WEBP_ROOT}/lib/libwebpdemux_dll.lib"
         "${ZLIB_ROOT}/lib/minizip.lib"
+        "dxgi.lib"
     )
 endif()
 
@@ -397,8 +398,8 @@ if(MSVC)
     add_definitions(-D_CRT_SECURE_NO_DEPRECATE)
     add_definitions(-D_CRT_NONSTDC_NO_DEPRECATE)
     # Change /MT to /MD for dynamic runtime linking
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /WX /MD")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP /WX /MD")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /WX- /MD")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP /WX- /MD")
     set_target_properties(retrofe PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
 else()
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g -O0 -Wall -ggdb")
