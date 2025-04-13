@@ -45,6 +45,7 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 	* Start and exit scripts; run programs such as steam at retrofe launch
 	* In depth logging system; 7 logging levels
 	* Kiosk mode; lock things down for kids or cleanliness
+ 	* Local Hiscores integration with hi2txt   
 	* And much more!
 
 ## System Requirements
