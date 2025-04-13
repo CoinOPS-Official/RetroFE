@@ -1,0 +1,80 @@
+name: Publish Release
+
+on:
+  workflow_run:
+    workflows:
+      - macOS App Bundles
+      - Linux AppImages
+      - Windows Package
+    types:
+      - completed
+
+jobs:
+  publish:
+    name: Publish Release
+    runs-on: ubuntu-latest
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      # Step 1: Checkout the repository
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Step 2: Extract version from RETROFE_VERSION_DESCRIBE in Versioning.cmake
+      - name: Extract version from Versioning.cmake
+        id: extract_version
+        run: |
+          VERSION=$(grep -Po '(?<=set\\(RETROFE_VERSION_DESCRIBE ")[^"]+' RetroFE/CMake/Versioning.cmake)
+          echo "VERSION=$VERSION"
+          echo "VERSION=${VERSION}" >> $GITHUB_ENV
+
+      # Step 3: Download macOS artifact
+      - name: Download macOS artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: RetroFE.dmg
+          path: ./artifacts/macos
+
+      # Step 4: Download Linux artifacts
+      - name: Download Linux x86_64 artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: RetroFE-x86_64.AppImage
+          path: ./artifacts/linux/x86_64
+
+      - name: Download Linux arm64 artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: RetroFE-arm64.AppImage
+          path: ./artifacts/linux/arm64
+
+      # Step 5: Download Windows artifact
+      - name: Download Windows artifact
+        uses: actions/download-artifact@v3
+        with:
+          name: RetroFE-windows
+          path: ./artifacts/windows
+
+      # Step 6: Combine artifacts into a single directory
+      - name: Combine artifacts
+        run: |
+          mkdir -p ./release
+          cp ./artifacts/macos/RetroFE.dmg ./release/
+          cp ./artifacts/linux/x86_64/RetroFE-x86_64.AppImage ./release/
+          cp ./artifacts/linux/arm64/RetroFE-arm64.AppImage ./release/
+          cp -r ./artifacts/windows/* ./release/
+
+      # Step 7: Publish the GitHub Release
+      - name: Create GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: v${{ env.VERSION }}
+          name: Release v${{ env.VERSION }}
+          body: |
+            This release includes the following builds:
+            - macOS: RetroFE.dmg
+            - Linux (x86_64): RetroFE-x86_64.AppImage
+            - Linux (arm64): RetroFE-arm64.AppImage
+            - Windows: RetroFE package
+          artifacts: ./release/*
