@@ -2,19 +2,11 @@ name: Publish Release
 
 on:
   workflow_dispatch:
-  workflow_run:
-    workflows:
-      - macOS App Bundles
-      - Linux AppImages
-      - Windows Package
-    types:
-      - completed
 
 jobs:
   publish:
     name: Publish Release
     runs-on: ubuntu-latest
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
 
     steps:
       # Step 1: Checkout the repository
