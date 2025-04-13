@@ -23,8 +23,8 @@
 #include "Utility/Log.h"
 #include "Utility/Utils.h"
 #include "RetroFE.h"
-#include "Version.h"
 #include "SDL.h"
+#include "versioning.h" // Created at build time
 
 #include <cstdlib>
 #include <fstream>
@@ -147,7 +147,7 @@ int main(int argc, char** argv)
         else if (param == "-version" ||
             param == "--version" ||
             param == "-v") {
-            std::cout << std::endl << "RetroFE version " << Version::getString() << std::endl << std::flush;
+            std::cout << std::endl << "RetroFE Version " << RETROFE_VERSION_DESCRIBE << "-" << RETROFE_VERSION_PATCH << std::endl << std::flush;
             sendEnterKey();
             return 0;
         }
@@ -277,10 +277,10 @@ int main(int argc, char** argv)
             // Display information about RetroFE
             std::cout << std::endl;
             std::cout << "Absolute Path: " << Configuration::absolutePath << std::endl;
-            std::cout << "RetroFE Version: " << Version::getString() << std::endl;
+            std::cout << "RetroFE Version: " << RETROFE_VERSION_DESCRIBE << "-" << RETROFE_VERSION_PATCH << std::endl;
             std::cout << std::endl;
             std::cout << "RetroFE is a cross-platform desktop frontend designed for MAME cabinets and game centers, with a focus on simplicity and customization." << std::endl;
-            std::cout << "It's licensed under the terms of the GNU General Public License, version 3 or later (GPLv3)." << std::endl;
+            std::cout << "Licensed under GNU General Public License, version 3 or later (GPLv3+)" << std::endl;
             std::cout << std::endl;
 
             // Display usage information
@@ -294,6 +294,9 @@ int main(int argc, char** argv)
             std::cout << "  -sc  -showconfig         Print a list of current settings" << std::endl;
             std::cout << "  -C   -createconfig       Create a settings.conf with default values and a readme" << std::endl;
             std::cout << "       -dump               Dump current settings to properties.txt" << std::endl;
+            std::cout << std::endl;
+            std::cout << "  -{key} {value}           RetroFE supports passing all settings as command line options for greater flexibility" << std::endl;
+            std::cout << "                           i.e. -log DEBUG -vSync true would filter logging to just debug and enable vSync" << std::endl;
             std::cout << std::endl;
 
             // Provide additional information and references
@@ -394,7 +397,8 @@ static bool ImportConfiguration(Configuration* c) {
     }
 
     // log version
-    LOG_INFO("RetroFE", "Version " + Version::getString() + " starting");
+    LOG_INFO("RetroFE", "Version: " << RETROFE_VERSION_DESCRIBE << "-" << RETROFE_VERSION_PATCH << " starting");
+    LOG_INFO("RetroFE", "Built: " << RETROFE_BUILD_DATE);
 
     #ifdef WIN32
         LOG_INFO("RetroFE", "OS: Windows");

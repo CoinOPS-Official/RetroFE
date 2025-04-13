@@ -36,10 +36,12 @@
 #include "../../SDL.h"
 #include "../ViewInfo.h"
 #include <math.h>
-#if (__APPLE__)
-    #include <SDL2_image/SDL_image.h>
+#if __has_include(<SDL2/SDL_image.h>)
+#include <SDL2/SDL_image.h>
+#elif __has_include(<SDL2_image/SDL_image.h>)
+#include <SDL2_image/SDL_image.h>
 #else
-    #include <SDL2/SDL_image.h>
+#error "Cannot find SDL_image header"
 #endif
 #include <sstream>
 #include <cctype>

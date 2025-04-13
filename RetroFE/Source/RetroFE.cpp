@@ -44,9 +44,12 @@
 #include <vector>
 #include <cmath>
 #if (__APPLE__)
+#if __has_include(<SDL2/SDL_ttf.h>)
+#include <SDL2/SDL_ttf.h>
+#elif __has_include(<SDL2_ttf/SDL_ttf.h>)
 #include <SDL2_ttf/SDL_ttf.h>
 #else
-#include <SDL2/SDL_ttf.h>
+#error "Cannot find SDL_ttf header"
 #endif
 
 #if defined(__linux) || defined(__APPLE__)
@@ -247,10 +250,10 @@ void RetroFE::launchEnter()
 			int musicPlayerPlayInGameVol = -1;
 			if (config_.getProperty("musicPlayer.playInGameVol", musicPlayerPlayInGameVol))
 			{
-				// Only proceed if the value is in the valid range (0–100).
+				// Only proceed if the value is in the valid range (0ï¿½100).
 				if (musicPlayerPlayInGameVol >= 0 && musicPlayerPlayInGameVol <= 100)
 				{
-					// Get current volume (0–128) and convert to percentage (0–100)
+					// Get current volume (0ï¿½128) and convert to percentage (0ï¿½100)
 					int currentVolume = musicPlayer_->getVolume();
 					int currentVolumePercent = static_cast<int>((currentVolume / static_cast<float>(MIX_MAX_VOLUME)) * 100.0f + 0.5f);
 
@@ -317,7 +320,7 @@ void RetroFE::launchExit()
 		{
 			if (musicPlayerPlayInGameVol >= 0 && musicPlayerPlayInGameVol <= 100)
 			{
-				// Convert the target volume from percentage to MIX's range (0–128)
+				// Convert the target volume from percentage to MIX's range (0ï¿½128)
 				int targetMixVolume = static_cast<int>((musicPlayerPlayInGameVol / 100.0f) * MIX_MAX_VOLUME + 0.5f);
 				// Allow for a small rounding tolerance
 				if (std::abs(musicPlayer_->getVolume() - targetMixVolume) <= 1)
