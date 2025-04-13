@@ -9,28 +9,6 @@ set(RETROFE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(RETROFE_THIRD_PARTY_DIR "${RETROFE_DIR}/ThirdParty")
 list(APPEND CMAKE_MODULE_PATH "${RETROFE_DIR}/CMake")
 
-# Find Git executable
-find_package(Git REQUIRED)
-
-# Get the Git version
-execute_process(
-    COMMAND ${GIT_EXECUTABLE} rev-list --count HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_COMMIT_NO
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-# Get the Git hash
-execute_process(
-    COMMAND ${GIT_EXECUTABLE} rev-parse --short HEAD
-    WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
-    OUTPUT_VARIABLE GIT_SHORT_HASH
-    OUTPUT_STRIP_TRAILING_WHITESPACE
-)
-
-# Pass the Git hash as a preprocessor definition to the compiler
-add_compile_definitions(GIT_SHORT_HASH="${GIT_SHORT_HASH}")
-
 ##############################################################
 # Setup some variables to help find external libraries
 ##############################################################
@@ -251,7 +229,6 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Graphics/ViewInfo.h"
 	"${RETROFE_DIR}/Source/RetroFE.h"
 	"${RETROFE_DIR}/Source/SDL.h"
-	"${RETROFE_DIR}/Source/Version.h"
     "${SQLITE3_ROOT}/sqlite3.h"
 )
 
@@ -307,7 +284,6 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Main.cpp"
 	"${RETROFE_DIR}/Source/RetroFE.cpp"
 	"${RETROFE_DIR}/Source/SDL.cpp"
-	"${RETROFE_DIR}/Source/Version.cpp"
 	"${SQLITE3_ROOT}/sqlite3.c"
 )
 
@@ -385,13 +361,9 @@ if(APPLE)
     )
     
     # Set up macOS-specific properties
-    set_target_properties(retrofe PROPERTIES OUTPUT_NAME "retrofe-${GIT_COMMIT_NO}")
+    set_target_properties(retrofe PROPERTIES OUTPUT_NAME "retrofe")
     set_target_properties(retrofe PROPERTIES LINKER_LANGUAGE CXX)
 endif()
-
-add_definitions(-DRETROFE_VERSION_MAJOR=${VERSION_MAJOR})
-add_definitions(-DRETROFE_VERSION_MINOR=${VERSION_MINOR})
-add_definitions(-DRETROFE_VERSION_BUILD=${VERSION_BUILD})
 
 if(MSVC)
     set(CMAKE_DEBUG_POSTFIX "d")
