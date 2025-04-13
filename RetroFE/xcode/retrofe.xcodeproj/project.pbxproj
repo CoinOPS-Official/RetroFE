@@ -186,7 +186,7 @@
 		DF07B3E42B2A14CE00B732CF /* GStreamer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GStreamer.framework; path = ../ThirdPartyMac/GStreamer.framework; sourceTree = SOURCE_ROOT; };
 		DF2B282C2B683F2E00A22011 /* GlobalOpts.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = GlobalOpts.cpp; path = Database/GlobalOpts.cpp; sourceTree = SOURCE_ROOT; };
 		DF2B282D2B683F2E00A22011 /* GlobalOpts.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GlobalOpts.h; path = Database/GlobalOpts.h; sourceTree = SOURCE_ROOT; };
-		DF5A44672DABDD0B005892D0 /* versioning.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = autogen/versioning.h; sourceTree = "<group>"; };
+		DF5A44672DABDD0B005892D0 /* versioning.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = versioning.h; path = autogen/versioning.h; sourceTree = "<group>"; };
 		DF87A1792B152AA400548E78 /* RetroFE.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = RetroFE.png; path = ../../Package/Environment/Common/RetroFE.png; sourceTree = "<group>"; };
 		DFC83C862D5796C400AA7522 /* CollectionInfoBuilder.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = CollectionInfoBuilder.cpp; path = Collection/CollectionInfoBuilder.cpp; sourceTree = SOURCE_ROOT; };
 		DFC83C882D57973600AA7522 /* webp.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = webp.framework; path = ../ThirdPartyMac/webp.framework; sourceTree = SOURCE_ROOT; };
@@ -643,7 +643,6 @@
 					"$(PROJECT_DIR)/../ThirdPartyMac",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
-				MARKETING_VERSION = 0.10.34.5;
 				PRODUCT_BUNDLE_IDENTIFIER = RetroFE;
 				PRODUCT_NAME = RetroFE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
@@ -698,7 +697,6 @@
 					"$(PROJECT_DIR)/../ThirdPartyMac",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
-				MARKETING_VERSION = 0.10.34.5;
 				PRODUCT_BUNDLE_IDENTIFIER = RetroFE;
 				PRODUCT_NAME = RetroFE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
