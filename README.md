@@ -5,7 +5,7 @@
   <img
     src="./Package/Environment/Common/RetroFE.png"
     alt="Icon"
-    height="200px"
+    height="140px"
     style="
       display: inline-block !important;
       height: 3.5rem;
@@ -17,7 +17,7 @@
   </span>
 </h1>
 
-##  - A cross-platform frontend for game centers
+## A cross-platform frontend for game centers
 
 [Project Discord](https://discord.gg/dpcsP8Hm9W) | [GitHub Wiki](https://github.com/CoinOPS-Official/RetroFE/wiki) | [Changelog](CHANGELOG.md)
 
