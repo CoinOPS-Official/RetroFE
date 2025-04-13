@@ -50,13 +50,19 @@
 #if __has_include(<SDL2/SDL_ttf.h>)
 #include <SDL2/SDL_ttf.h>
 #elif __has_include(<SDL2_ttf/SDL_ttf.h>)
-=======
-#include <cmath>
-#if (__APPLE__)
->>>>>>> 210b5aa6 (initial commit)
 #include <SDL2_ttf/SDL_ttf.h>
 #else
 #error "Cannot find SDL_ttf header"
+#endif
+#if (__APPLE__)
+	#if __has_include(<SDL2/SDL_ttf.h>)
+	#include <SDL2/SDL_ttf.h>
+	#elif __has_include(<SDL2_ttf/SDL_ttf.h>)
+	#include <SDL2_ttf/SDL_ttf.h>
+	#else
+	#error "Cannot find SDL_ttf header"
+	#endif
+>>>>>>> 7c48453f (Update RetroFE.cpp)
 #endif
 
 #if defined(__linux) || defined(__APPLE__)
