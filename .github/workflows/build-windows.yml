@@ -27,7 +27,7 @@ jobs:
           cmake --build RetroFE/Build --config Release
 
       - name: Upload retrofe.exe as artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: retrofe.exe
           path: D:\a\RetroFE\RetroFE\RetroFE\Build\Release\retrofe.exe
