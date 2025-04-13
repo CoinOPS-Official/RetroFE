@@ -1,4 +1,21 @@
-# RetroFE - A cross-platform frontend for MAME cabinets
+<h1 style="
+  display: inline-block !important;
+  font-size: 20rem;
+">
+  <img
+    src="./Package/Environment/Common/RetroFE.png"
+    alt="Icon"
+    height="200px"
+    style="
+      display: inline-block !important;
+      height: 3.5rem;
+      margin-right: 1rem;
+    "
+  />
+  <span style="position: relative; bottom: 0.7rem;">
+    RetroFE - A cross-platform frontend for game centers
+  </span>
+</h1>
 
 [Project Discord](https://discord.gg/dpcsP8Hm9W) | [GitHub Wiki](https://github.com/CoinOPS-Official/RetroFE/wiki) | [Changelog](CHANGELOG.md)
 
