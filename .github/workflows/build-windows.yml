@@ -1,4 +1,4 @@
-name: Windows exe's
+name: Windows Package
 on:
   workflow_dispatch:
 
@@ -33,10 +33,10 @@ jobs:
           move .\RetroFE\Build\Release\retrofe.exe .\RetroFE\Build\Release\retrofe\retrofe.exe
           copy .\Package\Environment\Windows\RetroFE.lnk .\RetroFE\Build\Release
 
-      - name: Upload retrofe.exe as artifact
+      - name: Upload RetroFE
         uses: actions/upload-artifact@v4
         with:
-          name: retrofe.exe
+          name: RetroFE-windows
           path: |
             D:\a\RetroFE\RetroFE\RetroFE\Build\Release\retrofe
             D:\a\RetroFE\RetroFE\RetroFE\Build\Release\RetroFE.lnk
