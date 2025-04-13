@@ -12,6 +12,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+
+      - name: Cache GStreamer
+        uses: actions/cache@v3
+        with:
+          path: D:\gstreamer\1.0\msvc_x86_64
+          key: gstreamer-${{ runner.os }}-${{ hashFiles('.github/workflows/build-windows.yml') }}
+          restore-keys: |
+            gstreamer-${{ runner.os }}-
   
       - name: Install dependencies
         run: |
