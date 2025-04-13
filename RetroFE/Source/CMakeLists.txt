@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.12)
 
 project (retrofe)
 
@@ -8,9 +8,18 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(RETROFE_DIR ${CMAKE_CURRENT_SOURCE_DIR}/..)
 set(RETROFE_THIRD_PARTY_DIR "${RETROFE_DIR}/ThirdParty")
 list(APPEND CMAKE_MODULE_PATH "${RETROFE_DIR}/CMake")
-include("${RETROFE_DIR}/CMake/Versioning.cmake")
 
-message(STATUS "Building RetroFE Version ${RETROFE_VERSION_DESCRIBE}-${RETROFE_VERSION_PATCH}")
+##############################################################
+# Versioning
+# Ensure versioning.h is generated before compiling
+add_custom_command(
+    OUTPUT "${CMAKE_BINARY_DIR}/autogen/versioning.h"
+    COMMAND ${CMAKE_COMMAND} -P "${RETROFE_DIR}/CMake/Versioning.cmake"
+    COMMENT "Generating versioning.h"
+)
+# Create a custom target to generate versioning.h
+add_custom_target(GenerateVersioningHeader ALL DEPENDS "${CMAKE_BINARY_DIR}/autogen/versioning.h")
+include_directories("${CMAKE_BINARY_DIR}/autogen")
 
 ##############################################################
 # Setup some variables to help find external libraries
