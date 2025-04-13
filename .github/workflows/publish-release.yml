@@ -1,14 +1,13 @@
 name: Publish Release
 
 on:
-  workflow_dispatch:
-  # workflow_run:
-  #   workflows:
-  #     - macOS App Bundles
-  #     - Linux AppImages
-  #     - Windows Package
-  #   types:
-  #     - completed
+  workflow_run:
+    workflows:
+      - macOS App Bundles
+      - Linux AppImages
+      - Windows Package
+    types:
+      - completed
 
 jobs:
   publish:
