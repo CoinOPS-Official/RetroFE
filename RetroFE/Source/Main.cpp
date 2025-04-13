@@ -279,6 +279,7 @@ int main(int argc, char** argv)
             std::cout << "RetroFE Version: " << RETROFE_VERSION_DESCRIBE << "-" << RETROFE_VERSION_PATCH << std::endl;
             std::cout << std::endl;
             std::cout << "RetroFE is a cross-platform desktop frontend designed for MAME cabinets and game centers, with a focus on simplicity and customization." << std::endl;
+            std::cout << "Licensed under GNU General Public License, version 3 or later (GPLv3+)" << std::endl;
             std::cout << std::endl;
 
             // Display usage information
@@ -292,6 +293,9 @@ int main(int argc, char** argv)
             std::cout << "  -sc  -showconfig         Print a list of current settings" << std::endl;
             std::cout << "  -C   -createconfig       Create a settings.conf with default values and a readme" << std::endl;
             std::cout << "       -dump               Dump current settings to properties.txt" << std::endl;
+            std::cout << std::endl;
+            std::cout << "  -{key} {value}           RetroFE supports passing all settings as command line options for greater flexibility" << std::endl;
+            std::cout << "                           i.e. -log DEBUG -vSync true would filter logging to just debug and enable vSync" << std::endl;
             std::cout << std::endl;
 
             // Provide additional information and references
