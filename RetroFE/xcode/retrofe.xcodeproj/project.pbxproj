@@ -73,7 +73,6 @@
 		DFC83C9A2D579D2B00AA7522 /* ReloadableHiscores.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DFC83C992D579D2B00AA7522 /* ReloadableHiscores.cpp */; };
 		DFC83C9D2D579D7F00AA7522 /* VideoPool.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DFC83C9C2D579D7F00AA7522 /* VideoPool.cpp */; };
 		DFF5D9582B6F9EFA005E9600 /* ThreadPool.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DFF5D9572B6F9EFA005E9600 /* ThreadPool.cpp */; };
-		EBC08A29661C4F528F9D6AC9 /* Version.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 6896574AEBD347EE888038E9 /* Version.cpp */; };
 		F979BDA3A4184905BFCA0DEA /* Configuration.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 87B7677F57FF454B953BAD59 /* Configuration.cpp */; };
 		FAAFCC77A92B455787428238 /* MouseButtonHandler.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 5BE2DB1B42B5406981272867 /* MouseButtonHandler.cpp */; };
 		FDC7F6BFD88B4C7AA9F024B6 /* Sound.cpp in Sources */ = {isa = PBXBuildFile; fileRef = 7BB2E3936E854C4BAB63E7CC /* Sound.cpp */; };
@@ -141,7 +140,6 @@
 		5C2402E96D2D400793F40054 /* VideoBuilder.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = VideoBuilder.cpp; path = Graphics/Component/VideoBuilder.cpp; sourceTree = SOURCE_ROOT; };
 		645B5E6E8698401F9449E2A5 /* Launcher.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Launcher.h; path = Execute/Launcher.h; sourceTree = SOURCE_ROOT; };
 		67ED00E78D0048CF83B5A39C /* Image.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Image.cpp; path = Graphics/Component/Image.cpp; sourceTree = SOURCE_ROOT; };
-		6896574AEBD347EE888038E9 /* Version.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; path = Version.cpp; sourceTree = SOURCE_ROOT; };
 		69D6C1AE38824F5AA705EC65 /* ImageBuilder.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = ImageBuilder.h; path = Graphics/Component/ImageBuilder.h; sourceTree = SOURCE_ROOT; };
 		6B5EFFE47A20421D89490D14 /* Configuration.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Configuration.h; path = Database/Configuration.h; sourceTree = SOURCE_ROOT; };
 		6BC23227E5F34070B240EDE8 /* ReloadableMedia.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = ReloadableMedia.cpp; path = Graphics/Component/ReloadableMedia.cpp; sourceTree = SOURCE_ROOT; };
@@ -215,7 +213,6 @@
 		ED3ECBBC7A5F4037B1307DDD /* SDL.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; path = SDL.cpp; sourceTree = SOURCE_ROOT; };
 		EE02B00CF8ED4ED5A5338E8E /* Item.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Item.cpp; path = Collection/Item.cpp; sourceTree = SOURCE_ROOT; };
 		EE6E6E7B182D4C30B8B9A04D /* Utils.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Utils.cpp; path = Utility/Utils.cpp; sourceTree = SOURCE_ROOT; };
-		EED6782DCBB645BCB2DE4AA4 /* Version.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; path = Version.h; sourceTree = SOURCE_ROOT; };
 		F1D057170E1B42E48851EE97 /* Font.h */ = {isa = PBXFileReference; explicitFileType = sourcecode.c.h; fileEncoding = 4; name = Font.h; path = Graphics/Font.h; sourceTree = SOURCE_ROOT; };
 		F23BC20492D84B5F8ACB6AA0 /* MenuParser.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = MenuParser.cpp; path = Collection/MenuParser.cpp; sourceTree = SOURCE_ROOT; };
 		F32833E0282342C1805836F1 /* Log.cpp */ = {isa = PBXFileReference; explicitFileType = sourcecode.cpp.cpp; fileEncoding = 4; name = Log.cpp; path = Utility/Log.cpp; sourceTree = SOURCE_ROOT; };
@@ -319,7 +316,6 @@
 				1A054F9D5F574151A8D39C1E /* TweenTypes.h */,
 				4B747ED75DE343C9816139B4 /* UserInput.h */,
 				A3802B28E231477DBAD771E0 /* Utils.h */,
-				EED6782DCBB645BCB2DE4AA4 /* Version.h */,
 				13BFB75C2B0C419DA620A836 /* VideoBuilder.h */,
 				74E506D70B7B42B194599016 /* VideoComponent.h */,
 				3BC313ADA5DC4A779D50FDCA /* VideoFactory.h */,
@@ -418,7 +414,6 @@
 				7832E783EB2E442BB24F46EA /* TweenSet.cpp */,
 				0132F78E83B14654B53CC409 /* UserInput.cpp */,
 				EE6E6E7B182D4C30B8B9A04D /* Utils.cpp */,
-				6896574AEBD347EE888038E9 /* Version.cpp */,
 				5C2402E96D2D400793F40054 /* VideoBuilder.cpp */,
 				F83482D74B334D73A7832224 /* VideoComponent.cpp */,
 				A1A2A509107048D78E451632 /* VideoFactory.cpp */,
@@ -562,7 +557,6 @@
 				152CC739D9A140CEAA1784E4 /* Log.cpp in Sources */,
 				233AD052A8D5436087C0A6B9 /* Utils.cpp in Sources */,
 				DFC83C932D579B5700AA7522 /* HiScores.cpp in Sources */,
-				EBC08A29661C4F528F9D6AC9 /* Version.cpp in Sources */,
 				5B3831EF962947E6BA9CA5F8 /* GStreamerVideo.cpp in Sources */,
 				09E729DCF5474E8CB566A119 /* VideoFactory.cpp in Sources */,
 				48B55630E343407DA9F5BCE1 /* sqlite3.c in Sources */,
