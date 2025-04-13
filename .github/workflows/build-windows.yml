@@ -21,7 +21,8 @@ jobs:
           restore-keys: |
             gstreamer-${{ runner.os }}-
   
-      - name: Install dependencies
+      - name: Install GStreamer
+        if: steps.cache.outputs.cache-hit != 'true'
         run: |
           choco install -y gstreamer
           choco install -y gstreamer-devel
