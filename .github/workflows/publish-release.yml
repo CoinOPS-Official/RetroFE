@@ -31,21 +31,24 @@ jobs:
 
       # Step 4: Download Linux artifacts
       - name: Download Linux x86_64 artifact
-        uses: actions/download-artifact@v3
+        uses: dawidd6/action-download-artifact@v9
         with:
+          workflow: Linux AppImages
           name: RetroFE-x86_64.AppImage
           path: ./artifacts/linux/x86_64
 
       - name: Download Linux arm64 artifact
-        uses: actions/download-artifact@v3
+        uses: dawidd6/action-download-artifact@v9
         with:
+          workflow: Linux AppImages
           name: RetroFE-arm64.AppImage
           path: ./artifacts/linux/arm64
 
       # Step 5: Download Windows artifact
       - name: Download Windows artifact
-        uses: actions/download-artifact@v3
+        uses: dawidd6/action-download-artifact@v9
         with:
+          workflow: Windows Package
           name: RetroFE-windows
           path: ./artifacts/windows
 
