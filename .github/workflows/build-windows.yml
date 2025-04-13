@@ -15,8 +15,8 @@ jobs:
 
       - name: Install GStreamer
         run: |
-          choco install -y gstreamer
-          choco install -y gstreamer-devel
+          choco install -y gstreamer --version 1.24.11
+          choco install -y gstreamer-devel --version 1.24.11
 
       - name: Configure environment
         run: |
