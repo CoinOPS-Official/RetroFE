@@ -40,8 +40,8 @@ if [[ -z "${RETROFE_VERSION_MAJOR}" || -z "${RETROFE_VERSION_MINOR}" || -z "${RE
 fi
 
 # Update the Info.plist file
-defaults write "${PLIST}" "CFBundleVersion"              -string "${RETROFE_VERSION_DESCRIBE}-${RETROFE_VERSION_PATCH}"
 defaults write "${PLIST}" "CFBundleShortVersionString"   -string "${RETROFE_VERSION_DESCRIBE}"
+defaults write "${PLIST}" "CFBundleVersion"              -string "${RETROFE_VERSION_DESCRIBE}-${RETROFE_VERSION_PATCH}"
 
 # Output the updated values
 echo "CFBundleShortVersionString:" "$(defaults read "${PLIST}" CFBundleShortVersionString)"
