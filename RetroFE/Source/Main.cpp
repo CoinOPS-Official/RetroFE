@@ -24,6 +24,7 @@
 #include "Utility/Utils.h"
 #include "RetroFE.h"
 #include "SDL.h"
+#include "versioning.h" // Created at build time
 
 #include <cstdlib>
 #include <fstream>
