@@ -30,8 +30,9 @@ jobs:
 
       # Step 3: Download macOS artifact
       - name: Download macOS artifact
-        uses: actions/download-artifact@v3
+        uses: dawidd6/action-download-artifact@v9
         with:
+          workflow: macOS App Bundles
           name: RetroFE.dmg
           path: ./artifacts/macos
 
