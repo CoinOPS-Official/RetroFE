@@ -20,7 +20,7 @@ jobs:
 
       - name: Configure environment
         run: |
-          cmake -A x64 -B .\RetroFE\Build -D GSTREAMER_ROOT=C:\gstreamer\1.0\msvc_x86_64 -S .\RetroFE\Source
+          cmake -A x64 -B .\RetroFE\Build -D GSTREAMER_ROOT=D:\gstreamer\1.0\msvc_x86_64 -S .\RetroFE\Source
   
       - name: Build RetroFE
         run: |
