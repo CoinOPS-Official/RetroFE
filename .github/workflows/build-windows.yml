@@ -1,0 +1,36 @@
+name: Windows exe's
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-2022
+    name: Build Windows
+
+    steps:
+      - name: Check out repository code
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up Chocolatey
+        run: |
+          Set-ExecutionPolicy Bypass -Scope Process -Force;
+          [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072;
+          iex ((New-Object System.Net.WebClient).DownloadString('https://community.chocolatey.org/install.ps1'))
+  
+      - name: Install dependencies
+        run: |
+          choco install -y visualstudio2022community
+          choco install -y windows-sdk-10.0
+          choco install -y dotnetfx
+          choco install -y cmake
+          choco install -y gstreamer
+
+      - name: Configure environment
+        run: |
+          cmake -A x64 -B .\RetroFE\Build -D GSTREAMER_ROOT=C:\gstreamer\1.0\msvc_x86_64 -S .\RetroFE\Source
+  
+      - name: Build RetroFE
+        run: |
+          cmake --build RetroFE/Build --config Release
