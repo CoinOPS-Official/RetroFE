@@ -26,12 +26,18 @@ jobs:
         run: |
           cmake --build RetroFE/Build --config Release
 
-      - name: Copy DLLs
+      - name: Copy DLLs and prepare package
         run: |
-          xcopy /S /I /Y .\Package\Environment\Windows\retrofe .\RetroFE\Build\Release
+          mkdir .\RetroFE\Build\Release\retrofe
+          xcopy /S /I /Y .\Package\Environment\Windows\retrofe .\RetroFE\Build\Release\retrofe
+          move D:\a\RetroFE\RetroFE\RetroFE\Build\Release\retrofe.exe D:\a\RetroFE\RetroFE\RetroFE\Build\Release\retrofe\retrofe.exe
+          copy .\Package\Environment\Windows\retrofe\RetroFE.lnk .\RetroFE\Build\Release\
 
       - name: Upload retrofe.exe as artifact
         uses: actions/upload-artifact@v4
         with:
           name: retrofe.exe
-          path: D:\a\RetroFE\RetroFE\RetroFE\Build\Release
+          path: |
+            D:\a\RetroFE\RetroFE\RetroFE\Build\Release\retrofe
+            D:\a\RetroFE\RetroFE\RetroFE\Build\Release\RetroFE.lnk
+
