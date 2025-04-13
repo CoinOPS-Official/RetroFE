@@ -12,7 +12,7 @@ in the format YYMM.X
 [@arghs15](https://github.com/arghs15)
 [@bluestang2006](https://github.com/bluestang2006)
 
-## Version TBA
+## [YYMM.X] - YYYY-MM-DD
 ### Added
 ### Changed
 ### Fixed
@@ -37,6 +37,52 @@ in the format YYMM.X
 ### Fixed
 - Made the Xcode project portable [@aidenjbass](https://github.com/aidenjbass)
 - CMake can now statically build macOS builds again [@aidenjbass](https://github.com/aidenjbass)
+
+## [2503.0] - 2025-03-09
+### This version details the technical overhaul that [Gstexperimentappsink](https://github.com/CoinOPS-Official/RetroFE/pull/221) made undertaken by [@inigomontoya](https://github.com/inigomontoya)
+### Added
+- Initial implementation of attract mode launch (`attraceModeLaunch`). Includes settings for `attractModeLaunchTime` and timeout interruption by key/button press.
+- Function to terminate a process and all child processes for attract mode.
+- `timeSpent` reloadable text tag to track time spent playing a particular item.
+- `reloadableHiscores` component for high score tables with attributes like `maxRows` and `excludedColumns`.
+- `quickList` and `quickList2` features.
+- `perspective` layout tag.
+- Support for `randomPlaylist` and updates to `randomStart`.
+- Smart pointers for GStreamer to avoid manual cleanup.
+
+### Changed
+- Refined caching mechanism for images and animations, introducing per-monitor caching.
+- Reverted multiple changes including:
+  - "fix new fineMatchingFile"
+  - "added scalemode attribute to image tags"
+  - "use ImageBuilder for all images"
+  - "sort LayerComponents_ by layer"
+  - "small AnimationEvents optimization"
+  - "Allow % for layout positioning."
+  - "ViewInfo optimization"
+- Adjustments to `TNQueue` and `GStreamerVideo` for improved performance and stability.
+- Linux-specific fixes for plugins, volume behavior, and launcher initialization.
+- Refactored `scroll()` to ensure correct allocation and deallocation of components.
+- Improved logging for the Launcher class and GStreamer.
+- Optimized `reloadableScrollingText` and `reloadableHiscores` rendering.
+- Simplified image class and animation handling.
+
+### Fixed
+- Issue with video stuttering when restarting.
+- Compilation issues on Windows and Linux.
+- Incorrect `textFallback` behavior.
+- Bugs in `ScrollingList` and its optimizations.
+- Reloadable text format attribute (`textFormat`) handling.
+- Issues with `randomStart` and playlist behavior.
+- Crash issues when shutting down `videopool` on exit.
+- Texture reuse and clearing mechanism for videos.
+- Undefined behavior when performing `back()` on an empty string.
+
+### Removed
+- `D3D11Memory` from hardware video acceleration caps due to instability on some systems.
+- Extraneous alpha checks.
+- Old scrolling text behavior when high scores are enabled.
+
 
 ## [10.34.5] - 2024-02-18
 
