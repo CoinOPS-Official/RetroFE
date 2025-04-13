@@ -15,8 +15,8 @@ jobs:
       - name: Extract RETROFE_VERSION_DESCRIBE
         id: extract_version
         run: |
-          RETROFE_VERSION_MAJOR=$(grep -oP 'set\\(RETROFE_VERSION_MAJOR\\s+\\"\\K[0-9]+' Versioning.cmake)
-          RETROFE_VERSION_MINOR=$(grep -oP 'set\\(RETROFE_VERSION_MINOR\\s+\\"\\K[0-9]+' Versioning.cmake)
+          RETROFE_VERSION_MAJOR=$(grep -oP 'set\\(RETROFE_VERSION_MAJOR\\s+\\\"\K[0-9]+' Versioning.cmake)
+          RETROFE_VERSION_MINOR=$(grep -oP 'set\\(RETROFE_VERSION_MINOR\\s+\\\"\K[0-9]+' Versioning.cmake)
           RETROFE_VERSION_DESCRIBE="${RETROFE_VERSION_MAJOR}.${RETROFE_VERSION_MINOR}"
           echo "RETROFE_VERSION_DESCRIBE=$RETROFE_VERSION_DESCRIBE"
           echo "RETROFE_VERSION_DESCRIBE=$RETROFE_VERSION_DESCRIBE" >> $GITHUB_ENV
