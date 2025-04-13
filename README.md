@@ -13,9 +13,11 @@
     "
   />
   <span style="position: relative; bottom: 0.7rem;">
-    RetroFE - A cross-platform frontend for game centers
+    RetroFE
   </span>
 </h1>
+
+##  - A cross-platform frontend for game centers
 
 [Project Discord](https://discord.gg/dpcsP8Hm9W) | [GitHub Wiki](https://github.com/CoinOPS-Official/RetroFE/wiki) | [Changelog](CHANGELOG.md)
 
