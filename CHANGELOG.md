@@ -24,7 +24,7 @@ in the format YYMM.X
 - Subtractive logging values, ie ALL,-INFO is all logging but INFO [@aidenjbass](https://github.com/aidenjbass)
 - Playlist menu scroll and select using up/down for Hor and left/right for Vert [@monkofthefunk](https://github.com/monkofthefunk)
 - `CMake/Versioning.cmake` as a simplified one-stop OS agnostic file for updating versions [@aidenjbass](https://github.com/aidenjbass)
-- GitHub Action have been created for continuous integration and release builds for Linux arm64/x86_64 AppImages and Universal2 macOS App Bundles [@aidenjbass](https://github.com/aidenjbass)
+- GitHub Action have been created for continuous integration and release builds for desktop platforms [@aidenjbass](https://github.com/aidenjbass)
 
 ### Changed
 - RetroFE now follows calendar versioning followed by a patch number in the format YYMM.X [@aidenjbass](https://github.com/aidenjbass)
