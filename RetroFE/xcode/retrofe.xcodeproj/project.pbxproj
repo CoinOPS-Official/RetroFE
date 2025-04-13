@@ -643,7 +643,7 @@
 					"$(PROJECT_DIR)/../ThirdPartyMac",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.coinops.RetroFE;
+				PRODUCT_BUNDLE_IDENTIFIER = org.coinops.RetroFE;
 				PRODUCT_NAME = RetroFE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
@@ -697,7 +697,7 @@
 					"$(PROJECT_DIR)/../ThirdPartyMac",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 11.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.coinops.RetroFE;
+				PRODUCT_BUNDLE_IDENTIFIER = org.coinops.RetroFE;
 				PRODUCT_NAME = RetroFE;
 				PROVISIONING_PROFILE_SPECIFIER = "";
 			};
