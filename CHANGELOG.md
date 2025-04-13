@@ -2,7 +2,8 @@
 All notable changes to this project will be documented in this file.
  
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
-and this project adheres to [Semantic Versioning](http://semver.org/).
+This project uses [Calendar Versioning](http://calver.org/) with [Semantic Versioning](http://semver.org/) for minor fixes and features
+in the format YYMM.X
 
 ## Contributors
 [@monkofthefunk](https://github.com/monkofthefunk)
@@ -13,18 +14,29 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 
 ## Version TBA
 ### Added
-- Window to display if splash.xml is invalid [@aidenjbass](https://github.com/aidenjbass)
-- Added subtractive logging values, ie ALL,-INFO is all logging but INFO [@aidenjbass](https://github.com/aidenjbass)
-- Added playlist menu scroll and select using up/down for Hor and left/right for Vert [@monkofthefunk](https://github.com/monkofthefunk)
-
 ### Changed
 ### Fixed
 
-## [10.34.6] - 2025-04-02
+## [2504.0] - 2025-04-13
+
 ### Added
+- Window to display if splash.xml is invalid [@aidenjbass](https://github.com/aidenjbass)
+- Subtractive logging values, ie ALL,-INFO is all logging but INFO [@aidenjbass](https://github.com/aidenjbass)
+- Playlist menu scroll and select using up/down for Hor and left/right for Vert [@monkofthefunk](https://github.com/monkofthefunk)
+- `CMake/Versioning.cmake` as a simplified one-stop OS agnostic file for updating versions [@aidenjbass](https://github.com/aidenjbass)
+- GitHub Action have been created for continuous integration and release builds for Linux arm64/x86_64 AppImages and Universal2 macOS App Bundles [@aidenjbass](https://github.com/aidenjbass)
+
 ### Changed
+- RetroFE now follows calendar versioning followed by a patch number in the format YYMM.X [@aidenjbass](https://github.com/aidenjbass)
+- The first two digits are the year, and the second two are the month. 2504 codifies a release from April 2025. [@aidenjbass](https://github.com/aidenjbass)
+- Major YYMM versions are denoted by major features released in a new month [@aidenjbass](https://github.com/aidenjbass)
+- Hotfix, minor bugfix and feature releases will have the addition of a suffix "X". [@aidenjbass](https://github.com/aidenjbass)
+- Additionally for internal development builds, an appended git hash allows us to keep track of specific binary versions [@aidenjbass](https://github.com/aidenjbass)
+- README.md has undergone a significant rewrite with cohesive and updated build instructions for Windows, Linux and macOS [@aidenjbass](https://github.com/aidenjbass)
+
 ### Fixed
-- Made the Xcode project portable
+- Made the Xcode project portable [@aidenjbass](https://github.com/aidenjbass)
+- CMake can now statically build macOS builds again [@aidenjbass](https://github.com/aidenjbass)
 
 ## [10.34.5] - 2024-02-18
 
