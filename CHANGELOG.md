@@ -2,7 +2,8 @@
 All notable changes to this project will be documented in this file.
  
 The format is based on [Keep a Changelog](http://keepachangelog.com/)
-and this project adheres to [Semantic Versioning](http://semver.org/).
+This project uses [Calendar Versioning](http://calver.org/) with [Semantic Versioning](http://semver.org/) for minor fixes and features
+in the format YYMM.X
 
 ## Contributors
 [@monkofthefunk](https://github.com/monkofthefunk)
@@ -11,20 +12,77 @@ and this project adheres to [Semantic Versioning](http://semver.org/).
 [@arghs15](https://github.com/arghs15)
 [@bluestang2006](https://github.com/bluestang2006)
 
-## Version TBA
+## [YYMM.X] - YYYY-MM-DD
+### Added
+### Changed
+### Fixed
+
+## [2504.0] - 2025-04-13
+
 ### Added
 - Window to display if splash.xml is invalid [@aidenjbass](https://github.com/aidenjbass)
-- Added subtractive logging values, ie ALL,-INFO is all logging but INFO [@aidenjbass](https://github.com/aidenjbass)
-- Added playlist menu scroll and select using up/down for Hor and left/right for Vert [@monkofthefunk](https://github.com/monkofthefunk)
+- Subtractive logging values, ie ALL,-INFO is all logging but INFO [@aidenjbass](https://github.com/aidenjbass)
+- Playlist menu scroll and select using up/down for Hor and left/right for Vert [@monkofthefunk](https://github.com/monkofthefunk)
+- `CMake/Versioning.cmake` as a simplified one-stop OS agnostic file for updating versions [@aidenjbass](https://github.com/aidenjbass)
+- GitHub Action have been created for continuous integration and release builds for Linux arm64/x86_64 AppImages and Universal2 macOS App Bundles [@aidenjbass](https://github.com/aidenjbass)
 
 ### Changed
-### Fixed
+- RetroFE now follows calendar versioning followed by a patch number in the format YYMM.X [@aidenjbass](https://github.com/aidenjbass)
+- The first two digits are the year, and the second two are the month. 2504 codifies a release from April 2025. [@aidenjbass](https://github.com/aidenjbass)
+- Major YYMM versions are denoted by major features released in a new month [@aidenjbass](https://github.com/aidenjbass)
+- Hotfix, minor bugfix and feature releases will have the addition of a suffix "X". [@aidenjbass](https://github.com/aidenjbass)
+- Additionally for internal development builds, an appended git hash allows us to keep track of specific binary versions [@aidenjbass](https://github.com/aidenjbass)
+- README.md has undergone a significant rewrite with cohesive and updated build instructions for Windows, Linux and macOS [@aidenjbass](https://github.com/aidenjbass)
 
-## [10.34.6] - 2025-04-02
+### Fixed
+- Made the Xcode project portable [@aidenjbass](https://github.com/aidenjbass)
+- CMake can now statically build macOS builds again [@aidenjbass](https://github.com/aidenjbass)
+
+## [2503.0] - 2025-03-09
+### This version details the technical overhaul that [Gstexperimentappsink](https://github.com/CoinOPS-Official/RetroFE/pull/221) made undertaken by [@inigomontoya](https://github.com/inigomontoya)
 ### Added
+- Initial implementation of attract mode launch (`attraceModeLaunch`). Includes settings for `attractModeLaunchTime` and timeout interruption by key/button press.
+- Function to terminate a process and all child processes for attract mode.
+- `timeSpent` reloadable text tag to track time spent playing a particular item.
+- `reloadableHiscores` component for high score tables with attributes like `maxRows` and `excludedColumns`.
+- `quickList` and `quickList2` features.
+- `perspective` layout tag.
+- Support for `randomPlaylist` and updates to `randomStart`.
+- Smart pointers for GStreamer to avoid manual cleanup.
+
 ### Changed
+- Refined caching mechanism for images and animations, introducing per-monitor caching.
+- Reverted multiple changes including:
+  - "fix new fineMatchingFile"
+  - "added scalemode attribute to image tags"
+  - "use ImageBuilder for all images"
+  - "sort LayerComponents_ by layer"
+  - "small AnimationEvents optimization"
+  - "Allow % for layout positioning."
+  - "ViewInfo optimization"
+- Adjustments to `TNQueue` and `GStreamerVideo` for improved performance and stability.
+- Linux-specific fixes for plugins, volume behavior, and launcher initialization.
+- Refactored `scroll()` to ensure correct allocation and deallocation of components.
+- Improved logging for the Launcher class and GStreamer.
+- Optimized `reloadableScrollingText` and `reloadableHiscores` rendering.
+- Simplified image class and animation handling.
+
 ### Fixed
-- Made the Xcode project portable
+- Issue with video stuttering when restarting.
+- Compilation issues on Windows and Linux.
+- Incorrect `textFallback` behavior.
+- Bugs in `ScrollingList` and its optimizations.
+- Reloadable text format attribute (`textFormat`) handling.
+- Issues with `randomStart` and playlist behavior.
+- Crash issues when shutting down `videopool` on exit.
+- Texture reuse and clearing mechanism for videos.
+- Undefined behavior when performing `back()` on an empty string.
+
+### Removed
+- `D3D11Memory` from hardware video acceleration caps due to instability on some systems.
+- Extraneous alpha checks.
+- Old scrolling text behavior when high scores are enabled.
+
 
 ## [10.34.5] - 2024-02-18
 
