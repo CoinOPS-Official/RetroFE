@@ -17,6 +17,10 @@ in the format YYMM.X
 ### Changed
 ### Fixed
 
+## [2504.1] - 2025-04-14
+### Added
+- RetroFE version appended with branch name if not on master [@aidenjbass](https://github.com/aidenjbass)
+
 ## [2504.0] - 2025-04-13
 
 ### Added
