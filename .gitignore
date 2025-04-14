@@ -24,3 +24,4 @@ RetroFE/xcode/retrofe.xcodeproj/project.xcworkspace/xcuserdata/aiden.xcuserdatad
 *.log
 !RetroFE/ThirdPartyMac/libminizip.dylib
 !RetroFE/ThirdPartyMac/libusb-1.0.0.dylib
+RetroFE/Source/autogen/versioning.h

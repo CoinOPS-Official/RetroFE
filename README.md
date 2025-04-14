@@ -1,4 +1,23 @@
-# RetroFE - A cross-platform frontend for MAME cabinets
+<h1 style="
+  display: inline-block !important;
+  font-size: 20rem;
+">
+  <img
+    src="./Package/Environment/Common/RetroFE.png"
+    alt="Icon"
+    height="140px"
+    style="
+      display: inline-block !important;
+      height: 3.5rem;
+      margin-right: 1rem;
+    "
+  />
+  <span style="position: relative; bottom: 0.7rem;">
+    RetroFE
+  </span>
+</h1>
+
+## A cross-platform frontend for game centers
 
 [Project Discord](https://discord.gg/dpcsP8Hm9W) | [GitHub Wiki](https://github.com/CoinOPS-Official/RetroFE/wiki) | [Changelog](CHANGELOG.md)
 
@@ -26,6 +45,7 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 	* Start and exit scripts; run programs such as steam at retrofe launch
 	* In depth logging system; 7 logging levels
 	* Kiosk mode; lock things down for kids or cleanliness
+ 	* Local Hiscores integration with hi2txt   
 	* And much more!
 
 ## System Requirements
