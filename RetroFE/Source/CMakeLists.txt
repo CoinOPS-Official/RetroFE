@@ -308,6 +308,7 @@ set(LIBRARY_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORC
 
 include_directories(${RETROFE_INCLUDE_DIRS})
 add_executable(retrofe  ${RETROFE_SOURCES} ${RETROFE_HEADERS})
+add_dependencies(retrofe GenerateVersioningHeader)
 
 find_library(WEBPDEMUX_LIBRARY
     NAMES webpdemux
