@@ -29,6 +29,7 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <charconv>
 
 MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMode, const std::string& type, Page& p, int monitor, FontManager* font)
 	: Component(p)
@@ -73,9 +74,9 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, vuMeterTextureWidth_(0)
 	, vuMeterTextureHeight_(0)
 	, vuMeterNeedsUpdate_(true)
-	, vuGreenColor_({ 0, 220, 0, 255 })
-	, vuYellowColor_({ 220, 220, 0, 255 })
-	, vuRedColor_({ 220, 0, 0, 255 })
+	, vuBottomColor_({ 0, 220, 0, 255 })
+	, vuMiddleColor_({ 220, 220, 0, 255 })
+	, vuTopColor_({ 220, 0, 0, 255 })
 	, vuBackgroundColor_({ 40, 40, 40, 255 })
 	, vuPeakColor_({ 255, 255, 255, 255 })
 	, vuGreenThreshold_(0.4f)
@@ -153,46 +154,58 @@ void MusicPlayerComponent::allocateGraphicsMemory() {
 		}
 
 		// Load color configurations
-		int r, g, b;
-		if (config_.getProperty("musicPlayer.vuMeter.greenColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.greenColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.greenColor.b", b)) {
-			vuGreenColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuGreenColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuGreenColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		std::string colorStr;
+		SDL_Color parsedColor; // Temporary variable for parsing result
 
-		if (config_.getProperty("musicPlayer.vuMeter.yellowColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.yellowColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.yellowColor.b", b)) {
-			vuYellowColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuYellowColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuYellowColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		// Load Bottom Color
+		if (config_.getProperty("musicPlayer.vuMeter.bottomColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuBottomColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.bottomColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuBottomColor_ is used
 
-		if (config_.getProperty("musicPlayer.vuMeter.redColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.redColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.redColor.b", b)) {
-			vuRedColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuRedColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuRedColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		// Load Middle Color
+		if (config_.getProperty("musicPlayer.vuMeter.middleColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuMiddleColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.middleColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuMiddleColor_ is used
 
-		if (config_.getProperty("musicPlayer.vuMeter.backgroundColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.backgroundColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.backgroundColor.b", b)) {
-			vuBackgroundColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuBackgroundColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuBackgroundColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		// Load Top Color
+		if (config_.getProperty("musicPlayer.vuMeter.topColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuTopColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.topColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuTopColor_ is used
 
-		if (config_.getProperty("musicPlayer.vuMeter.peakColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.peakColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.peakColor.b", b)) {
-			vuPeakColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuPeakColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuPeakColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		// Load Background Color
+		if (config_.getProperty("musicPlayer.vuMeter.backgroundColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuBackgroundColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.backgroundColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuBackgroundColor_ is used
+
+		// Load Peak Color
+		if (config_.getProperty("musicPlayer.vuMeter.peakColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuPeakColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.peakColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuPeakColor_ is used
 
 		// Load thresholds
 		float threshold;
@@ -496,7 +509,7 @@ int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 		}
 
 		// If segments are evenly spaced and we found more than before, update best result
-		if (evenlySpaced && segmentStartXs.size() > bestSegmentCount) {
+		if (evenlySpaced && segmentStartXs.size() > static_cast<size_t>(bestSegmentCount)) {
 			bestSegmentCount = static_cast<int>(segmentStartXs.size());
 			bestSegmentStarts = segmentStartXs;
 
@@ -896,9 +909,9 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 		if (barHeight > 0) {
 			SDL_SetRenderDrawColor(
 				renderer_,
-				vuGreenColor_.r,
-				vuGreenColor_.g,
-				vuGreenColor_.b,
+				vuBottomColor_.r,
+				vuBottomColor_.g,
+				vuBottomColor_.b,
 				255 // Full opacity on the texture
 			);
 			float segmentHeight = std::min(barHeight, greenZone);
@@ -915,9 +928,9 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 		if (barHeight > greenZone) {
 			SDL_SetRenderDrawColor(
 				renderer_,
-				vuYellowColor_.r,
-				vuYellowColor_.g,
-				vuYellowColor_.b,
+				vuMiddleColor_.r,
+				vuMiddleColor_.g,
+				vuMiddleColor_.b,
 				255 // Full opacity on the texture
 			);
 			float segmentHeight = std::min(barHeight - greenZone, yellowZone);
@@ -934,9 +947,9 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 		if (barHeight > greenZone + yellowZone) {
 			SDL_SetRenderDrawColor(
 				renderer_,
-				vuRedColor_.r,
-				vuRedColor_.g,
-				vuRedColor_.b,
+				vuTopColor_.r,
+				vuTopColor_.g,
+				vuTopColor_.b,
 				255 // Full opacity on the texture
 			);
 			float segmentHeight = std::min(barHeight - greenZone - yellowZone, redZone);
@@ -976,6 +989,50 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 	vuMeterNeedsUpdate_ = false;
 }
 
+
+bool MusicPlayerComponent::parseHexColor(const std::string& hexString, SDL_Color& outColor) {
+	std::string_view sv = hexString;
+
+	// Must be exactly 6 characters long
+	if (sv.length() != 6) {
+		LOG_WARNING("MusicPlayerComponent", "Invalid length for hex string: " + hexString);
+		return false;
+	}
+
+	// Check if all characters are hex digits
+	for (char c : sv) {
+		if (!std::isxdigit(static_cast<unsigned char>(c))) {
+			LOG_WARNING("parseHexColor", "Non-hex character found in string: " + hexString);
+			return false;
+		}
+	}
+
+	// Use std::from_chars for safe conversion (C++17)
+	unsigned int r, g, b;
+	// Using .data() and .data() + length is correct for string_view with from_chars
+	auto result_r = std::from_chars(sv.data(), sv.data() + 2, r, 16);
+	auto result_g = std::from_chars(sv.data() + 2, sv.data() + 4, g, 16);
+	auto result_b = std::from_chars(sv.data() + 4, sv.data() + 6, b, 16);
+
+	// Check if parsing succeeded for all components
+	if (result_r.ec != std::errc() || result_g.ec != std::errc() || result_b.ec != std::errc() ||
+		result_r.ptr != sv.data() + 2 || // Ensure exactly 2 chars were consumed for R
+		result_g.ptr != sv.data() + 4 || // Ensure exactly 2 chars were consumed for G
+		result_b.ptr != sv.data() + 6)   // Ensure exactly 2 chars were consumed for B
+	{
+		LOG_WARNING("MusicPlayerComponent", "Hex conversion failed for string: " + hexString); // Optional debug log
+		return false;
+	}
+
+
+	// Assign to SDL_Color (values are already guaranteed 0-255 by hex format and successful parse)
+	outColor.r = static_cast<Uint8>(r);
+	outColor.g = static_cast<Uint8>(g);
+	outColor.b = static_cast<Uint8>(b);
+	outColor.a = 255; // Full opacity
+
+	return true;
+}
 
 void MusicPlayerComponent::updateVuLevels() {
 	// Get audio levels from the music player

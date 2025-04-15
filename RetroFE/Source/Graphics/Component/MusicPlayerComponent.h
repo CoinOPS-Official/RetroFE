@@ -112,6 +112,7 @@ private:
     void drawVuMeter();
     void createVuMeterTextureIfNeeded();
     void updateVuMeterTexture();
+    bool parseHexColor(const std::string& hexString, SDL_Color& outColor);
     void updateVuLevels();
     SDL_Texture* vuMeterTexture_; // Target texture for VU meter rendering
     int vuMeterTextureWidth_;
@@ -119,9 +120,9 @@ private:
     bool vuMeterNeedsUpdate_; // Flag to track when texture update is needed
 
     // VU meter theming
-    SDL_Color vuGreenColor_;
-    SDL_Color vuYellowColor_;
-    SDL_Color vuRedColor_;
+    SDL_Color vuBottomColor_;
+    SDL_Color vuMiddleColor_;
+    SDL_Color vuTopColor_;
     SDL_Color vuBackgroundColor_;
     SDL_Color vuPeakColor_;
     float vuGreenThreshold_;  // Level threshold for green (0.0-1.0)
