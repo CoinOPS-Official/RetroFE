@@ -89,6 +89,9 @@ private:
     bool volumeBarNeedsUpdate_;
     bool isVolumeBar_;
 
+    // Progress bar
+    bool isProgressBar_;
+
     // Create a volume bar texture based on current volume
     void loadVolumeBarTextures();
     int detectSegmentsFromSurface(SDL_Surface* surface);
@@ -118,6 +121,7 @@ private:
     int vuMeterTextureWidth_;
     int vuMeterTextureHeight_;
     bool vuMeterNeedsUpdate_; // Flag to track when texture update is needed
+    bool vuMeterIsMono_;
 
     // VU meter theming
     SDL_Color vuBottomColor_;
