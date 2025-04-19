@@ -28,8 +28,15 @@
 
 extern "C" {
 #if (__APPLE__)
-#include <GStreamer/gst/gst.h>
-#include <GStreamer/gst/video/video.h>
+    #if __has_include(<gstreamer-1.0/gst/gst.h>)
+    #include <gstreamer-1.0/gst/gst.h>
+    #include <gstreamer-1.0/gst/video/video.h>
+    #elif __has_include(<GStreamer/gst/gst.h>)
+    #include <GStreamer/gst/gst.h>
+    #include <GStreamer/gst/video/video.h>
+    #else
+    #error "Cannot find Gstreamer headers"
+    #endif
 #else
 #include <gst/gst.h>
 #include <gst/pbutils/pbutils.h>

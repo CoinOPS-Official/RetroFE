@@ -19,8 +19,14 @@
 #include <string>
 #include "Component.h"
 #include <SDL2/SDL.h>
-#ifdef __APPLE__
+#if __has_include(<SDL2/SDL_image.h>)
+#include <SDL2/SDL_image.h>
+#elif __has_include(<SDL2_image/SDL_image.h>)
 #include <SDL2_image/SDL_image.h>
+#else
+#error "Cannot find SDL_image header"
+#endif
+#ifdef __APPLE__
 #include <webp/decode.h>
 #include <webp/demux.h>
 #elif defined(_WIN32) 
@@ -28,7 +34,6 @@
 #include <decode.h>
 #include <demux.h>
 #else  // Assume Linux
-#include <SDL2/SDL_image.h>
 #include <webp/decode.h>
 #include <webp/demux.h>
 #endif

@@ -29,6 +29,7 @@
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
+#include <charconv>
 
 MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMode, const std::string& type, Page& p, int monitor, FontManager* font)
 	: Component(p)
@@ -59,6 +60,7 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, lastVolumeValue_(-1)
 	, volumeBarNeedsUpdate_{ false }
 	, isVolumeBar_(Utils::toLower(type) == "volbar")
+	, isProgressBar_(Utils::toLower(type) == "progress")
 	, currentDisplayAlpha_(0.0f)  // Start invisible
 	, targetAlpha_(0.0f)          // Start with target of invisible
 	, fadeSpeed_(3.0f)            // Fade in/out in about 1/3 second
@@ -73,9 +75,10 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, vuMeterTextureWidth_(0)
 	, vuMeterTextureHeight_(0)
 	, vuMeterNeedsUpdate_(true)
-	, vuGreenColor_({ 0, 220, 0, 255 })
-	, vuYellowColor_({ 220, 220, 0, 255 })
-	, vuRedColor_({ 220, 0, 0, 255 })
+	, vuMeterIsMono_(false) // Initialize to default (stereo)
+	, vuBottomColor_({ 0, 220, 0, 255 })
+	, vuMiddleColor_({ 220, 220, 0, 255 })
+	, vuTopColor_({ 220, 0, 0, 255 })
 	, vuBackgroundColor_({ 40, 40, 40, 255 })
 	, vuPeakColor_({ 255, 255, 255, 255 })
 	, vuGreenThreshold_(0.4f)
@@ -131,12 +134,21 @@ void MusicPlayerComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
 
 	// Get the renderer if we're going to handle album art or volume bar
-	if (isAlbumArt_ || isVolumeBar_ || type_ == "progress" || isVuMeter_) {
+	if (isAlbumArt_ || isVolumeBar_ || isProgressBar_ || isVuMeter_) {
 		renderer_ = SDL::getRenderer(baseViewInfo.Monitor);
 	}
 
 	if (isVuMeter_) {
 		musicPlayer_->registerVisualizerCallback();
+		
+		config_.getProperty("musicPlayer.vuMeter.mono", vuMeterIsMono_); // Reads boolean, defaults to false if not found
+		if (vuMeterIsMono_) {
+			LOG_INFO("MusicPlayerComponent", "VU Meter configured for mono display.");
+		}
+		else {
+			LOG_INFO("MusicPlayerComponent", "VU Meter configured for stereo display (default).");
+		}
+		
 		int configBarCount;
 		if (config_.getProperty("musicPlayer.vuMeter.barCount", configBarCount)) {
 			vuBarCount_ = std::max(1, std::min(32, configBarCount)); // Limit to reasonable range
@@ -153,46 +165,58 @@ void MusicPlayerComponent::allocateGraphicsMemory() {
 		}
 
 		// Load color configurations
-		int r, g, b;
-		if (config_.getProperty("musicPlayer.vuMeter.greenColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.greenColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.greenColor.b", b)) {
-			vuGreenColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuGreenColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuGreenColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		std::string colorStr;
+		SDL_Color parsedColor; // Temporary variable for parsing result
 
-		if (config_.getProperty("musicPlayer.vuMeter.yellowColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.yellowColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.yellowColor.b", b)) {
-			vuYellowColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuYellowColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuYellowColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		// Load Bottom Color
+		if (config_.getProperty("musicPlayer.vuMeter.bottomColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuBottomColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.bottomColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuBottomColor_ is used
 
-		if (config_.getProperty("musicPlayer.vuMeter.redColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.redColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.redColor.b", b)) {
-			vuRedColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuRedColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuRedColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		// Load Middle Color
+		if (config_.getProperty("musicPlayer.vuMeter.middleColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuMiddleColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.middleColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuMiddleColor_ is used
 
-		if (config_.getProperty("musicPlayer.vuMeter.backgroundColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.backgroundColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.backgroundColor.b", b)) {
-			vuBackgroundColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuBackgroundColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuBackgroundColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		// Load Top Color
+		if (config_.getProperty("musicPlayer.vuMeter.topColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuTopColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.topColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuTopColor_ is used
 
-		if (config_.getProperty("musicPlayer.vuMeter.peakColor.r", r) &&
-			config_.getProperty("musicPlayer.vuMeter.peakColor.g", g) &&
-			config_.getProperty("musicPlayer.vuMeter.peakColor.b", b)) {
-			vuPeakColor_.r = static_cast<Uint8>(std::max(0, std::min(255, r)));
-			vuPeakColor_.g = static_cast<Uint8>(std::max(0, std::min(255, g)));
-			vuPeakColor_.b = static_cast<Uint8>(std::max(0, std::min(255, b)));
-		}
+		// Load Background Color
+		if (config_.getProperty("musicPlayer.vuMeter.backgroundColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuBackgroundColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.backgroundColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuBackgroundColor_ is used
+
+		// Load Peak Color
+		if (config_.getProperty("musicPlayer.vuMeter.peakColor", colorStr)) {
+			if (parseHexColor(colorStr, parsedColor)) {
+				vuPeakColor_ = parsedColor;
+			}
+			else {
+				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.peakColor: '" + colorStr + "'. Using default.");
+			}
+		} // else: default vuPeakColor_ is used
 
 		// Load thresholds
 		float threshold;
@@ -478,7 +502,7 @@ int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 		}
 
 		if (!spacings.empty()) {
-			averageSpacing /= spacings.size();
+			averageSpacing /= static_cast<double>(spacings.size());
 
 			// Calculate standard deviation to measure consistency
 			double varianceSum = 0.0;
@@ -486,7 +510,7 @@ int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 				double diff = spacing - averageSpacing;
 				varianceSum += diff * diff;
 			}
-			double stdDev = std::sqrt(varianceSum / spacings.size());
+			double stdDev = std::sqrt(varianceSum / static_cast<double>(spacings.size()));
 
 			// If standard deviation is too high relative to average spacing,
 			// segments aren't evenly spaced
@@ -496,7 +520,7 @@ int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 		}
 
 		// If segments are evenly spaced and we found more than before, update best result
-		if (evenlySpaced && segmentStartXs.size() > bestSegmentCount) {
+		if (evenlySpaced && segmentStartXs.size() > static_cast<size_t>(bestSegmentCount)) {
 			bestSegmentCount = static_cast<int>(segmentStartXs.size());
 			bestSegmentStarts = segmentStartXs;
 
@@ -734,7 +758,7 @@ bool MusicPlayerComponent::update(float dt) {
 		// For time, update on every refresh interval
 		currentState = std::to_string(musicPlayer_->getCurrent());
 	}
-	else if (type_ == "progress") {
+	else if (isProgressBar_) {
 		currentState = std::to_string(musicPlayer_->getCurrent());
 	}
 	else {
@@ -800,7 +824,7 @@ void MusicPlayerComponent::draw() {
 		return;
 	}
 
-	if (type_ == "progress") {
+	if (isProgressBar_) {
 		drawProgressBar();
 		return;
 	}
@@ -861,7 +885,7 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 	SDL_RenderClear(renderer_);
 
 	// Calculate bar dimensions
-	float barWidth = vuMeterTextureWidth_ / static_cast<float>(vuBarCount_);
+	float barWidth = static_cast<float>(vuMeterTextureWidth_) / static_cast<float>(vuBarCount_);
 	float barSpacing = barWidth * 0.1f; // 10% of bar width for spacing
 	float actualBarWidth = barWidth - barSpacing;
 
@@ -870,11 +894,11 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 
 	// Draw each bar to the texture
 	for (int i = 0; i < vuBarCount_; i++) {
-		float barX = i * barWidth;
+		float barX = static_cast<float>(i * barWidth);
 
 		// Calculate the height of this bar based on its level
-		float barHeight = vuMeterTextureHeight_ * vuLevels_[i];
-		float peakHeight = vuMeterTextureHeight_ * vuPeaks_[i];
+		float barHeight = static_cast<float>(vuMeterTextureHeight_) * vuLevels_[i];
+		float peakHeight = static_cast<float>(vuMeterTextureHeight_) * vuPeaks_[i];
 
 		// Background/border for bar
 		SDL_SetRenderDrawColor(
@@ -896,9 +920,9 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 		if (barHeight > 0) {
 			SDL_SetRenderDrawColor(
 				renderer_,
-				vuGreenColor_.r,
-				vuGreenColor_.g,
-				vuGreenColor_.b,
+				vuBottomColor_.r,
+				vuBottomColor_.g,
+				vuBottomColor_.b,
 				255 // Full opacity on the texture
 			);
 			float segmentHeight = std::min(barHeight, greenZone);
@@ -915,9 +939,9 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 		if (barHeight > greenZone) {
 			SDL_SetRenderDrawColor(
 				renderer_,
-				vuYellowColor_.r,
-				vuYellowColor_.g,
-				vuYellowColor_.b,
+				vuMiddleColor_.r,
+				vuMiddleColor_.g,
+				vuMiddleColor_.b,
 				255 // Full opacity on the texture
 			);
 			float segmentHeight = std::min(barHeight - greenZone, yellowZone);
@@ -934,9 +958,9 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 		if (barHeight > greenZone + yellowZone) {
 			SDL_SetRenderDrawColor(
 				renderer_,
-				vuRedColor_.r,
-				vuRedColor_.g,
-				vuRedColor_.b,
+				vuTopColor_.r,
+				vuTopColor_.g,
+				vuTopColor_.b,
 				255 // Full opacity on the texture
 			);
 			float segmentHeight = std::min(barHeight - greenZone - yellowZone, redZone);
@@ -977,13 +1001,57 @@ void MusicPlayerComponent::updateVuMeterTexture() {
 }
 
 
+bool MusicPlayerComponent::parseHexColor(const std::string& hexString, SDL_Color& outColor) {
+	std::string_view sv = hexString;
+
+	// Must be exactly 6 characters long
+	if (sv.length() != 6) {
+		LOG_WARNING("MusicPlayerComponent", "Invalid length for hex string: " + hexString);
+		return false;
+	}
+
+	// Check if all characters are hex digits
+	for (char c : sv) {
+		if (!std::isxdigit(static_cast<unsigned char>(c))) {
+			LOG_WARNING("parseHexColor", "Non-hex character found in string: " + hexString);
+			return false;
+		}
+	}
+
+	// Use std::from_chars for safe conversion (C++17)
+	unsigned int r, g, b;
+	// Using .data() and .data() + length is correct for string_view with from_chars
+	auto result_r = std::from_chars(sv.data(), sv.data() + 2, r, 16);
+	auto result_g = std::from_chars(sv.data() + 2, sv.data() + 4, g, 16);
+	auto result_b = std::from_chars(sv.data() + 4, sv.data() + 6, b, 16);
+
+	// Check if parsing succeeded for all components
+	if (result_r.ec != std::errc() || result_g.ec != std::errc() || result_b.ec != std::errc() ||
+		result_r.ptr != sv.data() + 2 || // Ensure exactly 2 chars were consumed for R
+		result_g.ptr != sv.data() + 4 || // Ensure exactly 2 chars were consumed for G
+		result_b.ptr != sv.data() + 6)   // Ensure exactly 2 chars were consumed for B
+	{
+		LOG_WARNING("MusicPlayerComponent", "Hex conversion failed for string: " + hexString); // Optional debug log
+		return false;
+	}
+
+
+	// Assign to SDL_Color (values are already guaranteed 0-255 by hex format and successful parse)
+	outColor.r = static_cast<Uint8>(r);
+	outColor.g = static_cast<Uint8>(g);
+	outColor.b = static_cast<Uint8>(b);
+	outColor.a = 255; // Full opacity
+
+	return true;
+}
+
 void MusicPlayerComponent::updateVuLevels() {
 	// Get audio levels from the music player
 	const std::vector<float>& audioLevels = musicPlayer_->getAudioLevels();
-	int channels = musicPlayer_->getAudioChannels();
+	int channels = musicPlayer_->getAudioChannels(); // Still potentially useful
 
 	if (!musicPlayer_->isPlaying() || audioLevels.empty()) {
-		// If not playing, rapidly reduce all levels for quick response
+		// If not playing, rapidly reduce all levels
 		for (auto& level : vuLevels_) {
 			level *= 0.8f; // Faster decay when not playing
 		}
@@ -993,126 +1061,100 @@ void MusicPlayerComponent::updateVuLevels() {
 		return;
 	}
 
-	// Amplification factor - make the visualization more dramatic
-	// This can be exposed to configuration if desired
-	const float amplification = 5.0f; // Significant boost to the levels
+	// Amplification factor
+	const float amplification = 5.0f;
 
-	// Distribute audio levels across VU bars
-	if (channels >= 2) {
-		// Stereo mode: left channel for left half, right channel for right half
-		int leftBars = vuBarCount_ / 2;
-		int rightBars = vuBarCount_ - leftBars;
-
-		// Left channel (first half of bars)
-		float leftLevel = std::min(1.0f, audioLevels[0] * amplification); // Amplify and clamp
-		for (int i = 0; i < leftBars; i++) {
-			// Use exponential distribution to create more dramatic effect
-			// Lower frequencies (lower bar indexes) get higher values
-			float barFactor = 1.0f - (static_cast<float>(i) / leftBars) * 0.5f; // Less falloff
-
-			// Add dynamic randomness that scales with level
-			float randomFactor = 1.0f + ((rand() % 20) - 10) / 100.0f; // ±10% variation
-
-			// Calculate new level with enhanced dynamics
-			float newLevel = leftLevel * barFactor * randomFactor;
-
-			// Apply non-linear scaling to emphasize higher levels
-			newLevel = std::min(1.0f, std::pow(newLevel, 0.8f)); // Power < 1 emphasizes higher values
-
-			// Apply if higher than current
-			if (newLevel > vuLevels_[i]) {
-				vuLevels_[i] = newLevel;
-
-				// Update peak
-				vuPeaks_[i] = std::max(vuPeaks_[i], newLevel);
-			}
+	// --- MONO / STEREO SPLIT ---
+	if (vuMeterIsMono_) {
+		// --- MONO MODE ---
+		// Calculate average level across all available channels
+		float averageLevel = 0.0f;
+		float sum = 0.0f;
+		for (float level : audioLevels) {
+			sum += level;
+		}
+		if (!audioLevels.empty()) {
+			averageLevel = sum / static_cast<float>(audioLevels.size());
 		}
 
-		// Right channel (second half of bars)
-		float rightLevel = std::min(1.0f, audioLevels[1] * amplification); // Amplify and clamp
-		for (int i = 0; i < rightBars; i++) {
-			int barIndex = leftBars + i;
+		// Amplify and clamp the average level
+		float monoLevel = std::min(1.0f, averageLevel * amplification);
 
-			float barFactor = 1.0f - (static_cast<float>(i) / rightBars) * 0.5f;
-			float randomFactor = 1.0f + ((rand() % 20) - 10) / 100.0f;
-
-			float newLevel = rightLevel * barFactor * randomFactor;
-			newLevel = std::min(1.0f, std::pow(newLevel, 0.8f));
-
-			if (newLevel > vuLevels_[barIndex]) {
-				vuLevels_[barIndex] = newLevel;
-				vuPeaks_[barIndex] = std::max(vuPeaks_[barIndex], newLevel);
-			}
-		}
-
-		// Add extra dynamics: occasionally boost random bars for a more lively display
-		// This simulates frequency spikes that occur in music
-		if ((rand() % 10) < 3) { // 30% chance each update
-			int barToBoost = rand() % vuBarCount_;
-			vuLevels_[barToBoost] = std::min(1.0f, vuLevels_[barToBoost] * 1.3f);
-			vuPeaks_[barToBoost] = std::max(vuPeaks_[barToBoost], vuLevels_[barToBoost]);
-		}
-	}
-	else {
-		// Mono mode: create a more interesting pattern
-		float monoLevel = std::min(1.0f, audioLevels[0] * amplification); // Amplify and clamp
-
+		// Apply this monoLevel to all bars using the existing mono pattern logic
 		for (int i = 0; i < vuBarCount_; i++) {
-			// Create a pattern that emphasizes both center and edges
+			// Create a pattern (reusing logic from original mono implementation)
 			float barPos = static_cast<float>(i) / vuBarCount_;
 			float patternFactor;
-
-			// Use a combination of patterns for more interesting visualization
 			if (i % 2 == 0) {
-				// For even bars, emphasize center
 				patternFactor = 1.0f - std::abs(barPos - 0.5f) * 0.6f;
 			}
 			else {
-				// For odd bars, create a wave pattern
-				patternFactor = 0.7f + 0.3f * std::sin(barPos * 3.14159f * 4);
+				patternFactor = 1.0f + 0.3f * std::sin(barPos * 3.14159f * 4);
 			}
-
-			// Add dynamic randomness
-			float randomFactor = 1.0f + ((rand() % 25) - 10) / 100.0f; // -10% to +15% variation
-
+			float randomFactor = 1.0f + ((rand() % 25) - 10) / 100.0f;
 			float newLevel = monoLevel * patternFactor * randomFactor;
-			newLevel = std::min(1.0f, std::pow(newLevel, 0.75f)); // More aggressive curve
+			newLevel = std::min(1.0f, std::pow(newLevel, 0.75f));
 
 			if (newLevel > vuLevels_[i]) {
 				vuLevels_[i] = newLevel;
 				vuPeaks_[i] = std::max(vuPeaks_[i], newLevel);
 			}
 		}
+	}
+	else {
+		// --- STEREO MODE (or fallback if not explicitly mono) ---
+		if (channels >= 2) {
+			// Stereo mode: left channel for left half, right channel for right half
+			int leftBars = vuBarCount_ / 2;
+			int rightBars = vuBarCount_ - leftBars;
 
-		// Occasionally create "wave" effects across the bars
-		static int wavePosition = 0;
-		static bool waveActive = false;
-
-		if (!waveActive && (rand() % 20) < 3) { // 15% chance to start a wave
-			waveActive = true;
-			wavePosition = 0;
-		}
-
-		if (waveActive) {
-			// Create a moving wave effect
-			float waveAmplitude = 0.3f * monoLevel; // Scale with audio level
-			int waveWidth = vuBarCount_ / 3;
-
-			for (int i = 0; i < vuBarCount_; i++) {
-				// Calculate distance from wave center
-				int distance = std::abs(i - wavePosition);
-				if (distance < waveWidth) {
-					// Apply wave effect with falloff from center
-					float waveFactor = waveAmplitude * (1.0f - static_cast<float>(distance) / waveWidth);
-					vuLevels_[i] = std::min(1.0f, vuLevels_[i] + waveFactor);
-					vuPeaks_[i] = std::max(vuPeaks_[i], vuLevels_[i]);
+			// Left channel (first half of bars)
+			float leftLevel = std::min(1.0f, audioLevels[0] * amplification);
+			for (int i = 0; i < leftBars; i++) {
+				float barFactor = 1.0f - (static_cast<float>(i) / leftBars) * 0.5f;
+				float randomFactor = 1.0f + ((rand() % 20) - 10) / 100.0f;
+				float newLevel = leftLevel * barFactor * randomFactor;
+				newLevel = std::min(1.0f, std::pow(newLevel, 0.8f));
+				if (newLevel > vuLevels_[i]) {
+					vuLevels_[i] = newLevel;
+					vuPeaks_[i] = std::max(vuPeaks_[i], newLevel);
 				}
 			}
 
-			// Move the wave
-			wavePosition += 1;
-			if (wavePosition >= vuBarCount_ + waveWidth) {
-				waveActive = false;
+			// Right channel (second half of bars)
+			float rightLevel = std::min(1.0f, audioLevels[1] * amplification);
+			for (int i = 0; i < rightBars; i++) {
+				int barIndex = leftBars + i;
+				float barFactor = 1.0f - (static_cast<float>(i) / rightBars) * 0.5f;
+				float randomFactor = 1.0f + ((rand() % 20) - 10) / 100.0f;
+				float newLevel = rightLevel * barFactor * randomFactor;
+				newLevel = std::min(1.0f, std::pow(newLevel, 0.8f));
+				if (newLevel > vuLevels_[barIndex]) {
+					vuLevels_[barIndex] = newLevel;
+					vuPeaks_[barIndex] = std::max(vuPeaks_[barIndex], newLevel);
+				}
+			}
+
+			// Add extra dynamics: occasionally boost random bars
+			if ((rand() % 10) < 3) { // 30% chance each update
+				int barToBoost = rand() % vuBarCount_;
+				vuLevels_[barToBoost] = std::min(1.0f, vuLevels_[barToBoost] * 1.3f);
+				vuPeaks_[barToBoost] = std::max(vuPeaks_[barToBoost], vuLevels_[barToBoost]);
+			}
+		}
+		else {
+			// Fallback for single channel audio when not in explicit mono mode
+			// Treat the single channel as mono input
+			float level = std::min(1.0f, audioLevels[0] * amplification);
+			for (int i = 0; i < vuBarCount_; i++) {
+				// Simple distribution: apply level directly, maybe with slight variation
+				float randomFactor = 1.0f + ((rand() % 10) - 5) / 100.0f; // +/- 5%
+				float newLevel = std::min(1.0f, level * randomFactor);
+
+				if (newLevel > vuLevels_[i]) {
+					vuLevels_[i] = newLevel;
+					vuPeaks_[i] = std::max(vuPeaks_[i], newLevel);
+				}
 			}
 		}
 	}
@@ -1443,9 +1485,6 @@ Component* MusicPlayerComponent::reloadComponent() {
 			loadedComponent_ = new Text(ss.str(), page, font_, baseViewInfo.Monitor);
 		}
 		return loadedComponent_;
-	}
-	else if (typeLC == "progress") {
-
 	}
 	else if (typeLC == "volume") {
 		int volumeRaw = musicPlayer_->getVolume();
