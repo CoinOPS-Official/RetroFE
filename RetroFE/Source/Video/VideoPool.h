@@ -34,21 +34,19 @@ public:
     static void releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId);
     static void cleanup(int monitor, int listId);
     static void shutdown();
-    static void destroyVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId);
     // Health check method
     static bool checkPoolHealth(int monitor, int listId);
-    // Trim excess instances, but determine target size dynamically
-    static void trimExcessInstances(int monitor, int listId);
 
 private:
     struct PoolInfo {
         std::deque<std::unique_ptr<GStreamerVideo>> instances;
         std::atomic<size_t> currentActive{0};
-        std::atomic<bool> poolInitialized{false};
-        std::atomic<bool> hasExtraInstance{false};
         std::timed_mutex poolMutex;
         std::condition_variable_any waitCondition;  // Add this line
         std::atomic<size_t> observedMaxActive{ 0 };  // Track observed maximum active instances
+        std::atomic<bool> initialCountLatched{false};
+        std::atomic<size_t> requiredInstanceCount{0}; // The latched target count (excluding the +1 buffer)
+
         PoolInfo() = default;
         PoolInfo(const PoolInfo&) = delete;
         PoolInfo& operator=(const PoolInfo&) = delete;

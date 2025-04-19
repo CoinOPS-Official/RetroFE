@@ -25,6 +25,7 @@
 #include "Video/IVideo.h"
 #include "Video/VideoFactory.h"
 #include "Video/GStreamerVideo.h"
+#include "Sound/MusicPlayer.h"
 #include <SDL2/SDL.h>
 #if __has_include(<SDL2/SDL_ttf.h>)
 #include <SDL2/SDL_ttf.h>
@@ -74,6 +75,8 @@ private:
     volatile bool initializeError;
     SDL_Thread   *initializeThread;
     static int    initialize( void *context );
+
+    void initializeMusicPlayer();
 
     enum RETROFE_STATE
     {
@@ -155,6 +158,7 @@ private:
     bool isStandalonePlaylist(std::string playlist);
     bool isInAttractModeSkipPlaylist(std::string playlist);
     void goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleVector);
+    void handleMusicControls(UserInput::KeyCode_E input);
     void            quit( );
     Page           *loadPage(const std::string& collectionName);
     Page           *loadSplashPage( );
@@ -176,6 +180,7 @@ private:
     MetadataDatabase  *metadb_;
     UserInput          input_;
     Page              *currentPage_;
+    MusicPlayer* musicPlayer_;
     
     std::stack<Page *> pages_;
     float              keyInputDisable_;
