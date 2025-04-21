@@ -68,7 +68,9 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 	winget install -e --id Kitware.CMake
 	winget install -e --id Git.Git
 
-* Install gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+* Open the Visual Studio Installer, modify the install and add the "Desktop development with C++" package group
+
+* Install gstreamer-runtime and gstreamer-devel MSVC 64-bit complete (https://gstreamer.freedesktop.org/download/#windows)
 
 Python 3 - Optional - Read below
 
@@ -81,7 +83,7 @@ Alternatively, manually install
 * CMake (https://cmake.org/download)
 * Git (https://git-scm.com/downloads/win)
 * Python 3 (https://www.python.org/downloads/windows)
-* gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+* gstreamer-runtime and gstreamer-devel MSVC 64-bit complete (https://gstreamer.freedesktop.org/download/#windows)
 
 ### Download and compile the source code
 Download the source code
