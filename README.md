@@ -62,10 +62,10 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 #   Building for Windows #
 ### Install Requirements
 
-	winget install -e --id Microsoft.VisualStudio.2022.Community &&
-	winget install -e --id Microsoft.WindowsSDK.10.0.26100 &&
-	winget install -e --id Microsoft.DotNet.Framework.DeveloperPack_4 &&
-	winget install -e --id Kitware.CMake &&
+	winget install -e --id Microsoft.VisualStudio.2022.Community
+	winget install -e --id Microsoft.WindowsSDK.10.0.26100
+	winget install -e --id Microsoft.DotNet.Framework.DeveloperPack_4
+	winget install -e --id Kitware.CMake
 	winget install -e --id Git.Git
 
 * Install gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
