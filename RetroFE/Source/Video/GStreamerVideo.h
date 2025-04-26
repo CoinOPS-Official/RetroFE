@@ -94,6 +94,9 @@ private:
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
+    bool updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame);
+    bool updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFrame* frame);
+    bool updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFrame* frame);
     void createSdlTexture();
     GstElement* playbin_{ nullptr };          // for playbin3
     GstElement* videoSink_{ nullptr };     // for appsink

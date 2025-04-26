@@ -110,7 +110,7 @@ bool VideoComponent::update(float dt) {
 		}
 
 		if (baseViewInfo.PauseOnScroll) {
-			if (!isCurrentlyVisible && !isPaused && !currentPage_->isMenuFastScrolling()) {
+			if (!isCurrentlyVisible && !isPaused) {
 				pause();
 				LOG_DEBUG("VideoComponent", "Paused " + videoFile_);
 			}

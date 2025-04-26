@@ -89,7 +89,7 @@ static bool IsIntelGPU() {
 
 		// Check if the vendor ID matches Intel's vendor ID
 		if (desc.VendorId == 0x8086) { // 0x8086 is the vendor ID for Intel
-			return true;
+			return false;
 		}
 	}
 
@@ -423,16 +423,31 @@ bool GStreamerVideo::unload() {
 
 	isPlaying_.store(false, std::memory_order_release);
 
-	// 1. Gracefully pause pipeline
-	gst_element_set_state(playbin_, GST_STATE_PAUSED);
-	gst_element_get_state(playbin_, nullptr, nullptr, GST_CLOCK_TIME_NONE);
+	// 1. Check current and pending state
+	GstState curState, pendingState;
+	GstStateChangeReturn getStateRet = gst_element_get_state(playbin_, &curState, &pendingState, 0);
 
-	// 2. Drain any remaining samples from appsink
+	bool needsPause = true;
+
+	if (getStateRet != GST_STATE_CHANGE_FAILURE) {
+		if (curState == GST_STATE_PAUSED || pendingState == GST_STATE_PAUSED) {
+			needsPause = false;
+		}
+	}
+
+	// 2. Gracefully pause if necessary
+	if (needsPause) {
+		gst_element_set_state(playbin_, GST_STATE_PAUSED);
+		// Now block briefly (not forever) to allow pause to complete
+		gst_element_get_state(playbin_, nullptr, nullptr, 2 * GST_SECOND);
+	}
+
+	// 3. Drain any remaining samples from appsink
 	while (GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) {
 		gst_sample_unref(sample);
 	}
 
-	// 3. Move pipeline to READY (full cleanup of media stream state)
+	// 4. Move pipeline to READY
 	GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
 	GstState newState;
 	ret = gst_element_get_state(playbin_, &newState, nullptr, GST_SECOND);
@@ -442,7 +457,7 @@ bool GStreamerVideo::unload() {
 		return false;
 	}
 
-	// 4. Clean up message bus
+	// 5. Clean up bus
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 	if (bus) {
 		GstMessage* msg;
@@ -453,13 +468,7 @@ bool GStreamerVideo::unload() {
 		gst_object_unref(bus);
 	}
 
-	// 5. Reset GStreamer-related objects
-	if (videoInfo_) {
-		gst_video_info_free(videoInfo_);
-		videoInfo_ = nullptr;
-	}
-
-	// 6. Reset internal playback state
+	// 6. Reset everything else (same as before)
 	paused_ = false;
 	currentFile_.clear();
 	playCount_ = 0;
@@ -469,14 +478,13 @@ bool GStreamerVideo::unload() {
 	lastSetMuteState_ = false;
 	volume_ = 0.0f;
 
-	// 7. Reset video dimensions and texture pointers
 	textureWidth_.store(width_.load(std::memory_order_acquire), std::memory_order_release);
 	textureHeight_.store(height_.load(std::memory_order_acquire), std::memory_order_release);
 	width_.store(0, std::memory_order_release);
 	height_.store(0, std::memory_order_release);
 
 	SDL_LockMutex(SDL::getMutex());
-	texture_ = alphaTexture_;  // fallback to alpha/blank texture
+	texture_ = alphaTexture_;  // fallback to blank
 	textureValid_.store(false, std::memory_order_release);
 	SDL_UnlockMutex(SDL::getMutex());
 
@@ -995,53 +1003,136 @@ void GStreamerVideo::draw() {
 		}
 	}
 
-	// We now know texture is valid from above checks
-	// Update the texture if it's the video texture (using cached state)
-	if (texture_ == videoTexture_) {
-		int updateResult = -1;
+	// Refresh after possible recreate
+	textureValid = textureValid_.load(std::memory_order_acquire);
 
-		if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-			updateResult = SDL_UpdateNVTexture(texture_, nullptr,
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0),
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1));
-		}
-		else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-			updateResult = SDL_UpdateYUVTexture(texture_, nullptr,
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0),
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 1)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1),
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 2)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 2));
-		}
-		else if (sdlFormat_ == SDL_PIXELFORMAT_ABGR8888) {
-			// For RGBA, there is only one plane (plane 0)
-			updateResult = SDL_UpdateTexture(texture_, nullptr,
-				static_cast<const Uint8*>(GST_VIDEO_FRAME_PLANE_DATA(&frame, 0)),
-				GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0));
-		}
-		else {
-			// Unsupported format - should not happen due to format checking in createPipelineIfNeeded()
+	if (textureValid && texture_ == videoTexture_) {
+		bool success = false;
+
+		switch (sdlFormat_) {
+			case SDL_PIXELFORMAT_IYUV:
+			success = updateTextureFromFrameIYUV(texture_, &frame);
+			break;
+			case SDL_PIXELFORMAT_NV12:
+			success = updateTextureFromFrameNV12(texture_, &frame);
+			break;
+			case SDL_PIXELFORMAT_ABGR8888:
+			success = updateTextureFromFrameRGBA(texture_, &frame);
+			break;
+			default:
 			LOG_ERROR("GStreamerVideo", "Unsupported pixel format in draw()");
-			updateResult = -1;
+			break;
 		}
 
-		// Check for texture update errors
-		if (updateResult != 0) {
-			LOG_ERROR("GStreamerVideo", "Texture update failed: " + std::string(SDL_GetError()));
-			// Mark texture as invalid so we'll try to recreate it next frame
+		if (!success) {
 			textureValid_.store(false, std::memory_order_release);
 		}
 	}
 
-	// We're done with SDL operations, unlock the mutex
 	SDL_UnlockMutex(SDL::getMutex());
 
-	// Clean up GStreamer resources (no mutex needed)
+	// Unmap and unref GStreamer objects
 	gst_video_frame_unmap(&frame);
 	gst_sample_unref(sample);
+}
+
+bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) {
+	void* pixels = nullptr;
+	int pitch = 0;
+	if (SDL_LockTexture(texture, nullptr, &pixels, &pitch) != 0)
+		return false;
+
+	uint8_t* dst = static_cast<uint8_t*>(pixels);
+
+	const int width = GST_VIDEO_FRAME_COMP_WIDTH(frame, 0);
+	const int height = GST_VIDEO_FRAME_COMP_HEIGHT(frame, 0);
+
+	const uint8_t* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+	const uint8_t* srcU = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
+	const uint8_t* srcV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 2));
+
+	const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
+	const int strideU = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
+	const int strideV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 2);
+
+	uint8_t* dstU = dst + height * pitch;
+	uint8_t* dstV = dstU + (height / 2) * (pitch / 2);
+
+	// Copy Y plane
+	for (int y = 0; y < height; ++y) {
+		SDL_memcpy(dst + y * pitch, srcY + y * strideY, width);
+	}
+
+	// Copy U plane
+	for (int y = 0; y < height / 2; ++y) {
+		SDL_memcpy(dstU + y * (pitch / 2), srcU + y * strideU, width / 2);
+	}
+
+	// Copy V plane
+	for (int y = 0; y < height / 2; ++y) {
+		SDL_memcpy(dstV + y * (pitch / 2), srcV + y * strideV, width / 2);
+	}
+
+	SDL_UnlockTexture(texture);
+	return true;
+}
+
+
+
+bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFrame* frame) {
+	void* pixels = nullptr;
+	int pitch = 0;
+	if (SDL_LockTexture(texture, nullptr, &pixels, &pitch) != 0)
+		return false;
+
+	uint8_t* dst = static_cast<uint8_t*>(pixels);
+
+	const int width = GST_VIDEO_FRAME_COMP_WIDTH(frame, 0);
+	const int height = GST_VIDEO_FRAME_COMP_HEIGHT(frame, 0);
+
+	const uint8_t* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+	const uint8_t* srcUV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
+
+	const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
+	const int strideUV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
+
+	uint8_t* dstUV = dst + height * pitch;
+
+	// --- Copy Y plane ---
+	for (int y = 0; y < height; ++y) {
+		SDL_memcpy(dst + y * pitch, srcY + y * strideY, width);
+	}
+
+	// --- Copy UV plane ---
+	for (int y = 0; y < height / 2; ++y) {
+		SDL_memcpy(dstUV + y * pitch, srcUV + y * strideUV, width);
+	}
+
+	SDL_UnlockTexture(texture);
+	return true;
+}
+
+bool GStreamerVideo::updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFrame* frame) {
+	void* pixels = nullptr;
+	int pitch = 0;
+	if (SDL_LockTexture(texture, nullptr, &pixels, &pitch) != 0)
+		return false;
+
+	uint8_t* dst = static_cast<uint8_t*>(pixels);
+
+	const int width = GST_VIDEO_FRAME_COMP_WIDTH(frame, 0);
+	const int height = GST_VIDEO_FRAME_COMP_HEIGHT(frame, 0);
+
+	const uint8_t* src = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+	const int stride = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
+
+	// --- Copy RGBA plane ---
+	for (int y = 0; y < height; ++y) {
+		SDL_memcpy(dst + y * pitch, src + y * stride, width * 4); // 4 bytes per pixel
+	}
+
+	SDL_UnlockTexture(texture);
+	return true;
 }
 
 bool GStreamerVideo::isPlaying() {
