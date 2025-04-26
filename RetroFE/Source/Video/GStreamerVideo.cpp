@@ -423,80 +423,70 @@ bool GStreamerVideo::unload() {
 
 	isPlaying_.store(false, std::memory_order_release);
 
-	// Set pipeline to GST_STATE_READY (instead of GST_STATE_NULL) so we can reuse it later
-	GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
-	if (ret == GST_STATE_CHANGE_FAILURE) {
-		LOG_ERROR("GStreamerVideo", "Failed to set pipeline to READY during unload.");
-		return false;
+	// 1. Gracefully pause pipeline
+	gst_element_set_state(playbin_, GST_STATE_PAUSED);
+	gst_element_get_state(playbin_, nullptr, nullptr, GST_CLOCK_TIME_NONE);
+
+	// 2. Drain any remaining samples from appsink
+	while (GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) {
+		gst_sample_unref(sample);
 	}
 
-	// Optionally wait for the state change to complete 
+	// 3. Move pipeline to READY (full cleanup of media stream state)
+	GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
 	GstState newState;
 	ret = gst_element_get_state(playbin_, &newState, nullptr, GST_SECOND);
 	if (ret == GST_STATE_CHANGE_FAILURE || newState != GST_STATE_READY) {
-		LOG_ERROR("GStreamerVideo", "Pipeline did not reach READY state during unload.");
+		LOG_ERROR("GStreamerVideo", "Pipeline failed to reach READY state during unload.");
+		hasError_.store(true, std::memory_order_release);
+		return false;
 	}
 
+	// 4. Clean up message bus
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-
-	// Process all pending messages (non-blocking)
-	GstMessage* msg;
-	while ((msg = gst_bus_pop(bus))) {
-		switch (GST_MESSAGE_TYPE(msg)) {
-		case GST_MESSAGE_ERROR: {
-			GError* err;
-			gchar* debug_info;
-			gst_message_parse_error(msg, &err, &debug_info);
-
-			// Set error flag and log the error
-			hasError_.store(true, std::memory_order_release);
-			LOG_ERROR("GStreamerVideo", "Error received from element " +
-				std::string(GST_OBJECT_NAME(msg->src)) + ": " +
-				std::string(err->message));
-			if (debug_info) {
-				LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
-			}
-
-			g_clear_error(&err);
-			g_free(debug_info);
-			break;
+	if (bus) {
+		GstMessage* msg;
+		while ((msg = gst_bus_pop(bus))) {
+			gst_message_unref(msg);
 		}
-		default:
-			break;
-		}
-		gst_message_unref(msg);
+		gst_bus_set_flushing(bus, TRUE);
+		gst_object_unref(bus);
 	}
-	gst_object_unref(bus);
 
-	// Reset flags used for timing, volume, etc.
-	paused_ = false;
-	currentVolume_ = 0.0f;
-	lastSetVolume_ = -1.0f;
-	lastSetMuteState_ = false;
-	volume_ = 0.0f;            // reset to default
-	playCount_ = 0;
-	numLoops_ = 0;
-
+	// 5. Reset GStreamer-related objects
 	if (videoInfo_) {
 		gst_video_info_free(videoInfo_);
 		videoInfo_ = nullptr;
 	}
+
+	// 6. Reset internal playback state
+	paused_ = false;
+	currentFile_.clear();
+	playCount_ = 0;
+	numLoops_ = 0;
+	currentVolume_ = 0.0f;
+	lastSetVolume_ = -1.0f;
+	lastSetMuteState_ = false;
+	volume_ = 0.0f;
+
+	// 7. Reset video dimensions and texture pointers
 	textureWidth_.store(width_.load(std::memory_order_acquire), std::memory_order_release);
 	textureHeight_.store(height_.load(std::memory_order_acquire), std::memory_order_release);
 	width_.store(0, std::memory_order_release);
 	height_.store(0, std::memory_order_release);
+
 	SDL_LockMutex(SDL::getMutex());
-	texture_ = alphaTexture_;  // Switch to blank texture
+	texture_ = alphaTexture_;  // fallback to alpha/blank texture
 	textureValid_.store(false, std::memory_order_release);
 	SDL_UnlockMutex(SDL::getMutex());
 
-	LOG_DEBUG("GStreamerVideo", "Pipeline unloaded, now in READY state.");
+	LOG_DEBUG("GStreamerVideo", "Pipeline and class fully unloaded, ready for new play().");
 
 	return true;
 }
 
 // Main function to compute perspective transform from 4 arbitrary points
-inline std::array<double, 9> computePerspectiveMatrixFromCorners(
+static inline std::array<double, 9> computePerspectiveMatrixFromCorners(
 	int width,
 	int height,
 	const std::array<Point2D, 4>& pts)
