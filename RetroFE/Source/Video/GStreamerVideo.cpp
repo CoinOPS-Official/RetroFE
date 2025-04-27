@@ -39,10 +39,13 @@
 #include <sys/types.h>
 #include <vector>
 #include <array>
-
+#include <mutex>
 
 bool GStreamerVideo::initialized_ = false;
 bool GStreamerVideo::pluginsInitialized_ = false;
+
+std::vector<GStreamerVideo*> GStreamerVideo::activeVideos_;
+std::mutex GStreamerVideo::activeVideosMutex_;
 
 typedef enum {
 	GST_PLAY_FLAG_VIDEO = (1 << 0),
@@ -89,7 +92,7 @@ static bool IsIntelGPU() {
 
 		// Check if the vendor ID matches Intel's vendor ID
 		if (desc.VendorId == 0x8086) { // 0x8086 is the vendor ID for Intel
-			return false;
+			return true;
 		}
 	}
 
@@ -147,34 +150,6 @@ void GStreamerVideo::messageHandler(float dt) {
 	// Skip if no playbin or not playing
 	if (!playbin_ || !isPlaying_.load(std::memory_order_relaxed))
 		return;
-
-	// Accumulate time since last message processing
-	static float timeAccumulator = 0.0f;
-
-	// Default message checking interval: 50ms (20Hz)
-	constexpr float DEFAULT_CHECK_INTERVAL = 0.050f;
-
-	// Shorter interval during transitions or paused state: ~16ms (60Hz)
-	constexpr float CRITICAL_CHECK_INTERVAL = 0.016f;
-
-	// Determine which interval to use based on playback state
-	float currentInterval = DEFAULT_CHECK_INTERVAL;
-
-	// Use faster checking during paused state or when there's an error
-	// These are critical states where we want more responsive message handling
-	if (hasError_.load(std::memory_order_relaxed)) {
-		currentInterval = CRITICAL_CHECK_INTERVAL;
-	}
-
-	// Accumulate the time
-	timeAccumulator += dt;
-
-	// Skip if not enough time has passed
-	if (timeAccumulator < currentInterval)
-		return;
-
-	// Reset accumulator (don't just zero it - subtract the interval to maintain precision)
-	timeAccumulator -= currentInterval;
 
 	// Get the bus and process messages
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
@@ -248,7 +223,7 @@ void GStreamerVideo::initializePlugins() {
 		pluginsInitialized_ = true;
 
 #if defined(WIN32)
-		enablePlugin("directsoundsink");
+		//enablePlugin("directsoundsink");
 		disablePlugin("mfdeviceprovider");
 		disablePlugin("nvh264dec");
 		disablePlugin("nvh265dec");
@@ -411,10 +386,12 @@ bool GStreamerVideo::stop() {
 		perspective_gva_ = nullptr;
 	}
 
-
+	{
+		std::lock_guard<std::mutex> lock(activeVideosMutex_);
+		activeVideos_.erase(std::remove(activeVideos_.begin(), activeVideos_.end(), this), activeVideos_.end());
+	}
 	return true;
 }
-
 
 bool GStreamerVideo::unload() {
 	if (!playbin_) {
@@ -568,9 +545,6 @@ static inline std::array<double, 9> computePerspectiveMatrixFromCorners(
 	return H;
 }
 
-
-
-
 bool GStreamerVideo::createPipelineIfNeeded() {
 	if (playbin_) {
 		return true;
@@ -667,9 +641,13 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		g_object_set(playbin_, "video-sink", videoSink_, nullptr);
 	}
 
+	{
+		std::lock_guard<std::mutex> lock(activeVideosMutex_);
+		activeVideos_.push_back(this);
+	}
+
 	return true;
 }
-
 
 bool GStreamerVideo::play(const std::string& file) {
 	playCount_ = 0;
@@ -922,7 +900,6 @@ void GStreamerVideo::volumeUpdate() {
 	}
 }
 
-
 int GStreamerVideo::getHeight() {
 	return height_.load(std::memory_order_relaxed);
 }
@@ -943,26 +920,7 @@ void GStreamerVideo::draw() {
 	// Try to pull a sample from the appsink (GStreamer operation - no mutex needed)
 	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
 
-	// If no sample is available, check for EOS condition
 	if (!sample) {
-		// Only check state if we're still playing (reusing cached value)
-		if (isPlaying) {
-			GstState state;
-			gst_element_get_state(GST_ELEMENT(playbin_), &state, nullptr, 0);
-
-			// Check for end of stream when in PLAYING state
-			if (state == GST_STATE_PLAYING && gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
-				if (getCurrent() > GST_SECOND) {
-					playCount_++;
-					if (!numLoops_ || numLoops_ > playCount_) {
-						restart();
-					}
-					else {
-						stop();
-					}
-				}
-			}
-		}
 		return;
 	}
 
@@ -1076,8 +1034,6 @@ bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFr
 	SDL_UnlockTexture(texture);
 	return true;
 }
-
-
 
 bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFrame* frame) {
 	void* pixels = nullptr;
@@ -1236,7 +1192,6 @@ void GStreamerVideo::restart() {
 	}
 }
 
-
 unsigned long long GStreamerVideo::getCurrent() {
 	gint64 ret = 0;
 	if (!gst_element_query_position(playbin_, GST_FORMAT_TIME, &ret) || !isPlaying_)
@@ -1306,45 +1261,62 @@ void GStreamerVideo::setPerspectiveCorners(const int* corners) {
 
 void GStreamerVideo::customGstLogHandler(GstDebugCategory* category, GstDebugLevel level,
 	const gchar* file, const gchar* function, gint line,
-	GObject* object, GstDebugMessage* message, gpointer user_data)
-{
-	// Extract the log message from the GStreamer message
+	GObject* object, GstDebugMessage* message, gpointer user_data) {
 	std::string logMsg = gst_debug_message_get(message);
+	std::string componentName = (category && gst_debug_category_get_name(category)) ? gst_debug_category_get_name(category) : "Unknown";
 
-	// Get the original GStreamer category name if available, or default to "Unknown"
-	std::string originalComponent = (category && gst_debug_category_get_name(category))
-		? gst_debug_category_get_name(category)
-		: "Unknown";
-
-	// Combine the original component and log message in the format "component: message"
-	std::string fullMessage = originalComponent + ": " + logMsg;
-
-	// Use a fixed component name so that all GStreamer logs appear under one category
 	std::string component = "GStreamerLog";
+	std::string finalMessage = componentName + ": " + logMsg;
 
-	// Map GStreamer log levels to your Logger's macros
-	switch (level) {
-	case GST_LEVEL_ERROR:
-		LOG_ERROR(component, fullMessage);
-		break;
-	case GST_LEVEL_WARNING:
-		LOG_WARNING(component, fullMessage);
-		break;
-	case GST_LEVEL_FIXME:
-		LOG_NOTICE(component, fullMessage);
-		break;
-	case GST_LEVEL_INFO:
-		LOG_INFO(component, fullMessage);
-		break;
-	case GST_LEVEL_DEBUG:
-	case GST_LEVEL_LOG:
-	case GST_LEVEL_TRACE:
-	case GST_LEVEL_MEMDUMP:
-		LOG_DEBUG(component, fullMessage);
-		break;
-	default:
-		// Default to DEBUG if the level is unrecognized
-		LOG_DEBUG(component, fullMessage);
-		break;
+	// Try to associate the log with a playing file
+	if (object) {
+		if (GstObject* gstObj = GST_OBJECT(object)) {
+			if (GStreamerVideo* owner = findInstanceFromGstObject(gstObj)) {
+				if (!owner->currentFile_.empty()) {
+					std::string relativePath = owner->currentFile_;
+					const std::string& basePath = Configuration::absolutePath;
+
+					// Remove base path if it matches
+					if (relativePath.find(basePath) == 0) {
+						relativePath = relativePath.substr(basePath.length());
+						if (!relativePath.empty() && (relativePath[0] == '/' || relativePath[0] == '\\')) {
+							relativePath.erase(0, 1);  // Trim leading separator
+						}
+					}
+
+					finalMessage = "[" + relativePath + "] " + finalMessage;
+				}
+			}
+		}
 	}
+
+	// Map log level to your logging macros
+	switch (level) {
+		case GST_LEVEL_ERROR:   LOG_ERROR(component, finalMessage);   break;
+		case GST_LEVEL_WARNING: LOG_WARNING(component, finalMessage); break;
+		case GST_LEVEL_FIXME:   LOG_NOTICE(component, finalMessage);  break;
+		case GST_LEVEL_INFO:    LOG_INFO(component, finalMessage);    break;
+		case GST_LEVEL_DEBUG:
+		case GST_LEVEL_LOG:
+		case GST_LEVEL_TRACE:
+		case GST_LEVEL_MEMDUMP:
+		default:                LOG_DEBUG(component, finalMessage);  break;
+	}
+}
+
+GStreamerVideo* GStreamerVideo::findInstanceFromGstObject(GstObject* object) {
+	if (!object)
+		return nullptr;
+
+	GstObject* cur = object;
+	while (cur) {
+		std::lock_guard<std::mutex> lock(activeVideosMutex_);
+		for (GStreamerVideo* video : activeVideos_) {
+			if (video->playbin_ == GST_ELEMENT(cur)) {
+				return video;
+			}
+		}
+		cur = GST_OBJECT_PARENT(cur);
+	}
+	return nullptr;
 }

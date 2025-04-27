@@ -89,6 +89,11 @@ public:
     }
 
 private:
+    static std::vector<GStreamerVideo*> activeVideos_;
+    static std::mutex activeVideosMutex_;
+
+    static GStreamerVideo* findInstanceFromGstObject(GstObject* object);
+    
     static constexpr int ALPHA_TEXTURE_SIZE = 4;
     void createAlphaTexture();
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
