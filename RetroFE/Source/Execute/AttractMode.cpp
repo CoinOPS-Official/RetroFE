@@ -55,6 +55,9 @@ AttractMode::AttractMode()
 }
 
 void AttractMode::reset(bool set) {
+	if (idleTime <= 0)
+		return;
+    
     elapsedTime_ = 0;
     isActive_ = false;
     isSet_ = set;
@@ -78,6 +81,10 @@ void AttractMode::reset(bool set) {
 }
 
 int AttractMode::update(float dt, Page& page) {
+    
+    if (idleTime <= 0)
+        return 0;
+    
     // Track total time for state management
     float currentTime = elapsedTime_ + dt;
 
