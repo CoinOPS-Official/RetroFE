@@ -40,6 +40,7 @@
 #include <vector>
 #include <array>
 #include <mutex>
+#include <algorithm>
 
 bool GStreamerVideo::initialized_ = false;
 bool GStreamerVideo::pluginsInitialized_ = false;
