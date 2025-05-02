@@ -116,6 +116,7 @@
 #define OPTION_PLAYLISTINPUTCLEAR      "playlistInputClear"
 #define OPTION_JUMPINPUTCLEAR          "jumpInputClear"
 #define OPTION_CONTROLLERCOMBOEXIT     "controllerComboExit"
+#define OPTION_CONTROLLERCOMBOAMBIENT  "controllerComboAmbient"
 #define OPTION_CONTROLLERCOMBOSETTINGS "controllerComboSettings"
 #define OPTION_SETTINGSCOLLECTIONPLAYLIST "settingsCollectionPlaylist"
 #define OPTION_SERVOSTIKENABLED "servoStikEnabled"
@@ -244,6 +245,7 @@ public:
     bool playlistinputclear() { return bool_value(OPTION_PLAYLISTINPUTCLEAR); }
     bool jumpinputclear() { return bool_value(OPTION_JUMPINPUTCLEAR); }
     bool controllercomboexit() { return bool_value(OPTION_CONTROLLERCOMBOEXIT); }
+    bool controllercomboambient() { return bool_value(OPTION_CONTROLLERCOMBOAMBIENT); }
     bool controllercombosettings() { return bool_value(OPTION_CONTROLLERCOMBOSETTINGS); }
 	const char* quicklistcollectionplaylist() { return value(OPTION_QUICKLISTCOLLECTIONPLAYLIST); }
     const char *settingscollectionplaylist() { return value(OPTION_SETTINGSCOLLECTIONPLAYLIST); }

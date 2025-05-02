@@ -60,6 +60,7 @@ public:
     void     allocateGraphicsMemory( );
     void     launchEnter( );
     void     launchExit( );
+    void     ambientMode( );
     std::vector<std::string>     getPlaylistCycle();
     bool getAttractModeCyclePlaylist();
     MetadataDatabase* getMetaDb();
@@ -144,8 +145,10 @@ private:
         RETROFE_SCROLL_FORWARD,
         RETROFE_SCROLL_BACK,
         RETROFE_NEW,
-        RETROFE_QUIT_REQUEST,
+        RETROFE_QUIT_REQUEST,        
         RETROFE_QUIT,
+        RETROFE_AMBIENT_REQUEST,
+        RETROFE_AMBIENT,
         RETROFE_SCROLL_PLAYLIST_FORWARD,
         RETROFE_SCROLL_PLAYLIST_BACK,
     };

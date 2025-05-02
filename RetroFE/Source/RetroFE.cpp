@@ -190,6 +190,42 @@ int RetroFE::initialize(void* context)
 	return 0;
 }
 
+void RetroFE::ambientMode()
+{
+	LOG_INFO("RetroFE", "Launching Ambient Mode");
+	std::string ambientImagePath = Utils::combinePath(Configuration::absolutePath, "ambient", "default.png");
+
+	// do some SDL stuff - renderer, surface, texture
+    SDL_Renderer* renderer = SDL::getRenderer(0); // Get the renderer for the first screen
+    SDL_Surface* surface = IMG_Load(ambientImagePath.c_str());
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
+    SDL_FreeSurface(surface);
+
+    // present it
+    SDL_RenderClear(renderer);
+    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
+    SDL_RenderPresent(renderer);
+
+    // Clean up
+    SDL_DestroyTexture(texture);
+
+	// TODO: take care of second screen if it exists
+
+	// Wait for user input to exit ambient mode. The normal event loop is blocked while we do this
+	// TODO: periodically rotate ambient images
+	input_.resetStates();
+	SDL_Event e;	
+	while (1) {
+	  SDL_PollEvent(&e);
+	  input_.update(e);	  
+	  if (input_.keystate(UserInput::KeyCodeSelect))
+	  {
+		input_.resetStates();
+		break;
+	  }
+	}
+}
+
 // Launch a game/program
 void RetroFE::launchEnter()
 {
@@ -2257,7 +2293,24 @@ bool RetroFE::run()
 				running = false;
 			}
 			break;
-		}
+		case RETROFE_AMBIENT_REQUEST:
+			// First stage of entering ambient mode: stop the current page, which fades it out visually.
+			currentPage_->stop();
+			state = RETROFE_AMBIENT;
+			break;
+		case RETROFE_AMBIENT:
+			// second stage of entering ambient mode: once the fade-out is complete, actually enter ambient mode.
+			if (currentPage_->isGraphicsIdle())
+				{
+					currentPage_->setIsLaunched(true);
+					// we're going to the ambient function, and blocking until it returns
+					ambientMode(); 
+					// ... and we're back! Restart the page, and continue normally
+					currentPage_->start();
+					state = RETROFE_IDLE;
+					break;			
+				}
+			}
 
 		// Handle screen updates and attract mode
 		if (running)
@@ -2691,12 +2744,21 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			bool controllerComboExit = false;
 			config_.getProperty(OPTION_CONTROLLERCOMBOEXIT, controllerComboExit);
+			bool controllerComboAmbient = false;
+			config_.getProperty(OPTION_CONTROLLERCOMBOAMBIENT, controllerComboAmbient);			
 			if (controllerComboExit)
 			{
 #ifdef WIN32
 				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 51, 0);
 #endif
 				return RETROFE_QUIT_REQUEST;
+			}
+			else if (controllerComboAmbient)
+			{
+#ifdef WIN32
+				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 51, 0);
+#endif
+				return RETROFE_AMBIENT_REQUEST;	
 			}
 		}
 		// KeyCodeCycleCollection shared with KeyCodeQuitCombo1 and can missfire
@@ -3142,7 +3204,11 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 				}
 			}
 		}
-
+		else if (input_.keystate(UserInput::KeyCodeAmbient))
+		{
+			LOG_INFO("RetroFE", "Ambient mode initated via keypress");	
+			state = RETROFE_AMBIENT_REQUEST;
+		}
 		// !kioskLock_ &&
 		else if (input_.keystate(UserInput::KeyCodeQuit))
 		{
