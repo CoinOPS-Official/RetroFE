@@ -1,1 +1,0 @@
-The files and folders in this directory are template files meant to demonstrate a basic collection. It should be modified and changed to your needs.
