@@ -104,6 +104,15 @@ Compile RetroFE
 
 	cmake --build RetroFE/Build --config Release
 
+Copy in DLLs
+
+	mkdir .\RetroFE\Build\Release\retrofe
+	xcopy /S /I /Y .\Package\Environment\Windows\retrofe .\RetroFE\Build\Release\retrofe
+	move .\RetroFE\Build\Release\retrofe.exe .\RetroFE\Build\Release\retrofe\retrofe.exe
+	copy .\Package\Environment\Windows\RetroFE.lnk .\RetroFE\Build\Release
+
+The executable is then found in `/RetroFE/Build`, copy `RetroFE.lnk` and the `retrofe` folder
+
 #   Building for Linux #
 
 ### Install libraries
@@ -148,6 +157,8 @@ Generate your gcc make files
 Compile RetroFE
 
 	cmake --build RetroFE/Build
+
+The executable is then found in `/RetroFE/Build`
 
 #   Building for MacOS #
 
@@ -206,6 +217,8 @@ Open the Xcodeproj in `RetroFE/xcode` and build target or
 	cd RetroFE/
 	xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
 
+The executable is then found in `/RetroFE/Build`
+
 ## Single Architecture Binaries
 ### Install libraries
 
@@ -230,13 +243,15 @@ Compile RetroFE
 
 	cmake --build RetroFE/Build
 
+The executable is then found in `/RetroFE/Build`
+
 #   Optional #
 
 ###   Creating a test environment
 
 A launchable test environment can be created with the following commands 
 
-	python Scripts/Package.py --os=windows/linux/mac --build=full
+	python3 Scripts/Package.py --os=windows/linux/mac --build=full
 
 Copy your live RetroFE system to any folder of your choosing. Files can be found in `Artifacts/{os}/RetroFE`
 
