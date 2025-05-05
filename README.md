@@ -17,8 +17,6 @@
   </span>
 </h1>
 
-## A cross-platform frontend for game centers
-
 [Project Discord](https://discord.gg/dpcsP8Hm9W) | [GitHub Wiki](https://github.com/CoinOPS-Official/RetroFE/wiki) | [Changelog](CHANGELOG.md)
 
 RetroFE is a cross-platform desktop frontend designed for MAME cabinets and game centers, with a focus on simplicity and customization. 
@@ -29,7 +27,7 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 
 ## What's so special about this fork?
 * Performance and optimisations
-	* 64bit codebase
+	* 64-bit codebase
     * C++17 as standard
 	* Modern render engine; DX11 for Windows, Metal for MacOS
  	* Hardware accelerated video support for Windows
