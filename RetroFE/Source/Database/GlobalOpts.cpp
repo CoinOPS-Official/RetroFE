@@ -30,7 +30,7 @@ const global_options::options_entry global_options::s_option_entries[] =
 {
 
     { nullptr,                        nullptr,     global_options::option_type::HEADER,   "LOGGING OPTIONS" },
-    { OPTION_LOG,                     "NONE",      global_options::option_type::STRING,   "Set logging level, any combo of ERROR,INFO,NOTICE,WARNING,DEBUG,FILECACHE or ALL or NONE" },
+    { OPTION_LOG,                     "NONE",      global_options::option_type::STRING,   "Set logging level, any combo of ERROR,INFO,NOTICE,WARNING,DEBUG,FILECACHE or ALL or NONE. Use - to invert logging (ALL, -INFO)" },
     { OPTION_DUMPPROPERTIES,          "false",     global_options::option_type::BOOLEAN,  "Dump contents of properties to txt in current directory"},
 
     { nullptr,                        nullptr,     global_options::option_type::HEADER,   "DISPLAY OPTIONS" },
