@@ -1,37 +1,36 @@
 # Getting Started
 [Back](README.md)
-  
-For Windows users, and some Linux users, getting started with RetroFE is
-as simple as following these steps:
+ 
+Getting started with RetroFE is as simple as following these steps:
 
-1.  Download RetroFE from <http://retrofe.nl/download>
-2.  Edit the [global settings.conf](global settings.conf) file.
-3.  Edit the [controls.conf](CONTROLS.md) file.
-4.  Run RetroFE to verify if the front-end loads (and exits) correctly.
-5.  Edit/add/delete [collections](COLLECTIONS.md).
-6.  Re-run RetroFE
+1. Download RetroFE for your Desktop OS
+2. Edit the [global settings.conf](global settings.conf) file.
+3. Edit the [controls.conf](CONTROLS.md) file.
+4. Run RetroFE to verify if the front-end loads (and exits) correctly.
+5. Edit/add/delete [collections](COLLECTIONS.md).
+6. Re-run RetroFE
 
-  
+ 
 ## RetroFE Root Directory Structure 
 
-| File / Folder                         | Description                                                                      |
+| File / Folder | Description |
 |---------------------------------------|----------------------------------------------------------------------------------|
-| [controls.conf](CONTROLS.md)             | Controller configuration (up, down, select, back, etc)                           |
-| log.txt                               | Log output                                                                       |
-| meta.db                               | Game (information database year, manufacturer, genre, #players, etc)             |
-| RetroFE.lnk                           | Windows link to core / retrofe.exe                                               |
-| [settings.conf](GLOBAL_SETTINGS.md) | Global frontend settings (display options, layout to use, base paths, etc)       |
-| /collections/                         | Game lists, menus, artwork and ROMs                                              |
-| /core/                                | Windows specific libraries needed for retrofe to run (also includes retrofe.exe) |
-| /launchers/                           | Configuration files for launchers (emulators)                                    |
-| /layouts/                             | Layouts / themes to use or display for the frontend                              |
-| /meta/                                | Files to import into meta.db (for scraping)                                      |
+| [controls.conf](CONTROLS.md) | Controller configuration (up, down, select, back, etc) |
+| log.txt | Log output |
+| meta.db | Game (information database year, manufacturer, genre, #players, etc) |
+| RetroFE.lnk/AppImage/app/retrofe | RetroFE executable |
+| [settings.conf](GLOBAL_SETTINGS.md) | Global frontend settings (display options, layout to use, base paths, etc) |
+| /collections/ | Game lists, menus, artwork and ROMs |
+| /core/ | Windows specific libraries needed for retrofe to run (also includes retrofe.exe) |
+| /launchers/ | Configuration files for launchers (emulators) |
+| /layouts/ | Layouts / themes to use or display for the frontend |
+| /meta/ | Files to import into meta.db (for scraping) |
 
-  
+ 
 
 # Detailed Setup Guide
 
-  
+ 
 ## Installation 
 
 (Note for linux users: Since Linux comes in many shapes and sizes,
@@ -45,7 +44,7 @@ executable in that directory. RetroFE comes with a pre-installed Sega
 Genesis system with one game so you can check if the installation went
 according to plan.
 
-  
+ 
 ## Configuration
 
 The first configuration step is editing the RetroFE system configuration
@@ -57,7 +56,7 @@ RetroFE/[controls.conf](CONTROLS.md). In here you configure the keys used
 to control the RetroFE front-end. Note that the default select key is
 space, and not enter as some people expected.
 
-  
+ 
 ## Adding Collections 
 
 RetroFE starts with two (almost empty) [collections](COLLECTIONS.md), but
