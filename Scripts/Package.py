@@ -74,18 +74,18 @@ if args.build == 'full':
   dirs = [d for d in os.listdir(collection_path) if os.path.isdir(os.path.join(collection_path, d))]
   for collection in dirs:
     if not collection.startswith('_'):
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'roms'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'artwork_front'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'artwork_back'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'medium_back'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'medium_front'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'bezel'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'logo'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'screenshot'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'screentitle'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'video'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'system_artwork'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'roms'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'artwork_front'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'artwork_back'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'medium_back'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'medium_front'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'bezel'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'logo'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'screenshot'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'screentitle'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'video'))
+      mkdir_p(os.path.join(output_path, 'collections', collection, 'system_artwork'))
  
 elif args.build == 'layout':
   layout_dest_path = os.path.join(output_path, 'layouts')
@@ -117,7 +117,7 @@ if args.os == 'windows':
     # copy retrofe.exe
     shutil.copy(src_exe, core_path)
 #    third_party_path = os.path.join(base_path, 'RetroFE', 'ThirdParty')
-        
+
 elif args.os == 'linux':
   if args.build == 'full' or args.build == 'core' or args.build == 'engine':
     src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe')
