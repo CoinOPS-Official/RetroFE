@@ -34,8 +34,6 @@ parser = argparse.ArgumentParser(description='Bundle up some RetroFE common file
 parser.add_argument('--os', choices=['windows','linux','mac'], required=True, help='Operating System (windows or linux or mac)')
 parser.add_argument('--build', default='full', help='Define what contents to package (full, core, engine, layout, none')
 parser.add_argument('--clean', action='store_true', help='Clean the output directory')
-parser.add_argument('--compiler', help='Compiler to use (vs, mingw, gcc')
-
 args = parser.parse_args()
 
 #####################################################################
@@ -108,12 +106,8 @@ elif args.build == 'layout':
 #####################################################################
 if args.os == 'windows':
   if args.build == 'full' or args.build == 'core' or args.build == 'engine':
-    # copy retrofe.exe to core folder
-    if(hasattr(args, 'compiler') and args.compiler == 'mingw'):
-      src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe.exe')
-    else:
-      src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'Release', 'retrofe.exe')
-      
+    # copy retrofe.exe to folder
+    src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'Release', 'retrofe.exe')
     core_path = os.path.join(output_path, 'retrofe')
     
     # create the core folder
