@@ -97,7 +97,7 @@ These keys are used to define button combos with two keycodes. The first value d
 
 | `menu` | |
 | `saveFirstPlaylist` | |
-| `quickPlaylist` |  |
+| `quickPlaylist` | Jumps to playlist defined at /collections/*/quicklist |
 
 
 ## Gamepad/Joystick codes
