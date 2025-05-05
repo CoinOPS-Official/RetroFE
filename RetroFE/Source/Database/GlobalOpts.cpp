@@ -118,6 +118,8 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_ATTRACTMODELAUNCHRUNTIME,  "30",      global_options::option_type::INTEGER,  "If attractModeLaunch = true, the length of time a launched item will run" },
     { OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS,   "3,5",     global_options::option_type::MSTRING,  "If attractModeLaunch = true, comma separated min and max number of scrolls before launch" },
 
+    { OPTION_AMBIENTMODEMINUTESPERIMAGE,   "30",       global_options::option_type::INTEGER,  "Number of minutes between changing images in ambient mode" },
+
     { nullptr,                         nullptr,    global_options::option_type::HEADER,   "INPUT OPTIONS" },
     { OPTION_COLLECTIONINPUTCLEAR,     "false",    global_options::option_type::BOOLEAN,  "Clear input queue on collection change" },
     { OPTION_PLAYLISTINPUTCLEAR,       "false",    global_options::option_type::BOOLEAN,  "Clear input queue on playlist change" },

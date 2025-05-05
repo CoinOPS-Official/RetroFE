@@ -60,7 +60,6 @@ public:
     void     allocateGraphicsMemory( );
     void     launchEnter( );
     void     launchExit( );
-    void     ambientMode( );
     std::vector<std::string>     getPlaylistCycle();
     bool getAttractModeCyclePlaylist();
     MetadataDatabase* getMetaDb();

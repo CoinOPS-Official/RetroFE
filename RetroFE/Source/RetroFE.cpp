@@ -24,6 +24,7 @@
 #include "Database/GlobalOpts.h"
 #include "Database/HiScores.h"
 #include "Execute/Launcher.h"
+#include "Execute/AmbientMode.h"
 #include "Graphics/Component/ScrollingList.h"
 #include "Graphics/Page.h"
 #include "Graphics/PageBuilder.h"
@@ -188,42 +189,6 @@ int RetroFE::initialize(void* context)
 
 	instance->initialized = true;
 	return 0;
-}
-
-void RetroFE::ambientMode()
-{
-	LOG_INFO("RetroFE", "Launching Ambient Mode");
-	std::string ambientImagePath = Utils::combinePath(Configuration::absolutePath, "ambient", "default.png");
-
-	// do some SDL stuff - renderer, surface, texture
-    SDL_Renderer* renderer = SDL::getRenderer(0); // Get the renderer for the first screen
-    SDL_Surface* surface = IMG_Load(ambientImagePath.c_str());
-    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
-    SDL_FreeSurface(surface);
-
-    // present it
-    SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-    SDL_RenderPresent(renderer);
-
-    // Clean up
-    SDL_DestroyTexture(texture);
-
-	// TODO: take care of second screen if it exists
-
-	// Wait for user input to exit ambient mode. The normal event loop is blocked while we do this
-	// TODO: periodically rotate ambient images
-	input_.resetStates();
-	SDL_Event e;	
-	while (1) {
-	  SDL_PollEvent(&e);
-	  input_.update(e);	  
-	  if (input_.keystate(UserInput::KeyCodeSelect))
-	  {
-		input_.resetStates();
-		break;
-	  }
-	}
 }
 
 // Launch a game/program
@@ -2302,13 +2267,24 @@ bool RetroFE::run()
 			// second stage of entering ambient mode: once the fade-out is complete, actually enter ambient mode.
 			if (currentPage_->isGraphicsIdle())
 				{
-					currentPage_->setIsLaunched(true);
-					// we're going to the ambient function, and blocking until it returns
-					ambientMode(); 
-					// ... and we're back! Restart the page, and continue normally
-					currentPage_->start();
+#ifdef WIN32
+					// stop music
+					Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 75, 0);
+#endif
+					//currentPage_->setIsLaunched(true);
+					// initialize the instance of AmbientMode
+					int ambientModeMinutesPerImage = 30;
+					config_.getProperty(OPTION_AMBIENTMODEMINUTESPERIMAGE, ambientModeMinutesPerImage);					
+					AmbientMode ambientMode(input_, Configuration::absolutePath, ambientModeMinutesPerImage);
+    				ambientMode.activate(); // blocks until user exits					
+					currentPage_->start();	// ... and we're back! Restart the page, and continue normally
 					state = RETROFE_IDLE;
-					break;			
+#ifdef WIN32
+					// restart music
+					Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 76, 0);
+#endif			
+
+					break;
 				}
 			}
 
@@ -2758,6 +2734,10 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 #ifdef WIN32
 				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 51, 0);
 #endif
+				return RETROFE_AMBIENT_REQUEST;	
+			}
+			else if (controllerComboAmbient)
+			{
 				return RETROFE_AMBIENT_REQUEST;	
 			}
 		}
