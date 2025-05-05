@@ -13,7 +13,7 @@ additional artwork like video, box art, screenshots, etc.
 # Index
 
 -   [Getting Started](GETTING_STARTED.md)
--   [. Creating a Basic RetroFE Environment](HOW_TO.md)
+-   [Creating a Basic RetroFE Environment](HOW_TO.md)
 - Global Configuration
     -   [. Global Settings](GLOBAL_SETTINGS.md)
     -   [. Command Line Interface](CLI.md)
