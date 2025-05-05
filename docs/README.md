@@ -14,15 +14,19 @@ additional artwork like video, box art, screenshots, etc.
 
 -   [. Getting Started](GETTING_STARTED.md)
 -   [. Creating a Basic RetroFE Environment](HOW_TO.md)
--   [. Global Settings](GLOBAL_SETTINGS.md)
--   [. Command Line Interface](CLI.md)
--   [. Controls (Keyboard/Gamepad)](CONTROLS.md)
--   [. Collections](COLLECTIONS.md)
--   [. Collection Settings](SETTINGS.md)
+- Global Configuration
+    -   [. Global Settings](GLOBAL_SETTINGS.md)
+    -   [. Command Line Interface](CLI.md)
+    -   [. Controls (Keyboard/Gamepad)](CONTROLS.md)
+- Collections
+    -   [. Collections](COLLECTIONS.md)
+    -   [. Collection Settings](SETTINGS.md)
+    -   [. Meta information](META_INFORMATION.md)
 -   [. Launchers](LAUNCHERS.md)
--   [. General Layout Structure](PLAYGROUND.md)
--   [. Layouts](LAYOUTS.md)
--   [. Meta information](META_INFORMATION.md)
+- Layouts
+    -   [. General Layout Structure](PLAYGROUND.md)
+    -   [. Layouts](LAYOUTS.md)
+
 
 # These are just dev notes I needed to put somewhere
 ```
@@ -45,6 +49,9 @@ Launchers
     Linux
     macOS
     Start and Exit Scripts
+
+Layouts
+    Structure
 
 Additional Features
     Jukebox
