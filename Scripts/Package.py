@@ -74,19 +74,28 @@ if args.build == 'full':
   dirs = [d for d in os.listdir(collection_path) if os.path.isdir(os.path.join(collection_path, d))]
   for collection in dirs:
     if not collection.startswith('_'):
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'roms'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'artwork_front'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'artwork_back'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'medium_back'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'medium_front'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'bezel'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'logo'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'screenshot'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'screentitle'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'video'))
-      mkdir_p(os.path.join(output_path, 'collections', collection, 'system_artwork'))
- 
+        collection_base = os.path.join(output_path, 'collections', collection)
+
+        # List of subdirectories to create for each collection
+        dirs_to_create = [
+            'roms',
+            'medium_artwork',
+            'medium_artwork/artwork_front',
+            'medium_artwork/artwork_back',
+            'medium_artwork/medium_back',
+            'medium_artwork/medium_front',
+            'medium_artwork/bezel',
+            'medium_artwork/logo',
+            'medium_artwork/screenshot',
+            'medium_artwork/screentitle',
+            'medium_artwork/video',
+            'system_artwork',
+        ]
+
+        # Create the directories
+        for subdir in dirs_to_create:
+            mkdir_p(os.path.join(collection_base, subdir))
+
 elif args.build == 'layout':
   layout_dest_path = os.path.join(output_path, 'layouts')
   layout_common_path = os.path.join(common_path, 'layouts')
