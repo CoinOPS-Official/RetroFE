@@ -6,8 +6,8 @@ Getting started with RetroFE is as simple as following these steps:
 1. Download RetroFE for your OS.
 2. Edit the [global settings.conf](GLOBAL_SETTINGS.md) file.
 3. Configure your [controls.conf](CONTROLS.md) file.
-4. Run RetroFE to ensure the frontend loads and exits correctly.
-5. Add, edit, or delete [collections](COLLECTIONS.md).
+4. Add, edit, or delete [collections](COLLECTIONS.md).
+5. Run RetroFE to ensure the frontend loads and exits correctly.
 6. Re-run RetroFE to check everything works.
 
 ## RetroFE Root Directory Structure
