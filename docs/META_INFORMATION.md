@@ -94,6 +94,6 @@ RetroFE supports the following tags (and will ignore the rest):
 
 ## MAME xml files
 
-MAME xml files are the output of the -listxml output of MAME.
+MAME xml files are the output of the -listxml option of MAME.
 
 [Back](README.md)
