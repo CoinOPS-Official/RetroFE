@@ -1,5 +1,7 @@
 # RetroFE Documentation Project
 
+> These Docs are under signficant reconstruction, updating and modernising. Having been generally untouched for 3 years. It is currently incomplete and for anything you may be unsure off feel free to open an issue or contact us via one of our channels.
+
 Welcome to the RetroFE documentation project. The purpose of this
 project is to provide documentation regarding the usage of the RetroFE
 front-end, and all its features.
