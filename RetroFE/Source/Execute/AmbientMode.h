@@ -7,7 +7,13 @@
 #include <string>
 #include <chrono>
 #include "../SDL.h"
-#include "SDL_image.h"
+#if __has_include(<SDL2/SDL_image.h>)
+    #include <SDL2/SDL_image.h>
+#elif __has_include(<SDL2_image/SDL_image.h>)
+    #include <SDL2_image/SDL_image.h>
+#else
+    #error "Cannot find SDL_image header"
+#endif
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
 #include "../Control/UserInput.h"
