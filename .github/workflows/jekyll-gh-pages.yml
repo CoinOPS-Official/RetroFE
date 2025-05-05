@@ -34,6 +34,7 @@ jobs:
 
       - name: Build the site
         run: |
+          cd docs
           bundle exec jekyll build
 
       - name: Deploy to GitHub Pages
