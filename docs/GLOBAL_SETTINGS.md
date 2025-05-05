@@ -1,11 +1,7 @@
 # Global settings.conf
 [Back](README.md)
 
-
-The global settings.conf file, located in the root directory,
-defines how your overall system operates. See below for a list of
-configuration parameters that can be specified for your global
-settings.conf.
+The global `settings.conf` file, located in the root directory, controls the global behavior of your system. Below is a list of available configuration parameters you can define in this file.
 
 ## LOGGING OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
