@@ -8,7 +8,10 @@ The global `settings.conf` file, located in the root directory, controls the glo
 To support scripted reconfiguration or multiple setup profiles, RetroFE also supports additional configuration files named sequentially: `settings1.conf`, `settings2.conf`, up to `settings16.conf`.
 
 ## Command-Line Overrides
-Additionally, all settings can be passed as command-line options using the format `-optionName value`. For example: `-LOG ALL -muteVideo yes` would enable logging in all categories and mute video audio. Command-line options have the highest priority. Any value specified on the command line will override the corresponding setting in all settings.conf or settingsX.conf files.
+Additionally, all settings can be passed as command-line options using the format `-optionName value`. For example: `-log ALL -muteVideo yes` would enable logging in all categories and mute video audio. Command-line options have the highest priority. Any value specified on the command line will override the corresponding setting in all settings.conf or settingsX.conf files.
+
+##
+For all `BOOLEAN` types, the following values are accepted: `yes`, `no`, `true`, and `false`.
 
 ## LOGGING OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
@@ -51,17 +54,17 @@ Additionally, all settings can be passed as command-line options using the forma
 ## RENDERER OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
 |--------|---------|------|-------------|-----------------------|
-| `vsync` | `false` | `BOOLEAN` | Vertical synchronization | |
-| `hardwareVideoAccel` | `false` | `BOOLEAN` | Hardware decoding | ✅ |
-| `avdecMaxThreads` | `2` | `INTEGER` | Number of threads for avdec software decoding | ✅ |
-| `muteVideo` | `false` | `BOOLEAN` | Video playback is muted | ✅ |
-| `sdlRenderDriver` | `direct3d` | `STRING` | Set renderer (direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software) | ✅ |
-| `scaleQuality` | `1` | `INTEGER` | Scaling quality (0, 1, 2) | ✅ |
+| `vSync` | `false` | `BOOLEAN` | Vertical synchronization | |
+| `HardwareVideoAccel` | `false` | `BOOLEAN` | Hardware decoding | ✅ |
+| `AvdecMaxThreads` | `2` | `INTEGER` | Number of threads for avdec software decoding | ✅ |
+| `MuteVideo` | `false` | `BOOLEAN` | Video playback is muted | ✅ |
+| `SDLRenderDriver` | `direct3d` | `STRING` | Set renderer (direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software) | ✅ |
+| `ScaleQuality` | `1` | `INTEGER` | Scaling quality (0, 1, 2) | ✅ |
 | `highPriority` | `false` | `BOOLEAN` | RetroFE Windows process priority | ✅ |
 | `unloadSDL` | `false` | `BOOLEAN` | Close SDL when launching a game, MUST be true for RPI | |
 | `minimizeOnFocusLoss` | `false` | `BOOLEAN` | Minimize RetroFE when focus is lost | |
-| `avdecThreadType` | `2` | `INTEGER` | Type of threading in the case of software decoding (1=frame, 2=slice) | |
-| `glSwapInterval` | `1` | `INTEGER` | OpenGL Swap Interval (0=immediate updates, 1=synchronized vsync, -1=adaptive vsync) | |
+| `AvdecThreadType` | `2` | `INTEGER` | Type of threading in the case of software decoding (1=frame, 2=slice) | |
+| `GlSwapInterval` | `1` | `INTEGER` | OpenGL Swap Interval (0=immediate updates, 1=synchronized vsync, -1=adaptive vsync) | |
 
 ## CUSTOMIZATION OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
