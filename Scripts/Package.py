@@ -110,7 +110,7 @@ if args.os == 'windows':
     src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'Release', 'retrofe.exe')
     core_path = os.path.join(output_path, 'retrofe')
     
-    # create the core folder
+    # create the retrofe folder
     if not os.path.exists(core_path):
       os.makedirs(core_path)
       
