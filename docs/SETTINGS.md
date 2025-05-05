@@ -17,6 +17,10 @@ that can be specified in your collection's settings.conf file.
 | metadata.type            | \<collection name>                                        | Specifies the meta file used in the meta.db to pull additional information like manufacturer, year, genre, etc. from                                                                                                                                                                             |
 | meda.\<filetype>         | collections/\<collection name>/medium_artwork/\<filetype> | Overwrites the path used to pull medium artwork from                                                                                                                                                                                                                                             |
 | media.system_artwork     | collections/\<collection name>/system_artwork             | Overwrites the path used to pull system artwork from                                                                                                                                                                                                                                             |
+| `firstPlaylist, autoPlaylist, attractModeCyclePlaylist, cyclePlaylist, attractModeSkipPlaylist` |        | (**CoinOPS**) These settings used to be in global, but can be overwritten by collection settings now 
+| layout                   | name of theme in the layouts/ from which to find layout/resources for collection | (**CoinOPS**) This "layout" that overides global setting, so different themes can be loaded under one collection menu
+
+
 
 All the settings above can take advantage of the following variables:
 
