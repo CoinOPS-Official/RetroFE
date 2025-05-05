@@ -51,6 +51,8 @@ Most users will want to use these keys to move around a build
 | `prevPlaylist` | Switches to the previous playlist. |
 | `nextPlaylist` | Switches to the next playlist. |
 | `cyclePlaylist` | Switches to the next playlist in the cyclePlaylist set. Still functional, but has been replaced by nextCyclePlaylist. |
+| `prevCycleCollection` | Switches to the previous playlist in the cycleCollection set. |
+| `cycleCollection` | Switches to the next playlist in the cycleCollection set. |
 
 ### Jukebox Mode
 These keys are used to define jukebox controls when RetroFE operates in a jukebox environment
@@ -95,9 +97,7 @@ These keys are used to define button combos with two keycodes. The first value d
 
 | `menu` | |
 | `saveFirstPlaylist` | |
-| `quickPlaylist` | |
-| `cycleCollection` | |
-| `prevCycleCollection` | |
+| `quickPlaylist` |  |
 
 
 ## Gamepad/Joystick codes
