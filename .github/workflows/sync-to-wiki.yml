@@ -42,4 +42,9 @@ jobs:
           commit-message: "Sync docs to Wiki"
           title: "Sync Wiki Docs"
           body: "This PR syncs the latest documentation to the wiki."
-          labels: automated
+
+      - name: Merge Pull Request
+        uses: peter-evans/merge-pull-request@v2
+        with:
+          pull-request: ${{ steps.create_pr.outputs.pull-request-number }}
+          merge-method: squash
