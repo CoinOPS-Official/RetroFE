@@ -8,7 +8,7 @@ The global `settings.conf` file, located in the root directory, controls the glo
 To support scripted reconfiguration or multiple setup profiles, RetroFE also supports additional configuration files named sequentially: `settings1.conf`, `settings2.conf`, up to `settings16.conf`.
 
 ## Command-Line Overrides
-Additionally, all settings can be passed as command-line options using the format `-optionName value`. For example: `-log ALL -muteVideo yes` would enable logging in all categories and mute video audio. Command-line options have the highest priority. Any value specified on the command line will override the corresponding setting in all settings.conf or settingsX.conf files.
+Additionally, all settings can be passed as command-line options using the format `-optionName value`. For example: `-log ALL -MuteVideo yes` would enable logging in all categories and mute video audio. Command-line options have the highest priority. Any value specified on the command line will override the corresponding setting in all settings.conf or settingsX.conf files.
 
 ##
 For all `BOOLEAN` types, the following values are accepted: `yes`, `no`, `true`, and `false`.
