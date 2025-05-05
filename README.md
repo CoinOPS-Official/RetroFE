@@ -29,7 +29,7 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 
 ## What's so special about this fork?
 * Performance and optimisations
-	* 64bit codebase
+	* 64-bit codebase
     * C++17 as standard
 	* Modern render engine; DX11 for Windows, Metal for MacOS
  	* Hardware accelerated video support for Windows
