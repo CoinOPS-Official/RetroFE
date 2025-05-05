@@ -1,7 +1,14 @@
 # Global settings.conf
 [Back](README.md)
 
-The global `settings.conf` file, located in the root directory, controls the global behavior of your system. Below is a list of available configuration parameters you can define in this file.
+## Overview
+The global `settings.conf` file, located in the root directory, controls the global behavior of the RetroFE instance. Below is a list of available configuration parameters you can define in this file.
+
+## Alternate Configuration Files
+To support scripted reconfiguration or multiple setup profiles, RetroFE also supports additional configuration files named sequentially: `settings1.conf`, `settings2.conf`, up to `settings16.conf`.
+
+## Command-Line Overrides
+Additionally, all settings can be passed as command-line options using the format `-optionName value`. For example: `-LOG ALL -muteVideo yes` would enable logging in all categories and mute video audio. Command-line options have the highest priority. Any value specified on the command line will override the corresponding setting in all settings.conf or settingsX.conf files.
 
 ## LOGGING OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
@@ -135,8 +142,5 @@ The global `settings.conf` file, located in the root directory, controls the glo
 |--------|---------|------|-------------|-----------------------|
 | `baseMediaPath` | `""` | `PATH` | Path to media if stored outside the build | |
 | `baseItemPath` | `""` | `PATH` | Path to items if stored outside the build | |
-
-In order to make scripted reconfiguration easier, RetroFE supports the
-filenames settings1.conf, settings2.conf, ..., settings9.conf as well.
 
 [Back](README.md)
