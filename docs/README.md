@@ -13,7 +13,7 @@ additional artwork like video, box art, screenshots, etc.
 # Index
 
 -   [Getting Started](GETTING_STARTED.md)
--   [Settings](GLOBAL_SETTINGS.md)
+-   [Global Settings](GLOBAL_SETTINGS.md)
 -   [Controls (Keyboard/Gamepad)](CONTROLS.md)
 -   [Collections](COLLECTIONS.md)
 -   [Collection Settings](SETTINGS.md)
