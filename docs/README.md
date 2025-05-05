@@ -12,13 +12,42 @@ additional artwork like video, box art, screenshots, etc.
 
 # Index
 
--   [Getting Started](GETTING_STARTED.md)
--   [Settings](GLOBAL_SETTINGS.md)
--   [Controls (Keyboard/Gamepad)](CONTROLS.md)
--   [Collections](COLLECTIONS.md)
--   [Collection Settings](SETTINGS.md)
--   [Launchers](LAUNCHERS.md)
--   [General Layout Structure](PLAYGROUND.md)
--   [Layouts](LAYOUTS.md)
--   [Meta information](META_INFORMATION.md)
+-   [. Getting Started](GETTING_STARTED.md)
+-   [. Creating a Basic RetroFE Environment](HOW_TO.md)
+-   [. Global Settings](GLOBAL_SETTINGS.md)
+-   [. Command Line Interface](CLI.md)
+-   [. Controls (Keyboard/Gamepad)](CONTROLS.md)
+-   [. Collections](COLLECTIONS.md)
+-   [. Collection Settings](SETTINGS.md)
+-   [. Launchers](LAUNCHERS.md)
+-   [. General Layout Structure](PLAYGROUND.md)
+-   [. Layouts](LAYOUTS.md)
+-   [. Meta information](META_INFORMATION.md)
 
+# These are just dev notes I needed to put somewhere
+```
+Global Configuration
+    controls.conf
+    settings.conf
+
+Collections
+    Roms
+    Artwork
+    Game Information
+    Launcher Overrides
+
+Controls
+    Gamepad
+    Mouse
+
+Launchers
+    Windows
+    Linux
+    macOS
+    Start and Exit Scripts
+
+Additional Features
+    Jukebox
+    Music Player
+    Hiscores via hi2txt
+```
