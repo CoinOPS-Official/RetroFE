@@ -124,13 +124,17 @@ elif args.os == 'linux':
     shutil.copy(src_exe, output_path)
 
 elif args.os == 'mac':
-  if args.build == 'full' or args.build == 'core' or args.build == 'engine':
-    src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe')
-    shutil.copy(src_exe, output_path)
-    app_path = os.path.join(output_path, 'RetroFE.app')
-    if not os.path.exists(app_path):
-      copytree(os_path, output_path)
-    shutil.copy(src_exe, output_path + '/RetroFE.app/Contents/MacOS/')
+    if args.build == 'full' or args.build == 'core' or args.build == 'engine':
+      release_dir = os.path.join(base_path, 'RetroFE', 'Build', 'Release')
+      src_app = os.path.join(release_dir, 'RetroFE.app')
+      src_exe = os.path.join(release_dir, 'retrofe')
+      dest_app = os.path.join(output_path, 'RetroFE.app')
 
-
-
+      if os.path.exists(src_app):
+          if os.path.exists(dest_app):
+              shutil.rmtree(dest_app) # Clean the Artifacts folder
+          shutil.copytree(src_app, dest_app, symlinks=True, ignore_dangling_symlinks=True) # Copy RetroFE.app
+      elif os.path.exists(src_exe):
+          shutil.copy(src_exe, output_path) # Copy RetroFE executable, typically built statically by CMake
+      else:
+          print("Error: Neither RetroFE.app nor retrofe binary found in Release folder.")
