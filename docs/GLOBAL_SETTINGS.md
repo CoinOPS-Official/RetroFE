@@ -13,8 +13,8 @@ Additionally, all settings can be passed as command-line options using the forma
 ## LOGGING OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
 |--------|---------|------|-------------|-----------------------|
-| `log` | `NONE` | `STRING` | Set logging level, any combo of ERROR,INFO,NOTICE,WARNING,DEBUG,FILECACHE or ALL or NONE. Use - to invert logging (ALL, -INFO) | |
-| `dumpProperties` | `false` | `BOOLEAN` | Dump contents of properties to txt in current directory | |
+| `log` | `NONE` | `STRING` | Set logging level, any combo of ERROR,INFO,NOTICE,WARNING,DEBUG,FILECACHE or ALL or NONE. Use - to invert logging (ALL, -INFO) | ✅ |
+| `dumpProperties` | `false` | `BOOLEAN` | Dump contents of properties to txt in current directory | ✅ |
 
 ## DISPLAY OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
@@ -38,26 +38,26 @@ Additionally, all settings can be passed as command-line options using the forma
 | `fps` | `60` | `INTEGER` | Requested FPS while in an active state | |
 | `fpsIdle` | `60` | `INTEGER` | Request FPS while in an idle state | |
 | `hideMouse` | `true` | `BOOLEAN` | Defines whether the mouse cursor is hidden | |
-| `animateDuringGame` | `true` | `BOOLEAN` | Pause animated marquees while in the game | |
+| `animateDuringGame` | `true` | `BOOLEAN` | Pause animated marquees while in the game | ✅ |
 
 ## VIDEO OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
 |--------|---------|------|-------------|-----------------------|
 | `videoEnable` | `true` | `BOOLEAN` | Defines whether video is rendered | |
 | `videoLoop` | `0` | `INTEGER` | Number of times to play video, 0 forever | |
-| `disableVideoRestart` | `false` | `BOOLEAN` | Pauses video while scrolling | |
-| `disablePauseOnScroll` | `false` | `BOOLEAN` | Restart video when selected | |
+| `disableVideoRestart` | `false` | `BOOLEAN` | Pauses video while scrolling | ✅ |
+| `disablePauseOnScroll` | `false` | `BOOLEAN` | Restart video when selected | ✅ |
 
 ## RENDERER OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
 |--------|---------|------|-------------|-----------------------|
 | `vsync` | `false` | `BOOLEAN` | Vertical synchronization | |
-| `hardwareVideoAccel` | `false` | `BOOLEAN` | Hardware decoding | |
-| `avdecMaxThreads` | `2` | `INTEGER` | Number of threads for avdec software decoding | |
-| `muteVideo` | `false` | `BOOLEAN` | Video playback is muted | |
-| `sdlRenderDriver` | `direct3d` | `STRING` | Set renderer (direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software) | |
-| `scaleQuality` | `1` | `INTEGER` | Scaling quality (0, 1, 2) | |
-| `highPriority` | `false` | `BOOLEAN` | RetroFE Windows process priority | |
+| `hardwareVideoAccel` | `false` | `BOOLEAN` | Hardware decoding | ✅ |
+| `avdecMaxThreads` | `2` | `INTEGER` | Number of threads for avdec software decoding | ✅ |
+| `muteVideo` | `false` | `BOOLEAN` | Video playback is muted | ✅ |
+| `sdlRenderDriver` | `direct3d` | `STRING` | Set renderer (direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software) | ✅ |
+| `scaleQuality` | `1` | `INTEGER` | Scaling quality (0, 1, 2) | ✅ |
+| `highPriority` | `false` | `BOOLEAN` | RetroFE Windows process priority | ✅ |
 | `unloadSDL` | `false` | `BOOLEAN` | Close SDL when launching a game, MUST be true for RPI | |
 | `minimizeOnFocusLoss` | `false` | `BOOLEAN` | Minimize RetroFE when focus is lost | |
 | `avdecThreadType` | `2` | `INTEGER` | Type of threading in the case of software decoding (1=frame, 2=slice) | |
@@ -67,13 +67,13 @@ Additionally, all settings can be passed as command-line options using the forma
 | Option | Default | Type | Description | CoinOPS Added Feature |
 |--------|---------|------|-------------|-----------------------|
 | `layout` | `Arcades` | `STRING` | Theme to be used in RetroFE, a folder name in /layouts | |
-| `randomLayout` | `""` | `MSTRING` | Randomly choose a layout on launch, CSV list of layout names | |
+| `randomLayout` | `""` | `MSTRING` | Randomly choose a layout on launch, CSV list of layout names | ✅ |
 | `firstPlaylist` | `arcades` | `STRING` | Start on this playlist if available | |
 | `autoPlaylist` | `all` | `STRING` | Start on this playlist when entering a collection if available | |
 | `quickListCollectionPlaylist` | `""` | `STRING` | Jump to playlist by way of quickList key | |
 | `cyclePlaylist` | `""` | `MSTRING` | Set of playlists that can be cycled through, CSV list of playlist names | |
-| `firstCollection` | `""` | `STRING` | Start on this collection if available | |
-| `cycleCollection` | `""` | `MSTRING` | Set of collections that can be cycled through, CSV list of collection names | |
+| `firstCollection` | `""` | `STRING` | Start on this collection if available | ✅ |
+| `cycleCollection` | `""` | `MSTRING` | Set of collections that can be cycled through, CSV list of collection names | ✅ |
 | `lastPlayedSize` | `10` | `INTEGER` | Size of the auto-generated last played playlist, 0 to disable | |
 | `lastPlayedSkipCollection` | `""` | `MSTRING` | Skip CSV list of collections being added to last played | |
 | `action` | `""` | `STRING` | If action=<something> and the action has setting=<something> then perform animation | |
@@ -84,15 +84,15 @@ Additionally, all settings can be passed as command-line options using the forma
 | `rememberMenu` | `true` | `BOOLEAN` | Remember the last highlighted item if re-entering a menu | |
 | `backOnEmpty` | `false` | `BOOLEAN` | Automatically back out of empty collection | |
 | `subsSplit` | `false` | `BOOLEAN` | Split merged collections based on subs (true) or sort as one list (false) | |
-| `cfwLetterSub` | `false` | `BOOLEAN` | Jump subs in a collection by sub instead of by the letter of the item | |
+| `cfwLetterSub` | `false` | `BOOLEAN` | Jump subs in a collection by sub instead of by the letter of the item | ✅ |
 | `prevLetterSubToCurrent` | `false` | `BOOLEAN` | Jump to the start of the current letter instead of the previous letter if jump to letter enabled | |
-| `randomStart` | `false` | `BOOLEAN` | Start on a random item when RetroFE boots | |
+| `randomStart` | `false` | `BOOLEAN` | Start on a random item when RetroFE boots | ✅ |
 | `randomPlaylist` | `false` | `BOOLEAN` | Start on a random playlist when RetroFE boots | |
-| `kiosk` | `false` | `BOOLEAN` | Start on the first playlist in cyclePlaylist with navigation and favorites locked, can be toggled with a setting in controls.conf | |
-| `globalFavLast` | `false` | `BOOLEAN` | Save last played and favorites to a new collection | |
-| `infoExitOnScroll` | `false` | `BOOLEAN` | Hide info text boxes when scrolling | |
+| `kiosk` | `false` | `BOOLEAN` | Start on the first playlist in cyclePlaylist with navigation and favorites locked, can be toggled with a setting in controls.conf | ✅ |
+| `globalFavLast` | `false` | `BOOLEAN` | Save last played and favorites to a new collection | ✅ |
+| `infoExitOnScroll` | `false` | `BOOLEAN` | Hide info text boxes when scrolling | ✅ |
 | `jukebox` | `false` | `BOOLEAN` | Enables mapping of jukebox controls | |
-| `fixedResLayouts` | `false` | `BOOLEAN` | Enables the use of fixed resolution layouts ie layout1920x1080.xml | |
+| `fixedResLayouts` | `false` | `BOOLEAN` | Enables the use of fixed resolution layouts ie layout1920x1080.xml | ✅ |
 | `screensaver` | `false` | `BOOLEAN` | Enables screensaver mode | |
 
 
@@ -103,12 +103,12 @@ Additionally, all settings can be passed as command-line options using the forma
 | `attractModeTime` | `19` | `INTEGER` | Number of seconds to wait before scrolling to another random point | |
 | `attractModeNextTime` | `19` | `INTEGER` | Number of seconds to wait before scrolling to another random point while attract mode is active | |
 | `attractModePlaylistTime` | `300` | `INTEGER` | Number of seconds to wait before attract mode jumps to another playlist, 0 to lock | |
-| `attractModeSkipPlaylist` | `""` | `MSTRING` | Skip CSV list of playlists while in attract mode | |
+| `attractModeSkipPlaylist` | `""` | `MSTRING` | Skip CSV list of playlists while in attract mode | ✅ |
 | `attractModeCollectionTime` | `300` | `INTEGER` | Number of seconds before attract mode switches to the next collection, 0 to lock | |
 | `attractModeSkipCollection` | `""` | `MSTRING` | Skip CSV list of collections while in attract mode | |
 | `attractModeMinTime` | `100` | `INTEGER` | Minimum number of milliseconds attract mode will scroll | |
 | `attractModeMaxTime` | `1600` | `INTEGER` | Maximum number of milliseconds attract mode will scroll | |
-| `attractModeFast` | `false` | `BOOLEAN` | Scroll(false) or jump(true) to the next random point while in attract mode | |
+| `attractModeFast` | `false` | `BOOLEAN` | Scroll(false) or jump(true) to the next random point while in attract mode | ✅ |
 | `attractModeLaunch` | `false` | `BOOLEAN` | When in attract mode will launch games for a time configured by attractModeLaunchRunTime, default 30 sec | |
 | `attractModeLaunchRunTime` | `30` | `INTEGER` | If attractModeLaunch = true, the length of time a launched item will run | |
 | `attractModeLaunchMinMaxScrolls` | `3,5` | `MSTRING` | If attractModeLaunch = true, comma separated min and max number of scrolls before launch | |
@@ -119,15 +119,15 @@ Additionally, all settings can be passed as command-line options using the forma
 | `collectionInputClear` | `false` | `BOOLEAN` | Clear input queue on collection change | |
 | `playlistInputClear` | `false` | `BOOLEAN` | Clear input queue on playlist change | |
 | `jumpInputClear` | `false` | `BOOLEAN` | Clear input queue while jumping through the menu | |
-| `controllerComboExit` | `true` | `BOOLEAN` | Close RetroFE with the controller combo set in controls.conf | |
-| `controllerComboSettings` | `false` | `BOOLEAN` | Open settings playlist with the controller combo set in controls.conf | |
-| `settingsCollectionPlaylist` | `Arcades:settings` | `STRING` | Used by settings toggle to go to the playlist in collection:playlist format, defaults to settings.txt in the current collection | |
+| `controllerComboExit` | `true` | `BOOLEAN` | Close RetroFE with the controller combo set in controls.conf | ✅ |
+| `controllerComboSettings` | `false` | `BOOLEAN` | Open settings playlist with the controller combo set in controls.conf | ✅ |
+| `settingsCollectionPlaylist` | `Arcades:settings` | `STRING` | Used by settings toggle to go to the playlist in collection:playlist format, defaults to settings.txt in the current collection | ✅ |
 | `servoStikEnabled` | `false` | `BOOLEAN` | Enable ServoStik support | |
 
 ## METADATA OPTIONS
 | Option | Default | Type | Description | CoinOPS Added Feature |
 |--------|---------|------|-------------|-----------------------|
-| `metaLock` | `true` | `BOOLEAN` | Locks RetroFE from looking for XML changes and uses meta.db, faster loading when true | |
+| `metaLock` | `true` | `BOOLEAN` | Locks RetroFE from looking for XML changes and uses meta.db, faster loading when true | ✅ |
 | `overwriteXML` | `false` | `BOOLEAN` | Allows metadata XMLs to be overwritten by files in a collection | |
 | `showParenthesis` | `true` | `BOOLEAN` | Show item information between () | |
 | `showSquareBrackets` | `true` | `BOOLEAN` | Show item information between [] | |
