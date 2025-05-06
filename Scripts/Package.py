@@ -34,8 +34,6 @@ parser = argparse.ArgumentParser(description='Bundle up some RetroFE common file
 parser.add_argument('--os', choices=['windows','linux','mac'], required=True, help='Operating System (windows or linux or mac)')
 parser.add_argument('--build', default='full', help='Define what contents to package (full, core, engine, layout, none')
 parser.add_argument('--clean', action='store_true', help='Clean the output directory')
-parser.add_argument('--compiler', help='Compiler to use (vs, mingw, gcc')
-
 args = parser.parse_args()
 
 #####################################################################
@@ -76,19 +74,21 @@ if args.build == 'full':
   dirs = [d for d in os.listdir(collection_path) if os.path.isdir(os.path.join(collection_path, d))]
   for collection in dirs:
     if not collection.startswith('_'):
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'roms'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'artwork_front'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'artwork_back'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'medium_back'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'medium_front'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'bezel'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'logo'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'screenshot'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'screentitle'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'medium_artwork', 'video'))
-     mkdir_p(os.path.join(output_path, 'collections', collection, 'system_artwork'))
- 
+        collection_base = os.path.join(output_path, 'collections', collection)
+
+        # List of subdirectories to create for each collection
+        dirs_to_create = [
+            'roms',
+            'medium_artwork',
+            'medium_artwork/logo',
+            'medium_artwork/video',
+            'system_artwork',
+        ]
+
+        # Create the directories
+        for subdir in dirs_to_create:
+            mkdir_p(os.path.join(collection_base, subdir))
+
 elif args.build == 'layout':
   layout_dest_path = os.path.join(output_path, 'layouts')
   layout_common_path = os.path.join(common_path, 'layouts')
@@ -108,35 +108,35 @@ elif args.build == 'layout':
 #####################################################################
 if args.os == 'windows':
   if args.build == 'full' or args.build == 'core' or args.build == 'engine':
-    # copy retrofe.exe to core folder
-    if(hasattr(args, 'compiler') and args.compiler == 'mingw'):
-      src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe.exe')
-    else:
-      src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'Release', 'retrofe.exe')
-      
+    # copy retrofe.exe to folder
+    src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'Release', 'retrofe.exe')
     core_path = os.path.join(output_path, 'retrofe')
     
-    # create the core folder
+    # create the retrofe folder
     if not os.path.exists(core_path):
       os.makedirs(core_path)
       
     # copy retrofe.exe
     shutil.copy(src_exe, core_path)
 #    third_party_path = os.path.join(base_path, 'RetroFE', 'ThirdParty')
-        
+
 elif args.os == 'linux':
   if args.build == 'full' or args.build == 'core' or args.build == 'engine':
     src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe')
     shutil.copy(src_exe, output_path)
 
 elif args.os == 'mac':
-  if args.build == 'full' or args.build == 'core' or args.build == 'engine':
-    src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe')
-    shutil.copy(src_exe, output_path)
-    app_path = os.path.join(output_path, 'RetroFE.app')
-    if not os.path.exists(app_path):
-      copytree(os_path, output_path)
-    shutil.copy(src_exe, output_path + '/RetroFE.app/Contents/MacOS/')
+    if args.build == 'full' or args.build == 'core' or args.build == 'engine':
+      release_dir = os.path.join(base_path, 'RetroFE', 'Build', 'Release')
+      src_app = os.path.join(release_dir, 'RetroFE.app')
+      src_exe = os.path.join(release_dir, 'retrofe')
+      dest_app = os.path.join(output_path, 'RetroFE.app')
 
-
-
+      if os.path.exists(src_app):
+          if os.path.exists(dest_app):
+              shutil.rmtree(dest_app) # Clean the Artifacts folder
+          shutil.copytree(src_app, dest_app, symlinks=True, ignore_dangling_symlinks=True) # Copy RetroFE.app
+      elif os.path.exists(src_exe):
+          shutil.copy(src_exe, output_path) # Copy RetroFE executable, typically built statically by CMake
+      else:
+          print("Error: Neither RetroFE.app nor retrofe binary found in Release folder.")
