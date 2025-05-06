@@ -80,14 +80,7 @@ if args.build == 'full':
         dirs_to_create = [
             'roms',
             'medium_artwork',
-            'medium_artwork/artwork_front',
-            'medium_artwork/artwork_back',
-            'medium_artwork/medium_back',
-            'medium_artwork/medium_front',
-            'medium_artwork/bezel',
             'medium_artwork/logo',
-            'medium_artwork/screenshot',
-            'medium_artwork/screentitle',
             'medium_artwork/video',
             'system_artwork',
         ]
