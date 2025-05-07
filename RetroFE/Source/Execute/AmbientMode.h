@@ -24,11 +24,11 @@ public:
         : input_(input), basePath_(basePath), minutesPerImage_(minutesPerImage) {}
 
     void activate();
-    void display(std::string imageName, int screenNum);
     void displayImages(int imageIndex);
-
+    void display(std::string imageName, int screenNum);
+    
 private:
-    void populateImageFiles(std::string directory);
+    void populateImageFiles();
     UserInput& input_;
     std::string basePath_;    
     std::string ambientPath_;

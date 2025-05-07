@@ -37,8 +37,7 @@ void AmbientMode::activate() {
     imageFiles_.clear();    
     marqueeImageFiles_.clear();
     ambientPath_ = Utils::combinePath(basePath_, "ambient");
-    LOG_INFO("AmbientMode", "Activating Ambient mode. Path for images is: " + ambientPath_);
-
+    LOG_INFO("AmbientMode", "Activating Ambient mode with "+std::to_string(SDL::getScreenCount())+" screen(s). Path for images is: " + ambientPath_);
 
     // Ensure the directory exists
     if (!std::filesystem::is_directory(ambientPath_)) {
@@ -47,7 +46,7 @@ void AmbientMode::activate() {
     }
 
     // Get lists of image files and marquee image files into our member variables
-    populateImageFiles(ambientPath_);
+    populateImageFiles();
     LOG_INFO("AmbientMode", "There are " + std::to_string(imageFiles_.size()) + " images and " + std::to_string(marqueeImageFiles_.size()) + " marquee images in the ambient directory.");
 
     if (imageFiles_.empty()) {
@@ -111,35 +110,42 @@ void AmbientMode::activate() {
 void AmbientMode::displayImages(int imageIndex) {
     // for the main screen, just display the image by index
     std::string imageName = Utils::combinePath(ambientPath_, imageFiles_[imageIndex]);
+    LOG_INFO("AmbientMode", "displaying main screen image: "+ imageName);
+
     display(imageName, 0); // Display on the first screen
     
+    if (SDL::getScreenCount() > 1) {    
+        // for the marquee screen, display the corresponding marquee image if available (by naming convention), 
+        // otherwise display a random marquee image.
+        if (!marqueeImageFiles_.empty()) {
+            std::filesystem::path path(imageName);
+            std::string baseName = path.stem().string(); // Get the filename without extension
+            std::string extension = path.extension().string(); // Get the file extension        
+            std::string marqueeImageName = baseName +"_marquee" + extension;
+            std::string marqueeImagePath = Utils::combinePath(ambientPath_, marqueeImageName);
 
-    // for the marquee screen, display the corresponding marquee image if available (by naming convention), 
-    // otherwise display a random marquee image.
-    if (!marqueeImageFiles_.empty()) {    
-        std::filesystem::path path(imageName);
-        std::string baseName = path.stem().string(); // Get the filename without extension
-        std::string extension = path.extension().string(); // Get the file extension        
-        std::string marqueeImageName = baseName +"_marquee" + extension;
-        std::string marqueeImagePath = Utils::combinePath(ambientPath_, marqueeImageName);
-
-        if (std::filesystem::exists(marqueeImagePath)) {
-            LOG_INFO("AmbientMode", "displaying corresponding marquee image: "+ marqueeImageName);
-            display(marqueeImageName, 1); // Display on the second screen
-        } else {            
-            std::string randomMarqueeImage = marqueeImageFiles_[std::rand() % marqueeImageFiles_.size()];        
-            LOG_INFO("AmbientMode", "displaying random marquee image: "+ randomMarqueeImage);
-            display(randomMarqueeImage, 1); // Display on the second screen
+            if (std::filesystem::exists(marqueeImagePath)) {
+                LOG_INFO("AmbientMode", "displaying corresponding marquee image: "+ marqueeImageName);
+                display(marqueeImageName, 1); // Display on the second screen
+            } else {            
+                std::string randomMarqueeImage = marqueeImageFiles_[std::rand() % marqueeImageFiles_.size()];        
+                LOG_INFO("AmbientMode", "displaying random marquee image: "+ randomMarqueeImage);
+                display(randomMarqueeImage, 1); // Display on the second screen
+            }
         }
+        else {
+            LOG_INFO("AmbientMode", "No marquee images available. Skipping marquee display.");
+        }
+
     }
 }
 
 
 // display a specific image (indentified by name only; it is assumed to be in the "ambient" directory) on the specified screen
 void AmbientMode::display(std::string imageName, int screenNum) {
+
     std::string imagePath = Utils::combinePath(ambientPath_, imageName);
     
-    SDL_LockMutex(SDL::getMutex());
     SDL_Renderer* renderer = SDL::getRenderer(screenNum);
     SDL_Surface* surface = IMG_Load(imagePath.c_str());
     SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
@@ -148,17 +154,16 @@ void AmbientMode::display(std::string imageName, int screenNum) {
     SDL_RenderCopy(renderer, texture, nullptr, nullptr);
     SDL_RenderPresent(renderer);
 
-    SDL_UnlockMutex(SDL::getMutex());
 }
 
-void AmbientMode::populateImageFiles(std::string directoryPath) {
+void AmbientMode::populateImageFiles() {
     namespace fs = std::filesystem;
 
     // Supported image extensions
     const std::vector<std::string> imageExtensions = { ".png", ".jpg", ".jpeg", ".bmp", ".gif" };
 
     // Iterate through the directory
-    for (const auto& entry : fs::directory_iterator(directoryPath)) {
+    for (const auto& entry : fs::directory_iterator(ambientPath_)) {
         if (entry.is_regular_file()) {
             std::string extension = entry.path().extension().string();
 
