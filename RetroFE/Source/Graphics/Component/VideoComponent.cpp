@@ -62,30 +62,15 @@ bool VideoComponent::update(float dt) {
 		return Component::update(dt);
 	}
 
-	if ((currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0)) {
-		if (videoInst_->isPaused()) {
-			videoInst_->pause();  // Ensure paused during launch
-		}
+	videoInst_->messageHandler(dt);
+
+	if (videoInst_->hasError()) {
 		return Component::update(dt);
 	}
 
-	videoInst_->messageHandler(dt);
-
-	// Check for errors first
-	bool hasError = videoInst_->hasError();
-	if (hasError) {
-		LOG_DEBUG("VideoComponent", "Detected error in video instance for " +
-			Utils::getFileName(videoFile_) + ", destroying and creating new instance");
-		instanceReady_ = false;
-		videoInst_.reset();
-		videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_, perspectiveCorners_);
-		if (videoInst_) {
-			instanceReady_ = videoInst_->play(videoFile_);
-			dimensionsUpdated_ = false; // Reset flag for new instance
-			if (!instanceReady_) {
-				LOG_ERROR("VideoComponent", "Failed to start playback with new instance: " +
-					Utils::getFileName(videoFile_));
-			}
+	if ((currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0)) {
+		if (videoInst_->isPaused()) {
+			videoInst_->pause();  // Ensure paused during launch
 		}
 		return Component::update(dt);
 	}
@@ -114,8 +99,8 @@ bool VideoComponent::update(float dt) {
 				dimensionsUpdated_ = true; // Mark dimensions as updated
 
 				LOG_DEBUG("VideoComponent", "Updated video dimensions: " +
-					std::to_string(videoWidth) + "x" + std::to_string(videoHeight) +
-					" for " + Utils::getFileName(videoFile_));
+					std::to_string(static_cast<int>(videoWidth)) + "x" + std::to_string(static_cast<int>(videoHeight)) +
+					" for " + videoFile_);
 			}
 		}
 
@@ -125,13 +110,13 @@ bool VideoComponent::update(float dt) {
 		}
 
 		if (baseViewInfo.PauseOnScroll) {
-			if (!isCurrentlyVisible && !isPaused && !currentPage_->isMenuFastScrolling()) {
+			if (!isCurrentlyVisible && !isPaused) {
 				pause();
-				LOG_DEBUG("VideoComponent", "Paused " + Utils::getFileName(videoFile_));
+				LOG_DEBUG("VideoComponent", "Paused " + videoFile_);
 			}
 			else if (isCurrentlyVisible && isPaused) {
 				pause();
-				LOG_DEBUG("VideoComponent", "Resumed " + Utils::getFileName(videoFile_));
+				LOG_DEBUG("VideoComponent", "Resumed " + videoFile_);
 			}
 		}
 

@@ -33,6 +33,7 @@
 #include <thread>
 #include <atomic>
 #include <filesystem>
+#include <set>
 #ifdef WIN32
 #include <Windows.h>
 #pragma comment(lib, "Xinput.lib")
@@ -41,6 +42,7 @@
 #include "PacDrive.h"
 #include "StdAfx.h"
 #include <tlhelp32.h>
+#include <Psapi.h>
 #endif
 #if defined(__linux__) || defined(__APPLE__)
 #include <libusb-1.0/libusb.h>
@@ -419,7 +421,47 @@ std::string replaceVariables(std::string str,
 
 #ifdef WIN32
 // Utility function to terminate a process and all its child processes
-void TerminateProcessAndChildren(DWORD processId) {
+void TerminateProcessAndChildren(DWORD processId, const std::string& originalExeName = "", std::set<DWORD>& processedIds = std::set<DWORD>()) {
+	// Check if we've already processed this process ID to avoid infinite recursion
+	if (processedIds.find(processId) != processedIds.end()) {
+		LOG_DEBUG("Launcher", "Process ID: " + std::to_string(processId) + " already processed, skipping.");
+		return;
+	}
+
+	// Add this process to the set of processed IDs
+	processedIds.insert(processId);
+
+	// Verify this is the expected process if we have an original name
+	bool shouldTerminate = true;
+	if (!originalExeName.empty()) {
+		HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, processId);
+		if (hProcess != nullptr) {
+			char processName[MAX_PATH] = { 0 };
+			if (GetModuleFileNameExA(hProcess, nullptr, processName, MAX_PATH) > 0) {
+				std::string currentName = processName;
+				std::string baseName = currentName.substr(currentName.find_last_of("\\/") + 1);
+
+				// Case-insensitive comparison for Windows filenames
+				std::string lowerBaseName = baseName;
+				std::string lowerOriginalName = originalExeName;
+				std::transform(lowerBaseName.begin(), lowerBaseName.end(), lowerBaseName.begin(), ::tolower);
+				std::transform(lowerOriginalName.begin(), lowerOriginalName.end(), lowerOriginalName.begin(), ::tolower);
+
+				if (lowerBaseName != lowerOriginalName) {
+					LOG_WARNING("Launcher", "Process ID " + std::to_string(processId) +
+						" is " + baseName + ", not " + originalExeName +
+						". Skipping termination.");
+					shouldTerminate = false;
+				}
+			}
+			CloseHandle(hProcess);
+		}
+	}
+
+	if (!shouldTerminate) {
+		return;
+	}
+
 	LOG_INFO("Launcher", "Terminating process ID: " + std::to_string(processId));
 
 	HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
@@ -436,6 +478,7 @@ void TerminateProcessAndChildren(DWORD processId) {
 	if (Process32First(hSnap, &pe32)) {
 		do {
 			if (pe32.th32ParentProcessID == processId) {
+				// For child processes, we don't verify the name
 				childPids.push_back(pe32.th32ProcessID);
 			}
 		} while (Process32Next(hSnap, &pe32));
@@ -445,10 +488,10 @@ void TerminateProcessAndChildren(DWORD processId) {
 
 	// Terminate children first
 	for (DWORD childPid : childPids) {
-		TerminateProcessAndChildren(childPid);
+		TerminateProcessAndChildren(childPid, "", processedIds);
 	}
 
-	// Now terminate the main process
+	// Now terminate the main process if it passed our verification
 	HANDLE hProcess = OpenProcess(PROCESS_TERMINATE | SYNCHRONIZE, FALSE, processId);
 	if (hProcess != nullptr) {
 		if (TerminateProcess(hProcess, 1)) {
@@ -1157,7 +1200,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				// Timer elapsed case (process still running)
 				DWORD processId = GetProcessId(hLaunchedProcess);
 				if (processId != 0) {
-					TerminateProcessAndChildren(processId);
+					// Extract the executable base name to ensure we terminate the right process
+					std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
+					TerminateProcessAndChildren(processId, exeName);
 				}
 				else {
 					LOG_WARNING("Launcher", "Could not get process ID for termination");

@@ -1429,7 +1429,7 @@ void Page::draw() {
         // Draw all components in the layer
         for (Component* component : LayerComponents_[i]) {
             if (!component) {
-                LOG_WARNING("Page::draw", "Null component in LayerComponents_[" + std::to_string(i) + "].");
+                //LOG_WARNING("Page::draw", "Null component in LayerComponents_[" + std::to_string(i) + "].");
                 continue;
             }
             component->draw();
@@ -1445,7 +1445,7 @@ void Page::draw() {
 
                 for (Component* c : menu->getComponents()) {
                     if (!c) {
-                        LOG_WARNING("Page::draw", "Null component in menu->getComponents().");
+                        //LOG_WARNING("Page::draw", "Null component in menu->getComponents().");
                         continue;
                     }
                     if (c->baseViewInfo.Layer == i) {
