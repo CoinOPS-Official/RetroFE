@@ -673,7 +673,10 @@ void Launcher::LEDBlinky(int command, std::string collection, Item* collectionIt
 bool Launcher::simpleExecute(std::string executable, std::string args, std::string currentDirectory, bool wait, Page* currentPage)
 {
 	bool retVal = false;
-	std::string executionString = "\"" + executable + "\" " + args;
+	std::string executionString = "\"" + executable + "\""; // Start with quoted executable
+	if (!args.empty()) {
+		executionString += " " + args; // Append arguments if they exist
+	}
 
 	LOG_INFO("Launcher", "Attempting to launch: " + executionString);
 	LOG_INFO("Launcher", "     from within folder: " + currentDirectory);
@@ -733,7 +736,10 @@ bool Launcher::simpleExecute(std::string executable, std::string args, std::stri
 
 bool Launcher::execute(std::string executable, std::string args, std::string currentDirectory, bool wait, Page* currentPage, bool isAttractMode, Item* collectionItem) {
 	bool retVal = false;
-	std::string executionString = "\"" + executable + "\" " + args;
+	std::string executionString = "\"" + executable + "\""; // Start with quoted executable
+	if (!args.empty()) {
+		executionString += " " + args; // Append arguments if they exist
+	}
 
 	LOG_INFO("Launcher", "Attempting to launch: " + executionString);
 	LOG_INFO("Launcher", "     from within folder: " + currentDirectory);
@@ -754,6 +760,8 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	// Variables to measure gameplay time
 	std::chrono::time_point<std::chrono::steady_clock> startTime;
 	std::chrono::time_point<std::chrono::steady_clock> endTime;
+	std::chrono::time_point<std::chrono::steady_clock> interruptionTime; // <-- NEW: For attract mode interruption start
+	bool userInputDetected = false; // Becomes true if any valid input breaks the loop
 
 	// Start timing if not in attract mode
 	if (!isAttractMode) {
@@ -761,6 +769,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	}
 
 #ifdef WIN32
+
 
 	// Ensure executable and currentDirectory are absolute paths
 	std::filesystem::current_path(Configuration::absolutePath);
@@ -798,13 +807,39 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		};
 
 	HANDLE hLaunchedProcess = nullptr;
+	HANDLE hJob = nullptr;
 	bool handleObtained = false;
+	bool jobAssigned = false;
+
+	hJob = CreateJobObject(NULL, NULL); // Create an unnamed job object
+	if (hJob == NULL) {
+		LOG_ERROR("Launcher", "Failed to create Job Object. Error: " + std::to_string(GetLastError()));
+		// Proceed without job object, termination might be incomplete
+	}
+	else {
+		LOG_INFO("Launcher", "Job Object created successfully.");
+		JOBOBJECT_EXTENDED_LIMIT_INFORMATION jeli = { 0 };
+		jeli.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE; // Kill processes when job handle closes
+
+		if (!SetInformationJobObject(hJob, JobObjectExtendedLimitInformation, &jeli, sizeof(jeli))) {
+			LOG_WARNING("Launcher", "Failed to set Job Object limits (KILL_ON_JOB_CLOSE). Error: " + std::to_string(GetLastError()));
+			// Job object might still work, but auto-cleanup on close might fail.
+		}
+		else {
+			LOG_INFO("Launcher", "Job Object configured with KILL_ON_JOB_CLOSE.");
+		}
+	}
 
 	// Lower priority before launching the process
 	SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
 
+	// --- Determine launch type (.exe or .bat or other) ---
+	std::string extension = Utils::toLower(exePath.extension().string());
+	bool isExe = (extension == ".exe");
+	bool isBat = (extension == ".bat");
+
 	// Check if launching an executable
-	if (exePath.extension() == ".exe") {
+	if (isExe || isBat) {
 		STARTUPINFOA startupInfo{};
 		PROCESS_INFORMATION processInfo{};
 		startupInfo.cb = sizeof(startupInfo);
@@ -822,24 +857,54 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 		LOG_INFO("Launcher", "Command line to be executed: " + commandLine);
 
+		DWORD dwCreationFlags = CREATE_NO_WINDOW | CREATE_SUSPENDED; // Start suspended
+
 		if (CreateProcessA(
 			nullptr,
 			&commandLine[0],          // Mutable command line
 			nullptr,                  // Process security attributes
 			nullptr,                  // Thread security attributes
 			FALSE,                    // Inherit handles
-			CREATE_NO_WINDOW,         // Creation flags
+			dwCreationFlags,          // Creation flags
 			nullptr,                  // Use parent's environment block
 			currDirStr.c_str(),       // Current directory
 			&startupInfo,             // Startup information
-			&processInfo)) {          // Process information
+			&processInfo))			  // Process information
+		{
+			LOG_INFO("Launcher", "Process created suspended successfully.");
 			hLaunchedProcess = processInfo.hProcess;
 			handleObtained = true;
-			CloseHandle(processInfo.hThread);
-			LOG_INFO("Launcher", "Process launched successfully with handle obtained.");
+			if (hJob != NULL) {
+				if (AssignProcessToJobObject(hJob, processInfo.hProcess)) {
+					LOG_INFO("Launcher", "Process successfully assigned to Job Object.");
+					jobAssigned = true;
+				}
+				else {
+					LOG_ERROR("Launcher", "Failed to assign process to Job Object. Error: " + std::to_string(GetLastError()));
+					// Proceed, but termination will rely on the process exiting itself or manual termination later
+				}
+			}
+			if (ResumeThread(processInfo.hThread) == (DWORD)-1) {
+				LOG_ERROR("Launcher", "Failed to resume process thread. Error: " + std::to_string(GetLastError()));
+				// This is bad, the process might be stuck suspended. May need termination.
+				if (jobAssigned) {
+					TerminateJobObject(hJob, 1); // Terminate via job if assigned
+				}
+				else if (hLaunchedProcess) {
+					TerminateProcess(hLaunchedProcess, 1); // Terminate directly otherwise
+				}
+				handleObtained = false; // Mark as failed
+			}
+			else {
+				LOG_INFO("Launcher", "Process resumed successfully.");
+			}
+			// --- End Resume ---
+
+			CloseHandle(processInfo.hThread); // Close thread handle always
+			// Keep hLaunchedProcess (processInfo.hProcess) open for waiting
 		}
 		else {
-			LOG_ERROR("Launcher", "Failed to launch executable: " + exePathStr + " with error code: " + std::to_string(GetLastError()));
+			LOG_ERROR("Launcher", "Failed to launch executable (CreateProcess Suspended): " + exePathStr + " with error code: " + std::to_string(GetLastError()));
 		}
 	}
 	// Use ShellExecuteEx for non-executable files
@@ -856,10 +921,29 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		shExInfo.hInstApp = nullptr;
 
 		if (ShellExecuteExA(&shExInfo)) {
-			hLaunchedProcess = shExInfo.hProcess;
-			if (hLaunchedProcess) {
+			if (shExInfo.hProcess) { // Check if we got a handle
+				LOG_INFO("Launcher", "ShellExecuteEx succeeded and returned process handle.");
+				hLaunchedProcess = shExInfo.hProcess;
 				handleObtained = true;
-				LOG_INFO("Launcher", "ShellExecuteEx successfully launched: " + exePathStr);
+
+				// --- Attempt Assign to Job Object (Less reliable) ---
+				if (hJob != NULL) {
+					if (AssignProcessToJobObject(hJob, shExInfo.hProcess)) {
+						LOG_INFO("Launcher", "Process (from ShellExecuteEx) successfully assigned to Job Object.");
+						jobAssigned = true;
+					}
+					else {
+						// This might happen due to race conditions or permissions
+						LOG_WARNING("Launcher", "Failed to assign process from ShellExecuteEx to Job Object. Error: " + std::to_string(GetLastError()) + ". Child processes might not be terminated.");
+					}
+				}
+				// --- End Assign ---
+				// Keep hLaunchedProcess (shExInfo.hProcess) open for waiting
+			}
+			else {
+				LOG_INFO("Launcher", "ShellExecuteEx succeeded but did not return a process handle (e.g., delegated to existing process). Job Object cannot be assigned.");
+				// No handle, no job assignment possible here. Process might run independently.
+				// We can't monitor or terminate reliably in this specific case.
 			}
 		}
 		else {
@@ -897,11 +981,20 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		if (hwndFullscreen) {
 			DWORD gameProcessId;
 			GetWindowThreadProcessId(hwndFullscreen, &gameProcessId);
-			hLaunchedProcess = OpenProcess(SYNCHRONIZE, FALSE, gameProcessId);
+			// --- Request more access rights for potential termination ---
+			hLaunchedProcess = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION, FALSE, gameProcessId);
 			if (hLaunchedProcess) {
 				handleObtained = true;
-				LOG_INFO("Launcher", "Fullscreen process detected and handle obtained.");
+				LOG_INFO("Launcher", "Fullscreen process detected and handle obtained (PID: " + std::to_string(gameProcessId) + ").");
+				LOG_WARNING("Launcher", "Handle obtained via fullscreen detection. Job Object will *not* be used for termination in this case.");
+				jobAssigned = false; // Explicitly mark job as not assigned/usable for this handle
 			}
+			else {
+				LOG_ERROR("Launcher", "Failed to open detected fullscreen process (PID: " + std::to_string(gameProcessId) + "). Error: " + std::to_string(GetLastError()));
+			}
+		}
+		else {
+			LOG_WARNING("Launcher", "No fullscreen window detected or timeout reached during detection.");
 		}
 	}
 
@@ -919,38 +1012,50 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				is4waySet = true;
 			}
 		}
+
 		if (isAttractMode) {
-			int attractModeLaunchRunTime = 30;
-			config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, attractModeLaunchRunTime);
-			auto start = std::chrono::high_resolution_clock::now();
-			bool userInputDetected = false;
-			bool processTerminated = false;
+			// --- Attract Mode Initialization ---
 
-			// For tracking first input
-			bool firstInputWasExitCommand = false;
-			bool anyInputRegistered = false;
+			int attractModeLaunchRunTime = 30; // Default timeout in seconds
+			config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, attractModeLaunchRunTime); // Read timeout from config
+			auto attractStart = std::chrono::high_resolution_clock::now(); // Record the start time for the timeout
 
-			// Variables for simultaneous button detection
+			// Flags to track state during the loop
+			bool processTerminated = false;   // Becomes true if the process exits on its own
+
+			// Flags for "Last Played" logic
+			bool firstInputWasExitCommand = false; // True if the *first* input was ESC or START+BACK
+			bool anyInputRegistered = false;     // True once *any* input is detected
+
+			// Variables for START+BACK combo detection
 			bool startButtonDown = false;
 			bool backButtonDown = false;
 			auto startPressTime = std::chrono::high_resolution_clock::now();
 			auto backPressTime = std::chrono::high_resolution_clock::now();
-			const int simultaneousThresholdMs = 200; // Consider buttons pressed simultaneously if within 200ms
+			const int simultaneousThresholdMs = 200; // Max time diff for combo
 
-			// Store process ID for window detection
-			DWORD launchedProcessId = GetProcessId(hLaunchedProcess);
+			// Variables for checking process/window state
+			DWORD launchedProcessId = 0;
 			HWND gameWindow = nullptr;
+			if (hLaunchedProcess != NULL) { // Only get PID if we have a valid handle
+				launchedProcessId = GetProcessId(hLaunchedProcess);
+			}
+			else {
+				LOG_WARNING("Launcher", "Attract mode entered but no valid process handle exists!");
+				// The monitoring loop below might not function correctly
+			}
 
-			// Give the process a moment to create its window
+
+			// Give the launched process a moment to initialize and potentially create its window
 			Sleep(500);
 
-			// Function to find the game window based on process ID
+			// Lambda function to find the main visible window associated with the launched process ID
 			auto findGameWindow = [launchedProcessId]() -> HWND {
+				if (launchedProcessId == 0) return nullptr; // Don't search if PID is invalid
 				struct EnumData {
 					DWORD processId;
 					HWND result;
 				};
-
 				EnumData data = { launchedProcessId, nullptr };
 
 				EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
@@ -958,9 +1063,10 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					DWORD windowProcessId = 0;
 					GetWindowThreadProcessId(hwnd, &windowProcessId);
 
+					// Check if PID matches and window is visible
 					if (windowProcessId == data->processId && IsWindowVisible(hwnd)) {
 						data->result = hwnd;
-						return FALSE; // Stop enumeration, we found it
+						return FALSE; // Found it, stop enumerating
 					}
 					return TRUE; // Continue enumeration
 					}, reinterpret_cast<LPARAM>(&data));
@@ -968,247 +1074,251 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				return data.result;
 				};
 
-			// First attempt to find the game window
+			// Try to find the game window immediately after the short sleep
 			gameWindow = findGameWindow();
 			if (gameWindow) {
-				LOG_DEBUG("Launcher", "Found game window handle: 0x" + std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
+				LOG_DEBUG("Launcher", "Found initial game window handle: 0x" + std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
+			}
+			else {
+				LOG_DEBUG("Launcher", "Game window not found immediately.");
 			}
 
-			// Combined input detection function that checks for all input types and special cases
+			// Lambda function to check for various user inputs (Keyboard, XInput Controller)
 			auto checkInputs = [&]() -> bool {
+				// This function checks:
+				// 1. VK_ESCAPE key press -> Sets firstInputWasExitCommand if it's the first input.
+				// 2. XInput START+BACK combo -> Sets firstInputWasExitCommand if it's the first input.
+				// 3. Any other XInput button press.
+				// 4. Various other Keyboard key presses (A-Z, 0-9, Arrows, Enter, Space, etc.).
+				// It sets `anyInputRegistered = true` upon detecting *any* input.
+				// Returns true if any input (exit command or otherwise) is detected, false otherwise.
 				bool inputDetected = false;
 				auto currentTime = std::chrono::high_resolution_clock::now();
 
 				// Check ESC key first (immediate exit command)
 				if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
-					// If this is the first input, mark it as an exit command
-					if (!anyInputRegistered) {
-						firstInputWasExitCommand = true;
-						LOG_INFO("Launcher", "ESC key pressed - game will not be added to last played");
-					}
-					else {
-						LOG_DEBUG("Launcher", "ESC key pressed");
-					}
-
-					anyInputRegistered = true;
-					inputDetected = true;
+					if (!anyInputRegistered) { firstInputWasExitCommand = true; LOG_INFO("Launcher", "ESC key pressed - game will not be added to last played"); }
+					else { LOG_DEBUG("Launcher", "ESC key pressed"); }
+					anyInputRegistered = true; inputDetected = true;
 				}
 
 				// Check controller for START+BACK combo
-				XINPUT_STATE state;
-				ZeroMemory(&state, sizeof(XINPUT_STATE));
-				if (XInputGetState(0, &state) == ERROR_SUCCESS) {
-					// Check START button state change
+				XINPUT_STATE state; ZeroMemory(&state, sizeof(XINPUT_STATE));
+				if (!inputDetected && XInputGetState(0, &state) == ERROR_SUCCESS) {
 					bool startCurrentlyDown = (state.Gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
-					if (startCurrentlyDown != startButtonDown) {
-						startButtonDown = startCurrentlyDown;
-						if (startButtonDown) {
-							startPressTime = currentTime;
-							LOG_DEBUG("Launcher", "START button pressed");
-						}
-					}
-
-					// Check BACK button state change
+					if (startCurrentlyDown != startButtonDown) { startButtonDown = startCurrentlyDown; if (startButtonDown) { startPressTime = currentTime; LOG_DEBUG("Launcher", "START button pressed"); } }
 					bool backCurrentlyDown = (state.Gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
-					if (backCurrentlyDown != backButtonDown) {
-						backButtonDown = backCurrentlyDown;
-						if (backButtonDown) {
-							backPressTime = currentTime;
-							LOG_DEBUG("Launcher", "BACK button pressed");
-						}
-					}
+					if (backCurrentlyDown != backButtonDown) { backButtonDown = backCurrentlyDown; if (backButtonDown) { backPressTime = currentTime; LOG_DEBUG("Launcher", "BACK button pressed"); } }
 
-					// If both buttons are pressed, check if they were pressed simultaneously
 					if (startButtonDown && backButtonDown) {
-						auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(
-							std::max(startPressTime, backPressTime) - std::min(startPressTime, backPressTime)
-						).count();
-
+						auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(std::max(startPressTime, backPressTime) - std::min(startPressTime, backPressTime)).count();
 						if (timeDiff <= simultaneousThresholdMs) {
-							// If this is the first input, flag it
-							if (!anyInputRegistered) {
-								firstInputWasExitCommand = true;
-								LOG_INFO("Launcher", "START+BACK combo detected (within " +
-									std::to_string(timeDiff) + "ms) - game will not be added to last played");
-							}
-							else {
-								LOG_DEBUG("Launcher", "START+BACK combo detected (within " + std::to_string(timeDiff) + "ms)");
-							}
-
+							if (!anyInputRegistered) { firstInputWasExitCommand = true; LOG_INFO("Launcher", "START+BACK combo detected (within " + std::to_string(timeDiff) + "ms) - game will not be added to last played"); }
+							else { LOG_DEBUG("Launcher", "START+BACK combo detected (within " + std::to_string(timeDiff) + "ms)"); }
 							inputDetected = true;
 						}
 					}
-
-					// Check any other controller buttons (individual START or BACK are included here)
-					if (state.Gamepad.wButtons != 0 && !inputDetected) {
-						if (!anyInputRegistered) {
-							LOG_INFO("Launcher", "Controller input - game will be added to last played");
-						}
-						else {
-							LOG_DEBUG("Launcher", "Controller input detected");
-						}
-						anyInputRegistered = true;
-						inputDetected = true;
+					// Check any other controller buttons
+					if (!inputDetected && state.Gamepad.wButtons != 0) {
+						if (!anyInputRegistered) { LOG_INFO("Launcher", "Controller input - game will be added to last played"); }
+						else { LOG_DEBUG("Launcher", "Controller input detected"); }
+						anyInputRegistered = true; inputDetected = true;
 					}
 				}
 
 				// Check other keyboard keys if no input detected yet
 				if (!inputDetected) {
-					for (int virtualKey : {
-						// Letters A-Z
-						0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A,
-							0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54,
-							0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, // A-Z
-							// Numbers 0-9
+					for (int virtualKey : { /* Common keys list */
+						0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, // A-Z
 							0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, // 0-9
-							// Arrow keys
-							VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT,
-							// Other common keys (excluding ESC which was already checked)
-							VK_RETURN, VK_SPACE, VK_TAB, VK_BACK,
-							// Modifier keys
-							VK_SHIFT, VK_CONTROL, VK_MENU // Shift, Ctrl, Alt
+							VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_SPACE, VK_TAB, VK_BACK, VK_SHIFT, VK_CONTROL, VK_MENU
 					}) {
 						if (GetAsyncKeyState(virtualKey) & 0x8000) {
-							if (!anyInputRegistered) {
-								LOG_INFO("Launcher", "Keyboard input - game will be added to last played");
-							}
-							else {
-								LOG_DEBUG("Launcher", "Keyboard input detected");
-							}
-							anyInputRegistered = true;
-							inputDetected = true;
-							break;
+							if (!anyInputRegistered) { LOG_INFO("Launcher", "Keyboard input - game will be added to last played"); }
+							else { LOG_DEBUG("Launcher", "Keyboard input detected"); }
+							anyInputRegistered = true; inputDetected = true; break;
 						}
 					}
 				}
-
 				return inputDetected;
 				};
 
-			// Window check counter to reduce frequency of checks
+			// Counter to reduce frequency of IsWindow checks
 			int windowCheckCounter = 0;
 
+			// --- Attract Mode Main Monitoring Loop ---
+			LOG_INFO("Launcher", "Entering Attract Mode monitoring loop (Timeout: " + std::to_string(attractModeLaunchRunTime) + "s)");
 			while (true) {
-				// Process window messages
+				// 1. Process Windows messages to keep UI responsive (if any) and allow input detection
 				MSG msg;
 				while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 					DispatchMessage(&msg);
 				}
 
-				// Check for any input (keyboard, controller, or special combos)
+				// 2. Check for user input interruption
 				if (checkInputs()) {
-					LOG_INFO("Launcher", "User interrupted attract mode - waiting for game to exit");
+					interruptionTime = std::chrono::steady_clock::now(); // <-- RECORD INTERRUPTION TIME
+					LOG_INFO("Launcher", "User input detected during attract mode.");
 					userInputDetected = true;
-					break;
+					break; // Exit the monitoring loop
 				}
 
-				// Check if the window still exists (do this every 5 loops to reduce overhead)
-				if (++windowCheckCounter % 5 == 0) {
-					if (gameWindow) {
-						if (!IsWindow(gameWindow)) {
-							LOG_INFO("Launcher", "Game window closed - process is terminating");
-							processTerminated = true;
-							break;
+				// Only proceed with process/window checks if we have a valid handle
+				if (hLaunchedProcess != NULL) {
+					// 3. Check if the game window still exists (less frequently)
+					if (++windowCheckCounter % 5 == 0) { // Check every 5 iterations (~500ms)
+						if (gameWindow) { // If we previously found the window
+							if (!IsWindow(gameWindow)) {
+								LOG_INFO("Launcher", "Game window handle became invalid (closed).");
+								processTerminated = true;
+								break; // Exit the monitoring loop
+							}
+						}
+						else {
+							// If we haven't found the window yet, try again
+							gameWindow = findGameWindow();
+							if (gameWindow) {
+								LOG_DEBUG("Launcher", "Found game window handle during loop: 0x" + std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
+							}
 						}
 					}
-					else {
-						// Try to find the window if we don't have it yet
-						gameWindow = findGameWindow();
-						if (gameWindow) {
-							LOG_DEBUG("Launcher", "Found game window handle: 0x" +
-								std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
-						}
+
+					// 4. Check if the process itself has exited (primary method)
+					DWORD exitCode;
+					// Use GetExitCodeProcess for a definitive check
+					if (!GetExitCodeProcess(hLaunchedProcess, &exitCode)) {
+						// This usually means the handle is invalid or access denied
+						DWORD error = GetLastError();
+						LOG_WARNING("Launcher", "GetExitCodeProcess failed during attract mode. Error: " + std::to_string(error));
+						processTerminated = true; // Assume terminated if we can't query it
+						break; // Exit the monitoring loop
+					}
+
+					if (exitCode != STILL_ACTIVE) {
+						LOG_INFO("Launcher", "Process terminated naturally during attract mode (Exit Code: " + std::to_string(exitCode) + ").");
+						processTerminated = true;
+						break; // Exit the monitoring loop
+					}
+				}
+				else {
+					// If we don't have a handle, we can't reliably check termination.
+					// The timeout is the only exit condition in this case.
+					// Add a small log warning if this state persists.
+					if (windowCheckCounter % 100 == 0) { // Log occasionally
+						LOG_WARNING("Launcher", "Attract mode running without valid process handle for monitoring.");
 					}
 				}
 
-				// Check if the launched process has exited (use this as a backup method)
-				DWORD exitCode;
-				if (!GetExitCodeProcess(hLaunchedProcess, &exitCode)) {
-					DWORD error = GetLastError();
-					LOG_WARNING("Launcher", "Failed to get process exit code, error: " + std::to_string(error));
-					processTerminated = true;
-					break;
-				}
 
-				if (exitCode != STILL_ACTIVE) {
-					LOG_INFO("Launcher", "Process terminated with exit code: " + std::to_string(exitCode));
-					processTerminated = true;
-					break;
-				}
-
-				// Check if the timeout has been reached
+				// 5. Check if the attract mode timer has expired
 				auto now = std::chrono::high_resolution_clock::now();
-				auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - start).count();
+				auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - attractStart).count();
 				if (elapsed >= attractModeLaunchRunTime) {
-					LOG_INFO("Launcher", "Attract mode timeout reached - terminating game");
-					break;
+					LOG_INFO("Launcher", "Attract mode timeout reached (" + std::to_string(elapsed) + "s >= " + std::to_string(attractModeLaunchRunTime) + "s).");
+					break; // Exit the monitoring loop
 				}
 
-				// Sleep to prevent high CPU usage
+				// 6. Sleep briefly to avoid pegging the CPU
 				std::this_thread::sleep_for(std::chrono::milliseconds(100));
 			}
+			// --- End Attract Mode Main Monitoring Loop ---
 
+
+			// --- Post-Loop Actions based on Exit Condition ---
+
+			// Case 1: User interrupted the attract mode
 			if (userInputDetected) {
-				bool shouldAddToLastPlayed = !firstInputWasExitCommand;
+				LOG_INFO("Launcher", "User interrupted attract mode. Waiting for process to exit naturally...");
+				bool shouldAddToLastPlayed = !firstInputWasExitCommand; // Determine if it counts as "played"
 
-				// Wait indefinitely for the process to exit
-				while (WAIT_OBJECT_0 != MsgWaitForMultipleObjects(1, &hLaunchedProcess, FALSE, INFINITE, QS_ALLINPUT)) {
-					MSG msg;
-					while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
-						DispatchMessage(&msg);
-					}
+				// Wait indefinitely for the process to terminate on its own
+				// Only wait if we actually have a handle to wait on
+				if (hLaunchedProcess != NULL) {
+					while (WAIT_OBJECT_0 != MsgWaitForMultipleObjects(1, &hLaunchedProcess, FALSE, INFINITE, QS_ALLINPUT)) {
+						// Keep processing messages while waiting
+						MSG msg;
+						while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
+							DispatchMessage(&msg);
+						}
 
-					// Also check window existence as a backup during this wait
-					if (gameWindow && !IsWindow(gameWindow)) {
-						LOG_DEBUG("Launcher", "Game window closed while waiting in user input mode");
-						break; // Exit the wait loop since the window is gone
+						// Also check window existence as a backup, in case the process hangs but window closes
+						if (gameWindow && !IsWindow(gameWindow)) {
+							LOG_DEBUG("Launcher", "Game window closed while waiting post-user-input.");
+							break; // Stop waiting if window is gone
+						}
+						std::this_thread::sleep_for(std::chrono::milliseconds(10));
 					}
+					LOG_INFO("Launcher", "Process finished exiting after user interruption.");
+				}
+				else {
+					LOG_WARNING("Launcher", "User interrupted, but no process handle to wait on.");
+					// Cannot wait, just proceed.
 				}
 
-				// Only add to last played if first input wasn't an exit command
-				if (shouldAddToLastPlayed) {
-					LOG_INFO("Launcher", "Adding game to last played");
 
-					// Add to last played
+				// Add to "Last Played" playlist ONLY if the first input wasn't an exit command
+				if (shouldAddToLastPlayed) {
+					LOG_INFO("Launcher", "Adding game to last played playlist.");
+					// ... (Your existing CollectionInfoBuilder logic to update last played) ...
 					CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
 					std::string lastPlayedSkipCollection = "";
 					int size = 0;
 					config_.getProperty(OPTION_LASTPLAYEDSKIPCOLLECTION, lastPlayedSkipCollection);
 					config_.getProperty(OPTION_LASTPLAYEDSIZE, size);
-
 					if (lastPlayedSkipCollection != "") {
-						// Check if collection should be skipped
-						std::stringstream ss(lastPlayedSkipCollection);
-						std::string collection = "";
-						bool updateLastPlayed = true;
-						while (ss.good()) {
-							getline(ss, collection, ',');
-							if (collectionItem->collectionInfo->name == collection) {
-								updateLastPlayed = false;
-								break;
-							}
-						}
-
-						// Update last played collection if needed
-						if (updateLastPlayed) {
-							cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, size);
-						}
+						std::stringstream ss(lastPlayedSkipCollection); std::string collection = ""; bool updateLastPlayed = true;
+						while (ss.good()) { getline(ss, collection, ','); if (collectionItem->collectionInfo->name == collection) { updateLastPlayed = false; break; } }
+						if (updateLastPlayed) { cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, size); }
 					}
 				}
-			}
-			else if (!processTerminated) {
-				// Timer elapsed case (process still running)
-				DWORD processId = GetProcessId(hLaunchedProcess);
-				if (processId != 0) {
-					// Extract the executable base name to ensure we terminate the right process
-					std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
-					TerminateProcessAndChildren(processId, exeName);
-				}
 				else {
-					LOG_WARNING("Launcher", "Could not get process ID for termination");
+					LOG_INFO("Launcher", "Game will not be added to last played (exit command used).");
 				}
 			}
-		}
+			// Case 2: Timer expired AND the process didn't terminate on its own during the loop
+			else if (!processTerminated) {
+				LOG_INFO("Launcher", "Attract mode timeout reached - attempting termination.");
+
+				// --- Use Job Object if available and assigned ---
+				if (jobAssigned && hJob != NULL) {
+					LOG_INFO("Launcher", "Terminating process and children via Job Object.");
+					if (!TerminateJobObject(hJob, 1)) { // Use exit code 1 for termination
+						LOG_ERROR("Launcher", "TerminateJobObject failed. Error: " + std::to_string(GetLastError()));
+						// Termination might not have happened. The process might continue running.
+					}
+					else {
+						LOG_INFO("Launcher", "TerminateJobObject called successfully.");
+						// KILL_ON_JOB_CLOSE should ensure cleanup even if this call had issues,
+						// but explicit termination is preferred.
+					}
+				}
+				// --- Fallback to TerminateProcessAndChildren if Job Object wasn't used/assigned ---
+				else if (hLaunchedProcess != NULL) {
+					LOG_WARNING("Launcher", "Job Object not assigned or unavailable; falling back to TerminateProcessAndChildren.");
+					DWORD processId = GetProcessId(hLaunchedProcess); // Re-get PID just in case
+					if (processId != 0) {
+						std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
+						// Create a *new* set for this specific termination attempt
+						std::set<DWORD> processedIds;
+						TerminateProcessAndChildren(processId, exeName, processedIds); // Call the recursive termination
+					}
+					else {
+						LOG_WARNING("Launcher", "Could not get process ID for fallback termination via TerminateProcessAndChildren.");
+					}
+				}
+				// --- No handle case ---
+				else {
+					LOG_ERROR("Launcher", "Attract mode timeout but no valid process handle or job object to terminate!");
+				}
+				// Optional: Wait briefly after issuing termination command
+				Sleep(500);
+			}
+			// Case 3: Process terminated on its own before timeout/input
+			else { // processTerminated is true
+				LOG_INFO("Launcher", "Process terminated naturally before attract mode timeout or user input.");
+				// No termination action needed.
+			}
+		} // End of if(isAttractMode)
 		else if (wait) {
 			LOG_INFO("Launcher", "Waiting for launched process to complete.");
 			while (WAIT_OBJECT_0 != MsgWaitForMultipleObjects(1, &hLaunchedProcess, FALSE, INFINITE, QS_ALLINPUT)) {
@@ -1219,6 +1329,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			}
 			LOG_INFO("Launcher", "Process completed.");
 		}
+
+		endTime = std::chrono::steady_clock::now();
+		LOG_DEBUG("Launcher", "Recording end time.");
 
 		// Restore ServoStik if needed
 		if (is4waySet) {
@@ -1234,11 +1347,17 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		if (hLaunchedProcess != nullptr) {
 			CloseHandle(hLaunchedProcess);
 			hLaunchedProcess = nullptr;
+			LOG_DEBUG("Launcher", "Closed hLaunchedProcess handle.");
 		}
 		retVal = true;
 	}
 	else {
 		LOG_WARNING("Launcher", "No handle was obtained; process monitoring will not occur.");
+	}
+	if (hJob != NULL) {
+		CloseHandle(hJob);
+		hJob = NULL;
+		LOG_INFO("Launcher", "Job Object handle closed.");
 	}
 
 	bool highPriority = false;
@@ -1247,6 +1366,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 #else
 	// Unix/Linux-specific execution logic
+
 
 	bool is4waySet = false;
 	bool isServoStikEnabled = false;
@@ -1429,7 +1549,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		}
 
 	}
+
 #endif
+
 
 	// Cleanup for animation thread if started
 	if (multiple_display && !stop_thread) {
@@ -1437,17 +1559,38 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		proc_thread.join();
 	}
 
+	double gameplayDuration = 0.0;
+	bool trackTime = false;
+
 	if (!isAttractMode) {
-		endTime = std::chrono::steady_clock::now();
-		double gameplayDuration = static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime).count());
+		// Normal gameplay: duration is endTime - startTime
+		gameplayDuration = static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime).count());
+		trackTime = true; // Always track time in normal mode
+		LOG_DEBUG("Launcher", "Calculating timeSpent for normal mode.");
+	}
+	else if (userInputDetected) { // isAttractMode was true AND user interrupted
+		// Interrupted attract mode: duration is endTime - interruptionTime
+		gameplayDuration = static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(endTime - interruptionTime).count());
+		trackTime = true; // Track time because user played
+		LOG_DEBUG("Launcher", "Calculating timeSpent for interrupted attract mode.");
+	}
+	else {
+		// Attract mode ran to completion or timed out without interruption
+		LOG_DEBUG("Launcher", "Not calculating timeSpent (attract mode completed/timed out).");
+	}
+
+	if (trackTime) {
+		// Ensure duration isn't negative due to clock weirdness (highly unlikely but safe)
+		if (gameplayDuration < 0) gameplayDuration = 0;
+
 		LOG_INFO("Launcher", "Gameplay time recorded: " + std::to_string(gameplayDuration) + " seconds.");
 
-		// Update timeSpent and save it
 		if (collectionItem != nullptr) {
 			CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
 			cib.updateTimeSpent(collectionItem, gameplayDuration);
 		}
 	}
+
 	if (executable.find("mame") != std::string::npos) {
 		HiScores::getInstance().runHi2TxtAsync(collectionItem->name);
 	}
