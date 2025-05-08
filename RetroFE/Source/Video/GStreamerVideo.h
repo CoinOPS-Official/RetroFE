@@ -24,6 +24,7 @@
 #include <shared_mutex>
 #include <string>
 #include <optional>
+#include <functional>
 
 
 extern "C" {
@@ -89,6 +90,8 @@ public:
     }
 
 private:
+    mutable std::mutex drawMutex_;
+    std::atomic<uint64_t> mappingGeneration_{ 0 };
     static std::vector<GStreamerVideo*> activeVideos_;
     static std::mutex activeVideosMutex_;
 
@@ -99,18 +102,19 @@ private:
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
-    bool updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame);
-    bool updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFrame* frame);
-    bool updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFrame* frame);
+    std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
+    bool updateTextureFromFrameIYUV(SDL_Texture*, GstVideoFrame*);
+    bool updateTextureFromFrameNV12(SDL_Texture*, GstVideoFrame*);
+    bool updateTextureFromFrameRGBA(SDL_Texture*, GstVideoFrame*);
     void createSdlTexture();
     GstElement* playbin_{ nullptr };          // for playbin3
     GstElement* videoSink_{ nullptr };     // for appsink
     GstElement* perspective_{ nullptr };
-    GstVideoInfo* videoInfo_{ nullptr };
     SDL_Texture* videoTexture_ = nullptr;    // Texture for video content
     SDL_Texture* alphaTexture_ = nullptr;    // Transparent texture for transitions
     SDL_Texture* texture_ = nullptr;         // Points to either videoTexture_ or alphaTexture_
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
+    void initializeUpdateFunction();
     guint elementSetupHandlerId_{ 0 };
     guint padProbeId_{ 0 };
     GValueArray* gva_;

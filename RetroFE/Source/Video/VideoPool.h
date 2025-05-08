@@ -53,10 +53,11 @@ private:
         PoolInfo(PoolInfo&&) = delete;
         PoolInfo& operator=(PoolInfo&&) = delete;
     };
-
-    using PoolMap = std::unordered_map<int, std::unordered_map<int, PoolInfo>>;
+    using PoolInfoPtr = std::shared_ptr<PoolInfo>;
+    using ListPoolMap = std::map<int, PoolInfoPtr>;
+    using PoolMap = std::map<int, ListPoolMap>;
     static PoolMap pools_;
     static std::shared_mutex mapMutex_;
 
-    static PoolInfo* getPoolInfo(int monitor, int listId);
+    static PoolInfoPtr getPoolInfo(int monitor, int listId);
 };

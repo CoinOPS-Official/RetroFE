@@ -117,7 +117,7 @@ GStreamerVideo::~GStreamerVideo() {
 }
 
 void GStreamerVideo::createAlphaTexture() {
-	SDL_LockMutex(SDL::getMutex());
+	SDL_LockMutex(SDL::getMutex()); // Per-monitor mutex
 	if (alphaTexture_) {
 		SDL_UnlockMutex(SDL::getMutex());
 		return;
@@ -129,6 +129,7 @@ void GStreamerVideo::createAlphaTexture() {
 
 	if (!alphaTexture_) {
 		LOG_ERROR("GStreamerVideo", "Failed to create alpha texture: " + std::string(SDL_GetError()));
+		hasError_.store(true, std::memory_order_release);
 		SDL_UnlockMutex(SDL::getMutex());
 		return;
 	}
@@ -136,9 +137,9 @@ void GStreamerVideo::createAlphaTexture() {
 	SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
 	SDL_SetTextureBlendMode(alphaTexture_, blendMode);
 
-	const int pitch = ALPHA_TEXTURE_SIZE * 4;  // 4 bytes per pixel
+	const int pitch = ALPHA_TEXTURE_SIZE * 4;
 	const int size = pitch * ALPHA_TEXTURE_SIZE;
-	std::vector<uint8_t> pixels(size, 0);  // Transparent black
+	std::vector<uint8_t> pixels(size, 0);
 	if (SDL_UpdateTexture(alphaTexture_, nullptr, pixels.data(), pitch) != 0) {
 		LOG_ERROR("GStreamerVideo", "Failed to update alpha texture: " + std::string(SDL_GetError()));
 		hasError_.store(true, std::memory_order_release);
@@ -361,10 +362,6 @@ bool GStreamerVideo::stop() {
 	}
 
 	SDL_LockMutex(SDL::getMutex());
-	if (videoInfo_) {
-		gst_video_info_free(videoInfo_);
-		videoInfo_ = nullptr;
-	}
 
 	if (texture_ != nullptr)
 	{
@@ -455,6 +452,8 @@ bool GStreamerVideo::unload() {
 	lastSetVolume_ = -1.0f;
 	lastSetMuteState_ = false;
 	volume_ = 0.0f;
+
+	mappingGeneration_.store(0, std::memory_order_release); // Reset for the next playback session
 
 	textureWidth_.store(width_.load(std::memory_order_acquire), std::memory_order_release);
 	textureHeight_.store(height_.load(std::memory_order_acquire), std::memory_order_release);
@@ -646,8 +645,36 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		std::lock_guard<std::mutex> lock(activeVideosMutex_);
 		activeVideos_.push_back(this);
 	}
+	
+	initializeUpdateFunction();
 
 	return true;
+}
+
+void GStreamerVideo::initializeUpdateFunction() {
+	switch (sdlFormat_) {
+		case SDL_PIXELFORMAT_IYUV:
+		updateTextureFunc_ = [this](SDL_Texture* tex, GstVideoFrame* frame) {
+			return updateTextureFromFrameIYUV(tex, frame);
+			};
+		break;
+		case SDL_PIXELFORMAT_NV12:
+		updateTextureFunc_ = [this](SDL_Texture* tex, GstVideoFrame* frame) {
+			return updateTextureFromFrameNV12(tex, frame);
+			};
+		break;
+		case SDL_PIXELFORMAT_ABGR8888:
+		updateTextureFunc_ = [this](SDL_Texture* tex, GstVideoFrame* frame) {
+			return updateTextureFromFrameRGBA(tex, frame);
+			};
+		break;
+		default:
+		LOG_ERROR("GStreamerVideo", "Unsupported pixel format during initialization");
+		updateTextureFunc_ = [](SDL_Texture*, GstVideoFrame*) {
+			return false;
+			};
+		break;
+	}
 }
 
 bool GStreamerVideo::play(const std::string& file) {
@@ -745,20 +772,11 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 		GstCaps* caps = nullptr;
 		gst_event_parse_caps(event, &caps);
 		if (caps) {
-			// Create new video info from caps
-			GstVideoInfo* newInfo = gst_video_info_new_from_caps(caps);
-			if (newInfo) {
-				// Store dimensions before freeing old info
-				int newWidth = GST_VIDEO_INFO_WIDTH(newInfo);
-				int newHeight = GST_VIDEO_INFO_HEIGHT(newInfo);
+			const GstStructure* s = gst_caps_get_structure(caps, 0);
+			int newWidth = 0, newHeight = 0;
 
-				// Free old info and update pointer atomically
-				if (video->videoInfo_) {
-					gst_video_info_free(video->videoInfo_);
-				}
-				video->videoInfo_ = newInfo;
-
-				if (newWidth > 0 && newHeight > 0) {
+			if (gst_structure_get_int(s, "width", &newWidth) &&
+				gst_structure_get_int(s, "height", &newHeight)) {
 					// Update texture validity
 					if (video->videoTexture_ &&
 						video->textureWidth_.load(std::memory_order_acquire) == newWidth &&
@@ -810,7 +828,7 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 					video->isPlaying_.store(true, std::memory_order_release);
 					LOG_DEBUG("GStreamerVideo", "Caps processed, video is now playing: " + video->currentFile_);
 				}
-			}
+			
 		}
 		gst_pad_remove_probe(pad, video->padProbeId_);
 		video->padProbeId_ = 0;
@@ -910,162 +928,162 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-	// Cache atomic states at the beginning to avoid repeated loads
-	bool isPlaying = isPlaying_.load(std::memory_order_acquire);
-
-	// Early exit if not playing or stopping is in progress
-	if (!isPlaying) {
+	std::lock_guard<std::mutex> lock(drawMutex_);  // use SDL_LockMutex if using SDL_mutex*
+	
+	// --- Early exit if not playing ---
+	if (!isPlaying_.load(std::memory_order_acquire)) {
 		return;
 	}
 
-	// Try to pull a sample from the appsink (GStreamer operation - no mutex needed)
 	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
-
 	if (!sample) {
+		// Handle EOS or just return if no frame ready
+		// Your existing EOS logic here...
 		return;
 	}
 
-	// Get buffer from sample (GStreamer operation - no mutex needed)
-	GstBuffer* buf = gst_sample_get_buffer(sample);
-	GstVideoFrame frame;
-
-	// Check for valid video info and map the frame (GStreamer operation - no mutex needed)
-	if (!videoInfo_ || !gst_video_frame_map(&frame, videoInfo_, buf, GST_MAP_READ)) {
+	GstBuffer* originalBuf = gst_sample_get_buffer(sample);
+	if (!originalBuf) {
 		gst_sample_unref(sample);
 		return;
 	}
 
-	// Now we need the SDL mutex only for texture operations
-	SDL_LockMutex(SDL::getMutex());
-
-	// Cache texture validity once inside the mutex section
-	bool textureValid = textureValid_.load(std::memory_order_acquire);
-
-	// Check if we need to switch to video texture
-	if (textureValid && texture_ != videoTexture_) {
-		texture_ = videoTexture_;
+	// --- Get Caps and Video Info ---
+	GstCaps* caps = gst_sample_get_caps(sample);
+	if (!caps) {
+		SDL_UnlockMutex(SDL::getMutex());
+		gst_sample_unref(sample);
+		return;
+	}
+	GstVideoInfo freshInfo;
+	if (!gst_video_info_from_caps(&freshInfo, caps)) {
+		SDL_UnlockMutex(SDL::getMutex());
+		gst_sample_unref(sample); // Unref sample, no buffer ref taken yet
+		return;
 	}
 
-	// Handle texture creation if needed
+	// --- Ref Buffer (Inside mutex, AFTER getting info) ---
+	GstBuffer* buf = gst_buffer_ref(originalBuf); // Ref the buffer WE are processing
+
+	// --- Prepare for Mapping: Increment Generation ---
+	// Use sequentially consistent ordering for simplicity, or acquire/release if optimized
+	uint64_t currentGeneration = mappingGeneration_.fetch_add(1, std::memory_order_seq_cst) + 1;
+
+	// --- Map Frame ---
+	GstVideoFrame frame;
+	bool mapped = gst_video_frame_map(&frame, &freshInfo, buf, GST_MAP_READ);
+
+	if (!mapped) {
+		// Map failed, cleanup and exit critical section
+		SDL_UnlockMutex(SDL::getMutex());
+		gst_buffer_unref(buf);
+		gst_sample_unref(sample);
+		return;
+	}
+
+	// --- Check Texture Validity (if needed) ---
+	bool textureValid = textureValid_.load(std::memory_order_acquire); // Or however you check
 	if (!textureValid) {
+		// Attempt to create texture. If fails, need to cleanup.
 		createSdlTexture();
+		textureValid = textureValid_.load(std::memory_order_acquire); // Re-check
 
-		// Refresh our cached value after createSdlTexture
-		textureValid = textureValid_.load(std::memory_order_acquire);
-
-		// Bail out if texture creation failed
-		if (!textureValid || !texture_) {
-			SDL_UnlockMutex(SDL::getMutex());
+		if (!textureValid || !texture_) { // Check if creation failed or texture pointer is null
+			// Cleanup if texture creation failed
 			gst_video_frame_unmap(&frame);
+			SDL_UnlockMutex(SDL::getMutex());
+			gst_buffer_unref(buf);
 			gst_sample_unref(sample);
 			return;
 		}
 	}
-
-	// Refresh after possible recreate
-	textureValid = textureValid_.load(std::memory_order_acquire);
-
-	if (textureValid && texture_ == videoTexture_) {
-		bool success = false;
-
-		switch (sdlFormat_) {
-			case SDL_PIXELFORMAT_IYUV:
-			success = updateTextureFromFrameIYUV(texture_, &frame);
-			break;
-			case SDL_PIXELFORMAT_NV12:
-			success = updateTextureFromFrameNV12(texture_, &frame);
-			break;
-			case SDL_PIXELFORMAT_ABGR8888:
-			success = updateTextureFromFrameRGBA(texture_, &frame);
-			break;
-			default:
-			LOG_ERROR("GStreamerVideo", "Unsupported pixel format in draw()");
-			break;
-		}
-
-		if (!success) {
-			textureValid_.store(false, std::memory_order_release);
-		}
+	// Ensure texture_ points to the correct texture if different caches exist
+	if (texture_ != videoTexture_) {
+		texture_ = videoTexture_;
 	}
 
+
+	// --- <<< CRITICAL CHECK >>> ---
+	// Verify if another thread has mapped *after* we did, invalidating our map.
+	if (mappingGeneration_.load(std::memory_order_seq_cst) != currentGeneration) {
+		// Stale mapping detected! Another thread ran this section after we mapped.
+		LOG_WARNING("GStreamerVideo", "Stale mapping detected (Thread ID: %lu). Aborting texture update.");
+
+		// Cleanup immediately, do not use 'frame'
+		gst_video_frame_unmap(&frame);
+		SDL_UnlockMutex(SDL::getMutex());
+		gst_buffer_unref(buf);
+		gst_sample_unref(sample);
+		return; // Abort this draw cycle
+	}
+
+	// --- Update Texture (Only if generation check passed) ---
+	if (texture_ && updateTextureFunc_) { // Check texture_ again just in case
+		bool success = updateTextureFunc_(texture_, &frame);
+		if (!success) {
+			// Handle update failure, maybe invalidate texture
+			textureValid_.store(false, std::memory_order_release); // Example
+		}
+	}
+	else {
+		LOG_ERROR("GStreamerVideo", "Texture or update function missing.");
+	}
+
+	// --- Unmap Frame ---
+	gst_video_frame_unmap(&frame);
+
+	// --- Release Mutex ---
 	SDL_UnlockMutex(SDL::getMutex());
 
-	// Unmap and unref GStreamer objects
-	gst_video_frame_unmap(&frame);
+	// --- Unref Buffer and Sample (Outside mutex is fine) ---
+	gst_buffer_unref(buf);
 	gst_sample_unref(sample);
 }
 
 bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) {
-	void* pixels = nullptr;
-	int pitch = 0;
-	if (SDL_LockTexture(texture, nullptr, &pixels, &pitch) != 0)
-		return false;
+	const Uint8* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+	const Uint8* srcU = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
+	const Uint8* srcV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 2));
 
-	uint8_t* dst = static_cast<uint8_t*>(pixels);
-
-	const int width = GST_VIDEO_FRAME_COMP_WIDTH(frame, 0);
-	const int height = GST_VIDEO_FRAME_COMP_HEIGHT(frame, 0);
-
-	const uint8_t* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
-	const uint8_t* srcU = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
-	const uint8_t* srcV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 2));
-
+	// Stride IS the distance between rows in the source buffer
 	const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
 	const int strideU = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
 	const int strideV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 2);
 
-	uint8_t* dstU = dst + height * pitch;
-	uint8_t* dstV = dstU + (height / 2) * (pitch / 2);
+	// Get the actual video dimensions from the frame
+	const int frame_width = GST_VIDEO_FRAME_WIDTH(frame);
+	const int frame_height = GST_VIDEO_FRAME_HEIGHT(frame);
 
-	// Copy Y plane
-	for (int y = 0; y < height; ++y) {
-		SDL_memcpy(dst + y * pitch, srcY + y * strideY, width);
+	SDL_Rect frame_rect = { 0, 0, frame_width, frame_height };
+
+	// Update the texture using the explicit frame rectangle
+	if (SDL_UpdateYUVTexture(texture, &frame_rect, srcY, strideY, srcU, strideU, srcV, strideV) != 0) {
+		LOG_ERROR("GStreamerVideo", std::string("SDL_UpdateYUVTexture failed: ") + SDL_GetError());
+		return false;
 	}
 
-	// Copy U plane
-	for (int y = 0; y < height / 2; ++y) {
-		SDL_memcpy(dstU + y * (pitch / 2), srcU + y * strideU, width / 2);
-	}
-
-	// Copy V plane
-	for (int y = 0; y < height / 2; ++y) {
-		SDL_memcpy(dstV + y * (pitch / 2), srcV + y * strideV, width / 2);
-	}
-
-	SDL_UnlockTexture(texture);
 	return true;
 }
 
 bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFrame* frame) {
-	void* pixels = nullptr;
-	int pitch = 0;
-	if (SDL_LockTexture(texture, nullptr, &pixels, &pitch) != 0)
-		return false;
-
-	uint8_t* dst = static_cast<uint8_t*>(pixels);
-
-	const int width = GST_VIDEO_FRAME_COMP_WIDTH(frame, 0);
-	const int height = GST_VIDEO_FRAME_COMP_HEIGHT(frame, 0);
-
 	const uint8_t* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
 	const uint8_t* srcUV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
 
 	const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
 	const int strideUV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
 
-	uint8_t* dstUV = dst + height * pitch;
+	// Get the actual video dimensions from the frame
+	const int frame_width = GST_VIDEO_FRAME_WIDTH(frame);
+	const int frame_height = GST_VIDEO_FRAME_HEIGHT(frame);
 
-	// --- Copy Y plane ---
-	for (int y = 0; y < height; ++y) {
-		SDL_memcpy(dst + y * pitch, srcY + y * strideY, width);
+	SDL_Rect frame_rect = { 0, 0, frame_width, frame_height };
+
+	// Use SDL_UpdateNVTexture for NV12 format
+	if (SDL_UpdateNVTexture(texture, &frame_rect, srcY, strideY, srcUV, strideUV) != 0) {
+		LOG_ERROR("GStreamerVideo", std::string("SDL_UpdateNVTexture failed: ") + SDL_GetError());
+		return false;
 	}
 
-	// --- Copy UV plane ---
-	for (int y = 0; y < height / 2; ++y) {
-		SDL_memcpy(dstUV + y * pitch, srcUV + y * strideUV, width);
-	}
-
-	SDL_UnlockTexture(texture);
 	return true;
 }
 
