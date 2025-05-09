@@ -1371,18 +1371,23 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 	pid_t pid = fork();
 
+	pid_t pid = fork();
 	if (pid == -1) {
-		// Fork failed
 		LOG_ERROR("Launcher", "Failed to fork a new process.");
 		return false;
 	}
 	else if (pid == 0) {
-		// Child process: Change directory and execute command
-		if (!currentDirectory.empty() && chdir(currentDirectory.c_str()) != 0) {
-			LOG_ERROR("Launcher", "Failed to change directory to: " + currentDirectory);
-			exit(EXIT_FAILURE);
+		// === CHILD PROCESS ===
+		if (!currentDirectory.empty()) {
+			if (chdir(currentDirectory.c_str()) != 0) {
+				// Use low-level write to stderr; don't touch std::string or logging
+				const char* msg = "Launcher: Failed to change directory.\n";
+				write(STDERR_FILENO, msg, strlen(msg));
+				_exit(EXIT_FAILURE);
+			}
 		}
 
+		// Build argument vector
 		std::vector<std::string> argVector;
 		std::istringstream argsStream(args);
 		std::string arg;
@@ -1392,14 +1397,18 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 		std::vector<char*> execArgs;
 		execArgs.push_back(const_cast<char*>(executable.c_str()));
-		for (auto& arg : argVector) {
-			execArgs.push_back(const_cast<char*>(arg.c_str()));
+		for (auto& a : argVector) {
+			execArgs.push_back(const_cast<char*>(a.c_str()));
 		}
 		execArgs.push_back(nullptr);
 
+		// Replace the child process with the target program
 		execvp(executable.c_str(), execArgs.data());
-		LOG_ERROR("Launcher", "Failed to execute: " + executable + " with arguments: " + args);
-		exit(EXIT_FAILURE);
+
+		// If execvp returns, it's an error
+		const char* msg = "Launcher: Failed to execute target binary.\n";
+		write(STDERR_FILENO, msg, strlen(msg));
+		_exit(EXIT_FAILURE); // Never return from child
 	}
 	else {
 		std::thread servoThread;
