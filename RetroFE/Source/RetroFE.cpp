@@ -2271,7 +2271,7 @@ bool RetroFE::run()
 					// stop music
 					Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 75, 0);
 #endif
-					//currentPage_->setIsLaunched(true);
+					l.LEDBlinky(5); // 5= "Screensaver Start Event" per https://ledblinky.net/downloads/readme.txt
 					// initialize the instance of AmbientMode
 					int ambientModeMinutesPerImage = 30;
 					config_.getProperty(OPTION_AMBIENTMODEMINUTESPERIMAGE, ambientModeMinutesPerImage);					
@@ -2283,7 +2283,7 @@ bool RetroFE::run()
 					// restart music
 					Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 76, 0);
 #endif			
-
+					l.LEDBlinky(6); // 6= "Screensaver Stop Event" per https://ledblinky.net/downloads/readme.txt
 					break;
 				}
 			}
