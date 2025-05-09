@@ -180,13 +180,13 @@ void AmbientMode::displayImages(SDL_Texture* currentImage, SDL_Texture* nextImag
 The point of this mehtod is to decide which marquee image to display, given a specific image for the main screen.
 
  @imageIndex:  refers to the index of an image in the imageFiles_ vector (the main screen).
- @returns: the full path to some image, OR POSIBLY nullptr if we aren't doing marquees.
+ @returns: the full path to some image, OR POSIBLY an empty string if we aren't doing marquees.
 */
 std::string AmbientMode::determineMarqueePath(int imageIndex) {
     // for the main screen, just display the image by index
     std::string imageName = imageFiles_[imageIndex];
     std::string marqueeImageName;
-    std::string marqueeImagePath = nullptr;
+    std::string marqueeImagePath = "";
     
     // for the marquee screen, determine the corresponding marquee image if available (by naming convention), 
     // otherwise return a random marquee image.
