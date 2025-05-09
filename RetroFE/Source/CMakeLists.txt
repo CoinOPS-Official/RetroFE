@@ -49,6 +49,9 @@ if(WIN32)
     set(WEBP_LIB "${WEBP_ROOT}/lib/libwebp_dll.lib")
     include_directories("${WEBP_ROOT}/include")
 
+    set(LIBSERIALPORT_ROOT "${RETROFE_THIRD_PARTY_DIR}/libserialport")
+    include_directories("${LIBSERIALPORT_ROOT}")
+
 endif()
 
 if(WIN32)
@@ -93,6 +96,7 @@ else()
     pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
     pkg_search_module(LIBUSB REQUIRED libusb-1.0)
     pkg_check_modules(LIBEVDEV REQUIRED libevdev)
+    pkg_search_module(LIBSERIALPORT REQUIRED libserialport)
     find_package(Threads REQUIRED)
     
     # Include directories for all found libraries
@@ -110,6 +114,7 @@ else()
         ${LIBUSB_INCLUDE_DIRS}
         ${LIBUSB_INCLUDE_DIR}
         ${LIBEVDEV_INCLUDE_DIRS}
+        ${LIBSERIALPORT_INCLUDE_DIRS}
     )
     
     # Link directories (optional, mostly handled by pkg-config)
@@ -125,6 +130,7 @@ else()
         ${GLIB2_LIBRARY_DIRS}
         ${LIBUSB_LIBRARY_DIRS}
         ${LIBEVDEV_LIBRARY_DIRS}
+        ${LIBSERIALPORT_LIBRARY_DIRS}
     )
     
     # Append the necessary libraries to be linked
@@ -180,6 +186,7 @@ if(WIN32)
         "${WEBP_ROOT}/lib/libwebpdecoder_dll.lib"
         "${WEBP_ROOT}/lib/libwebpdemux_dll.lib"
         "${ZLIB_ROOT}/lib/minizip.lib"
+        "${LIBSERIALPORT_ROOT}/lib/libserialport.lib"
         "dxgi.lib"
     )
 endif()
@@ -200,6 +207,10 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Control/JoyHatHandler.h"
 	"${RETROFE_DIR}/Source/Control/KeyboardHandler.h"
 	"${RETROFE_DIR}/Source/Control/MouseButtonHandler.h"
+    "${RETROFE_DIR}/Source/Control/Restrictor/Restrictor.h"
+    "${RETROFE_DIR}/Source/Control/Restrictor/RestrictorInstance.h"
+    "${RETROFE_DIR}/Source/Control/Restrictor/ServoStikRestrictor.h"
+    "${RETROFE_DIR}/Source/Control/Restrictor/TOSGRSRestrictor.h"
 	"${RETROFE_DIR}/Source/Database/Configuration.h"
 	"${RETROFE_DIR}/Source/Database/DB.h"
 	"${RETROFE_DIR}/Source/Database/GlobalOpts.h"
@@ -257,6 +268,10 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Control/JoyHatHandler.cpp"
 	"${RETROFE_DIR}/Source/Control/KeyboardHandler.cpp"
 	"${RETROFE_DIR}/Source/Control/MouseButtonHandler.cpp"
+    "${RETROFE_DIR}/Source/Control/Restrictor/Restrictor.cpp"
+    "${RETROFE_DIR}/Source/Control/Restrictor/RestrictorInstance.cpp"
+    "${RETROFE_DIR}/Source/Control/Restrictor/ServoStikRestrictor.cpp"
+    "${RETROFE_DIR}/Source/Control/Restrictor/TOSGRSRestrictor.cpp"
 	"${RETROFE_DIR}/Source/Database/Configuration.cpp"
 	"${RETROFE_DIR}/Source/Database/DB.cpp"
 	"${RETROFE_DIR}/Source/Database/GlobalOpts.cpp"
