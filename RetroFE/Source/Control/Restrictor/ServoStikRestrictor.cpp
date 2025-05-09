@@ -1,6 +1,8 @@
 #include "ServoStikRestrictor.h"
 #include "../../Utility/Log.h"
+#ifdef WIN32
 #include "PacDrive.h"
+#endif
 
 static constexpr char COMPONENT[] = "ServoStik";
 
