@@ -17,6 +17,8 @@
 #include "Launcher.h"
 #include "../RetroFE.h"
 #include "../Collection/Item.h"
+#include "../Control/Restrictor/Restrictor.h"
+#include "../Control/Restrictor/RestrictorInstance.h"
 #include "../Utility/Log.h"
 #include "../Database/Configuration.h"
 #include "../Utility/Utils.h"
@@ -39,7 +41,6 @@
 #pragma comment(lib, "Xinput.lib")
 #include <Xinput.h>
 #include <cstring>
-#include "PacDrive.h"
 #include "StdAfx.h"
 #include <tlhelp32.h>
 #include <Psapi.h>
@@ -1001,10 +1002,10 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	// Monitoring the process
 	if (handleObtained) {
 		bool is4waySet = false;
-		bool isServoStikEnabled = false;
-		config_.getProperty(OPTION_SERVOSTIKENABLED, isServoStikEnabled);
-		if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && isServoStikEnabled) {
-			if (!PacSetServoStik4Way()) {
+		bool restrictorEnabled = false;
+		config_.getProperty("restrictorEnabled", restrictorEnabled);
+		if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
+			if (!gRestrictor->setWay(4)) {
 				LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
 			}
 			else {
@@ -1335,7 +1336,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 		// Restore ServoStik if needed
 		if (is4waySet) {
-			if (!PacSetServoStik8Way()) { // return to 8-way if 4-way switch occurred
+			if (!gRestrictor->setWay(8)) { // return to 8-way if 4-way switch occurred
 				LOG_ERROR("RetroFE", "Failed to return ServoStik to 8-way mode");
 			}
 			else {

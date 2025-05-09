@@ -19,6 +19,8 @@
 #include "Collection/CollectionInfoBuilder.h"
 #include "Collection/Item.h"
 #include "Collection/MenuParser.h"
+#include "Control/Restrictor/Restrictor.h"
+#include "Control/Restrictor/RestrictorInstance.h"
 #include "Control/UserInput.h"
 #include "Database/Configuration.h"
 #include "Database/GlobalOpts.h"
@@ -66,7 +68,6 @@
 #include <SDL2/SDL_syswm.h>
 #include <SDL2/SDL_thread.h>
 #include <Windows.h>
-#include "PacDrive.h"
 #include "StdAfx.h"
 #endif
 
@@ -439,13 +440,6 @@ bool RetroFE::deInitialize()
 		SDL::deInitialize();
 	}
 
-#ifdef WIN32
-	bool isServoStikEnabled = false;
-	config_.getProperty("servoStikEnabled", isServoStikEnabled);
-	if (isServoStikEnabled)
-		PacShutdown();
-#endif
-
 	return retVal;
 }
 
@@ -483,33 +477,10 @@ bool RetroFE::run()
 	SDL_RestoreWindow(SDL::getWindow(0));
 	SDL_RaiseWindow(SDL::getWindow(0));
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_TRUE);
-#ifdef WIN32
-	if (!PacInitialize()) {  //attempt to enable ServoStik
-		config_.setProperty(OPTION_SERVOSTIKENABLED, false);
-		LOG_INFO("RetroFE", "ServoStik not detected");
-	}
-	else {
-		config_.setProperty(OPTION_SERVOSTIKENABLED, true);
-		LOG_INFO("RetroFE", "ServoStik Enabled");
-	}
 
-	bool highPriority = false;
-	config_.getProperty(OPTION_HIGHPRIORITY, highPriority);
-	if (highPriority)
-	{
-		SetPriorityClass(GetCurrentProcess(), ABOVE_NORMAL_PRIORITY_CLASS);
-	}
-#endif
-#ifdef __linux
+	gRestrictor = IRestrictor::create();
+	config_.setProperty("restrictorEnabled", gRestrictor != nullptr);
 
-	if (!InitializeServoStik())
-	{
-		config_.setProperty(OPTION_SERVOSTIKENABLED, false);
-	}
-	else {
-		config_.setProperty(OPTION_SERVOSTIKENABLED, true);
-	}
-#endif
 	// Define control configuration
 	config_.import("controls", controlsConfPath + ".conf");
 	for (int i = 1; i < 10; i++)
