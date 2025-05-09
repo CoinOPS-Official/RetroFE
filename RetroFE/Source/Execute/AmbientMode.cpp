@@ -72,9 +72,9 @@ void AmbientMode::activate() {
     SDL_Renderer* rendererMain = SDL::getRenderer(0); // Get the renderer for the main screen
     SDL_Renderer* rendererMarquee = SDL::getRenderer(1); // Get the renderer for the Marquee screen
     
-    currentImage_ = IMG_LoadTexture(rendererMain, imageFiles_[imageIndex].c_str());
+    currentImage_ = loadTexture(rendererMain, imageFiles_[imageIndex].c_str());
     if (SDL::getScreenCount() > 1) {
-        currentImageMarquee_ = IMG_LoadTexture(rendererMarquee, determineMarqueePath(imageIndex).c_str());
+        currentImageMarquee_ = loadTexture(rendererMarquee, determineMarqueePath(imageIndex).c_str());
     } 
     
 
@@ -89,9 +89,9 @@ void AmbientMode::activate() {
                 input_.keystate(UserInput::KeyCodeLeft)) 
             {                 
                 imageIndex = (imageIndex + 1) % imageFiles_.size(); // Increment the image index, wrapping around if necessary                
-                nextImage_ = IMG_LoadTexture(rendererMain, imageFiles_[imageIndex].c_str());
+                nextImage_ = loadTexture(rendererMain, imageFiles_[imageIndex].c_str());
                 if (SDL::getScreenCount() > 1) {
-                    nextImageMarquee_ = IMG_LoadTexture(rendererMarquee, determineMarqueePath(imageIndex).c_str());
+                    nextImageMarquee_ = loadTexture(rendererMarquee, determineMarqueePath(imageIndex).c_str());
                 }      
                 isFading = true;
                 fadeStartTime = SDL_GetTicks(); // Record the start time of the fade                
@@ -216,7 +216,7 @@ void AmbientMode::populateImageFiles()
     namespace fs = std::filesystem;
 
     // Supported image extensions
-    const std::vector<std::string> imageExtensions = { ".png", ".jpg", ".jpeg", ".bmp", ".gif" };
+    const std::vector<std::string> imageExtensions = { ".png", ".jpg", ".jpeg" };
 
     // Iterate through the directory
     for (const auto& entry : fs::directory_iterator(ambientPath_)) {
@@ -237,4 +237,34 @@ void AmbientMode::populateImageFiles()
             }
         }
     }
+}
+
+/* This is needed for image formats that do not support alpha channels (like JPEG).
+Convert everything we load to a format that does support alpha channels.
+*/
+SDL_Texture* AmbientMode::loadTexture(SDL_Renderer* renderer, const std::string& imagePath) {
+    // Load the image as a surface
+    SDL_Surface* loadedSurface = IMG_Load(imagePath.c_str());
+    if (!loadedSurface) {
+        LOG_ERROR("AmbientMode", "Failed to load image: " + imagePath + " - " + IMG_GetError());
+        return nullptr;
+    }
+
+    // Convert the surface to a format with an alpha channel (RGBA8888)
+    SDL_Surface* surfaceWithAlpha = SDL_ConvertSurfaceFormat(loadedSurface, SDL_PIXELFORMAT_RGBA8888, 0);    
+    SDL_FreeSurface(loadedSurface); // Free the original surface
+    if (!surfaceWithAlpha) {
+        LOG_ERROR("AmbientMode", "Failed to convert surface to RGBA8888: " + std::string(SDL_GetError()));
+        return nullptr;
+    }
+
+    // Create a texture from the surface
+    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surfaceWithAlpha);
+    SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+    SDL_FreeSurface(surfaceWithAlpha); // Free the converted surface
+    if (!texture) {
+        LOG_ERROR("AmbientMode", "Failed to create texture: " + std::string(SDL_GetError()));
+    }
+
+    return texture;
 }

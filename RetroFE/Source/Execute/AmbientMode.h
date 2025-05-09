@@ -26,10 +26,11 @@ public:
     void activate();
     
 
-private:
+private:    
     void populateImageFiles();
     std::string determineMarqueePath(int imageIndex);    
     void displayImages(SDL_Texture *currentImage, SDL_Texture *nextImage, float alphaOfFirstImage, int screenNum);
+    SDL_Texture* loadTexture(SDL_Renderer* renderer, const std::string& imagePath);    
     UserInput& input_;
     std::string basePath_;    
     std::string ambientPath_;
