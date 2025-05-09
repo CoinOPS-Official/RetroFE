@@ -3,6 +3,7 @@
 #include "libserialport.h"
 #include <optional>
 #include <string>
+#include <cstdint>
 
 class TOSGRSRestrictor : public IRestrictor {
 public:
