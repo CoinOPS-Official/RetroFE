@@ -2,7 +2,7 @@
 #include "../../Utility/Log.h"
 #ifdef WIN32
 #include "PacDrive.h"
-#elif
+#else
 #include <thread>
 #include <chrono>
 #include <libusb.h>
