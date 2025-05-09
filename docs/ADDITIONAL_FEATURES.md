@@ -31,7 +31,7 @@ In the settings.conf file, add the following configuration options
 ```
 controllerComboExit = false
 controllerComboAmbient = true
-ambientModeMinutesPerImage = 30
+ambientModeMinutesPerImage = 2
 ```
 
 `controllerComboExit`: Set to false to prevent the exit button from quitting RetroFE while Ambient Mode is active.

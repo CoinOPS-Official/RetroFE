@@ -2731,9 +2731,6 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			}
 			else if (controllerComboAmbient)
 			{
-#ifdef WIN32
-				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 51, 0);
-#endif
 				return RETROFE_AMBIENT_REQUEST;	
 			}
 			else if (controllerComboAmbient)
