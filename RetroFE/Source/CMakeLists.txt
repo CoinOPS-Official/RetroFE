@@ -149,6 +149,7 @@ else()
         ${CMAKE_THREAD_LIBS_INIT}
         ${LIBUSB_LIBRARIES}
         ${LIBEVDEV_LIBRARIES}
+        ${LIBSERIALPORT_LIBRARIES}
     )
     add_definitions(${LIBEVDEV_CFLAGS_OTHER})
     endif()
