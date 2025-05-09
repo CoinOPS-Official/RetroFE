@@ -67,8 +67,7 @@ namespace fs = std::filesystem;
 
 Launcher::Launcher(Configuration& c, RetroFE& retroFe)
 	: config_(c),
-	retroFeInstance_(retroFe)
-{
+	retroFeInstance_(retroFe) {
 }
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -253,142 +252,143 @@ bool detectInput(const std::vector<std::string>& devices) {
 #include <thread>
 
 std::vector<std::string> getInputDevices() {
-    std::vector<std::string> devicePaths;
-    IOHIDManagerRef hidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+	std::vector<std::string> devicePaths;
+	IOHIDManagerRef hidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
 
-    if (hidManager == nullptr) {
-        std::cerr << "Failed to create HID Manager" << std::endl;
-        return devicePaths;
-    }
+	if (hidManager == nullptr) {
+		std::cerr << "Failed to create HID Manager" << std::endl;
+		return devicePaths;
+	}
 
-    // Set up the device matching criteria to find all input devices
-    CFMutableDictionaryRef matchingDict = IOServiceMatching(kIOHIDDeviceKey);
-    IOHIDManagerSetDeviceMatching(hidManager, matchingDict);
+	// Set up the device matching criteria to find all input devices
+	CFMutableDictionaryRef matchingDict = IOServiceMatching(kIOHIDDeviceKey);
+	IOHIDManagerSetDeviceMatching(hidManager, matchingDict);
 
-    IOHIDManagerOpen(hidManager, kIOHIDOptionsTypeNone);
+	IOHIDManagerOpen(hidManager, kIOHIDOptionsTypeNone);
 
-    // Get the list of devices
-    CFSetRef devices = IOHIDManagerCopyDevices(hidManager);
-    if (devices == nullptr) {
-        std::cerr << "No input devices found." << std::endl;
-        IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
-        CFRelease(hidManager);
-        return devicePaths;
-    }
+	// Get the list of devices
+	CFSetRef devices = IOHIDManagerCopyDevices(hidManager);
+	if (devices == nullptr) {
+		std::cerr << "No input devices found." << std::endl;
+		IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+		CFRelease(hidManager);
+		return devicePaths;
+	}
 
-    // Iterate over devices and check if they support key events (buttons/keys)
-    CFIndex deviceCount = CFSetGetCount(devices);
-    CFTypeRef *deviceArray = new CFTypeRef[deviceCount];
-    CFSetGetValues(devices, deviceArray);
+	// Iterate over devices and check if they support key events (buttons/keys)
+	CFIndex deviceCount = CFSetGetCount(devices);
+	CFTypeRef* deviceArray = new CFTypeRef[deviceCount];
+	CFSetGetValues(devices, deviceArray);
 
-    for (CFIndex i = 0; i < deviceCount; ++i) {
-        IOHIDDeviceRef device = (IOHIDDeviceRef)deviceArray[i];
+	for (CFIndex i = 0; i < deviceCount; ++i) {
+		IOHIDDeviceRef device = (IOHIDDeviceRef)deviceArray[i];
 
-        // Check if the device supports keys
-        if (IOHIDDeviceConformsTo(device, kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard)) {
-            // Get the product name (property)
-            CFTypeRef productNameRef = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
+		// Check if the device supports keys
+		if (IOHIDDeviceConformsTo(device, kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard)) {
+			// Get the product name (property)
+			CFTypeRef productNameRef = IOHIDDeviceGetProperty(device, CFSTR(kIOHIDProductKey));
 
-            // Ensure the property is of type CFStringRef before using it
-            if (productNameRef && CFGetTypeID(productNameRef) == CFStringGetTypeID()) {
-                CFStringRef productName = (CFStringRef)productNameRef;
+			// Ensure the property is of type CFStringRef before using it
+			if (productNameRef && CFGetTypeID(productNameRef) == CFStringGetTypeID()) {
+				CFStringRef productName = (CFStringRef)productNameRef;
 
-                // Convert CFStringRef to std::string
-                char buffer[256];
-                if (CFStringGetCString(productName, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
-                    devicePaths.push_back(std::string(buffer));
-                    std::cout << "Added valid input device: " << buffer << std::endl;
-                }
-            }
-        }
-    }
+				// Convert CFStringRef to std::string
+				char buffer[256];
+				if (CFStringGetCString(productName, buffer, sizeof(buffer), kCFStringEncodingUTF8)) {
+					devicePaths.push_back(std::string(buffer));
+					std::cout << "Added valid input device: " << buffer << std::endl;
+				}
+			}
+		}
+	}
 
-    delete[] deviceArray;
-    CFRelease(devices);
-    IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
-    CFRelease(hidManager);
-    return devicePaths;
+	delete[] deviceArray;
+	CFRelease(devices);
+	IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+	CFRelease(hidManager);
+	return devicePaths;
 }
 
 bool detectInput(const std::vector<std::string>& devices) {
-    for (const auto& devicePath : devices) {
-        IOHIDManagerRef hidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
-        if (hidManager == nullptr) {
-            std::cerr << "Failed to create HID Manager for device " << devicePath << std::endl;
-            continue;
-        }
+	for (const auto& devicePath : devices) {
+		IOHIDManagerRef hidManager = IOHIDManagerCreate(kCFAllocatorDefault, kIOHIDOptionsTypeNone);
+		if (hidManager == nullptr) {
+			std::cerr << "Failed to create HID Manager for device " << devicePath << std::endl;
+			continue;
+		}
 
-        // Set up the device matching criteria (similar to getInputDevices)
-        CFMutableDictionaryRef matchingDict = IOServiceMatching(kIOHIDDeviceKey);
-        IOHIDManagerSetDeviceMatching(hidManager, matchingDict);
+		// Set up the device matching criteria (similar to getInputDevices)
+		CFMutableDictionaryRef matchingDict = IOServiceMatching(kIOHIDDeviceKey);
+		IOHIDManagerSetDeviceMatching(hidManager, matchingDict);
 
-        IOHIDManagerOpen(hidManager, kIOHIDOptionsTypeNone);
+		IOHIDManagerOpen(hidManager, kIOHIDOptionsTypeNone);
 
-        CFSetRef devicesSet = IOHIDManagerCopyDevices(hidManager);
-        if (devicesSet == nullptr) {
-            std::cerr << "No devices found." << std::endl;
-            IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
-            CFRelease(hidManager);
-            continue;
-        }
+		CFSetRef devicesSet = IOHIDManagerCopyDevices(hidManager);
+		if (devicesSet == nullptr) {
+			std::cerr << "No devices found." << std::endl;
+			IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+			CFRelease(hidManager);
+			continue;
+		}
 
-        CFIndex deviceCount = CFSetGetCount(devicesSet);
-        CFTypeRef *deviceArray = new CFTypeRef[deviceCount];
-        CFSetGetValues(devicesSet, deviceArray);
+		CFIndex deviceCount = CFSetGetCount(devicesSet);
+		CFTypeRef* deviceArray = new CFTypeRef[deviceCount];
+		CFSetGetValues(devicesSet, deviceArray);
 
-        // Iterate over devices to check if the desired input event is triggered
-        for (CFIndex i = 0; i < deviceCount; ++i) {
-            IOHIDDeviceRef device = (IOHIDDeviceRef)deviceArray[i];
+		// Iterate over devices to check if the desired input event is triggered
+		for (CFIndex i = 0; i < deviceCount; ++i) {
+			IOHIDDeviceRef device = (IOHIDDeviceRef)deviceArray[i];
 
-            // Check if the device supports keys
-            if (IOHIDDeviceConformsTo(device, kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard)) {
+			// Check if the device supports keys
+			if (IOHIDDeviceConformsTo(device, kHIDPage_GenericDesktop, kHIDUsage_GD_Keyboard)) {
 
-                // Get the list of elements for the device
-                CFArrayRef elements = IOHIDDeviceCopyMatchingElements(device, nullptr, kIOHIDOptionsTypeNone);
-                if (elements) {
-                    CFIndex elementCount = CFArrayGetCount(elements);
+				// Get the list of elements for the device
+				CFArrayRef elements = IOHIDDeviceCopyMatchingElements(device, nullptr, kIOHIDOptionsTypeNone);
+				if (elements) {
+					CFIndex elementCount = CFArrayGetCount(elements);
 
-                    for (CFIndex j = 0; j < elementCount; ++j) {
-                        IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, j);
+					for (CFIndex j = 0; j < elementCount; ++j) {
+						IOHIDElementRef element = (IOHIDElementRef)CFArrayGetValueAtIndex(elements, j);
 
-                        // Check if the element represents a key
-                        if (IOHIDElementGetUsagePage(element) == kHIDPage_Button &&
-                            IOHIDElementGetUsage(element) >= kHIDUsage_Button_1 &&
-                            IOHIDElementGetUsage(element) <= kHIDUsage_Button_128) {
-                            
-                            // Create an IOHIDValueRef to store the value of the element
-                            IOHIDValueRef value = nullptr;
-                            IOReturn result = IOHIDDeviceGetValue(device, element, &value);
+						// Check if the element represents a key
+						if (IOHIDElementGetUsagePage(element) == kHIDPage_Button &&
+							IOHIDElementGetUsage(element) >= kHIDUsage_Button_1 &&
+							IOHIDElementGetUsage(element) <= kHIDUsage_Button_128) {
 
-                            if (result == kIOReturnSuccess && value != nullptr) {
-                                uint8_t keyValue = 0;
-                                // Extract the value (0 or 1 for key press/release)
-                                keyValue = (uint8_t)IOHIDValueGetIntegerValue(value);
+							// Create an IOHIDValueRef to store the value of the element
+							IOHIDValueRef value = nullptr;
+							IOReturn result = IOHIDDeviceGetValue(device, element, &value);
 
-                                if (keyValue) {
-                                    std::cout << "Key press detected on device: " << devicePath << std::endl;
-                                    CFRelease(elements);
-                                    IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
-                                    CFRelease(hidManager);
-                                    return true;
-                                }
-                                CFRelease(value);  // Always release the IOHIDValueRef
-                            } else {
-                                std::cerr << "Failed to get value for element" << std::endl;
-                            }
-                        }
-                    }
-                    CFRelease(elements);
-                }
-            }
-        }
+							if (result == kIOReturnSuccess && value != nullptr) {
+								uint8_t keyValue = 0;
+								// Extract the value (0 or 1 for key press/release)
+								keyValue = (uint8_t)IOHIDValueGetIntegerValue(value);
 
-        delete[] deviceArray;
-        CFRelease(devicesSet);
-        IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
-        CFRelease(hidManager);
-    }
-    return false; // No input detected
+								if (keyValue) {
+									std::cout << "Key press detected on device: " << devicePath << std::endl;
+									CFRelease(elements);
+									IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+									CFRelease(hidManager);
+									return true;
+								}
+								CFRelease(value);  // Always release the IOHIDValueRef
+							}
+							else {
+								std::cerr << "Failed to get value for element" << std::endl;
+							}
+						}
+					}
+					CFRelease(elements);
+				}
+			}
+		}
+
+		delete[] deviceArray;
+		CFRelease(devicesSet);
+		IOHIDManagerClose(hidManager, kIOHIDOptionsTypeNone);
+		CFRelease(hidManager);
+	}
+	return false; // No input detected
 }
 
 #endif
@@ -398,8 +398,7 @@ std::string replaceVariables(std::string str,
 	const std::string& itemName,
 	const std::string& itemFilename,
 	const std::string& itemDirectory,
-	const std::string& itemCollectionName)
-{
+	const std::string& itemCollectionName) {
 	str = Utils::replace(str, "%ITEM_FILEPATH%", itemFilePath);
 	str = Utils::replace(str, "%ITEM_NAME%", itemName);
 	str = Utils::replace(str, "%ITEM_FILENAME%", itemFilename);
@@ -591,8 +590,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
 	return reboot;
 }
 
-void Launcher::startScript()
-{
+void Launcher::startScript() {
 #ifdef WIN32
 	std::string exe = Utils::combinePath(Configuration::absolutePath, "start.bat");
 #else
@@ -603,8 +601,7 @@ void Launcher::startScript()
 	}
 }
 
-void Launcher::exitScript()
-{
+void Launcher::exitScript() {
 #ifdef WIN32
 	std::string exe = Utils::combinePath(Configuration::absolutePath, "exit.bat");
 #else
@@ -615,8 +612,7 @@ void Launcher::exitScript()
 	}
 }
 
-void Launcher::LEDBlinky(int command, std::string collection, Item* collectionItem)
-{
+void Launcher::LEDBlinky(int command, std::string collection, Item* collectionItem) {
 	std::string LEDBlinkyDirectory = "";
 	config_.getProperty(OPTION_LEDBLINKYDIRECTORY, LEDBlinkyDirectory);
 	if (LEDBlinkyDirectory == "") {
@@ -671,8 +667,7 @@ void Launcher::LEDBlinky(int command, std::string collection, Item* collectionIt
 	return;
 }
 
-bool Launcher::simpleExecute(std::string executable, std::string args, std::string currentDirectory, bool wait, Page* currentPage)
-{
+bool Launcher::simpleExecute(std::string executable, std::string args, std::string currentDirectory, bool wait, Page* currentPage) {
 	bool retVal = false;
 	std::string executionString = "\"" + executable + "\""; // Start with quoted executable
 	if (!args.empty()) {
@@ -1370,9 +1365,9 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 
 	bool is4waySet = false;
-	bool isServoStikEnabled = false;
+	bool restrictorEnabled = false;
 
-	config_.getProperty(OPTION_SERVOSTIKENABLED, isServoStikEnabled);
+	config_.getProperty("restrictorEnabled", restrictorEnabled);
 
 	pid_t pid = fork();
 
@@ -1416,7 +1411,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		if (!isAttractMode) {
 			LOG_INFO("Launcher", "Waiting for launched item to exit.");
 
-			if (isServoStikEnabled) {
+			if (restrictorEnabled) {
 				// Spawn ServoStik thread only if needed
 				servoThread = std::thread([&]() {
 					// Give the process a moment to start
@@ -1425,7 +1420,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					// Use kill with signal 0 to check if process is running
 					if (kill(pid, 0) == 0) {  // Process is running
 						if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
-							if (!SetServoStik4Way()) {
+							if (!gRestrictor->setWay(4)) {
 								LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
 							}
 							else {
@@ -1459,8 +1454,8 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					LOG_INFO("Launcher", "User input detected. Stopping attract mode timer.");
 
 					// Perform ServoStik check if necessary
-					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && isServoStikEnabled) {
-						if (!SetServoStik4Way()) {
+					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
+						if (!gRestrictor->setWay(4)) {
 							LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
 						}
 						else {
@@ -1527,7 +1522,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 		// Restore ServoStik to 8-way mode if it was changed
 		if (is4waySet) {
-			if (!SetServoStik8Way()) {
+			if (!gRestrictor->setWay(8)) {
 				LOG_ERROR("RetroFE", "Failed to return ServoStik to 8-way mode");
 			}
 			else {
@@ -1600,8 +1595,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	return retVal;
 }
 
-void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) const
-{
+void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) const {
 	float lastTime = 0;
 	float currentTime = 0;
 	float deltaTime = 0;
@@ -1650,8 +1644,7 @@ void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) 
 	}
 }
 
-bool Launcher::launcherName(std::string& launcherName, std::string collection)
-{
+bool Launcher::launcherName(std::string& launcherName, std::string collection) {
 	// find the launcher for the particular item 
 	if (std::string launcherKey = "collections." + collection + ".launcher"; !config_.getProperty(launcherKey, launcherName)) {
 		std::stringstream ss;
@@ -1715,8 +1708,7 @@ bool Launcher::launcherArgs(std::string& args, std::string launcherName) {
 	return true;
 }
 
-bool Launcher::extensions(std::string& extensions, std::string collection)
-{
+bool Launcher::extensions(std::string& extensions, std::string collection) {
 	if (std::string extensionsKey = "collections." + collection + ".list.extensions"; !config_.getProperty(extensionsKey, extensions)) {
 		LOG_ERROR("Launcher", "No extensions specified for: " + extensionsKey);
 		return false;
@@ -1728,8 +1720,7 @@ bool Launcher::extensions(std::string& extensions, std::string collection)
 	return true;
 }
 
-bool Launcher::collectionDirectory(std::string& directory, std::string collection)
-{
+bool Launcher::collectionDirectory(std::string& directory, std::string collection) {
 	std::string itemsPathValue;
 	std::string mergedCollectionName;
 
