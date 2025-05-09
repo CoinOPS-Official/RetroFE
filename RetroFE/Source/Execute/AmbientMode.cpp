@@ -46,12 +46,13 @@ void AmbientMode::activate() {
     }
 
     // Get lists of image files and marquee image files into our member variables
-    populateImageFiles();
-    LOG_INFO("AmbientMode", "There are " + std::to_string(imageFiles_.size()) + " images and " + std::to_string(marqueeImageFiles_.size()) + " marquee images in the ambient directory.");
+    populateImageFiles();    
 
     if (imageFiles_.empty()) {
         LOG_ERROR("AmbientMode", "Ambient mode will not be launched, since there are no images for the main screen in " + ambientPath_);
         return;
+    } else {
+        LOG_INFO("AmbientMode", "There are " + std::to_string(imageFiles_.size()) + " images and " + std::to_string(marqueeImageFiles_.size()) + " marquee images in the ambient directory.");
     }
 
     // Shuffle the image files to randomize the order
@@ -60,19 +61,73 @@ void AmbientMode::activate() {
     
     input_.resetStates();
     SDL_Event e;    
+
+    int fadeStartTime = 0;
+    bool isFading = false; 
+    int fadeDuration = 2000; // 2 second fade durationn. Could be made configurable in the future.
+    float firstImageOpacity = 1.0f; // 1 = fully opaque; 0 = fully transparent
     auto lastChangeTime = std::chrono::steady_clock::now();
     int imageIndex = 0;
-    displayImages(imageIndex);
+    
+    SDL_Renderer* rendererMain = SDL::getRenderer(0); // Get the renderer for the main screen
+    SDL_Renderer* rendererMarquee = SDL::getRenderer(1); // Get the renderer for the Marquee screen
+    
+    currentImage_ = IMG_LoadTexture(rendererMain, imageFiles_[imageIndex].c_str());
+    if (SDL::getScreenCount() > 1) {
+        currentImageMarquee_ = IMG_LoadTexture(rendererMarquee, determineMarqueePath(imageIndex).c_str());
+    } 
+    
 
     // Main loop for ambient mode
     while (true) {
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsedTime = std::chrono::duration_cast<std::chrono::seconds>(currentTime - lastChangeTime);
-        if (elapsedTime.count() >= minutesPerImage_ * 60) {
-            // update images
-            imageIndex = (imageIndex + 1) % imageFiles_.size();
-            displayImages(imageIndex);
-            lastChangeTime = currentTime; // Reset the timer
+    
+        if (!isFading) {                                    
+            if (elapsedTime.count() >= minutesPerImage_ * 60 || 
+                input_.keystate(UserInput::KeyCodeRight) || 
+                input_.keystate(UserInput::KeyCodeLeft)) 
+            {                 
+                imageIndex = (imageIndex + 1) % imageFiles_.size(); // Increment the image index, wrapping around if necessary                
+                nextImage_ = IMG_LoadTexture(rendererMain, imageFiles_[imageIndex].c_str());
+                if (SDL::getScreenCount() > 1) {
+                    nextImageMarquee_ = IMG_LoadTexture(rendererMarquee, determineMarqueePath(imageIndex).c_str());
+                }      
+                isFading = true;
+                fadeStartTime = SDL_GetTicks(); // Record the start time of the fade                
+                LOG_INFO("AmbientMode", "start fading to new image: " + imageFiles_[imageIndex]);
+            }
+        }
+
+        // Handle fading
+        if (isFading) {
+            int currentFadeTime = SDL_GetTicks() - fadeStartTime;
+            firstImageOpacity = 1.0f - static_cast<float>(currentFadeTime) / fadeDuration;
+            firstImageOpacity < 0.0f ? firstImageOpacity = 0.0f : NULL; // Clamp opacity lower value to 0.0f
+            
+            // check if we're done fading
+            if (firstImageOpacity == 0.0f) {
+                lastChangeTime = currentTime; // Reset the timer                
+                isFading = false; // Reset the fade state                
+                
+                SDL_DestroyTexture(currentImage_); // Destroy the old texture
+                currentImage_ = nextImage_; // Set the currentImage pointer so it will will now render
+                nextImage_ = nullptr; // Reset the next image texture
+                
+                SDL_DestroyTexture(currentImageMarquee_); // Destroy the old texture
+                currentImageMarquee_ = nextImageMarquee_; // Set the currentImage so it will renter the next iteration
+                nextImageMarquee_ = nullptr; // Reset the next image texture
+
+                firstImageOpacity = 1.0f; 
+                LOG_INFO("AmbientMode", "done fading "); 
+            }
+        } 
+        
+        // Display the current image (blended with the 2nd if needed) on the main screen
+        displayImages(currentImage_, nextImage_, firstImageOpacity, 0); 
+        // Display the current image (blended with the 2nd if needed) on the marquee screen
+        if (SDL::getScreenCount() > 1) {
+            displayImages(currentImageMarquee_, nextImageMarquee_, firstImageOpacity, 1); 
         }
         
         // Check events to see if it's time to exit ambient mode
@@ -85,78 +140,79 @@ void AmbientMode::activate() {
             input_.resetStates();
             break; // by breaking, we will exit the ambient mode loop, exit this function, and cease to block the main thread, thereby returning the user to retrofe.
         }
-        // you can also move through the images with left or right. Honestly, more useful for testing than anything else.
-        if (input_.keystate(UserInput::KeyCodeRight) ) {
-            imageIndex = (imageIndex + 1) % imageFiles_.size();
-            displayImages(imageIndex);
-            lastChangeTime = currentTime; // Reset the timer
-            input_.resetStates();
-        }
-        if (input_.keystate(UserInput::KeyCodeLeft)) {
-            imageIndex = (imageIndex - 1) % imageFiles_.size();
-            displayImages(imageIndex);
-            lastChangeTime = currentTime; // Reset the timer
-            input_.resetStates();
-        }        
-        
+
         // little delay to avoid busy waiting
-        SDL_Delay(10);
+        SDL_Delay(16); // SDL_Delay takes milliseconds, so this results in ~60 FPS. There's not enough going on in this loop to conditionally reduce the delay.
     }
 
 }
 
-// Takes care of displaying the images on both the main and marquee screens. 
-// The imageIndex refers to the index of an image in the imageFiles_ vector (the main screen).
-void AmbientMode::displayImages(int imageIndex) {
-    // for the main screen, just display the image by index
-    std::string imageName = Utils::combinePath(ambientPath_, imageFiles_[imageIndex]);
-    LOG_INFO("AmbientMode", "displaying main screen image: "+ imageName);
+/*
+The thing to know about this method is that nextImage_ CAN be a nullptr. That's the case when images NOT in the process of fading in/out.
+If both images ARE provided, this method will render some blend between them, based on the firstImageOpacity value.
 
-    display(imageName, 0); // Display on the first screen
-    
-    if (SDL::getScreenCount() > 1) {    
-        // for the marquee screen, display the corresponding marquee image if available (by naming convention), 
-        // otherwise display a random marquee image.
-        if (!marqueeImageFiles_.empty()) {
-            std::filesystem::path path(imageName);
-            std::string baseName = path.stem().string(); // Get the filename without extension
-            std::string extension = path.extension().string(); // Get the file extension        
-            std::string marqueeImageName = baseName +"_marquee" + extension;
-            std::string marqueeImagePath = Utils::combinePath(ambientPath_, marqueeImageName);
-
-            if (std::filesystem::exists(marqueeImagePath)) {
-                LOG_INFO("AmbientMode", "displaying corresponding marquee image: "+ marqueeImageName);
-                display(marqueeImageName, 1); // Display on the second screen
-            } else {            
-                std::string randomMarqueeImage = marqueeImageFiles_[std::rand() % marqueeImageFiles_.size()];        
-                LOG_INFO("AmbientMode", "displaying random marquee image: "+ randomMarqueeImage);
-                display(randomMarqueeImage, 1); // Display on the second screen
-            }
-        }
-        else {
-            LOG_INFO("AmbientMode", "No marquee images available. Skipping marquee display.");
-        }
-
+@firstImageOpacity: 0.0f = fully transparent, 1.0f = fully opaque
+*/
+void AmbientMode::displayImages(SDL_Texture* currentImage, SDL_Texture* nextImage, float firstImageOpacity, int screenNum) {
+    // safety -- if the screen number is out of bounds, this call is a no-op
+    if (screenNum + 1 > SDL::getScreenCount() ) {
+        return; 
     }
-}
 
-
-// display a specific image (indentified by name only; it is assumed to be in the "ambient" directory) on the specified screen
-void AmbientMode::display(std::string imageName, int screenNum) {
-
-    std::string imagePath = Utils::combinePath(ambientPath_, imageName);
-    
     SDL_Renderer* renderer = SDL::getRenderer(screenNum);
-    SDL_Surface* surface = IMG_Load(imagePath.c_str());
-    SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer, surface);
-    // Render the texture
-    SDL_RenderClear(renderer);
-    SDL_RenderCopy(renderer, texture, nullptr, nullptr);
-    SDL_RenderPresent(renderer);
+    SDL_RenderClear(renderer); // Clear the screen
 
+    // Set the alpha value for the first image
+    SDL_SetTextureAlphaMod(currentImage, static_cast<Uint8>(firstImageOpacity * 255)); // Set the alpha value for the first image
+
+    // Render the first image
+    SDL_RenderCopy(renderer, currentImage, nullptr, nullptr);
+
+    if (nextImage != nullptr) {
+        float alphaOfSecondImage = 1.0f - firstImageOpacity; // Inverse of the first image's alpha
+        SDL_SetTextureAlphaMod(nextImage, static_cast<Uint8>(alphaOfSecondImage * 255)); // Set the alpha value for the second image
+        SDL_RenderCopy(renderer, nextImage, nullptr, nullptr);
+    }
+
+    SDL_RenderPresent(renderer); // Present the rendered frame
+}
+/*
+The point of this mehtod is to decide which marquee image to display, given a specific image for the main screen.
+
+ @imageIndex:  refers to the index of an image in the imageFiles_ vector (the main screen).
+ @returns: the full path to some image, OR POSIBLY nullptr if we aren't doing marquees.
+*/
+std::string AmbientMode::determineMarqueePath(int imageIndex) {
+    // for the main screen, just display the image by index
+    std::string imageName = imageFiles_[imageIndex];
+    std::string marqueeImageName;
+    std::string marqueeImagePath = nullptr;
+    
+    // for the marquee screen, determine the corresponding marquee image if available (by naming convention), 
+    // otherwise return a random marquee image.
+    if (!marqueeImageFiles_.empty()) {
+        std::filesystem::path path(imageName);
+        std::string baseName = path.stem().string(); // Get the filename without extension
+        std::string extension = path.extension().string(); // Get the file extension        
+        marqueeImageName = baseName +"_marquee" + extension;
+        marqueeImagePath = Utils::combinePath(ambientPath_, marqueeImageName);
+
+        if (!std::filesystem::exists(marqueeImagePath)) {
+            marqueeImageName = marqueeImageFiles_[std::rand() % marqueeImageFiles_.size()];                    
+            marqueeImagePath = Utils::combinePath(ambientPath_, marqueeImageName);
+            LOG_INFO("AmbientMode", "There is no matching ambient image for "+marqueeImagePath+". Displaying random marquee image: "+ marqueeImagePath);
+        }
+    }
+    return marqueeImagePath; // Return the path to the marquee image
 }
 
-void AmbientMode::populateImageFiles() {
+
+/*
+This method modifies the members imageFiles_ and marqueeImageFiles_. It's intented to be called early, either in instantation or first use.
+The vectors, once populated, will contain strings with full paths to image files.
+*/
+void AmbientMode::populateImageFiles()
+{
     namespace fs = std::filesystem;
 
     // Supported image extensions
@@ -174,9 +230,9 @@ void AmbientMode::populateImageFiles() {
 
                 // Check if the filename (without extension) ends with "marquee"
                 if (filenameWithoutExtension.size() >= 8 && filenameWithoutExtension.substr(filenameWithoutExtension.size() - 8) == "_marquee") {
-                    marqueeImageFiles_.push_back(filenameWithExtension);
+                    marqueeImageFiles_.push_back(entry.path().string());
                 } else {
-                    imageFiles_.push_back(filenameWithExtension);
+                    imageFiles_.push_back(entry.path().string()); // Store the full path of the image file
                 }
             }
         }

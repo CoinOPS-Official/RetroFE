@@ -24,15 +24,20 @@ public:
         : input_(input), basePath_(basePath), minutesPerImage_(minutesPerImage) {}
 
     void activate();
-    void displayImages(int imageIndex);
-    void display(std::string imageName, int screenNum);
     
+
 private:
     void populateImageFiles();
+    std::string determineMarqueePath(int imageIndex);    
+    void displayImages(SDL_Texture *currentImage, SDL_Texture *nextImage, float alphaOfFirstImage, int screenNum);
     UserInput& input_;
     std::string basePath_;    
     std::string ambientPath_;
     std::vector<std::string> imageFiles_;
     std::vector<std::string> marqueeImageFiles_;
     int minutesPerImage_;
+    SDL_Texture* currentImage_ = nullptr;
+    SDL_Texture* nextImage_ = nullptr;
+    SDL_Texture* currentImageMarquee_ = nullptr;
+    SDL_Texture* nextImageMarquee_ = nullptr;
 };
