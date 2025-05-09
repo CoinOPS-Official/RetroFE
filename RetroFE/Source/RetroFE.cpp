@@ -2273,7 +2273,7 @@ bool RetroFE::run()
 #endif
 					l.LEDBlinky(5); // 5= "Screensaver Start Event" per https://ledblinky.net/downloads/readme.txt
 					// initialize the instance of AmbientMode
-					int ambientModeMinutesPerImage = 30;
+					int ambientModeMinutesPerImage = 2;
 					config_.getProperty(OPTION_AMBIENTMODEMINUTESPERIMAGE, ambientModeMinutesPerImage);					
 					AmbientMode ambientMode(input_, Configuration::absolutePath, ambientModeMinutesPerImage);
     				ambientMode.activate(); // blocks until user exits					

@@ -21,7 +21,7 @@ If you have a 2nd monitor, you should have at least one image name ending with "
 
     controllerComboExit = false
     controllerComboAmbient = true
-    ambientModeMinutesPerImage = 30 # OPTIONAL - how often to change to a new images. if left unspecified, default is 30 minutes
+    ambientModeMinutesPerImage = 2 # OPTIONAL - how often to change to a new images. if left unspecified, default is 2 minutes
 
 ## Marquee display
 
