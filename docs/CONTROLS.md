@@ -7,7 +7,7 @@ single action, separated by a `,`
 
 Example:
 
- Up = Keypad 8, Up
+ ```Up = Keypad 8, Up```
 
 This will assign both the Keypad 8 (up arrow on your keypad) and the up
 arrow to RetroFE's Up control.
@@ -83,11 +83,15 @@ These keys are used to define button combos with two keycodes. The first value d
 | `favPlaylist` | Switches to the favorites playlist |
 | `togglePlaylist` | Toggle adding current item to favorites playlist |
 | `random` | Selects a random item |
+| `quickPlaylist` | Jumps to playlist defined at /collections/*/quicklist |
 
 ### Admin
+| Control | Description |
+|---------|-------------|
 | `settings` | Switches to the settings playlist |
 | `reboot` | Reboot RetroFE and refresh config |
 | `kiosk` | Toggle kiosk mode |
+| `saveFirstPlaylist` | Saves current playlist as `firstPlaylist` in settings_saved.conf |
 
 ### Deadzone
 | Control | Description |
@@ -96,8 +100,6 @@ These keys are used to define button combos with two keycodes. The first value d
 
 
 | `menu` | |
-| `saveFirstPlaylist` | |
-| `quickPlaylist` | Jumps to playlist defined at /collections/*/quicklist |
 
 
 ## Gamepad/Joystick codes

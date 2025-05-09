@@ -1,0 +1,1 @@
+A demo collection of launchers suitable for Windows to show what is possible
