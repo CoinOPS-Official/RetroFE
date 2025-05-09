@@ -232,4 +232,10 @@ autoFavorites = yes parameter setting in your [global
 settings.conf](GLOBAL_SETTINGS.md) file to automatically switch to
 your favorite games when you enter a collection.
 
+(CoinOPS) 
+Other special types are based on a metadata field to sort by that field.
+Rename the playlist to the below metadata.
+sortType year, manufacturer, developer, genre, numberPlayers, numberButtons, ctrlType, joyWays, rating, score, playCount
+make sure to add the playlist to the cyclePlaylist and can add * inside the playlist file to include all games in the list.
+
 [Back](README.md)
