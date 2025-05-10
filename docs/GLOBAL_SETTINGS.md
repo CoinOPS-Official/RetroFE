@@ -122,7 +122,7 @@ For all `BOOLEAN` types, the following values are accepted: `yes`, `no`, `true`,
 | `collectionInputClear` | `false` | `BOOLEAN` | Clear input queue on collection change | |
 | `playlistInputClear` | `false` | `BOOLEAN` | Clear input queue on playlist change | |
 | `jumpInputClear` | `false` | `BOOLEAN` | Clear input queue while jumping through the menu | |
-| `controllerComboExit` | `true` | `BOOLEAN` | Close RetroFE with the controller combo set in controls.conf | ✅ |
+| `controllerComboExitAction` | `QUIT` | `STRING` | Specify what happens on  the controller combo set in controls.conf. Valid valies: QUIT, AMBIENT, NONE | ✅ |
 | `controllerComboSettings` | `false` | `BOOLEAN` | Open settings playlist with the controller combo set in controls.conf | ✅ |
 | `settingsCollectionPlaylist` | `Arcades:settings` | `STRING` | Used by settings toggle to go to the playlist in collection:playlist format, defaults to settings.txt in the current collection | ✅ |
 | `servoStikEnabled` | `false` | `BOOLEAN` | Enable ServoStik support | |

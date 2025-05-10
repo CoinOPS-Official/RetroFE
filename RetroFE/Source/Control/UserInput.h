@@ -63,6 +63,7 @@ public:
         KeyCodeAdminMode,
         KeyCodeHideItem,
         KeyCodeQuit,
+        KeyCodeAmbient,
         KeyCodeReboot,
         KeyCodeSaveFirstPlaylist,
         KeyCodeSkipForward,

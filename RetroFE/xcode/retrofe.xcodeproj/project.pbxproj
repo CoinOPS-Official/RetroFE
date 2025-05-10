@@ -60,6 +60,7 @@
 		DF07B3E52B2A14CE00B732CF /* GStreamer.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; };
 		DF07B3E62B2A14CE00B732CF /* GStreamer.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DF07B3E42B2A14CE00B732CF /* GStreamer.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DF2B282E2B683F2E00A22011 /* GlobalOpts.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DF2B282C2B683F2E00A22011 /* GlobalOpts.cpp */; };
+		DF2FCF8C2DC90A080077B107 /* AmbientMode.cpp in Sources */ = {isa = PBXBuildFile; fileRef = DF2FCF8B2DC90A080077B107 /* AmbientMode.cpp */; };
 		DF87A17A2B152AAB00548E78 /* RetroFE.png in Resources */ = {isa = PBXBuildFile; fileRef = DF87A1792B152AA400548E78 /* RetroFE.png */; };
 		DFC83C8A2D57973600AA7522 /* webp.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFC83C882D57973600AA7522 /* webp.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		DFC83C8B2D57973600AA7522 /* libusb-1.0.0.dylib in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = DFC83C892D57973600AA7522 /* libusb-1.0.0.dylib */; settings = {ATTRIBUTES = (CodeSignOnCopy, ); }; };
@@ -186,6 +187,8 @@
 		DF07B3E42B2A14CE00B732CF /* GStreamer.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = GStreamer.framework; path = ../ThirdPartyMac/GStreamer.framework; sourceTree = SOURCE_ROOT; };
 		DF2B282C2B683F2E00A22011 /* GlobalOpts.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; name = GlobalOpts.cpp; path = Database/GlobalOpts.cpp; sourceTree = SOURCE_ROOT; };
 		DF2B282D2B683F2E00A22011 /* GlobalOpts.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = GlobalOpts.h; path = Database/GlobalOpts.h; sourceTree = SOURCE_ROOT; };
+		DF2FCF8B2DC90A080077B107 /* AmbientMode.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = AmbientMode.cpp; path = Execute/AmbientMode.cpp; sourceTree = "<group>"; };
+		DF2FCF8D2DC90A120077B107 /* AmbientMode.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = AmbientMode.h; path = Execute/AmbientMode.h; sourceTree = "<group>"; };
 		DF5A44672DABDD0B005892D0 /* versioning.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; name = versioning.h; path = autogen/versioning.h; sourceTree = "<group>"; };
 		DF87A1792B152AA400548E78 /* RetroFE.png */ = {isa = PBXFileReference; lastKnownFileType = image.png; name = RetroFE.png; path = ../../Package/Environment/Common/RetroFE.png; sourceTree = "<group>"; };
 		DFC83C862D5796C400AA7522 /* CollectionInfoBuilder.cpp */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.cpp.cpp; name = CollectionInfoBuilder.cpp; path = Collection/CollectionInfoBuilder.cpp; sourceTree = SOURCE_ROOT; };
@@ -268,6 +271,7 @@
 		4C418535FD0A487485FDF907 /* Header Files */ = {
 			isa = PBXGroup;
 			children = (
+				DF2FCF8D2DC90A120077B107 /* AmbientMode.h */,
 				7FD09C6A782A4B69B37697F1 /* Animation.h */,
 				90AC9A42897248FB8AB8E13D /* AnimationEvents.h */,
 				D32E8F4A73994068B6107132 /* AttractMode.h */,
@@ -368,7 +372,7 @@
 		F1EBF96675C5443E881F32F0 /* Source Files */ = {
 			isa = PBXGroup;
 			children = (
-				DFC83C9C2D579D7F00AA7522 /* VideoPool.cpp */,
+				DF2FCF8B2DC90A080077B107 /* AmbientMode.cpp */,
 				265E7B256A954D8793198331 /* Animation.cpp */,
 				F7BFDD750A8D4FD2BD04E3E8 /* AnimationEvents.cpp */,
 				C10786B3822040D9BB915594 /* AttractMode.cpp */,
@@ -419,6 +423,7 @@
 				5C2402E96D2D400793F40054 /* VideoBuilder.cpp */,
 				F83482D74B334D73A7832224 /* VideoComponent.cpp */,
 				A1A2A509107048D78E451632 /* VideoFactory.cpp */,
+				DFC83C9C2D579D7F00AA7522 /* VideoPool.cpp */,
 				4AE8BEDF614B479688422071 /* ViewInfo.cpp */,
 				F916B85C7BF943D3AD1C1864 /* CollectionInfoBuilder.cpp */,
 			);
@@ -545,6 +550,7 @@
 				DFC83C9D2D579D7F00AA7522 /* VideoPool.cpp in Sources */,
 				9E952B425AE5418FBE7740DF /* VideoComponent.cpp in Sources */,
 				8500F0A27BE443418BC27E80 /* ComponentItemBinding.cpp in Sources */,
+				DF2FCF8C2DC90A080077B107 /* AmbientMode.cpp in Sources */,
 				8DB049BC5D5241F48A59212D /* ComponentItemBindingBuilder.cpp in Sources */,
 				66790A464AE144839DE62066 /* Font.cpp in Sources */,
 				FEC7E2567C954EC295AC1C94 /* FontCache.cpp in Sources */,

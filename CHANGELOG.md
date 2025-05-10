@@ -17,6 +17,11 @@ in the format YYMM.X
 ### Changed
 ### Fixed
 
+## [2504.3] - 2025-05-10
+### Added
+- Ambient Mode, allowing screensaver-type imagery to be displayed on main and marquee monitors [@andre](https://github.com/andre))
+
+
 ## [2504.2] - 2025-05-05
 ### Changed
 - Delete the Configuration RetroFE tool, it isn't used at all, never made it past production and will only ever work on Windows. A better solution in the form of Qt in C++ is coming shortly [@aidenjbass](https://github.com/aidenjbass)

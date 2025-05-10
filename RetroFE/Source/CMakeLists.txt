@@ -60,6 +60,11 @@ if(WIN32)
     find_package(SDL2_ttf REQUIRED)
     find_package(ZLIB REQUIRED)
 
+
+    include_directories(${GSTREAMER_INCLUDE_DIRS})
+    link_directories(${GSTREAMER_LIBRARY_DIRS})
+
+
 elseif(APPLE)
     find_package(Glib2 REQUIRED)
     find_package(GStreamer REQUIRED)
@@ -205,6 +210,7 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Database/GlobalOpts.h"
     "${RETROFE_DIR}/Source/Database/HiScores.h"
 	"${RETROFE_DIR}/Source/Execute/AttractMode.h"
+    "${RETROFE_DIR}/Source/Execute/AmbientMode.h"
 	"${RETROFE_DIR}/Source/Execute/Launcher.h"
 	"${RETROFE_DIR}/Source/Graphics/Animate/Tween.h"
 	"${RETROFE_DIR}/Source/Graphics/Animate/TweenTypes.h"
@@ -261,6 +267,7 @@ set(RETROFE_SOURCES
     "${RETROFE_DIR}/Source/Database/HiScores.cpp"
 	"${RETROFE_DIR}/Source/Database/MetadataDatabase.cpp"
 	"${RETROFE_DIR}/Source/Execute/AttractMode.cpp"
+    "${RETROFE_DIR}/Source/Execute/AmbientMode.cpp"
 	"${RETROFE_DIR}/Source/Execute/Launcher.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Font.cpp"
 	"${RETROFE_DIR}/Source/Graphics/FontCache.cpp"
@@ -305,7 +312,7 @@ set(LIBRARY_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORC
 include_directories(${RETROFE_INCLUDE_DIRS})
 add_executable(retrofe  ${RETROFE_SOURCES} ${RETROFE_HEADERS})
 add_dependencies(retrofe GenerateVersioningHeader)
-
+target_link_libraries(retrofe ${GSTREAMER_LIBRARIES})
 find_library(WEBPDEMUX_LIBRARY
     NAMES webpdemux
     HINTS /opt/homebrew/lib /usr/lib /usr/local/lib
