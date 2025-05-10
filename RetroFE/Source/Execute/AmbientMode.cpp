@@ -14,7 +14,7 @@ When enabled:
 
 ## Configuration
 
-1) create a directory called "ambient" in the same directory as the RetroFE executable, and populate it with images. 
+1) create a directory called "ambient" in RetroFE's root directory, and populate it with images. 
 If you have a 2nd monitor, you should have at least one image name ending with "_marquee.png" (or any other common image extenion)
 
 2) in settings.conf:

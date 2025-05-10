@@ -2271,6 +2271,7 @@ bool RetroFE::run()
 					// stop music
 					Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 75, 0);
 #endif
+					currentPage_->setIsLaunched(true);
 					l.LEDBlinky(5); // 5= "Screensaver Start Event" per https://ledblinky.net/downloads/readme.txt
 					// initialize the instance of AmbientMode
 					int ambientModeMinutesPerImage = 2;
@@ -2279,6 +2280,15 @@ bool RetroFE::run()
     				ambientMode.activate(); // blocks until user exits					
 					currentPage_->start();	// ... and we're back! Restart the page, and continue normally
 					state = RETROFE_IDLE;
+					// START: honestly, I'm not sure how much of this is needed, but adding it solved problems with a blank screen on exiting from ambient mode.
+					currentPage_->setIsLaunched(false);
+					currentPage_->updateReloadables(0);
+					currentPage_->onNewItemSelected();
+					currentPage_->reallocateMenuSpritePoints(false);
+					currentTime_ = static_cast<float>(SDL_GetTicks()) / 1000;
+					keyLastTime_ = currentTime_;
+					lastLaunchReturnTime_ = currentTime_;
+					// END
 #ifdef WIN32
 					// restart music
 					Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 76, 0);
@@ -2728,10 +2738,6 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 51, 0);
 #endif
 				return RETROFE_QUIT_REQUEST;
-			}
-			else if (controllerComboAmbient)
-			{
-				return RETROFE_AMBIENT_REQUEST;	
 			}
 			else if (controllerComboAmbient)
 			{
