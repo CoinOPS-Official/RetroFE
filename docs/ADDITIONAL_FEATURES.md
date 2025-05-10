@@ -29,16 +29,16 @@ To set up Ambient Mode
 In the settings.conf file, add the following configuration options
 
 ```
-controllerComboExit = false
-controllerComboAmbient = true
+controllerComboExitAction = AMBIENT
 ambientModeMinutesPerImage = 2
 ```
 
-`controllerComboExit`: Set to false to prevent the exit button from quitting RetroFE while Ambient Mode is active.
+`controllerComboExitAction` controls what happens when you press select+start in RetroFE:
+    - QUIT: quits RetroFE
+    - AMBIENT: puts RetroFE in Ambient mode
+    - NONE: nothing happens. Use this if you want to prevent users from quitting RetroFE via controller (you can still quit with the keyboard)
 
-`controllerComboAmbient`: Set to true to enable Ambient Mode when the combo button is pressed.
-
-`ambientModeMinutesPerImage`: Optional. This option defines how often the image should change (in minutes). If left unspecified, the default is 30 minutes.
+`ambientModeMinutesPerImage`: Optional. This option defines how often the image should change (in minutes). If left unspecified, the default is 20 minutes.
 
 ### Marquee Support
 If you have a dual-monitor setup, Ambient Mode supports a marquee display on the second monitor:

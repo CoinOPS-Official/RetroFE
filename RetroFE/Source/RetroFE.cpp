@@ -2728,18 +2728,16 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		else if (input_.keystate(UserInput::KeyCodeQuitCombo1) && input_.keystate(UserInput::KeyCodeQuitCombo2))
 		{
 			attract_.reset();
-			bool controllerComboExit = false;
-			config_.getProperty(OPTION_CONTROLLERCOMBOEXIT, controllerComboExit);
-			bool controllerComboAmbient = false;
-			config_.getProperty(OPTION_CONTROLLERCOMBOAMBIENT, controllerComboAmbient);			
-			if (controllerComboExit)
+			std::string controllerComboExitAction = "EXIT";
+			config_.getProperty(OPTION_CONTROLLERCOMBOEXITACTION, controllerComboExitAction);
+			if (controllerComboExitAction == "EXIT")
 			{
 #ifdef WIN32
 				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 51, 0);
 #endif
 				return RETROFE_QUIT_REQUEST;
 			}
-			else if (controllerComboAmbient)
+			else if (controllerComboExitAction == "AMBIENT")
 			{
 				return RETROFE_AMBIENT_REQUEST;	
 			}

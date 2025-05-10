@@ -19,8 +19,7 @@ If you have a 2nd monitor, you should have at least one image name ending with "
 
 2) in settings.conf:
 
-    controllerComboExit = false
-    controllerComboAmbient = true
+    controllerComboExitAction = AMBIENT    
     ambientModeMinutesPerImage = 2 # OPTIONAL - how often to change to a new images. if left unspecified, default is 2 minutes
 
 ## Marquee display
