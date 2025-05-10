@@ -40,6 +40,10 @@ ambientModeMinutesPerImage = 2
 
 `ambientModeMinutesPerImage`: Optional. This option defines how often the image should change (in minutes). If left unspecified, the default is 20 minutes.
 
+### LEDBlinky Integration
+When activated, Ambient Mode triggers LEDBLinky's "Screensaver" mode - so you want your LEDs/buttons to do something particular (including just go dark),
+configure LEDBlinky's "Screensaver" mode.
+
 ### Marquee Support
 If you have a dual-monitor setup, Ambient Mode supports a marquee display on the second monitor:
 
