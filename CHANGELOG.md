@@ -17,6 +17,14 @@ in the format YYMM.X
 ### Changed
 ### Fixed
 
+## [2504.2] - 2025-05-05
+### Changed
+- Delete the Configuration RetroFE tool, it isn't used at all, never made it past production and will only ever work on Windows. A better solution in the form of Qt in C++ is coming shortly [@aidenjbass](https://github.com/aidenjbass)
+
+## [2504.1] - 2025-04-14
+### Added
+- RetroFE version appended with branch name if not on master [@aidenjbass](https://github.com/aidenjbass)
+
 ## [2504.0] - 2025-04-13
 
 ### Added

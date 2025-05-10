@@ -17,9 +17,7 @@
   </span>
 </h1>
 
-## A cross-platform frontend for game centers
-
-[Project Discord](https://discord.gg/dpcsP8Hm9W) | [GitHub Wiki](https://github.com/CoinOPS-Official/RetroFE/wiki) | [Changelog](CHANGELOG.md)
+[Project Discord](https://discord.gg/dpcsP8Hm9W) | [GitHub Wiki](https://coinops-official.github.io/RetroFE/) | [Changelog](CHANGELOG.md)
 
 RetroFE is a cross-platform desktop frontend designed for MAME cabinets and game centers, with a focus on simplicity and customization. 
 This repository is actively maintained and hundreds of commits ahead of the original RetroFE project. 
@@ -29,7 +27,7 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 
 ## What's so special about this fork?
 * Performance and optimisations
-	* 64bit codebase
+	* 64-bit codebase
     * C++17 as standard
 	* Modern render engine; DX11 for Windows, Metal for MacOS
  	* Hardware accelerated video support for Windows
@@ -62,13 +60,15 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 #   Building for Windows #
 ### Install Requirements
 
-	winget install -e --id Microsoft.VisualStudio.2022.Community &&
-	winget install -e --id Microsoft.WindowsSDK.10.0.26100 &&
-	winget install -e --id Microsoft.DotNet.Framework.DeveloperPack_4 &&
-	winget install -e --id Kitware.CMake &&
+	winget install -e --id Microsoft.VisualStudio.2022.Community
+	winget install -e --id Microsoft.WindowsSDK.10.0.26100
+	winget install -e --id Microsoft.DotNet.Framework.DeveloperPack_4
+	winget install -e --id Kitware.CMake
 	winget install -e --id Git.Git
 
-* Install gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+* Open the Visual Studio Installer, modify the install and add the "Desktop development with C++" package group
+
+* Install gstreamer-runtime and gstreamer-devel MSVC 64-bit complete (https://gstreamer.freedesktop.org/download/#windows)
 
 Python 3 - Optional - Read below
 
@@ -81,7 +81,7 @@ Alternatively, manually install
 * CMake (https://cmake.org/download)
 * Git (https://git-scm.com/downloads/win)
 * Python 3 (https://www.python.org/downloads/windows)
-* gstreamer-runtime and gstreamer-devel to `c:/gstreamer(x86-64 bit)` (https://gstreamer.freedesktop.org/download/#windows)
+* gstreamer-runtime and gstreamer-devel MSVC 64-bit complete (https://gstreamer.freedesktop.org/download/#windows)
 
 ### Download and compile the source code
 Download the source code
@@ -103,6 +103,15 @@ Generate visual studio solution files
 Compile RetroFE
 
 	cmake --build RetroFE/Build --config Release
+
+Copy in DLLs
+
+	mkdir .\RetroFE\Build\Release\retrofe
+	xcopy /S /I /Y .\Package\Environment\Windows\retrofe .\RetroFE\Build\Release\retrofe
+	move .\RetroFE\Build\Release\retrofe.exe .\RetroFE\Build\Release\retrofe\retrofe.exe
+	copy .\Package\Environment\Windows\RetroFE.lnk .\RetroFE\Build\Release
+
+The executable is then found in `/RetroFE/Build`, copy `RetroFE.lnk` and the `retrofe` folder
 
 #   Building for Linux #
 
@@ -148,6 +157,8 @@ Generate your gcc make files
 Compile RetroFE
 
 	cmake --build RetroFE/Build
+
+The executable is then found in `/RetroFE/Build`
 
 #   Building for MacOS #
 
@@ -206,6 +217,8 @@ Open the Xcodeproj in `RetroFE/xcode` and build target or
 	cd RetroFE/
 	xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
 
+The executable is then found in `/RetroFE/Build`
+
 ## Single Architecture Binaries
 ### Install libraries
 
@@ -230,13 +243,15 @@ Compile RetroFE
 
 	cmake --build RetroFE/Build
 
+The executable is then found in `/RetroFE/Build`
+
 #   Optional #
 
 ###   Creating a test environment
 
 A launchable test environment can be created with the following commands 
 
-	python Scripts/Package.py --os=windows/linux/mac --build=full
+	python3 Scripts/Package.py --os=windows/linux/mac --build=full
 
 Copy your live RetroFE system to any folder of your choosing. Files can be found in `Artifacts/{os}/RetroFE`
 

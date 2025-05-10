@@ -1,116 +1,94 @@
 # Getting Started
 [Back](README.md)
-  
-For Windows users, and some Linux users, getting started with RetroFE is
-as simple as following these steps:
 
-1.  Download RetroFE from <http://retrofe.nl/download>
-2.  Edit the [global settings.conf](global settings.conf) file.
-3.  Edit the [controls.conf](CONTROLS.md) file.
-4.  Run RetroFE to verify if the front-end loads (and exits) correctly.
-5.  Edit/add/delete [collections](COLLECTIONS.md).
-6.  Re-run RetroFE
+Getting started with RetroFE is as simple as following these steps:
 
-  
-## RetroFE Root Directory Structure 
+1. Download RetroFE for your OS.
+2. Edit the [global settings.conf](GLOBAL_SETTINGS.md) file.
+3. Configure your [controls.conf](CONTROLS.md) file.
+4. Add, edit, or delete [collections](COLLECTIONS.md).
+5. Run RetroFE to ensure the frontend loads and exits correctly.
+6. Re-run RetroFE to check everything works.
 
-| File / Folder                         | Description                                                                      |
-|---------------------------------------|----------------------------------------------------------------------------------|
-| [controls.conf](CONTROLS.md)             | Controller configuration (up, down, select, back, etc)                           |
-| log.txt                               | Log output                                                                       |
-| meta.db                               | Game (information database year, manufacturer, genre, #players, etc)             |
-| RetroFE.lnk                           | Windows link to core / retrofe.exe                                               |
-| [settings.conf](GLOBAL_SETTINGS.md) | Global frontend settings (display options, layout to use, base paths, etc)       |
-| /collections/                         | Game lists, menus, artwork and ROMs                                              |
-| /core/                                | Windows specific libraries needed for retrofe to run (also includes retrofe.exe) |
-| /launchers/                           | Configuration files for launchers (emulators)                                    |
-| /layouts/                             | Layouts / themes to use or display for the frontend                              |
-| /meta/                                | Files to import into meta.db (for scraping)                                      |
+## RetroFE Root Directory Structure
 
-  
+| File / Folder | Description |
+|---------------|-------------|
+| `controls.conf` | Controller definition (e.g. up, down, select, back) |
+| `log.txt` | Log output |
+| `meta.db` | Game database (year, manufacturer, genre, players, etc.) |
+| `RetroFE.{lnk/AppImage/app}` | RetroFE executable |
+| `settings.conf` | Global settings (display options, layout, base paths, etc.) |
+| `/collections/` | Game lists, menus, artwork, and ROMs |
+| `/retrofe/` | Windows-specific libraries needed for RetroFE to run (includes retrofe.exe) |
+| `/launchers/` | Configuration files for launchers (emulators) |
+| `/layouts/` | Themes/layouts for the frontend |
+| `/meta/` | Files to import into meta.db |
+
 
 # Detailed Setup Guide
+## Installation
+Once you've copied RetroFE to your chosen directory, you can test the installation by running the `retrofe` executable. RetroFE comes with a pre-installed Sega Genesis system, which includes a single game for your first test.
 
-  
-## Installation 
-
-(Note for linux users: Since Linux comes in many shapes and sizes,
-RetroFE users need to compile and install their own RetroFE setup using
-bitbucket. The instructions for this can be found
-[here](https://bitbucket.org/phulshof/retrofe/overview).)
-
-After copying the RetroFE system to the directory of your choice, you're
-set to give your installation a first test by running the retrofe
-executable in that directory. RetroFE comes with a pre-installed Sega
-Genesis system with one game so you can check if the installation went
-according to plan.
-
-  
 ## Configuration
+### Step 1: Edit the Global Settings
+The first configuration step involves editing the global settings file:  
+`settings.conf`.
+This file defines your screen settings, global theme, base paths, and other system-wide settings.
 
-The first configuration step is editing the RetroFE system configuration
-file RetroFE/[settings.conf](GLOBAL_SETTINGS.md). In here you
-configure the screen settings, global theme, base paths, etc.
+### Step 2: Configure the Controls
+The second step is to edit the `controls.conf` file to define the controls for your front-end. By default, the "select" key is space, not enter as some might expect.
 
-The second configuration step is editing the RetroFE controls file
-RetroFE/[controls.conf](CONTROLS.md). In here you configure the keys used
-to control the RetroFE front-end. Note that the default select key is
-space, and not enter as some people expected.
+---
 
-  
-## Adding Collections 
+## Adding Collections
+RetroFE starts with two basic [collections](COLLECTIONS.md), but you can easily add more. For example, let's set up the **Nintendo Entertainment System (NES)** collection:
 
-RetroFE starts with two (almost empty) [collections](COLLECTIONS.md), but
-more can be added easily. As an example, let's set up the Nintendo
-Entertainment System collection. First, enter the RetroFE/collections
-directory, and create an empty collection using the following command:
-../retrofe -createcollection "Nintendo Entertainment System"
+1. **Create a new collection**:
+   - Navigate to the `RetroFE/collections` directory.
+   - Run the following command to create the collection:  
+     `../retrofe -createcollection "Nintendo Entertainment System"`
 
-Next we add the roms and artwork:
+2. **Add ROMs and artwork**:
+   - Download a NES ROM set and place the ROMs in:  
+     `RetroFE/collections/Nintendo Entertainment System/roms`
+   - Download the system artwork (e.g., device image, logo, and video) and place them in:  
+     `RetroFE/collections/Nintendo Entertainment System/system_artwork`
+   - Download game-specific artwork (e.g., front artwork, logos, screenshots) and place them in:  
+     `RetroFE/collections/Nintendo Entertainment System/medium_artwork`
 
-Download a NES romset from your favourite source, and place the roms in
-the RetroFE/collections/Nintendo Entertainment System/roms directory.
-Download a device image, logo, and video for the system, and place the
-device.png, logo.png, and video.mp4 files in the
-RetroFE/collections/Nintendo Entertainment System/system_artwork
-directory. Download games artwork (artwork_front, logo's, screenshots,
-titleshots, videos, etc.) from your favourite art source, and place them
-in the RetroFE/collections/Nintendo Entertainment System/medium_artwork
-directory.
+3. **Configure the new collection**:
+   - Edit the **RetroFE/collections/Nintendo Entertainment System/settings.conf** file to match the following:
 
-Now we configure the new system by editing RetroFE/collections/Nintendo
-Entertainment System/settings.conf. If you stick to the default
-directory structure, this file can be extremely simple:
+     ```ini
+     list.extensions = nes
+     launcher = NES
+     ```
 
-    list.extensions = nes
+     The first line defines the ROM file extension as `.nes`, which should match the ROM files in the `/roms` directory. The second line sets the launcher for this collection (in this case, "NES").
 
-    launcher = NES
+4. **Configure the launcher**:
+   - Edit the **RetroFE/launchers/NES.conf** file to define the launcher. For example, using MAME 0.162:
 
-The first line defines the ROM file extention as .nes; this should match
-the file extentions in your RetroFE/collections/Nintendo Entertainment
-System/roms directory. The second line defines the name of the launcher
-used for this collection. Before the collection can be used, this
-launcher needs to be configured:
+     ```ini
+     executable = mame
+     arguments = nes -cart "%ITEM_FILEPATH%"
+     ```
 
-Edit the RetroFE/launchers/NES.conf (matching the launcher name defined
-in the settings.conf) file. I'm currently using MAME 0.162 for this
-purpose, so the launcher can be simple:
+     This configuration launches the game using the command:
+     `mame nes -cart "collections/Nintendo Entertainment System/roms/Willow (USA).nes"`
 
-    executable = mame
+5. **Add the collection to the main menu**:
+   - Edit the **RetroFE/collections/Main/menu.txt** file to include the new collection. Add the following line:
 
-    arguments = nes -cart "%ITEM_FILEPATH%"
+     ```plaintext
+     Nintendo Entertainment System
+     ```
 
-As an example: if RetroFE starts the game Willow (USA).nes, this
-launcher will execute the command:
+6. **Test the collection**:
+   - After making all changes, test your newly added collection by running the **retrofe** executable:  
+     `RetroFE/retrofe`
 
-    mame nes -cart "collections/Nintendo Entertainment System/roms/Willow (USA).nes".
-
-The last step is to add the newly created collection to the main menu by
-editing RetroFE/collections/Main/menu.txt, and add the following line:
-
-    Nintendo Entertainment System
-
-When this is done, your newly added collection is ready for testing by
-running the retrofe executable RetroFE/retrofe.
+---
 
 [Back](README.md)
