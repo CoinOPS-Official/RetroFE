@@ -135,6 +135,7 @@ const global_options::options_entry global_options::s_option_entries[] =
 
     { nullptr,                         nullptr,    global_options::option_type::HEADER,   "WINDOWS ONLY OPTIONS" },
     { OPTION_LEDBLINKYDIRECTORY,       "",         global_options::option_type::PATH,     "Path to LEDBlinky installation" },
+    { OPTION_LEDBLINKYCLOSEONEXIT,     "true",     global_options::option_type::BOOLEAN,  "If set to false, LEDBlinky will not close with RetroFE and keep the session open" },
 
     { nullptr,                        nullptr,     global_options::option_type::HEADER,   "MEDIA SEARCH PATH OPTIONS" },
     { OPTION_BASEMEDIAPATH,            "",         global_options::option_type::PATH,     "Path to media if stored outside the build" },
