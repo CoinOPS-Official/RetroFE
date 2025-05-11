@@ -1605,51 +1605,41 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 }
 
 void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) const {
-	float lastTime = 0;
-	float currentTime = 0;
-	float deltaTime = 0;
-	double sleepTime;
-	double fpsTime = 1000.0 / static_cast<double>(60);
+	const double fpsTime = 1000.0 / 60.0; // 60 FPS in milliseconds
+	float lastTime = static_cast<float>(SDL_GetTicks()) / 1000.0f;
 
 	while (!stop_thread) {
-		lastTime = currentTime;
-		currentTime = static_cast<float>(SDL_GetTicks()) / 1000;
-
-		if (currentTime < lastTime) {
-			currentTime = lastTime;
+		float currentTime = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+		float deltaTime = currentTime - lastTime;
+		if (deltaTime < 0) {
+			deltaTime = 0; // Handle clock wraparound
 		}
 
-		deltaTime = currentTime - lastTime;
-		sleepTime = fpsTime - deltaTime * 1000;
+		// Update page with proper deltaTime
+		currentPage.update(deltaTime);
 
-		if (sleepTime > 0 && sleepTime < 1000) {
-			SDL_Delay(static_cast<unsigned int>(sleepTime));
-		}
-		currentPage.update(float(0));
-		SDL_LockMutex(SDL::getMutex());
-
-		// start on secondary monitor
-		// todo support future main screen swap
+		// Render secondary monitors
 		for (int i = 1; i < SDL::getScreenCount(); ++i) {
+
 			SDL_SetRenderTarget(SDL::getRenderer(i), SDL::getRenderTarget(i));
-			SDL_SetRenderDrawColor(SDL::getRenderer(i), 0x0, 0x0, 0x0, 0xFF);
+			SDL_SetRenderDrawColor(SDL::getRenderer(i), 0, 0, 0, 255);
 			SDL_RenderClear(SDL::getRenderer(i));
-		}
 
-		currentPage.draw();
+			currentPage.draw(i); // Draw for monitor i
 
-		for (int i = 1; i < SDL::getScreenCount(); ++i) {
-			// Switch back to the screen's framebuffer
 			SDL_SetRenderTarget(SDL::getRenderer(i), nullptr);
-
-			// Render the texture onto the screen
 			SDL_RenderCopy(SDL::getRenderer(i), SDL::getRenderTarget(i), nullptr, nullptr);
-
-			// Present the final result to the screen
 			SDL_RenderPresent(SDL::getRenderer(i));
 		}
 
-		SDL_UnlockMutex(SDL::getMutex());
+		lastTime = currentTime;
+
+		// Sleep to maintain 60 FPS
+		float frameTime = (static_cast<float>(SDL_GetTicks()) / 1000.0f) - currentTime;
+		double sleepTime = fpsTime - frameTime * 1000.0;
+		if (sleepTime > 0 && sleepTime < fpsTime) {
+			SDL_Delay(static_cast<unsigned int>(sleepTime));
+		}
 	}
 }
 

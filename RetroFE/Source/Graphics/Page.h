@@ -109,7 +109,7 @@ public:
     void update(float dt);
     void updateReloadables(float dt);
     void cleanup();
-    void draw();
+    void draw(int monitor);
     void freeGraphicsMemory();
     void allocateGraphicsMemory();
     void deInitializeFonts( ) const;

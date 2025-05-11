@@ -1412,43 +1412,36 @@ void Page::cleanup()
 }
 
 
-void Page::draw() {
- 
+void Page::draw(int monitor) {
     for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
-        // Check for out-of-bounds access
         if (i >= LayerComponents_.size()) {
             LOG_ERROR("Page::draw", "Layer index out of bounds: " + std::to_string(i));
-            break; // Exit loop
+            break;
         }
 
-        // Skip layers with no components or menus
         if (LayerComponents_[i].empty() && menus_.empty()) {
             continue;
         }
 
-        // Draw all components in the layer
         for (Component* component : LayerComponents_[i]) {
             if (!component) {
-                //LOG_WARNING("Page::draw", "Null component in LayerComponents_[" + std::to_string(i) + "].");
                 continue;
             }
-            component->draw();
+            if (component->baseViewInfo.Monitor == monitor) {
+                component->draw();
+            }
         }
 
-        // Draw all menus in the layer
         for (const auto& menuList : menus_) {
             for (ScrollingList* const menu : menuList) {
                 if (!menu) {
-                    LOG_WARNING("Page::draw", "Null menu in menus_.");
                     continue;
                 }
-
                 for (Component* c : menu->getComponents()) {
                     if (!c) {
-                        //LOG_WARNING("Page::draw", "Null component in menu->getComponents().");
                         continue;
                     }
-                    if (c->baseViewInfo.Layer == i) {
+                    if (c->baseViewInfo.Layer == i && c->baseViewInfo.Monitor == monitor) {
                         c->draw();
                     }
                 }
