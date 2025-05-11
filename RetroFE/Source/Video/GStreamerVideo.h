@@ -131,7 +131,7 @@ private:
     float volume_{ 0.0f };
     double currentVolume_{ 0.0 };
     int monitor_;
-    bool paused_{ false };
+    std::atomic<bool>paused_{ false };
     double lastSetVolume_{ -1.0 };
     bool lastSetMuteState_{ false };
     static bool pluginsInitialized_;
