@@ -111,11 +111,14 @@
 #define OPTION_ATTRACTMODELAUNCHRUNTIME  "attractModeLaunchRunTime"
 #define OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS   "attractModeLaunchMinMaxScrolls"
 
+// AMBIENT MODE OPTIONS
+#define OPTION_AMBIENTMODEMINUTESPERIMAGE "ambientModeMinutesPerImage"
+
 // INPUT OPTIONS
 #define OPTION_COLLECTIONINPUTCLEAR    "collectionInputClear"
 #define OPTION_PLAYLISTINPUTCLEAR      "playlistInputClear"
 #define OPTION_JUMPINPUTCLEAR          "jumpInputClear"
-#define OPTION_CONTROLLERCOMBOEXIT     "controllerComboExit"
+#define OPTION_CONTROLLERCOMBOEXITACTION     "controllerComboExitAction"
 #define OPTION_CONTROLLERCOMBOSETTINGS "controllerComboSettings"
 #define OPTION_SETTINGSCOLLECTIONPLAYLIST "settingsCollectionPlaylist"
 #define OPTION_SERVOSTIKENABLED "servoStikEnabled"
@@ -239,11 +242,13 @@ public:
     bool attractmodelaunch() { return bool_value(OPTION_ATTRACTMODELAUNCH); }
     int attractmodelaunchruntime() { return int_value(OPTION_ATTRACTMODELAUNCHRUNTIME); }
     int attractmodelaunchminmaxScrolls() { return int_value(OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS); }
+
+    int ambientmodechangeminutes() { return int_value(OPTION_AMBIENTMODEMINUTESPERIMAGE); }
     
     bool collectioninputclear() { return bool_value(OPTION_COLLECTIONINPUTCLEAR); }
     bool playlistinputclear() { return bool_value(OPTION_PLAYLISTINPUTCLEAR); }
     bool jumpinputclear() { return bool_value(OPTION_JUMPINPUTCLEAR); }
-    bool controllercomboexit() { return bool_value(OPTION_CONTROLLERCOMBOEXIT); }
+    const char* controllercomboexitaction() { return value(OPTION_CONTROLLERCOMBOEXITACTION); }
     bool controllercombosettings() { return bool_value(OPTION_CONTROLLERCOMBOSETTINGS); }
 	const char* quicklistcollectionplaylist() { return value(OPTION_QUICKLISTCOLLECTIONPLAYLIST); }
     const char *settingscollectionplaylist() { return value(OPTION_SETTINGSCOLLECTIONPLAYLIST); }
