@@ -41,6 +41,7 @@ public:
     void skipForwardp( ) override;
     void skipBackwardp( ) override;
     void pause( ) override;
+    void resume();
     void restart( ) override;
     unsigned long long getCurrent( ) override;
     unsigned long long getDuration( ) override;
@@ -52,6 +53,7 @@ private:
     std::unique_ptr<IVideo> videoInst_;
     std::atomic<bool> instanceReady_{false};
     bool hasBeenOnScreen_{ false };
+	bool wasVisible_{ false };
     bool softOverlay_;
     int numLoops_;
     int monitor_;

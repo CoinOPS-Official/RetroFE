@@ -27,7 +27,7 @@
 
 namespace {
 	// Keep only relevant constants
-	constexpr size_t POOL_BUFFER_INSTANCES = 1; // Default to 1 extra instance
+	constexpr size_t POOL_BUFFER_INSTANCES = 2; // Default to 1 extra instance
 	constexpr int ACQUIRE_MAX_RETRIES = 5;
 	constexpr std::chrono::milliseconds ACQUIRE_BASE_BACKOFF{ 20 };
 	constexpr std::chrono::milliseconds ACQUIRE_LOCK_TIMEOUT{ 100 };

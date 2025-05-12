@@ -41,7 +41,6 @@
 #include <gst/video/video.h>
 #include "../../Video/VideoPool.h"
 
-
 VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
 	: Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), listId_(listId), currentPage_(&p)
 {
@@ -58,46 +57,35 @@ VideoComponent::~VideoComponent()
 }
 
 bool VideoComponent::update(float dt) {
-	if (!instanceReady_ || !currentPage_) {
+	if (!instanceReady_ || !currentPage_)
 		return Component::update(dt);
-	}
 
-	videoInst_->messageHandler(dt);
-
-	if (videoInst_->hasError()) {
+	if (videoInst_->hasError())
 		return Component::update(dt);
-	}
 
 	if ((currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0)) {
-		if (videoInst_->isPaused()) {
-			videoInst_->pause();  // Ensure paused during launch
-		}
+		if (videoInst_->isPaused())
+			videoInst_->pause();  // Force pause during game launch
 		return Component::update(dt);
 	}
 
-	// Cache the playing state once
 	bool isVideoPlaying = videoInst_->isPlaying();
 	bool isPaused = videoInst_->isPaused();
 
-	// Only proceed with state changes if video is fully playing
 	if (isVideoPlaying) {
 		videoInst_->setVolume(baseViewInfo.Volume);
 
-		if (!currentPage_->isMenuScrolling()) {
+		if (!currentPage_->isMenuScrolling())
 			videoInst_->volumeUpdate();
-		}
 
-		// Only update dimensions once after playback starts
+		// One-time dimension fetch
 		if (!dimensionsUpdated_) {
 			auto videoHeight = static_cast<float>(videoInst_->getHeight());
 			auto videoWidth = static_cast<float>(videoInst_->getWidth());
-
-			// Only update if we have valid dimensions
 			if (videoHeight > 0.0f && videoWidth > 0.0f) {
 				baseViewInfo.ImageHeight = videoHeight;
 				baseViewInfo.ImageWidth = videoWidth;
-				dimensionsUpdated_ = true; // Mark dimensions as updated
-
+				dimensionsUpdated_ = true;
 				LOG_DEBUG("VideoComponent", "Updated video dimensions: " +
 					std::to_string(static_cast<int>(videoWidth)) + "x" + std::to_string(static_cast<int>(videoHeight)) +
 					" for " + videoFile_);
@@ -105,29 +93,32 @@ bool VideoComponent::update(float dt) {
 		}
 
 		bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0f;
-		if (isCurrentlyVisible) {
+		if (isCurrentlyVisible)
 			hasBeenOnScreen_ = true;
-		}
 
+		// Only toggle playback state when visibility *changes*
 		if (baseViewInfo.PauseOnScroll) {
-			if (!isCurrentlyVisible && !isPaused) {
-				pause();
-				LOG_DEBUG("VideoComponent", "Paused " + videoFile_);
-			}
-			else if (isCurrentlyVisible && isPaused) {
-				pause();
-				LOG_DEBUG("VideoComponent", "Resumed " + videoFile_);
+			if (isCurrentlyVisible != wasVisible_) {
+				if (isCurrentlyVisible) {
+					videoInst_->resume();
+					LOG_DEBUG("VideoComponent", "Resumed " + videoFile_);
+				}
+				else {
+					videoInst_->pause();
+					LOG_DEBUG("VideoComponent", "Paused " + videoFile_);
+				}
+				wasVisible_ = isCurrentlyVisible;
 			}
 		}
 
+		// Restart support
 		if (baseViewInfo.Restart && hasBeenOnScreen_) {
-			if (isPaused) {
-				pause();  // Resume if paused
-			}
+			if (videoInst_->getTargetState() == IVideo::VideoState::Playing && videoInst_->isPaused())
+				videoInst_->resume();
 
 			GstClockTime currentTime = videoInst_->getCurrent();
 			if (currentTime > 1000000) {
-				restart();
+				videoInst_->restart();
 				baseViewInfo.Restart = false;
 				LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
 			}
@@ -136,6 +127,7 @@ bool VideoComponent::update(float dt) {
 
 	return Component::update(dt);
 }
+
 
 void VideoComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
@@ -235,6 +227,14 @@ void VideoComponent::pause()
 	}
 	videoInst_->pause();
 }
+
+void VideoComponent::resume() {
+	if (!videoInst_ || !instanceReady_) {
+		return;
+	}
+	videoInst_->resume();
+}
+
 
 void VideoComponent::restart()
 {

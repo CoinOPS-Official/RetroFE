@@ -2395,6 +2395,8 @@ bool RetroFE::run()
 					attract_.reset();
 				}
 				currentPage_->update(deltaTime);
+				// Let GStreamer process bus messages
+				g_main_context_iteration(nullptr, false);
 				SDL_PumpEvents();
 				// Update keystate at 30Hz
 				if (currentTime_ - lastInputUpdateTime >= inputUpdateInterval)

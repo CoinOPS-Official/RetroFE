@@ -19,30 +19,36 @@
 #include <string>
 #include <gst/video/video.h>
 
-class IVideo
-{
-  public:
-    virtual ~IVideo() = default;
-    virtual bool initialize() = 0;
-    virtual bool play(const std::string &file) = 0;
-    virtual bool stop() = 0;
-    virtual bool deInitialize() = 0;
-    virtual SDL_Texture *getTexture() const = 0;
-    virtual void draw() = 0;
-    virtual void messageHandler(float dt) = 0;
-    virtual void volumeUpdate() = 0;
-    virtual int getHeight() = 0;
-    virtual int getWidth() = 0;
-    virtual void setVolume(float volume) = 0;
-    virtual void skipForward() = 0;
-    virtual void skipBackward() = 0;
-    virtual void skipForwardp() = 0;
-    virtual void skipBackwardp() = 0;
-    virtual void pause() = 0;
-    virtual void restart() = 0;
-    virtual unsigned long long getCurrent() = 0;
-    virtual unsigned long long getDuration() = 0;
-    virtual bool isPaused() = 0;
-    virtual bool isPlaying() = 0;
-    virtual bool hasError() const = 0;
+class IVideo {
+public:
+	enum class VideoState {
+		None,
+		Playing,
+		Paused
+	};
+
+	virtual VideoState getTargetState() const = 0;
+	virtual ~IVideo() = default;
+	virtual bool initialize() = 0;
+	virtual bool play(const std::string& file) = 0;
+	virtual bool stop() = 0;
+	virtual bool deInitialize() = 0;
+	virtual SDL_Texture* getTexture() const = 0;
+	virtual void draw() = 0;
+	virtual void volumeUpdate() = 0;
+	virtual int getHeight() = 0;
+	virtual int getWidth() = 0;
+	virtual void setVolume(float volume) = 0;
+	virtual void skipForward() = 0;
+	virtual void skipBackward() = 0;
+	virtual void skipForwardp() = 0;
+	virtual void skipBackwardp() = 0;
+	virtual void pause() = 0;
+	virtual void resume() = 0;
+	virtual void restart() = 0;
+	virtual unsigned long long getCurrent() = 0;
+	virtual unsigned long long getDuration() = 0;
+	virtual bool isPaused() = 0;
+	virtual bool isPlaying() = 0;
+	virtual bool hasError() const = 0;
 };

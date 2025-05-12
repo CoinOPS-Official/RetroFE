@@ -45,15 +45,17 @@ extern "C" {
 #endif
 }
 
-
-
 class GStreamerVideo final : public IVideo {
 public:
+
+    IVideo::VideoState getTargetState() const override {
+        return targetState_;
+    }
+    
     explicit GStreamerVideo(int monitor);
     GStreamerVideo(const GStreamerVideo&) = delete;
     GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo() override;
-    void messageHandler(float dt) override;
     bool initialize() override;
     bool unload();
     bool createPipelineIfNeeded();
@@ -73,6 +75,7 @@ public:
     void skipForwardp() override;
     void skipBackwardp() override;
     void pause() override;
+    void resume() override;
     void restart() override;
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
@@ -90,6 +93,9 @@ public:
     }
 
 private:
+    
+    std::atomic<IVideo::VideoState> targetState_{ IVideo::VideoState::None };
+
     mutable std::mutex drawMutex_;
     std::atomic<uint64_t> mappingGeneration_{ 0 };
     static std::vector<GStreamerVideo*> activeVideos_;
@@ -99,6 +105,7 @@ private:
     
     static constexpr int ALPHA_TEXTURE_SIZE = 4;
     void createAlphaTexture();
+    static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
@@ -117,6 +124,7 @@ private:
     void initializeUpdateFunction();
     guint elementSetupHandlerId_{ 0 };
     guint padProbeId_{ 0 };
+	guint busWatchId_{ 0 };
     GValueArray* gva_;
     std::atomic<int> width_{ 0 };
     std::atomic<int> height_{ 0 };
@@ -148,3 +156,4 @@ private:
     static void customGstLogHandler(GstDebugCategory* category, GstDebugLevel level, const gchar* file, const gchar* function, gint line, GObject* object, GstDebugMessage* message, gpointer user_data);
 
 };
+

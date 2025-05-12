@@ -148,76 +148,35 @@ void GStreamerVideo::createAlphaTexture() {
 	SDL_UnlockMutex(SDL::getMutex());
 }
 
-void GStreamerVideo::messageHandler(float dt) {
-	// Skip if no playbin or not playing
-	if (!playbin_ || !isPlaying_.load(std::memory_order_relaxed))
-		return;
+gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user_data) {
+	GStreamerVideo* video = static_cast<GStreamerVideo*>(user_data);
 
-	// Get the bus and process messages
-	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-	if (!bus)
-		return;
+	switch (GST_MESSAGE_TYPE(msg)) {
+		case GST_MESSAGE_STATE_CHANGED: {
+			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
+				GstState oldState, newState, pending;
+				gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
 
-	// Process all pending messages (non-blocking)
-	GstMessage* msg;
-	while ((msg = gst_bus_pop(bus))) {
-		switch (GST_MESSAGE_TYPE(msg)) {
-			case GST_MESSAGE_ERROR: {
-				GError* err;
-				gchar* debug_info;
-				gst_message_parse_error(msg, &err, &debug_info);
+				video->paused_.store(newState == GST_STATE_PAUSED, std::memory_order_release);
 
-				hasError_.store(true, std::memory_order_release);
-				LOG_ERROR("GStreamerVideo", "Error from " +
-					std::string(GST_OBJECT_NAME(msg->src)) + ": " +
-					std::string(err->message));
-				if (debug_info) {
-					LOG_DEBUG("GStreamerVideo", "Debug info: " + std::string(debug_info));
-				}
+				if (newState == GST_STATE_PLAYING)
+					video->targetState_ = IVideo::VideoState::Playing;
+				else if (newState == GST_STATE_PAUSED)
+					video->targetState_ = IVideo::VideoState::Paused;
+				else
+					video->targetState_ = IVideo::VideoState::None;
 
-				g_clear_error(&err);
-				g_free(debug_info);
-				break;
+				LOG_DEBUG("GStreamerVideo", "BusCallback: State changed: " +
+					std::string(gst_element_state_get_name(oldState)) + " > " +
+					std::string(gst_element_state_get_name(newState)) + " for " + video->currentFile_);
 			}
-			case GST_MESSAGE_WARNING: {
-				GError* err;
-				gchar* debug_info;
-				gst_message_parse_warning(msg, &err, &debug_info);
-				LOG_DEBUG("GStreamerVideo", "Warning: " + std::string(err->message));
-				g_clear_error(&err);
-				g_free(debug_info);
-				break;
-			}
-			case GST_MESSAGE_INFO: {
-				GError* err;
-				gchar* debug_info;
-				gst_message_parse_info(msg, &err, &debug_info);
-				LOG_DEBUG("GStreamerVideo", "Info: " + std::string(err->message));
-				g_clear_error(&err);
-				g_free(debug_info);
-				break;
-			}
-			case GST_MESSAGE_STATE_CHANGED: {
-				if (GST_MESSAGE_SRC(msg) == GST_OBJECT(playbin_)) {
-					GstState oldState, newState, pending;
-					gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
-
-					paused_.store(newState == GST_STATE_PAUSED, std::memory_order_release);
-
-					LOG_DEBUG("GStreamerVideo", "State changed: " +
-						std::string(gst_element_state_get_name(oldState)) + " > " +
-						std::string(gst_element_state_get_name(newState)) + " for " + currentFile_ +
-						" (paused_ = " + (newState == GST_STATE_PAUSED ? "true" : "false") + ")");
-				}
-				break;
-			}
-			default:
 			break;
 		}
-		gst_message_unref(msg);
+		default:
+		break;
 	}
 
-	gst_object_unref(bus);
+	return TRUE; // keep watching
 }
 
 void GStreamerVideo::initializePlugins() {
@@ -324,7 +283,6 @@ bool GStreamerVideo::initialize() {
 bool GStreamerVideo::deInitialize() {
 	gst_deinit();
 	initialized_ = false;
-	paused_ = false;
 	return true;
 }
 
@@ -338,6 +296,11 @@ bool GStreamerVideo::stop() {
 
 	if (playbin_)
 	{
+		if (busWatchId_ != 0) {
+			g_source_remove(busWatchId_);
+			busWatchId_ = 0;
+		}
+		
 		// Set the pipeline state to NULL
 		gst_element_set_state(playbin_, GST_STATE_NULL);
 
@@ -399,6 +362,11 @@ bool GStreamerVideo::unload() {
 
 	isPlaying_.store(false, std::memory_order_release);
 
+	if (busWatchId_ != 0) {
+		g_source_remove(busWatchId_);
+		busWatchId_ = 0;
+	}
+
 	// 1. Check current and pending state
 	GstState curState, pendingState;
 	GstStateChangeReturn getStateRet = gst_element_get_state(playbin_, &curState, &pendingState, GST_SECOND);
@@ -440,7 +408,7 @@ bool GStreamerVideo::unload() {
 	}
 
 	// 6. Reset everything else (same as before)
-	paused_ = false;
+	targetState_ = IVideo::VideoState::None;
 	currentFile_.clear();
 	playCount_ = 0;
 	numLoops_ = 0;
@@ -696,18 +664,24 @@ bool GStreamerVideo::play(const std::string& file) {
 		gst_object_unref(pad);
 	}
 
+	GstBus* bus = gst_element_get_bus(playbin_);
+	busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
+	gst_object_unref(bus);
+
 	// Convert file path to URI
 	gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
 	if (!uriFile) {
 		LOG_DEBUG("Video", "Failed to convert filename to URI");
 		return false;
 	}
-	GstState current, pending;
-	gst_element_get_state(playbin_, &current, &pending, GST_SECOND);
+
 
 	// Update URI - no need to set to READY first
 	g_object_set(playbin_, "uri", uriFile, nullptr);
 	g_free(uriFile);
+
+	GstState current, pending;
+	gst_element_get_state(playbin_, &current, &pending, GST_SECOND);
 
 	if (current != GST_STATE_PAUSED) {
 		GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
@@ -717,8 +691,9 @@ bool GStreamerVideo::play(const std::string& file) {
 			return false;
 		}
 	}
+	targetState_ = IVideo::VideoState::Paused;  // accurately reflect that we're starting preloaded
+	paused_.store(true, std::memory_order_release);  // draw() must treat this as preloaded-not-playing
 	isPlaying_.store(true, std::memory_order_release);
-	paused_.store(true, std::memory_order_release);
 	currentFile_ = file;
 
 	// Mute and volume to 0 by default
@@ -1198,29 +1173,36 @@ void GStreamerVideo::skipBackwardp() {
 }
 
 void GStreamerVideo::pause() {
-	if (!isPlaying_.load(std::memory_order_acquire) || !playbin_) {
-		LOG_DEBUG("GStreamerVideo", "TogglePlayPause: Pipeline not active for file: " + currentFile_);
+	if (!isPlaying_ || !playbin_) return;
+
+	if (targetState_ == IVideo::VideoState::Paused)
 		return;
+
+	targetState_ = IVideo::VideoState::Paused;
+
+	LOG_DEBUG("GStreamerVideo", "Requesting PAUSED for " + currentFile_);
+	if (gst_element_set_state(playbin_, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
+		LOG_ERROR("GStreamerVideo", "Failed to set PAUSED for " + currentFile_);
+		hasError_.store(true);
+		targetState_ = IVideo::VideoState::None;
 	}
-
-	// Optimistically toggle based on our internal paused_ flag
-	bool currentlyPaused = paused_.load(std::memory_order_acquire);
-	GstState targetState = currentlyPaused ? GST_STATE_PLAYING : GST_STATE_PAUSED;
-
-	LOG_DEBUG("GStreamerVideo", "TogglePlayPause: Requesting " +
-		std::string(currentlyPaused ? "PLAYING" : "PAUSED") + " for " + currentFile_);
-
-	GstStateChangeReturn result = gst_element_set_state(playbin_, targetState);
-	if (result == GST_STATE_CHANGE_FAILURE) {
-		LOG_ERROR("GStreamerVideo", "TogglePlayPause: Failed to set state for " + currentFile_);
-		hasError_.store(true, std::memory_order_release);
-		return;
-	}
-
-	// Optimistically update paused_ (messageHandler will confirm/correct)
-	paused_.store(!currentlyPaused, std::memory_order_release);
 }
 
+void GStreamerVideo::resume() {
+	if (!isPlaying_ || !playbin_) return;
+
+	if (targetState_ == IVideo::VideoState::Playing)
+		return;  // Already requested
+
+	targetState_ = IVideo::VideoState::Playing;
+
+	LOG_DEBUG("GStreamerVideo", "Requesting PLAYING for " + currentFile_);
+	if (gst_element_set_state(playbin_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+		LOG_ERROR("GStreamerVideo", "Failed to set PLAYING for " + currentFile_);
+		hasError_.store(true);
+		targetState_ = IVideo::VideoState::None; // Reset fallback
+	}
+}
 
 void GStreamerVideo::restart() {
 	if (!isPlaying_)
