@@ -62,7 +62,7 @@ bool VideoComponent::update(float dt) {
 		return Component::update(dt);
 	}
 
-	//videoInst_->messageHandler(dt);
+	videoInst_->messageHandler(dt);
 
 	if (videoInst_->hasError()) {
 		return Component::update(dt);
