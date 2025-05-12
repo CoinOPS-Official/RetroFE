@@ -172,6 +172,22 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 			}
 			break;
 		}
+		case GST_MESSAGE_EOS: {
+			auto* self = static_cast<GStreamerVideo*>(user_data);
+			if (!self) break;
+			if (self->getCurrent() > GST_SECOND) {
+				self->playCount_++;
+				if (!self->numLoops_ || self->numLoops_ > self->playCount_) {
+					self->restart();
+				}
+				else {
+					self->pause();
+				}
+			}
+
+			LOG_DEBUG("GStreamerVideo", "Received EOS for " + self->currentFile_);
+			break;
+		}
 		default:
 		break;
 	}
@@ -300,7 +316,7 @@ bool GStreamerVideo::stop() {
 			g_source_remove(busWatchId_);
 			busWatchId_ = 0;
 		}
-		
+
 		// Set the pipeline state to NULL
 		gst_element_set_state(playbin_, GST_STATE_NULL);
 
@@ -438,8 +454,7 @@ bool GStreamerVideo::unload() {
 static inline std::array<double, 9> computePerspectiveMatrixFromCorners(
 	int width,
 	int height,
-	const std::array<Point2D, 4>& pts)
-{
+	const std::array<Point2D, 4>& pts) {
 	constexpr double EPSILON = 1e-9;
 
 	const Point2D A = pts[0];
@@ -609,7 +624,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		std::lock_guard<std::mutex> lock(activeVideosMutex_);
 		activeVideos_.push_back(this);
 	}
-	
+
 	initializeUpdateFunction();
 
 	return true;
@@ -748,57 +763,57 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 
 			if (gst_structure_get_int(s, "width", &newWidth) &&
 				gst_structure_get_int(s, "height", &newHeight)) {
-					// Update texture validity
-					if (video->videoTexture_ &&
-						video->textureWidth_.load(std::memory_order_acquire) == newWidth &&
-						video->textureHeight_.load(std::memory_order_acquire) == newHeight) {
-						video->textureValid_.store(true, std::memory_order_release);
-						LOG_DEBUG("GStreamerVideo", "Will reuse existing texture for dimensions " +
-							std::to_string(newWidth) + "x" + std::to_string(newHeight));
-					}
-					else {
-						video->textureValid_.store(false, std::memory_order_release);
-						LOG_DEBUG("GStreamerVideo", "Will create new texture for dimensions " +
-							std::to_string(newWidth) + "x" + std::to_string(newHeight));
-					}
-
-					video->width_.store(newWidth, std::memory_order_release);
-					video->height_.store(newHeight, std::memory_order_release);
-
-					// Perspective box
-					if (video->hasPerspective_ && !video->textureValid_.load(std::memory_order_acquire)) {
-						// Only update perspective matrix if texture is invalid.
-						// Free and recompute the cached GValueArray if necessary.
-						if (video->perspective_gva_) {
-							g_value_array_free(video->perspective_gva_);
-							video->perspective_gva_ = nullptr;
-						}
-						std::array<Point2D, 4> perspectiveBox = {
-							Point2D(video->perspectiveCorners_[0], video->perspectiveCorners_[1]), // top-left
-							Point2D(video->perspectiveCorners_[2], video->perspectiveCorners_[3]), // top-right
-							Point2D(video->perspectiveCorners_[4], video->perspectiveCorners_[5]), // bottom-left
-							Point2D(video->perspectiveCorners_[6], video->perspectiveCorners_[7])  // bottom-right
-						};
-						std::array<double, 9> mat = computePerspectiveMatrixFromCorners(newWidth, newHeight, perspectiveBox);
-
-						video->perspective_gva_ = g_value_array_new(9);
-						GValue val = G_VALUE_INIT;
-						g_value_init(&val, G_TYPE_DOUBLE);
-						for (const double element : mat) {
-							g_value_set_double(&val, element);
-							g_value_array_append(video->perspective_gva_, &val);
-						}
-						g_value_unset(&val);
-
-						// Set the new perspective matrix.
-						if (video->perspective_) {
-							g_object_set(video->perspective_, "matrix", video->perspective_gva_, nullptr);
-						}
-					}
-
-					LOG_DEBUG("GStreamerVideo", "Caps processed, video is now playing: " + video->currentFile_);
+				// Update texture validity
+				if (video->videoTexture_ &&
+					video->textureWidth_.load(std::memory_order_acquire) == newWidth &&
+					video->textureHeight_.load(std::memory_order_acquire) == newHeight) {
+					video->textureValid_.store(true, std::memory_order_release);
+					LOG_DEBUG("GStreamerVideo", "Will reuse existing texture for dimensions " +
+						std::to_string(newWidth) + "x" + std::to_string(newHeight));
 				}
-			
+				else {
+					video->textureValid_.store(false, std::memory_order_release);
+					LOG_DEBUG("GStreamerVideo", "Will create new texture for dimensions " +
+						std::to_string(newWidth) + "x" + std::to_string(newHeight));
+				}
+
+				video->width_.store(newWidth, std::memory_order_release);
+				video->height_.store(newHeight, std::memory_order_release);
+
+				// Perspective box
+				if (video->hasPerspective_ && !video->textureValid_.load(std::memory_order_acquire)) {
+					// Only update perspective matrix if texture is invalid.
+					// Free and recompute the cached GValueArray if necessary.
+					if (video->perspective_gva_) {
+						g_value_array_free(video->perspective_gva_);
+						video->perspective_gva_ = nullptr;
+					}
+					std::array<Point2D, 4> perspectiveBox = {
+						Point2D(video->perspectiveCorners_[0], video->perspectiveCorners_[1]), // top-left
+						Point2D(video->perspectiveCorners_[2], video->perspectiveCorners_[3]), // top-right
+						Point2D(video->perspectiveCorners_[4], video->perspectiveCorners_[5]), // bottom-left
+						Point2D(video->perspectiveCorners_[6], video->perspectiveCorners_[7])  // bottom-right
+					};
+					std::array<double, 9> mat = computePerspectiveMatrixFromCorners(newWidth, newHeight, perspectiveBox);
+
+					video->perspective_gva_ = g_value_array_new(9);
+					GValue val = G_VALUE_INIT;
+					g_value_init(&val, G_TYPE_DOUBLE);
+					for (const double element : mat) {
+						g_value_set_double(&val, element);
+						g_value_array_append(video->perspective_gva_, &val);
+					}
+					g_value_unset(&val);
+
+					// Set the new perspective matrix.
+					if (video->perspective_) {
+						g_object_set(video->perspective_, "matrix", video->perspective_gva_, nullptr);
+					}
+				}
+
+				LOG_DEBUG("GStreamerVideo", "Caps processed, video is now playing: " + video->currentFile_);
+			}
+
 		}
 		video->padProbeId_ = 0;
 		return GST_PAD_PROBE_REMOVE;
@@ -844,9 +859,6 @@ void GStreamerVideo::createSdlTexture() {
 
 		SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
 		SDL_SetTextureBlendMode(videoTexture_, blendMode);
-
-
-		texture_ = videoTexture_;  // Start pointing to video texture
 
 	}
 
@@ -898,37 +910,14 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-	std::lock_guard<std::mutex> lock(drawMutex_);  // use SDL_LockMutex if using SDL_mutex*
-	
+	std::lock_guard<std::mutex> lock(drawMutex_);
 
-	bool isPlaying = isPlaying_.load(std::memory_order_acquire); // Cache the value\
-
-	// --- Early exit if not playing ---
-	if (!isPlaying) {
+	if (!isPlaying_.load(std::memory_order_acquire)) {
 		return;
 	}
 
 	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
-	// If no sample is available, check for EOS condition
 	if (!sample) {
-		// Only check state if we're still playing (reusing cached value)
-		if (isPlaying) {
-			GstState state;
-			gst_element_get_state(GST_ELEMENT(playbin_), &state, nullptr, 0);
-
-			// Check for end of stream when in PLAYING state
-			if (state == GST_STATE_PLAYING && gst_app_sink_is_eos(GST_APP_SINK(videoSink_))) {
-				if (getCurrent() > GST_SECOND) {
-					playCount_++;
-					if (!numLoops_ || numLoops_ > playCount_) {
-						restart();
-					}
-					else {
-						stop();
-					}
-				}
-			}
-		}
 		return;
 	}
 
@@ -938,94 +927,62 @@ void GStreamerVideo::draw() {
 		return;
 	}
 
-	// --- Get Caps and Video Info ---
 	GstCaps* caps = gst_sample_get_caps(sample);
 	if (!caps) {
-		SDL_UnlockMutex(SDL::getMutex());
 		gst_sample_unref(sample);
 		return;
 	}
+
 	GstVideoInfo freshInfo;
 	if (!gst_video_info_from_caps(&freshInfo, caps)) {
-		SDL_UnlockMutex(SDL::getMutex());
-		gst_sample_unref(sample); // Unref sample, no buffer ref taken yet
+		gst_sample_unref(sample);
 		return;
 	}
 
-	// --- Ref Buffer (Inside mutex, AFTER getting info) ---
-	GstBuffer* buf = gst_buffer_ref(originalBuf); // Ref the buffer WE are processing
+	GstBuffer* buf = gst_buffer_ref(originalBuf);
 
-	// --- Prepare for Mapping: Increment Generation ---
-	// Use sequentially consistent ordering for simplicity, or acquire/release if optimized
 	uint64_t currentGeneration = mappingGeneration_.fetch_add(1, std::memory_order_seq_cst) + 1;
 
-	// --- Map Frame ---
 	GstVideoFrame frame;
 	bool mapped = gst_video_frame_map(&frame, &freshInfo, buf, GST_MAP_READ);
 
 	if (!mapped) {
-		// Map failed, cleanup and exit critical section
-		SDL_UnlockMutex(SDL::getMutex());
 		gst_buffer_unref(buf);
 		gst_sample_unref(sample);
 		return;
 	}
 
-	// --- Check Texture Validity (if needed) ---
-	bool textureValid = textureValid_.load(std::memory_order_acquire); // Or however you check
-	if (!textureValid) {
-		// Attempt to create texture. If fails, need to cleanup.
+	// Lazy texture creation
+	if (!textureValid_.load(std::memory_order_acquire)) {
 		createSdlTexture();
-		textureValid = textureValid_.load(std::memory_order_acquire); // Re-check
-
-		if (!textureValid || !texture_) { // Check if creation failed or texture pointer is null
-			// Cleanup if texture creation failed
+		if (!textureValid_.load(std::memory_order_acquire) || !videoTexture_) {
 			gst_video_frame_unmap(&frame);
-			SDL_UnlockMutex(SDL::getMutex());
 			gst_buffer_unref(buf);
 			gst_sample_unref(sample);
 			return;
 		}
 	}
-	// Ensure texture_ points to the correct texture if different caches exist
-	if (texture_ != videoTexture_) {
-		texture_ = videoTexture_;
-	}
 
-
-	// --- <<< CRITICAL CHECK >>> ---
-	// Verify if another thread has mapped *after* we did, invalidating our map.
+	// Critical generation check
 	if (mappingGeneration_.load(std::memory_order_seq_cst) != currentGeneration) {
-		// Stale mapping detected! Another thread ran this section after we mapped.
 		LOG_WARNING("GStreamerVideo", "Stale mapping detected (Thread ID: %lu). Aborting texture update.");
-
-		// Cleanup immediately, do not use 'frame'
 		gst_video_frame_unmap(&frame);
-		SDL_UnlockMutex(SDL::getMutex());
 		gst_buffer_unref(buf);
 		gst_sample_unref(sample);
-		return; // Abort this draw cycle
+		return;
 	}
 
-	// --- Update Texture (Only if generation check passed) ---
-	if (texture_ && updateTextureFunc_) { // Check texture_ again just in case
-		bool success = updateTextureFunc_(texture_, &frame);
-		if (!success) {
-			// Handle update failure, maybe invalidate texture
-			textureValid_.store(false, std::memory_order_release); // Example
-		}
+	// Perform texture update on videoTexture_
+	bool success = updateTextureFunc_(videoTexture_, &frame);
+	if (!success) {
+		textureValid_.store(false, std::memory_order_release);
 	}
-	else {
-		LOG_ERROR("GStreamerVideo", "Texture or update function missing.");
+	else if (texture_ != videoTexture_) {
+		texture_ = videoTexture_;
+		LOG_DEBUG("GStreamerVideo", "Promoted videoTexture_ to active texture_");
 	}
 
-	// --- Unmap Frame ---
 	gst_video_frame_unmap(&frame);
-
-	// --- Release Mutex ---
-	SDL_UnlockMutex(SDL::getMutex());
-
-	// --- Unref Buffer and Sample (Outside mutex is fine) ---
 	gst_buffer_unref(buf);
 	gst_sample_unref(sample);
 }
