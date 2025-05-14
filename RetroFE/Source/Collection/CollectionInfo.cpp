@@ -56,24 +56,20 @@ CollectionInfo::CollectionInfo(
 {
 }
 
-CollectionInfo::~CollectionInfo()
-{
-    auto pit = playlists.begin();
-
-    while(pit != playlists.end()) {
-        if(pit->second != &items) {
-            delete pit->second;
+CollectionInfo::~CollectionInfo() {
+    // Delete all playlist vectors that aren't pointing to items
+    for (auto& entry : playlists) {
+        if (entry.second != &items) {
+            delete entry.second;
         }
-        playlists.erase(pit);
-        pit = playlists.begin();
     }
+    playlists.clear();
 
-	auto it = items.begin();
-    while(it != items.end()) {
-        delete *it;
-        items.erase(it);
-        it = items.begin();
+    // Delete all items
+    for (Item* item : items) {
+        delete item;
     }
+    items.clear();
 }
 
 bool CollectionInfo::saveFavorites(Item* removed)
