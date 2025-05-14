@@ -58,6 +58,7 @@ public:
     virtual void skipForwardp( ) {};
     virtual void skipBackwardp( ) {};
     virtual void pause( ) {};
+    virtual void resume() {};
     virtual void restart( ) {};
     virtual unsigned long long getCurrent( ) {return 0;};
     virtual unsigned long long getDuration( ) {return 0;};

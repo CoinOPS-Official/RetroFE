@@ -153,6 +153,12 @@ private:
         RETROFE_SCROLL_PLAYLIST_BACK,
     };
 
+    RETROFE_STATE state_ = RETROFE_IDLE;  // Private version of your state variable
+
+    void setState(RETROFE_STATE newState);
+    RETROFE_STATE getState() const;
+    std::string stateToString(RETROFE_STATE s) const;
+
     void            render();
     bool            back( bool &exit );
     bool isStandalonePlaylist(std::string playlist);
