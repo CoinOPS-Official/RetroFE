@@ -172,6 +172,7 @@ public:
     void  skipForwardp( );
     void  skipBackwardp( );
     void  pause( );
+    void resume();
     void  restart( );
     unsigned long long getCurrent( );
     unsigned long long getDuration( );

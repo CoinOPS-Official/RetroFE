@@ -1898,6 +1898,14 @@ void Page::pause()
     }
 }
 
+void Page::resume() {
+    for (auto& layerComponents : LayerComponents_) {
+        for (auto& component : layerComponents) {
+            component->resume();
+        }
+    }
+}
+
 void Page::restart()
 {
     for (auto& layerComponents : LayerComponents_) {
