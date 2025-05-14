@@ -44,6 +44,7 @@
 #include <vector>
 #include <cstring>
 #include <optional>
+#include <filesystem>
 
  // Definition of static members
 Image::PathCache Image::pathCache_;
@@ -148,9 +149,10 @@ void Image::allocateGraphicsMemory() {
         return success;
         };
 
-    if (tryLoad(file_))
+    if (!file_.empty() && std::filesystem::exists(file_) && tryLoad(file_))
         return;
-    if (!altFile_.empty() && tryLoad(altFile_))
+
+    if (!altFile_.empty() && std::filesystem::exists(altFile_) && tryLoad(altFile_))
         return;
     LOG_ERROR("Image", "Failed to load both primary and alternative image files: " + file_ + " | " + altFile_);
 }
