@@ -1142,6 +1142,9 @@ bool RetroFE::run() {
 			if ((settingsCollection == "" || currentPage_->getCollectionName() == settingsCollection) &&
 				(settingsPlaylist == "" || currentPage_->getPlaylistName() == settingsPlaylist))
 			{
+				if (nextPageItem_) {
+					delete nextPageItem_;
+				}
 				nextPageItem_ = new Item();
 				config_.getProperty("lastCollection", nextPageItem_->name);
 				if (currentPage_->getCollectionName() != nextPageItem_->name)
