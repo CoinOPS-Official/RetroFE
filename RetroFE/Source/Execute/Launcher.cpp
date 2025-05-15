@@ -732,6 +732,7 @@ bool Launcher::simpleExecute(std::string executable, std::string args, std::stri
 
 bool Launcher::execute(std::string executable, std::string args, std::string currentDirectory, bool wait, Page* currentPage, bool isAttractMode, Item* collectionItem) {
 	bool retVal = false;
+	bool is4waySet = false;
 	std::string executionString = "\"" + executable + "\""; // Start with quoted executable
 	if (!args.empty()) {
 		executionString += " " + args; // Append arguments if they exist
@@ -996,19 +997,21 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 	// Monitoring the process
 	if (handleObtained) {
-		bool is4waySet = false;
 		bool restrictorEnabled = false;
 		config_.getProperty("restrictorEnabled", restrictorEnabled);
-		if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
-			if (!gRestrictor->setWay(4)) {
-				LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
-			}
-			else {
-				LOG_INFO("RetroFE", "Setting ServoStik to 4-way mode");
-				is4waySet = true;
-			}
+		// Condition to check if not in attract mode
+		if (!isAttractMode && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
+			is4waySet = true;
+			std::thread([]() {
+				bool result = gRestrictor->setWay(4);
+				if (!result) {
+					LOG_ERROR("Launcher", "Failed to set restrictor to 4-way mode (async)");
+				}
+				else {
+					LOG_INFO("Launcher", "Restrictor set to 4-way mode (async)");
+				}
+				}).detach();
 		}
-
 		if (isAttractMode) {
 			// --- Attract Mode Initialization ---
 
@@ -1156,6 +1159,20 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					interruptionTime = std::chrono::steady_clock::now(); // <-- RECORD INTERRUPTION TIME
 					LOG_INFO("Launcher", "User input detected during attract mode.");
 					userInputDetected = true;
+					
+					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
+						is4waySet = true;
+						std::thread([]() {
+							bool result = gRestrictor->setWay(4);
+							if (!result) {
+								LOG_ERROR("Launcher", "Failed to set restrictor to 4-way mode (async)");
+							}
+							else {
+								LOG_INFO("Launcher", "Restrictor set to 4-way mode (async)");
+							}
+							}).detach();
+					}
+					
 					break; // Exit the monitoring loop
 				}
 
@@ -1329,16 +1346,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		endTime = std::chrono::steady_clock::now();
 		LOG_DEBUG("Launcher", "Recording end time.");
 
-		// Restore ServoStik if needed
-		if (is4waySet) {
-			if (!gRestrictor->setWay(8)) { // return to 8-way if 4-way switch occurred
-				LOG_ERROR("RetroFE", "Failed to return ServoStik to 8-way mode");
-			}
-			else {
-				LOG_INFO("RetroFE", "Returned ServoStik to 8-way mode");
-			}
-		}
-
 		// Always clean up handles
 		if (hLaunchedProcess != nullptr) {
 			CloseHandle(hLaunchedProcess);
@@ -1411,34 +1418,26 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		_exit(EXIT_FAILURE); // Never return from child
 	}
 	else {
-		std::thread servoThread;
 		int status;
 		int attractModeLaunchRunTime = 30;
-
+		bool restrictorEnabled = false;
+		config_.getProperty("restrictorEnabled", restrictorEnabled);
 		config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, attractModeLaunchRunTime);
 		// Non-attract mode: Perform ServoStik check immediately after successful launch
 		if (!isAttractMode) {
 			LOG_INFO("Launcher", "Waiting for launched item to exit.");
 
-			if (restrictorEnabled) {
-				// Spawn ServoStik thread only if needed
-				servoThread = std::thread([&]() {
-					// Give the process a moment to start
-					std::this_thread::sleep_for(std::chrono::milliseconds(500));
-
-					// Use kill with signal 0 to check if process is running
-					if (kill(pid, 0) == 0) {  // Process is running
-						if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
-							if (!gRestrictor->setWay(4)) {
-								LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
-							}
-							else {
-								LOG_INFO("RetroFE", "Setting ServoStik to 4-way mode");
-								is4waySet = true;
-							}
-						}
+			if (restrictorEnabled && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
+				is4waySet = true;
+				std::thread([]() {
+					bool result = gRestrictor->setWay(4);
+					if (!result) {
+						LOG_ERROR("Launcher", "Failed to set restrictor to 4-way mode (async)");
 					}
-					});
+					else {
+						LOG_INFO("Launcher", "Restrictor set to 4-way mode (async)");
+					}
+					}).detach();
 			}
 
 			// Main process waits here
@@ -1462,18 +1461,18 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				if (!timerStopped && detectInput(inputDevices)) {
 					LOG_INFO("Launcher", "User input detected. Stopping attract mode timer.");
 
-					// Perform ServoStik check if necessary
 					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
-						if (!gRestrictor->setWay(4)) {
-							LOG_ERROR("RetroFE", "Failed to set ServoStik to 4-way mode");
-						}
-						else {
-							LOG_INFO("RetroFE", "Setting ServoStik to 4-way mode");
-							is4waySet = true;
-						}
+						is4waySet = true;
+						std::thread([]() {
+							bool result = gRestrictor->setWay(4);
+							if (!result) {
+								LOG_ERROR("Launcher", "Failed to set restrictor to 4-way mode (async)");
+							}
+							else {
+								LOG_INFO("Launcher", "Restrictor set to 4-way mode (async)");
+							}
+							}).detach();
 					}
-
-
 
 					timerStopped = true; // Stop the timer after input is detected
 					// Add to last played if user interrupted during attract mode
@@ -1524,11 +1523,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			}
 		}
 
-		// Ensure ServoStik thread completes if it was spawned
-		if (servoThread.joinable()) {
-			servoThread.join();
-		}
-
 		// Restore ServoStik to 8-way mode if it was changed
 		if (is4waySet) {
 			if (!gRestrictor->setWay(8)) {
@@ -1563,6 +1557,19 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		stop_thread = true;
 		proc_thread.join();
 	}
+
+	if (is4waySet) {
+		std::thread([]() {
+			bool result = gRestrictor->setWay(8);
+			if (!result) {
+				LOG_ERROR("Launcher", "Failed to return restrictor to 8-way mode (async)");
+			}
+			else {
+				LOG_INFO("Launcher", "Returned restrictor to 8-way mode (async)");
+			}
+			}).detach();
+	}
+
 
 	double gameplayDuration = 0.0;
 	bool trackTime = false;
