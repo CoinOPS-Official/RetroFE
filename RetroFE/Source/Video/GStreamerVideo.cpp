@@ -48,6 +48,9 @@ bool GStreamerVideo::pluginsInitialized_ = false;
 std::vector<GStreamerVideo*> GStreamerVideo::activeVideos_;
 std::mutex GStreamerVideo::activeVideosMutex_;
 
+// Initialize the static session ID generator
+std::atomic<uint64_t> GStreamerVideo::nextUniquePlaySessionId_{ 1 };
+
 typedef enum {
 	GST_PLAY_FLAG_VIDEO = (1 << 0),
 	GST_PLAY_FLAG_AUDIO = (1 << 1),
@@ -148,53 +151,117 @@ void GStreamerVideo::createAlphaTexture() {
 	SDL_UnlockMutex(SDL::getMutex());
 }
 
-gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user_data) {
+// In GStreamerVideo.cpp
+
+gboolean GStreamerVideo::busCallback(GstBus * bus, GstMessage * msg, gpointer user_data) {
 	GStreamerVideo* video = static_cast<GStreamerVideo*>(user_data);
+
+	// It's good practice to ensure 'video' is valid, especially in callbacks.
+	if (!video) {
+		LOG_ERROR("GStreamerVideo::busCallback", "Callback invoked with null user_data.");
+		// If user_data is null, we can't operate.
+		// Returning FALSE would remove the watch, which might be desired if this is a critical error.
+		// However, if the bus watch was added with g_source_remove_on_dispatch, it might be removed anyway.
+		// For safety, let's just log and continue, though this state indicates a deeper problem.
+		return TRUE;
+	}
+	// Optional: Check if playbin_ is still valid if there's any chance it could be destroyed
+	// while a bus message is pending.
+	if (!video->playbin_) {
+		LOG_WARNING("GStreamerVideo::busCallback", "Callback invoked but playbin_ is null for file: " + video->currentFile_);
+		return TRUE; // Continue, but state is unusual.
+	}
+
 
 	switch (GST_MESSAGE_TYPE(msg)) {
 		case GST_MESSAGE_STATE_CHANGED: {
+			// Ensure the state change is from our playbin element
 			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
 				GstState oldState, newState, pending;
 				gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
 
 				video->paused_.store(newState == GST_STATE_PAUSED, std::memory_order_release);
 
-				if (newState == GST_STATE_PLAYING)
+				if (newState == GST_STATE_PLAYING) {
 					video->targetState_ = IVideo::VideoState::Playing;
-				else if (newState == GST_STATE_PAUSED)
+				}
+				else if (newState == GST_STATE_PAUSED) {
 					video->targetState_ = IVideo::VideoState::Paused;
-				else
+				}
+				else if (newState == GST_STATE_NULL || newState == GST_STATE_READY) {
+					// If pipeline goes to NULL or READY unexpectedly (not via explicit stop/unload),
+					// it might indicate an issue or that it has finished/failed.
+					// isPlaying_ should reflect this.
+					if (video->isPlaying_.load(std::memory_order_acquire) && (newState == GST_STATE_NULL || (newState == GST_STATE_READY && oldState != GST_STATE_PAUSED && oldState != GST_STATE_PLAYING))) {
+						LOG_WARNING("GStreamerVideo", "BusCallback: Pipeline for " + video->currentFile_ +
+							" transitioned to " + std::string(gst_element_state_get_name(newState)) +
+							" unexpectedly from " + std::string(gst_element_state_get_name(oldState)) +
+							". Playback may have stopped.");
+						// Consider setting hasError_ or isPlaying_ = false if this is unexpected
+					}
 					video->targetState_ = IVideo::VideoState::None;
+				}
+
 
 				LOG_DEBUG("GStreamerVideo", "BusCallback: State changed: " +
-					std::string(gst_element_state_get_name(oldState)) + " > " +
-					std::string(gst_element_state_get_name(newState)) + " for " + video->currentFile_);
+					std::string(gst_element_state_get_name(oldState)) + " -> " +
+					std::string(gst_element_state_get_name(newState)) +
+					(pending == GST_STATE_VOID_PENDING ? "" : " (pending: " + std::string(gst_element_state_get_name(pending)) + ")") +
+					" for " + video->currentFile_ + " (Session: " + std::to_string(video->currentPlaySessionId_.load()) + ")");
 			}
 			break;
 		}
 		case GST_MESSAGE_EOS: {
-			auto* self = static_cast<GStreamerVideo*>(user_data);
-			if (!self) break;
-			if (self->getCurrent() > GST_SECOND) {
-				self->playCount_++;
-				if (!self->numLoops_ || self->numLoops_ > self->playCount_) {
-					self->restart();
+			// Check if the EOS is from our main playbin element
+			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
+				LOG_DEBUG("GStreamerVideo", "BusCallback: Received EOS for " + video->currentFile_ +
+					" (Session: " + std::to_string(video->currentPlaySessionId_.load()) + ")");
+				if (video->playbin_ && video->getCurrent() > GST_SECOND / 2) { // Check if it played for a meaningful duration
+					video->playCount_++;
+					if (!video->numLoops_ || video->numLoops_ > video->playCount_) {
+						LOG_DEBUG("GStreamerVideo", "BusCallback: Looping " + video->currentFile_);
+						video->restart();
+					}
+					else {
+						LOG_DEBUG("GStreamerVideo", "BusCallback: Finished loops for " + video->currentFile_ + ". Pausing.");
+						video->pause(); // Or perhaps a full stop/unload depending on desired behavior
+						// video->isPlaying_.store(false, std::memory_order_release); // If EOS means it's no longer "playing"
+					}
 				}
-				else {
-					self->pause();
+				else if (video->playbin_) {
+					LOG_DEBUG("GStreamerVideo", "BusCallback: EOS received very early for " + video->currentFile_ + ". Not looping.");
+					// Potentially an issue if EOS comes too fast, could indicate a problem loading the file.
+					// video->hasError_.store(true, std::memory_order_release);
+					// video->isPlaying_.store(false, std::memory_order_release);
 				}
 			}
-
-			LOG_DEBUG("GStreamerVideo", "Received EOS for " + self->currentFile_);
 			break;
 		}
-		default:
-		break;
+		case GST_MESSAGE_ERROR: {
+			GError* err = nullptr;
+			gchar* dbg_info = nullptr;
+
+			gst_message_parse_error(msg, &err, &dbg_info);
+
+			LOG_ERROR("GStreamerVideo", "BusCallback: GStreamer ERROR received for " + video->currentFile_ +
+				" (Session: " + std::to_string(video->currentPlaySessionId_.load()) + "): " +
+				(err ? err->message : "Unknown error") +
+				(dbg_info ? (std::string(" | Debug: ") + dbg_info) : ""));
+
+			video->hasError_.store(true, std::memory_order_release);
+			video->isPlaying_.store(false, std::memory_order_release); // Typically an error means playback stops
+			video->targetState_ = IVideo::VideoState::None; // Reflect that it's no longer in a valid playing/paused state
+
+			if (err) g_error_free(err);
+			if (dbg_info) g_free(dbg_info);
+			break;
+		}
+							  // LOG_DEBUG("GStreamerVideo", "BusCallback: Unhandled message type: " + std::to_string(GST_MESSAGE_TYPE(msg)));
+							  break;
 	}
 
-	return TRUE; // keep watching
+	return TRUE; // Keep the bus watch active
 }
-
 void GStreamerVideo::initializePlugins() {
 	if (!pluginsInitialized_)
 	{
@@ -213,13 +280,15 @@ void GStreamerVideo::initializePlugins() {
 				enablePlugin("qsvh265dec");
 				disablePlugin("d3d11h264dec");
 				disablePlugin("d3d11h265dec");
+				disablePlugin("d3d12h264dec");
+				disablePlugin("d3d12h265dec");
 
 				LOG_DEBUG("GStreamerVideo", "Using qsvh264dec/qsvh265dec for Intel GPU");
 			}
 			else
 			{
-				enablePlugin("d3d11h264dec");
-				enablePlugin("d3d11h265dec");
+				enablePlugin("d3d12h264dec");
+				enablePlugin("d3d12h265dec");
 				disablePlugin("qsvh264dec");
 				disablePlugin("qsvh265dec");
 
@@ -232,6 +301,8 @@ void GStreamerVideo::initializePlugins() {
 			enablePlugin("avdec_h265");
 			disablePlugin("d3d11h264dec");
 			disablePlugin("d3d11h265dec");
+			disablePlugin("d3d12h264dec");
+			disablePlugin("d3d12h265dec");
 			disablePlugin("qsvh264dec");
 			disablePlugin("qsvh265dec");
 			LOG_DEBUG("GStreamerVideo", "Using avdec_h264/avdec_h265 for software decoding");
@@ -276,19 +347,15 @@ SDL_Texture* GStreamerVideo::getTexture() const {
 }
 
 bool GStreamerVideo::initialize() {
-	if (initialized_)
-	{
-		initialized_ = true;
-		return true;
-	}
+	if (initialized_) return true;
 	if (!gst_is_initialized())
 	{
 		LOG_DEBUG("GStreamer", "Initializing in instance");
 		gst_init(nullptr, nullptr);
 		std::string path = Utils::combinePath(Configuration::absolutePath, "retrofe");
 #ifdef WIN32
-		GstRegistry* registry = gst_registry_get();
-		gst_registry_scan_path(registry, path.c_str());
+		//GstRegistry* registry = gst_registry_get();
+		//gst_registry_scan_path(registry, path.c_str());
 #endif
 	}
 	gst_debug_add_log_function(customGstLogHandler, nullptr, nullptr);
@@ -308,7 +375,24 @@ bool GStreamerVideo::stop() {
 		return false;
 	}
 
+	std::lock_guard<std::mutex> lock(drawMutex_);
+
+	LOG_DEBUG("GStreamerVideo", "Stopping video: " + currentFile_ + " for session ID: " + std::to_string(currentPlaySessionId_.load()));
 	isPlaying_.store(false, std::memory_order_release);
+
+	// --- Proactively remove any active pad probe ---
+	if (padProbeId_ != 0 && playbin_ && videoSink_) { // Check playbin_ as well, as it might be set to NULL path
+		GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink");
+		if (sinkPad) {
+			LOG_DEBUG("GStreamerVideo", "Stop: Removing active pad probe ID " + std::to_string(padProbeId_) + " for " + currentFile_);
+			gst_pad_remove_probe(sinkPad, padProbeId_);
+			gst_object_unref(sinkPad);
+		}
+		else {
+			LOG_WARNING("GStreamerVideo", "Stop: Could not get sink pad to remove probe for " + currentFile_);
+		}
+		padProbeId_ = 0; // Mark as no active probe from our side
+	}
 
 	if (playbin_)
 	{
@@ -376,7 +460,25 @@ bool GStreamerVideo::unload() {
 		return false;
 	}
 
+	std::lock_guard<std::mutex> lock(drawMutex_);
+
+	LOG_DEBUG("GStreamerVideo", "Unloading video: " + currentFile_ + " for session ID: " + std::to_string(currentPlaySessionId_.load()));
+
 	isPlaying_.store(false, std::memory_order_release);
+
+	// --- Proactively remove any active pad probe ---
+	if (padProbeId_ != 0 && videoSink_) {
+		GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink");
+		if (sinkPad) {
+			LOG_DEBUG("GStreamerVideo", "Unload: Removing active pad probe ID " + std::to_string(padProbeId_) + " for " + currentFile_);
+			gst_pad_remove_probe(sinkPad, padProbeId_);
+			gst_object_unref(sinkPad);
+		}
+		else {
+			LOG_WARNING("GStreamerVideo", "Unload: Could not get sink pad to remove probe for " + currentFile_);
+		}
+		padProbeId_ = 0; // Mark as no active probe from our side
+	}
 
 	if (busWatchId_ != 0) {
 		g_source_remove(busWatchId_);
@@ -403,22 +505,19 @@ bool GStreamerVideo::unload() {
 	}
 
 	// 4. Move pipeline to READY
-	GstStateChangeReturn ret = gst_element_set_state(playbin_, GST_STATE_READY);
+	GstStateChangeReturn setRet = gst_element_set_state(playbin_, GST_STATE_READY);
 	GstState newState;
-	ret = gst_element_get_state(playbin_, &newState, nullptr, GST_SECOND);
-	if (ret == GST_STATE_CHANGE_FAILURE || newState != GST_STATE_READY) {
-		LOG_ERROR("GStreamerVideo", "Pipeline failed to reach READY state during unload.");
+	GstStateChangeReturn getRet = gst_element_get_state(playbin_, &newState, nullptr, 200 * GST_MSECOND); // Shorter timeout
+
+	if (setRet == GST_STATE_CHANGE_FAILURE || getRet == GST_STATE_CHANGE_FAILURE || (getRet != GST_STATE_CHANGE_ASYNC && newState != GST_STATE_READY)) {
+		LOG_ERROR("GStreamerVideo", "Pipeline failed to reach READY state during unload for " + currentFile_ + ". Marking as error.");
 		hasError_.store(true, std::memory_order_release);
-		return false;
+		// Don't return false immediately, let other cleanup happen, error is now flagged.
 	}
 
 	// 5. Clean up bus
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 	if (bus) {
-		GstMessage* msg;
-		while ((msg = gst_bus_pop(bus))) {
-			gst_message_unref(msg);
-		}
 		gst_bus_set_flushing(bus, TRUE);
 		gst_object_unref(bus);
 	}
@@ -440,6 +539,8 @@ bool GStreamerVideo::unload() {
 	width_.store(0, std::memory_order_release);
 	height_.store(0, std::memory_order_release);
 
+	hasValidFrame_.store(false, std::memory_order_release);
+
 	SDL_LockMutex(SDL::getMutex());
 	texture_ = alphaTexture_;  // fallback to blank
 	textureValid_.store(false, std::memory_order_release);
@@ -454,7 +555,7 @@ bool GStreamerVideo::unload() {
 static inline std::array<double, 9> computePerspectiveMatrixFromCorners(
 	int width,
 	int height,
-	const std::array<Point2D, 4>& pts) {
+	const std::array<Point2D, 4>&pts) {
 	constexpr double EPSILON = 1e-9;
 
 	const Point2D A = pts[0];
@@ -535,6 +636,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 
 	if (!playbin_ || !videoSink_) {
 		LOG_DEBUG("Video", "Could not create GStreamer elements");
+		hasError_.store(true, std::memory_order_release);
 		return false;
 	}
 
@@ -582,12 +684,14 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		perspective_ = gst_element_factory_make("perspective", "perspective");
 		if (!perspective_) {
 			LOG_DEBUG("GStreamerVideo", "Could not create perspective element");
+			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 
 		GstElement* videoBin = gst_bin_new("video_bin");
 		if (!videoBin) {
 			LOG_DEBUG("GStreamerVideo", "Could not create video bin");
+			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 
@@ -596,6 +700,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		// Link perspective to appsink.
 		if (!gst_element_link(perspective_, videoSink_)) {
 			LOG_DEBUG("GStreamerVideo", "Could not link perspective to appsink");
+			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 
@@ -603,12 +708,14 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		GstPad* perspectiveSinkPad = gst_element_get_static_pad(perspective_, "sink");
 		if (!perspectiveSinkPad) {
 			LOG_DEBUG("GStreamerVideo", "Could not get sink pad from perspective element");
+			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 		GstPad* ghostPad = gst_ghost_pad_new("sink", perspectiveSinkPad);
 		gst_object_unref(perspectiveSinkPad);
 		if (!gst_element_add_pad(videoBin, ghostPad)) {
 			LOG_DEBUG("GStreamerVideo", "Could not add ghost pad to video bin");
+			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 
@@ -656,27 +763,56 @@ void GStreamerVideo::initializeUpdateFunction() {
 	}
 }
 
-bool GStreamerVideo::play(const std::string& file) {
+bool GStreamerVideo::play(const std::string & file) {
 	playCount_ = 0;
 	if (!initialized_) {
+		LOG_ERROR("GStreamerVideo", "Play called but GStreamer not initialized for file: " + file);
+		hasError_.store(true, std::memory_order_release);
 		return false;
 	}
+
+	// Atomically increment and assign a new unique session ID for this play attempt.
+	// This ID is unique across all GStreamerVideo instances and all play attempts.
+	currentPlaySessionId_.store(nextUniquePlaySessionId_++, std::memory_order_release);
 
 	// 1. Create the pipeline if we haven’t already
 	if (!createPipelineIfNeeded()) {
 		LOG_ERROR("Video", "Failed to create GStreamer pipeline");
+		hasError_.store(true, std::memory_order_release);
 		return false;
 	}
 
-	// reconnect the pad probe if it's not connected.
-	if (GstPad* pad = gst_element_get_static_pad(videoSink_, "sink")) {
-		if (padProbeId_ != 0) {
-			gst_pad_remove_probe(pad, padProbeId_);
+	// Reconnect the pad probe if it's not connected.
+	// This should be done for each new 'play' call to ensure the probe is fresh for this stream.
+	GstPad* sinkPad = gst_element_get_static_pad(videoSink_, "sink");
+	if (sinkPad) {
+		if (padProbeId_ != 0) { // Remove any existing probe on this pad from this instance
+			gst_pad_remove_probe(sinkPad, padProbeId_);
 			padProbeId_ = 0;
 		}
-		padProbeId_ = gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
-			padProbeCallback, this, nullptr);
-		gst_object_unref(pad);
+
+		// --- Create Userdata for the Probe ---
+		PadProbeUserdata* userdataForProbe = static_cast<PadProbeUserdata*>(g_malloc(sizeof(PadProbeUserdata)));
+		if (!userdataForProbe) {
+			LOG_ERROR("GStreamerVideo", "Failed to allocate memory for PadProbeUserdata for file: " + file);
+			gst_object_unref(sinkPad);
+			hasError_.store(true);
+			return false;
+		}
+		userdataForProbe->videoInstance = this;
+		userdataForProbe->playSessionId = currentPlaySessionId_.load(std::memory_order_acquire);
+
+		padProbeId_ = gst_pad_add_probe(sinkPad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+			GStreamerVideo::padProbeCallback,
+			userdataForProbe,
+			g_free); // now matches allocation
+
+		gst_object_unref(sinkPad);
+	}
+	else {
+		LOG_ERROR("GStreamerVideo", "Failed to get sink pad from videoSink_ for file: " + file);
+		hasError_.store(true);
+		return false;
 	}
 
 	GstBus* bus = gst_element_get_bus(playbin_);
@@ -687,6 +823,7 @@ bool GStreamerVideo::play(const std::string& file) {
 	gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
 	if (!uriFile) {
 		LOG_DEBUG("Video", "Failed to convert filename to URI");
+		hasError_.store(true, std::memory_order_release);
 		return false;
 	}
 
@@ -695,14 +832,15 @@ bool GStreamerVideo::play(const std::string& file) {
 	g_object_set(playbin_, "uri", uriFile, nullptr);
 	g_free(uriFile);
 
+	
 	GstState current, pending;
 	gst_element_get_state(playbin_, &current, &pending, GST_SECOND);
 
 	if (current != GST_STATE_PAUSED) {
 		GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
 		if (stateRet != GST_STATE_CHANGE_ASYNC && stateRet != GST_STATE_CHANGE_SUCCESS) {
-			isPlaying_ = false;
-			stop();
+			isPlaying_.store(false, std::memory_order_release);
+			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 	}
@@ -739,7 +877,7 @@ bool GStreamerVideo::play(const std::string& file) {
 	return true;
 }
 
-void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, GstElement* element, [[maybe_unused]] gpointer data) {
+void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement * playbin, GstElement * element, [[maybe_unused]] gpointer data) {
 	// Check if the element is a video decoder
 	if (!Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element))
 	{
@@ -750,8 +888,37 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, 
 	}
 }
 
-GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
-	auto* video = static_cast<GStreamerVideo*>(user_data);
+GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad * pad, GstPadProbeInfo * info, gpointer user_data) {
+	PadProbeUserdata* probeData = static_cast<PadProbeUserdata*>(user_data);
+	// It's crucial that 'user_data' (PadProbeUserdata) is valid until the probe is removed.
+	// g_free as GDestroyNotify handles its deallocation.
+
+	if (!probeData || !probeData->videoInstance) {
+		LOG_WARNING("GStreamerVideo::padProbeCallback", "Probe fired with invalid user_data or videoInstance.");
+		// If probeData itself is null, we can't even get videoInstance to check session ID.
+		// This indicates a severe issue, possibly with probe setup or memory corruption.
+		return GST_PAD_PROBE_REMOVE; // Remove the probe to prevent further issues.
+	}
+
+	GStreamerVideo* video = probeData->videoInstance;
+	uint64_t callbackSessionId = probeData->playSessionId;
+
+	// CRITICAL CHECK 1: Is this probe for the CURRENT playback session of this GStreamerVideo instance?
+	uint64_t videoCurrentSessionId = video->currentPlaySessionId_.load(std::memory_order_acquire);
+	if (videoCurrentSessionId != callbackSessionId) {
+		LOG_DEBUG("GStreamerVideo::padProbeCallback", "Stale probe for session ID: " + std::to_string(callbackSessionId) +
+			" (current video session ID: " + std::to_string(videoCurrentSessionId) +
+			" for file: " + video->currentFile_ + "). Ignoring.");
+		return GST_PAD_PROBE_REMOVE; // This probe is for an old, abandoned play attempt.
+	}
+
+	// CRITICAL CHECK 2: Is the pipeline (playbin_) still associated with this instance and active?
+	// This helps if stop() was called (which nullifies playbin_) or if the instance is otherwise invalid.
+	if (!video->playbin_ || !video->isPlaying_.load(std::memory_order_acquire)) {
+		LOG_DEBUG("GStreamerVideo::padProbeCallback", "Probe for session ID: " + std::to_string(callbackSessionId) +
+			" fired, but playbin_ is NULL or video is not marked as playing (file: " + video->currentFile_ + "). Instance likely stopped/reset. Ignoring.");
+		return GST_PAD_PROBE_REMOVE;
+	}
 
 	auto* event = GST_PAD_PROBE_INFO_EVENT(info);
 	if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
@@ -762,37 +929,46 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 			int newWidth = 0, newHeight = 0;
 
 			if (gst_structure_get_int(s, "width", &newWidth) &&
-				gst_structure_get_int(s, "height", &newHeight)) {
-				// Update texture validity
-				if (video->videoTexture_ &&
-					video->textureWidth_.load(std::memory_order_acquire) == newWidth &&
-					video->textureHeight_.load(std::memory_order_acquire) == newHeight) {
-					video->textureValid_.store(true, std::memory_order_release);
-					LOG_DEBUG("GStreamerVideo", "Will reuse existing texture for dimensions " +
-						std::to_string(newWidth) + "x" + std::to_string(newHeight));
-				}
-				else {
-					video->textureValid_.store(false, std::memory_order_release);
-					LOG_DEBUG("GStreamerVideo", "Will create new texture for dimensions " +
-						std::to_string(newWidth) + "x" + std::to_string(newHeight));
-				}
+				gst_structure_get_int(s, "height", &newHeight) &&
+				newWidth > 0 && newHeight > 0) {
 
 				video->width_.store(newWidth, std::memory_order_release);
 				video->height_.store(newHeight, std::memory_order_release);
 
-				// Perspective box
-				if (video->hasPerspective_ && !video->textureValid_.load(std::memory_order_acquire)) {
-					// Only update perspective matrix if texture is invalid.
-					// Free and recompute the cached GValueArray if necessary.
+				bool dimensionsChangedOrTextureMissing;
+				SDL_LockMutex(SDL::getMutex()); // Protects videoTexture_ and textureWidth_/Height_ (which describe videoTexture_)
+
+				// textureWidth_ and textureHeight_ store the dimensions of the *current SDL videoTexture_*
+				if (video->videoTexture_ &&
+					video->textureWidth_.load(std::memory_order_acquire) == newWidth &&
+					video->textureHeight_.load(std::memory_order_acquire) == newHeight) {
+
+					dimensionsChangedOrTextureMissing = false;
+					video->textureValid_.store(true, std::memory_order_release); // Current texture is valid for new dimensions
+					LOG_DEBUG("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) + "): Reusing existing texture for " + video->currentFile_ +
+						" (" + std::to_string(newWidth) + "x" + std::to_string(newHeight) + ")");
+				}
+				else {
+					dimensionsChangedOrTextureMissing = true;
+					video->textureValid_.store(false, std::memory_order_release); // Mark as invalid, new texture needed
+					if (video->texture_ != video->alphaTexture_) { // Avoid redundant assignment
+						LOG_DEBUG("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) + "): Switching to alphaTexture_ for " + video->currentFile_);
+						video->texture_ = video->alphaTexture_; // Immediately fallback to blank
+					}
+					LOG_DEBUG("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) + "): New texture needed for " + video->currentFile_ +
+						" (" + std::to_string(newWidth) + "x" + std::to_string(newHeight) + ")");
+				}
+				SDL_UnlockMutex(SDL::getMutex());
+
+				if (video->hasPerspective_ && dimensionsChangedOrTextureMissing) {
 					if (video->perspective_gva_) {
 						g_value_array_free(video->perspective_gva_);
 						video->perspective_gva_ = nullptr;
 					}
-					std::array<Point2D, 4> perspectiveBox = {
-						Point2D(video->perspectiveCorners_[0], video->perspectiveCorners_[1]), // top-left
+					std::array<Point2D, 4> perspectiveBox = { Point2D(video->perspectiveCorners_[0], video->perspectiveCorners_[1]), // top-left
 						Point2D(video->perspectiveCorners_[2], video->perspectiveCorners_[3]), // top-right
 						Point2D(video->perspectiveCorners_[4], video->perspectiveCorners_[5]), // bottom-left
-						Point2D(video->perspectiveCorners_[6], video->perspectiveCorners_[7])  // bottom-right
+						Point2D(video->perspectiveCorners_[6], video->perspectiveCorners_[7])  // bottom-right 
 					};
 					std::array<double, 9> mat = computePerspectiveMatrixFromCorners(newWidth, newHeight, perspectiveBox);
 
@@ -805,20 +981,34 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 					}
 					g_value_unset(&val);
 
-					// Set the new perspective matrix.
 					if (video->perspective_) {
 						g_object_set(video->perspective_, "matrix", video->perspective_gva_, nullptr);
+						LOG_DEBUG("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) + "): Updated perspective matrix for " + video->currentFile_);
 					}
 				}
-
-				LOG_DEBUG("GStreamerVideo", "Caps processed, video is now playing: " + video->currentFile_);
+				LOG_INFO("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) + "): Caps processed successfully for " + video->currentFile_ +
+					" (" + std::to_string(newWidth) + "x" + std::to_string(newHeight) + ")");
 			}
-
+			else {
+				LOG_WARNING("GStreamerVideo::padProbeCallback", "Session " + std::to_string(callbackSessionId) +
+					": Failed to get valid dimensions from CAPS for " + video->currentFile_);
+				video->hasError_.store(true); // Could mark as error if dimensions are critical
+			}
 		}
-		video->padProbeId_ = 0;
+		else {
+			LOG_WARNING("GStreamerVideo::padProbeCallback", "Session " + std::to_string(callbackSessionId) +
+				": Caps event, but gst_event_parse_caps failed for " + video->currentFile_);
+			video->hasError_.store(true);
+		}
+
+		// This probe has done its job for this session (or determined it's stale).
+		// GStreamer will remove the actual probe due to GST_PAD_PROBE_REMOVE.
+		// We don't need to manage video->padProbeId_ here as it's reset at the start of each play()
+		video->padProbeId_ = 0; // Mark as no active probe from our side
+		video->hasValidFrame_.store(true, std::memory_order_release); // Mark that we have a valid frame
 		return GST_PAD_PROBE_REMOVE;
 	}
-	return GST_PAD_PROBE_OK;
+	return GST_PAD_PROBE_OK; // Keep other event types if any (though we only expect CAPS here)
 }
 
 void GStreamerVideo::createSdlTexture() {
@@ -871,31 +1061,29 @@ void GStreamerVideo::volumeUpdate() {
 	if (!isPlaying_ || !playbin_)
 		return;
 
-	// Clamp volume_ to valid range
-	volume_ = std::min(volume_, 1.0f);
+	// Clamp volume_ to valid range (float)
+	volume_ = std::clamp(volume_, 0.0f, 1.0f);
 
-	// Gradually adjust currentVolume_ towards volume_
-	if (currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_)
-		currentVolume_ = volume_;
+	// Gradually adjust currentVolume_ (double) towards volume_
+	double target = static_cast<double>(volume_);
+	double diff = target - currentVolume_;
+	if (std::abs(diff) <= 0.005)
+		currentVolume_ = target;
 	else
-		currentVolume_ += 0.005;
+		currentVolume_ += (diff > 0 ? 0.005 : -0.005);
 
 	// Determine mute state
 	bool shouldMute = (currentVolume_ < 0.1) || Configuration::MuteVideo;
 
 	// Update volume only if it has changed and is not muted
-	if (!shouldMute && currentVolume_ != lastSetVolume_)
-	{
+	if (!shouldMute && currentVolume_ != lastSetVolume_) {
 		gst_stream_volume_set_volume(
 			GST_STREAM_VOLUME(playbin_),
 			GST_STREAM_VOLUME_FORMAT_LINEAR,
 			currentVolume_);
 		lastSetVolume_ = currentVolume_;
 	}
-
-	// Update mute state only if it has changed
-	if (shouldMute != lastSetMuteState_)
-	{
+	else if (shouldMute != lastSetMuteState_) {
 		gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), shouldMute);
 		lastSetMuteState_ = shouldMute;
 	}
@@ -912,7 +1100,7 @@ int GStreamerVideo::getWidth() {
 void GStreamerVideo::draw() {
 	std::lock_guard<std::mutex> lock(drawMutex_);
 
-	if (!isPlaying_.load(std::memory_order_acquire)) {
+	if (!isPlaying_.load(std::memory_order_acquire) || !hasValidFrame_.load(std::memory_order_acquire)) {
 		return;
 	}
 
@@ -921,13 +1109,13 @@ void GStreamerVideo::draw() {
 		return;
 	}
 
-	GstBuffer* originalBuf = gst_sample_get_buffer(sample);
-	if (!originalBuf) {
+	GstBuffer* buf = gst_sample_get_buffer(sample);
+	if (!buf) {
 		gst_sample_unref(sample);
 		return;
 	}
 
-	GstCaps* caps = gst_sample_get_caps(sample);
+	GstCaps const* caps = gst_sample_get_caps(sample);
 	if (!caps) {
 		gst_sample_unref(sample);
 		return;
@@ -939,7 +1127,6 @@ void GStreamerVideo::draw() {
 		return;
 	}
 
-	GstBuffer* buf = gst_buffer_ref(originalBuf);
 
 	uint64_t currentGeneration = mappingGeneration_.fetch_add(1, std::memory_order_seq_cst) + 1;
 
@@ -947,7 +1134,6 @@ void GStreamerVideo::draw() {
 	bool mapped = gst_video_frame_map(&frame, &freshInfo, buf, GST_MAP_READ);
 
 	if (!mapped) {
-		gst_buffer_unref(buf);
 		gst_sample_unref(sample);
 		return;
 	}
@@ -957,7 +1143,6 @@ void GStreamerVideo::draw() {
 		createSdlTexture();
 		if (!textureValid_.load(std::memory_order_acquire) || !videoTexture_) {
 			gst_video_frame_unmap(&frame);
-			gst_buffer_unref(buf);
 			gst_sample_unref(sample);
 			return;
 		}
@@ -967,7 +1152,6 @@ void GStreamerVideo::draw() {
 	if (mappingGeneration_.load(std::memory_order_seq_cst) != currentGeneration) {
 		LOG_WARNING("GStreamerVideo", "Stale mapping detected (Thread ID: %lu). Aborting texture update.");
 		gst_video_frame_unmap(&frame);
-		gst_buffer_unref(buf);
 		gst_sample_unref(sample);
 		return;
 	}
@@ -983,11 +1167,10 @@ void GStreamerVideo::draw() {
 	}
 
 	gst_video_frame_unmap(&frame);
-	gst_buffer_unref(buf);
 	gst_sample_unref(sample);
 }
 
-bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) {
+bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture * texture, GstVideoFrame * frame) const {
 	const Uint8* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
 	const Uint8* srcU = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
 	const Uint8* srcV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 2));
@@ -1012,7 +1195,7 @@ bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFr
 	return true;
 }
 
-bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFrame* frame) {
+bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture * texture, GstVideoFrame * frame) const {
 	const uint8_t* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
 	const uint8_t* srcUV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
 
@@ -1034,7 +1217,7 @@ bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFr
 	return true;
 }
 
-bool GStreamerVideo::updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFrame* frame) {
+bool GStreamerVideo::updateTextureFromFrameRGBA(SDL_Texture * texture, GstVideoFrame * frame) const {
 	void* pixels = nullptr;
 	int pitch = 0;
 	if (SDL_LockTexture(texture, nullptr, &pixels, &pitch) != 0)
@@ -1190,7 +1373,7 @@ bool GStreamerVideo::isPaused() {
 	return paused_.load(std::memory_order_acquire);
 }
 
-std::string GStreamerVideo::generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const {
+std::string GStreamerVideo::generateDotFileName(const std::string & prefix, const std::string & videoFilePath) const {
 	std::string videoFileName = Utils::getFileName(videoFilePath);
 
 	auto now = std::chrono::system_clock::now();
@@ -1204,7 +1387,7 @@ std::string GStreamerVideo::generateDotFileName(const std::string& prefix, const
 	return ss.str();
 }
 
-void GStreamerVideo::enablePlugin(const std::string& pluginName) {
+void GStreamerVideo::enablePlugin(const std::string & pluginName) {
 	GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
 	if (factory)
 	{
@@ -1214,7 +1397,7 @@ void GStreamerVideo::enablePlugin(const std::string& pluginName) {
 	}
 }
 
-void GStreamerVideo::disablePlugin(const std::string& pluginName) {
+void GStreamerVideo::disablePlugin(const std::string & pluginName) {
 	GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
 	if (factory)
 	{
@@ -1239,9 +1422,9 @@ void GStreamerVideo::setPerspectiveCorners(const int* corners) {
 	}
 }
 
-void GStreamerVideo::customGstLogHandler(GstDebugCategory* category, GstDebugLevel level,
-	const gchar* file, const gchar* function, gint line,
-	GObject* object, GstDebugMessage* message, gpointer user_data) {
+void GStreamerVideo::customGstLogHandler(GstDebugCategory * category, GstDebugLevel level,
+	const gchar * file, const gchar * function, gint line,
+	GObject * object, GstDebugMessage * message, gpointer user_data) {
 	std::string logMsg = gst_debug_message_get(message);
 	std::string componentName = (category && gst_debug_category_get_name(category)) ? gst_debug_category_get_name(category) : "Unknown";
 
@@ -1284,7 +1467,7 @@ void GStreamerVideo::customGstLogHandler(GstDebugCategory* category, GstDebugLev
 	}
 }
 
-GStreamerVideo* GStreamerVideo::findInstanceFromGstObject(GstObject* object) {
+GStreamerVideo* GStreamerVideo::findInstanceFromGstObject(GstObject * object) {
 	if (!object)
 		return nullptr;
 

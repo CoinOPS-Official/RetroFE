@@ -60,8 +60,13 @@ bool VideoComponent::update(float dt) {
 	if (!instanceReady_ || !currentPage_)
 		return Component::update(dt);
 
-	if (videoInst_->hasError())
+	if (videoInst_ && videoInst_->hasError()) { // New check
+		LOG_WARNING("VideoComponent", "Update: GStreamerVideo instance for " + videoFile_ +
+			" has an error. Halting further video operations for this component.");
+		instanceReady_ = false; // Stop trying to interact with a faulty instance
+		// The pool will handle the faulty instance upon its release.
 		return Component::update(dt);
+	}
 
 	if ((currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0)) {
 		if (videoInst_->isPaused())
@@ -71,6 +76,7 @@ bool VideoComponent::update(float dt) {
 
 	bool isVideoPlaying = videoInst_->isPlaying();
 	bool isPaused = videoInst_->isPaused();
+	bool isFastScrolling = currentPage_->isMenuFastScrolling();
 
 	if (isVideoPlaying) {
 		videoInst_->setVolume(baseViewInfo.Volume);
@@ -137,6 +143,25 @@ void VideoComponent::allocateGraphicsMemory() {
 				hasPerspective_ ? perspectiveCorners_ : nullptr);
 			if (videoInst_) {
 				instanceReady_ = videoInst_->play(videoFile_);
+				if (!instanceReady_) {
+					LOG_WARNING("VideoComponent", "play() returned false for: " + videoFile_);
+					if (videoInst_->hasError()) {
+						LOG_ERROR("VideoComponent", "GStreamerVideo instance for " + videoFile_ +
+							" is marked with hasError_ after play() attempt. Video will not display.");
+						// The videoInst_ is now "tainted".
+						// VideoPool will handle its disposal when freeGraphicsMemory() is called.
+					}
+					else {
+						LOG_WARNING("VideoComponent", "play() returned false for " + videoFile_ +
+							" but GStreamerVideo instance not marked with error. (e.g. file not found by GStreamer, URI error before pipeline interaction)");
+						// This is a non-fatal error, but the video will not display.	
+					}
+					// instanceReady_ is false, so draw() should not attempt to use it.
+				}
+				else {
+					LOG_DEBUG("VideoComponent", "play() succeeded for: " + videoFile_);
+					// Potentially set volume, loops here if needed, though GStreamerVideo::play handles initial mute.
+				}
 			}
 		}
 	}
@@ -162,13 +187,13 @@ void VideoComponent::freeGraphicsMemory()
 		}
 
 		LOG_DEBUG("VideoComponent", "Stopping and resetting video: " + videoFile_);
-		videoInst_->stop();
+		//videoInst_->stop();
 		videoInst_.reset();  // Clean deletion for non-pooled instances
 	}
 }
 
 void VideoComponent::draw() {
-	if (!videoInst_ || !instanceReady_) return;
+	if (!videoInst_ || !instanceReady_ || !videoInst_->isPlaying()) return;
 
 	videoInst_->draw();
 

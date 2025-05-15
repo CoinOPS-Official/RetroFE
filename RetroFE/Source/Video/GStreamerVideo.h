@@ -96,6 +96,16 @@ private:
     
     std::atomic<IVideo::VideoState> targetState_{ IVideo::VideoState::None };
 
+    std::atomic<uint64_t> currentPlaySessionId_{ 0 };
+    static std::atomic<uint64_t> nextUniquePlaySessionId_;
+    std::atomic<bool> hasValidFrame_{ false };
+
+
+    struct PadProbeUserdata {
+        GStreamerVideo* videoInstance;
+        uint64_t playSessionId;
+    };
+
     mutable std::mutex drawMutex_;
     std::atomic<uint64_t> mappingGeneration_{ 0 };
     static std::vector<GStreamerVideo*> activeVideos_;
@@ -110,9 +120,9 @@ private:
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
     std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
-    bool updateTextureFromFrameIYUV(SDL_Texture*, GstVideoFrame*);
-    bool updateTextureFromFrameNV12(SDL_Texture*, GstVideoFrame*);
-    bool updateTextureFromFrameRGBA(SDL_Texture*, GstVideoFrame*);
+    bool updateTextureFromFrameIYUV(SDL_Texture*, GstVideoFrame*) const;
+    bool updateTextureFromFrameNV12(SDL_Texture*, GstVideoFrame*) const;
+    bool updateTextureFromFrameRGBA(SDL_Texture*, GstVideoFrame*) const;
     void createSdlTexture();
     GstElement* playbin_{ nullptr };          // for playbin3
     GstElement* videoSink_{ nullptr };     // for appsink
