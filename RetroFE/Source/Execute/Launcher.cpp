@@ -1377,8 +1377,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	config_.getProperty("restrictorEnabled", restrictorEnabled);
 
 	pid_t pid = fork();
-
-	pid_t pid = fork();
 	if (pid == -1) {
 		LOG_ERROR("Launcher", "Failed to fork a new process.");
 		return false;
