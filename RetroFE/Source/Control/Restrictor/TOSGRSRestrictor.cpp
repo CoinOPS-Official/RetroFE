@@ -28,25 +28,10 @@ bool TOSGRSRestrictor::initialize() {
 		return false;
 	}
 
-	enum sp_return openResult = sp_open(port_, SP_MODE_READ_WRITE);
-	if (openResult != SP_OK) {
-		LOG_ERROR(COMPONENT, "sp_open() failed with code: " + std::to_string(openResult));
-		return false;
-	}
-
-	if (sp_set_baudrate(port_, 115200) != SP_OK ||
-		sp_set_bits(port_, 8) != SP_OK ||
-		sp_set_parity(port_, SP_PARITY_NONE) != SP_OK ||
-		sp_set_stopbits(port_, 1) != SP_OK ||
-		sp_set_flowcontrol(port_, SP_FLOWCONTROL_NONE) != SP_OK) {
-		sp_close(port_);
-		return false;
-	}
-
+	// DO NOT re-open — port_ is already open and configured
 	LOG_INFO(COMPONENT, "TOS GRS restrictor detected and initialized.");
 	return true;
 }
-
 
 bool TOSGRSRestrictor::setWay(int way) {
 	if (!port_ || (way != 4 && way != 8)) return false;
@@ -129,21 +114,60 @@ sp_port* TOSGRSRestrictor::findPort(uint16_t vid, uint16_t pid) {
 	if (sp_list_ports(&ports) != SP_OK) return nullptr;
 
 	sp_port* result = nullptr;
+
 	for (int i = 0; ports[i]; ++i) {
 		int v = 0, p = 0;
-		if (sp_get_port_usb_vid_pid(ports[i], &v, &p) == SP_OK) {
-			LOG_INFO(COMPONENT, "Port: " + std::string(sp_get_port_name(ports[i])) +
-				" VID: 0x" + intToHex(v) + " PID: 0x" + intToHex(p));
+		if (sp_get_port_usb_vid_pid(ports[i], &v, &p) == SP_OK && v == vid && (p == 0x8036 || p == 0x8026)) {
+			LOG_INFO(COMPONENT, "Probing port: " + std::string(sp_get_port_name(ports[i])));
 
-			if (v == vid && (p == 0x8036 || p == 0x8026)) {
-				if (sp_copy_port(ports[i], &result) != SP_OK) {
-					LOG_ERROR(COMPONENT, "sp_copy_port() failed");
-					result = nullptr;
-				}
-				break;
+			sp_port* testPort = nullptr;
+			if (sp_copy_port(ports[i], &testPort) != SP_OK) continue;
+
+			if (sp_open(testPort, SP_MODE_READ_WRITE) != SP_OK) {
+				sp_free_port(testPort);
+				continue;
 			}
+
+			sp_set_baudrate(testPort, 115200);
+			sp_set_bits(testPort, 8);
+			sp_set_parity(testPort, SP_PARITY_NONE);
+			sp_set_stopbits(testPort, 1);
+			sp_set_flowcontrol(testPort, SP_FLOWCONTROL_NONE);
+
+			const std::string probe = "getwelcome\r";
+			sp_blocking_write(testPort, probe.c_str(), probe.size(), 200);
+
+			char buf[128] = {};
+			int n = sp_blocking_read(testPort, buf, sizeof(buf), 500);
+			if (n > 0) {
+				std::string response(buf, n);
+
+				// Strip trailing CR/LF for log output only
+				std::string logResponse = response;
+				while (!logResponse.empty() && (logResponse.back() == '\r' || logResponse.back() == '\n')) {
+					logResponse.pop_back();
+				}
+
+				LOG_INFO(COMPONENT, "Received from probe: \"" + logResponse + "\"");
+
+				std::string lower;
+				for (char c : response) lower += std::tolower(c);
+				if (lower.find("tos428") != std::string::npos) {
+					LOG_INFO(COMPONENT, "Confirmed TOS GRS on port: " + std::string(sp_get_port_name(testPort)));
+					result = testPort;
+					break;
+				}
+			}
+
+			else {
+				LOG_INFO(COMPONENT, "No response or read failed");
+			}
+
+			sp_close(testPort);
+			sp_free_port(testPort);
 		}
 	}
+
 	sp_free_port_list(ports);
 	return result;
 }
