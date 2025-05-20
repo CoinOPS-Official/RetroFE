@@ -73,6 +73,60 @@ std::string Utils::wstringToString(const std::wstring& wstr) {
 }
 #endif
 
+void Utils::preciseSleep(double seconds_to_sleep) {
+    using namespace std::chrono;
+
+    if (seconds_to_sleep <= 0.0) {
+        return;
+    }
+
+    // Each thread gets its own adaptive parameters for preciseSleep
+    thread_local static double estimate_s = 0.010; // Initial estimate in seconds (e.g., 10ms)
+    thread_local static double mean_s = 0.010; // Initial mean in seconds
+    thread_local static double m2_s = 0.0;   // For variance calculation
+    thread_local static int64_t count = 1;
+
+    double remaining_seconds = seconds_to_sleep;
+
+    // Note: This adaptive loop is based on the idea of repeatedly sleeping for 1ms
+    // and learning. If seconds_to_sleep is small (e.g., < estimate_s), it goes straight to spin.
+    // The effectiveness of this adaptive part vs. a simpler (sleep_for(total - fudge) then spin)
+    // depends on the OS and typical sleep durations.
+    while (remaining_seconds > estimate_s) {
+        auto start_chunk = steady_clock::now();
+        std::this_thread::sleep_for(milliseconds(1)); // Coarse sleep for 1ms
+        auto end_chunk = steady_clock::now();
+
+        double observed_s = duration<double>(end_chunk - start_chunk).count();
+        remaining_seconds -= observed_s;
+
+        // Update running statistics (Welford's algorithm)
+        ++count;
+        double delta_s = observed_s - mean_s;
+        mean_s += delta_s / count;
+        m2_s += delta_s * (observed_s - mean_s);
+
+        double stddev_s = 0.0;
+        if (count > 1) { // Need at least 2 samples for stddev
+            stddev_s = std::sqrt(m2_s / (count - 1));
+        }
+        estimate_s = mean_s + stddev_s; // Update estimate for next iteration
+    }
+
+    // Spin for the remainder (or if seconds_to_sleep was < estimate_s initially)
+    // Ensure remaining_seconds for spin isn't negative if coarse sleep overshot.
+    if (remaining_seconds > 0.0) {
+        auto spin_start_time = steady_clock::now();
+        // Create duration object once
+        auto spin_delay_duration = duration<double>(remaining_seconds);
+        while (steady_clock::now() - spin_start_time < spin_delay_duration) {
+            // Spin
+            // Consider adding _mm_pause() or std::this_thread::yield() for very long spins,
+            // but for typical sub-millisecond final spins, pure spin is often best.
+        }
+    }
+}
+
 std::string Utils::toLower(const std::string& inputStr)
 {
     std::string str = inputStr;

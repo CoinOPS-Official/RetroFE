@@ -91,7 +91,7 @@ private:
     ViewInfo     storeViewInfo_;
     unsigned int currentTweenIndex_;
     bool         currentTweenComplete_;
-    float        elapsedTweenTime_;
+    double       elapsedTweenTime_;
     std::string  animationRequestedType_;
     std::string  animationType_;
     bool         animationRequested_;

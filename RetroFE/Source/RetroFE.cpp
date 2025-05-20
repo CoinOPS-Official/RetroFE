@@ -29,6 +29,7 @@
 #include "Graphics/Component/ScrollingList.h"
 #include "Graphics/Page.h"
 #include "Graphics/PageBuilder.h"
+#include "Graphics/Component/Text.h"
 #include "Sound/MusicPlayer.h"
 #include "Menu/Menu.h"
 #include "SDL.h"
@@ -113,30 +114,136 @@ RetroFE::~RetroFE() {
 	deInitialize();
 }
 
-// Render the current page to the screen
-void RetroFE::render() {
-	// Step 1: Clear render targets
+void RetroFE::render() { 
+	static double accumulatedRenderMs = 0.0;
+	static int framesSinceFpsUpdate = 0;
+	static double displayedFps = 0.0;
+	static double displayedRenderMs = 0.0;
+	static uint64_t lastFpsUpdateTimestamp = 0;
+
+	uint64_t r_startTicks = SDL_GetPerformanceCounter(); // 'r_' prefix for render-specific
+
+	// --- 1. Clear render targets ---
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
-		SDL_SetRenderTarget(SDL::getRenderer(i), SDL::getRenderTarget(i));
-		SDL_SetRenderDrawColor(SDL::getRenderer(i), 0, 0, 0, 255);
-		SDL_RenderClear(SDL::getRenderer(i));
+		SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+		SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+		if (!currentRenderer || !currentRenderTarget) continue;
+
+		SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
+		SDL_SetRenderDrawColor(currentRenderer, 0, 0, 0, 255);
+		SDL_RenderClear(currentRenderer);
 	}
 
-	// Step 2: Draw current page for each monitor
+	// --- 2. Draw main content and overlay ---
+	// Assuming overlay on screen 0 only
 	if (currentPage_) {
 		for (int i = 0; i < SDL::getScreenCount(); ++i) {
-			SDL_SetRenderTarget(SDL::getRenderer(i), SDL::getRenderTarget(i));
-			currentPage_->draw(i); // Draw only for monitor i
+			SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+			SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+			if (!currentRenderer || !currentRenderTarget) continue;
+
+			SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
+			currentPage_->draw(i);
+
+			if (showFps_ && i == 0 && fpsOverlayTexture_) { // Check m_showFps
+				SDL_Rect dst = { 20, 20, fpsOverlayW_, fpsOverlayH_ };
+				SDL_RenderCopy(currentRenderer, fpsOverlayTexture_, nullptr, &dst);
+			}
 		}
 	}
 
-	// Step 3: Present to screens
+	// --- 3. Present to screens ---
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
-		SDL_SetRenderTarget(SDL::getRenderer(i), nullptr);
-		SDL_RenderCopy(SDL::getRenderer(i), SDL::getRenderTarget(i), nullptr, nullptr);
-		SDL_RenderPresent(SDL::getRenderer(i));
+		SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+		SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+		if (!currentRenderer || !currentRenderTarget) continue; // Should not happen if previous steps worked
+
+		SDL_SetRenderTarget(currentRenderer, nullptr);
+		SDL_RenderCopy(currentRenderer, currentRenderTarget, nullptr, nullptr);
+		SDL_RenderPresent(currentRenderer); // This blocks if VSync is on
+	}
+
+	// --- Timing for THIS render() call ---
+	uint64_t r_endTicks = SDL_GetPerformanceCounter();
+	uint64_t r_deltaTicks = r_endTicks - r_startTicks;
+	double currentRenderDurationMs = (r_deltaTicks * 1000.0) / freq_; // Duration of this render() call
+
+	if (showFps_) {
+		framesSinceFpsUpdate++;
+		accumulatedRenderMs += currentRenderDurationMs; // Accumulate render duration
+
+		uint64_t now_ticks64 = SDL_GetTicks64(); // For the 1-second update interval
+		if (now_ticks64 - lastFpsUpdateTimestamp >= 1000) {
+			// Calculate FPS based on how many 'render' calls (frames) happened
+			displayedFps = framesSinceFpsUpdate * 1000.0 / (now_ticks64 - lastFpsUpdateTimestamp);
+			// Calculate average 'render' call duration
+			displayedRenderMs = accumulatedRenderMs / framesSinceFpsUpdate;
+
+			lastFpsUpdateTimestamp = now_ticks64 - (now_ticks64 - lastFpsUpdateTimestamp) % 1000; // Aligned update
+			framesSinceFpsUpdate = 0;
+			accumulatedRenderMs = 0.0;
+
+			// --- Compose and update overlay texture ---
+			char overlayText[128];
+			// Use this->lastFrameTimeMs_ (which was updated by the main game loop)
+			snprintf(overlayText, sizeof(overlayText), "FPS: %.1f | Frame: %.2f ms | Draw: %.2f ms",
+				displayedFps, this->lastFrameTimeMs_, displayedRenderMs);
+
+			if (lastOverlayText_ != overlayText) {
+				lastOverlayText_ = overlayText;
+				if (fpsOverlayTexture_) {
+					SDL_DestroyTexture(fpsOverlayTexture_);
+					fpsOverlayTexture_ = nullptr;
+				}
+
+				if (debugFont_) { // Ensure font is loaded
+					SDL_Color color = { 255, 255, 0, 255 }; // Yellow
+					SDL_Surface* surf = TTF_RenderText_Blended(debugFont_, overlayText, color);
+					if (surf) {
+						SDL_Renderer* renderer0 = SDL::getRenderer(0);
+						if (renderer0) { // Ensure renderer 0 exists
+							fpsOverlayTexture_ = SDL_CreateTextureFromSurface(renderer0, surf);
+							if (fpsOverlayTexture_) {
+								fpsOverlayW_ = surf->w;
+								fpsOverlayH_ = surf->h;
+							}
+							else {
+								fprintf(stderr, "FPS Overlay: Failed to create texture: %s\n", SDL_GetError());
+								fpsOverlayW_ = 0; fpsOverlayH_ = 0;
+							}
+						}
+						else {
+							fprintf(stderr, "FPS Overlay: Renderer 0 not available.\n");
+						}
+						SDL_FreeSurface(surf);
+					}
+					else {
+						fprintf(stderr, "FPS Overlay: TTF_RenderText_Blended failed: %s\n", TTF_GetError());
+					}
+				}
+				else {
+					fprintf(stderr, "FPS Overlay: Debug font not loaded.\n");
+				}
+			}
+		}
+	}
+	else { // showFps_ is false
+		// If FPS display was on and is now turned off (or was never on)
+		if (fpsOverlayTexture_) {
+			SDL_DestroyTexture(fpsOverlayTexture_);
+			fpsOverlayTexture_ = nullptr;
+			fpsOverlayW_ = 0;
+			fpsOverlayH_ = 0;
+			lastOverlayText_ = ""; // Reset to ensure re-creation if turned back on
+		}
+		// Reset calculation statics if FPS is off, so they don't carry over old values
+		accumulatedRenderMs = 0.0;
+		framesSinceFpsUpdate = 0;
+		// displayedFps, displayedRenderMs, lastFpsUpdateTimestamp will just hold their last values
+		// until showFps_ is true again and a 1-second interval passes.
 	}
 }
+
 // Initialize the configuration and database
 int RetroFE::initialize(void* context) {
 
@@ -283,8 +390,8 @@ void RetroFE::launchExit() {
 	currentPage_->updateReloadables(0);
 	currentPage_->onNewItemSelected();
 	currentPage_->reallocateMenuSpritePoints(false);
-
-	currentTime_ = static_cast<float>(SDL_GetTicks()) / 1000;
+	attract_.reset(false);
+	currentTime_ = static_cast<float>((SDL_GetPerformanceCounter() * 1.0 / freq_)); // currentTime_ in seconds
 	keyLastTime_ = currentTime_;
 	lastLaunchReturnTime_ = currentTime_;
 
@@ -405,6 +512,17 @@ bool RetroFE::deInitialize() {
 		musicPlayer_->shutdown();
 	}
 
+	if (debugFont_) {
+		TTF_CloseFont(debugFont_);
+		debugFont_ = nullptr;
+	}
+
+	if (fpsOverlayTexture_)
+	{
+		SDL_DestroyTexture(fpsOverlayTexture_);
+		fpsOverlayTexture_ = nullptr;
+	}
+
 	initialized = false;
 
 	if (reboot_)
@@ -451,6 +569,27 @@ bool RetroFE::run() {
 		return false;
 	if (!fontcache_.initialize())
 		return false;
+
+	config_.getProperty(OPTION_SHOWFPS, showFps_);
+	if (showFps_)
+	{
+		std::string fontPath = Configuration::absolutePath + "/font.ttf";
+		debugFont_ = TTF_OpenFont(fontPath.c_str(), 24);
+		if (!debugFont_)
+		{
+			LOG_ERROR("RetroFE", "Could not load font: " + fontPath);
+			return false;
+		}
+		else
+		{
+			LOG_INFO("RetroFE", "Loaded font: " + fontPath);
+		}
+	}
+	else
+	{
+		debugFont_ = nullptr;
+	}
+
 	SDL_RestoreWindow(SDL::getWindow(0));
 	SDL_RaiseWindow(SDL::getWindow(0));
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_TRUE);
@@ -583,13 +722,28 @@ bool RetroFE::run() {
 		config_.setProperty("quickListPlaylist", quickListPlaylist);
 	}
 
-	float lastTime = 0;
 	float deltaTime = 0;
 	float inputUpdateInterval = 0.0333f; // Update every ~33.33ms (~30Hz)
 	static float lastInputUpdateTime = 0.0f;
 
+	double initial_current_time_ms = SDL_GetPerformanceCounter() * 1000.0 / (double)freq_;
+
+	double nextFrameTime = initial_current_time_ms;
+	lastFrameTimePointMs_ = initial_current_time_ms;
+
+
 	while (running)
 	{
+		uint64_t loopStart = SDL_GetPerformanceCounter();
+		double nowMs_loopStart = loopStart * 1000.0 / freq_; // freq is SDL_GetPerformanceFrequency()
+
+		if (nextFrameTime < nowMs_loopStart) {
+			nextFrameTime = nowMs_loopStart;
+		}
+
+		deltaTime = static_cast<float>((nowMs_loopStart - lastFrameTimePointMs_) / 1000.0);
+		currentTime_ = static_cast<float>(nowMs_loopStart / 1000.0);
+		lastFrameTimePointMs_ = nowMs_loopStart; // For next frame's deltaTime
 
 		// Exit splash mode when an active key is pressed
 		if (SDL_Event e; splashMode && (SDL_PollEvent(&e)))
@@ -2050,7 +2204,6 @@ bool RetroFE::run() {
 				else
 				{
 					attract_.reset();
-					launchExit();
 					l.LEDBlinky(4);
 					currentPage_->exitGame();
 					if (currentPage_->getPlaylistName() == "lastplayed")
@@ -2058,7 +2211,7 @@ bool RetroFE::run() {
 						currentPage_->setScrollOffsetIndex(0);
 						currentPage_->reallocateMenuSpritePoints();
 					}
-
+					launchExit();
 					setState(RETROFE_LAUNCH_EXIT);
 				}
 			}
@@ -2307,33 +2460,16 @@ bool RetroFE::run() {
 		// Handle screen updates and attract mode
 		if (running)
 		{
-			lastTime = currentTime_;
-			currentTime_ = static_cast<float>(SDL_GetTicks()) / 1000;
-
-			if (currentTime_ < lastTime)
-			{
-				currentTime_ = lastTime;
-			}
-
-			deltaTime = currentTime_ - lastTime;
-			double sleepTime;
-			if (getState() == RETROFE_IDLE)
-				sleepTime = fpsIdleTime - deltaTime * 1000;
-			else
-				sleepTime = fpsTime - deltaTime * 1000;
-			if (sleepTime > 0 && sleepTime < 1000)
-			{
-				if (vSync == false)
-				{
-					SDL_Delay(static_cast<unsigned int>(sleepTime));
-				}
-			}
-
 			if (currentPage_)
 			{
 				if (!splashMode && !paused_)
 				{
-					int attractReturn = attract_.update(deltaTime, *currentPage_);
+					float attract_dt = static_cast<float>(deltaTime);
+					const float MAX_REASONABLE_DELTA_TIME = 0.1f; // 100ms, or 1/10th of a second
+					if (attract_dt > MAX_REASONABLE_DELTA_TIME) {
+						attract_dt = MAX_REASONABLE_DELTA_TIME;
+					}
+					int attractReturn = attract_.update(attract_dt, *currentPage_);
 					if (!kioskLock_ && attractReturn == 1) // Change playlist
 					{
 						attract_.reset(attract_.isSet());
@@ -2413,10 +2549,42 @@ bool RetroFE::run() {
 					}
 				}
 			}
-
+			
 			render();
+			
+			bool activelyAnimating = isUserActive(currentTime_)
+				|| currentPage_->isMenuScrolling()
+				|| !currentPage_->isIdle()
+				|| !currentPage_->isGraphicsIdle()
+				|| currentPage_->isPlaylistScrolling()
+				|| currentPage_->isGamesScrolling();
+
+			double currentFrameIntervalMs = activelyAnimating ? fpsTime : fpsIdleTime;
+
+			// Advance nextFrameTime by one interval FROM ITS CURRENT VALUE
+			// This nextFrameTime now represents the target END time for the current frame (after sleeping)
+			nextFrameTime += currentFrameIntervalMs;
+
+			// Get current time right before sleep
+			double timeBeforeSleepMs = SDL_GetPerformanceCounter() * 1000.0 / freq_;
+
+			// Calculate sleep duration
+			double sleepTimeMs = nextFrameTime - timeBeforeSleepMs;
+			//Clamp and advance the target frame time
+
+			if (!vSync && sleepTimeMs > 0.0) {
+				Utils::preciseSleep(sleepTimeMs / 1000.0);
+				uint64_t ultimateTargetTicks = (uint64_t)(nextFrameTime * freq_ / 1000.0);
+				while (SDL_GetPerformanceCounter() < ultimateTargetTicks);
+			}
+
+			//Measure how long the full frame took (update + render + sleep)
+			uint64_t loopEnd = SDL_GetPerformanceCounter();
+			double actualTotalFrameDurationMs = (loopEnd - loopStart) * 1000.0 / freq_; // loopStart was actual start
+			lastFrameTimeMs_ = actualTotalFrameDurationMs; // For display
 		}
 	}
+
 	return reboot_;
 }
 
@@ -3677,6 +3845,10 @@ CollectionInfo* RetroFE::getMenuCollection(const std::string& collectionName) {
 	}
 	collection->playlists["all"] = &collection->items;
 	return collection;
+}
+
+bool RetroFE::isUserActive(double now, double threshold) const {
+	return (now - keyLastTime_) < threshold;
 }
 
 void RetroFE::saveRetroFEState() const {

@@ -44,6 +44,7 @@
 #define OPTION_WINDOWRESIZE          "windowResize"
 #define OPTION_FPS                   "fps"
 #define OPTION_FPSIDLE               "fpsIdle"
+#define OPTION_SHOWFPS               "showFps"
 #define OPTION_HIDEMOUSE             "hideMouse"
 #define OPTION_ANIMATEDURINGGAME     "animateDuringGame"
 
@@ -179,6 +180,7 @@ public:
     bool windowresize() { return bool_value(OPTION_WINDOWRESIZE); }
     int fps() { return int_value(OPTION_FPS); }
     int fpsidle() { return int_value(OPTION_FPSIDLE); }
+	bool showfps() { return bool_value(OPTION_SHOWFPS); }
     bool hidemouse() { return bool_value(OPTION_HIDEMOUSE); }
     bool animateduringgame() { return bool_value(OPTION_ANIMATEDURINGGAME); }
 

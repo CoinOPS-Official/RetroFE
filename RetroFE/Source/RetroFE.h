@@ -64,8 +64,7 @@ public:
     std::vector<std::string>     getPlaylistCycle();
     bool getAttractModeCyclePlaylist();
     MetadataDatabase* getMetaDb();
-
-
+    uint64_t freq_ = SDL_GetPerformanceFrequency();
 
 private:
 #ifdef WIN32	
@@ -76,7 +75,19 @@ private:
     SDL_Thread   *initializeThread;
     static int    initialize( void *context );
 
+	double lastFrameTimeMs_ = 0.0;
+	double lastFrameTimePointMs_ = 0.0;
+
     void initializeMusicPlayer();
+
+    //fps counter resources
+    std::unique_ptr<Text> fpsOverlayText_;
+    TTF_Font* debugFont_ = nullptr;
+    SDL_Texture* fpsOverlayTexture_ = nullptr;
+    int fpsOverlayW_ = 0;
+    int fpsOverlayH_ = 0;
+    std::string lastOverlayText_ = "";
+    bool showFps_ = false;
 
     enum RETROFE_STATE
     {
@@ -177,6 +188,7 @@ private:
     CollectionInfo *getCollection( const std::string& collectionName );
     void updatePageControls(const std::string& type);
     CollectionInfo *getMenuCollection( const std::string& collectionName );
+    bool isUserActive(double now, double threshold = 3.0) const;
 	void            saveRetroFEState( ) const;
     std::string getLayoutFileName();
     void resetInfoToggle();

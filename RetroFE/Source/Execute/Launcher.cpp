@@ -1610,42 +1610,85 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 }
 
 void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) const {
-	const double fpsTime = 1000.0 / 60.0; // 60 FPS in milliseconds
-	float lastTime = static_cast<float>(SDL_GetTicks()) / 1000.0f;
+	const uint64_t perf_freq = retroFeInstance_.freq_;
+	if (perf_freq == 0) { // Safety check
+		LOG_ERROR("Launcher", "Performance frequency is 0. Cannot run render thread.");
+		return;
+	}
 
-	while (!stop_thread) {
-		float currentTime = static_cast<float>(SDL_GetTicks()) / 1000.0f;
-		float deltaTime = currentTime - lastTime;
-		if (deltaTime < 0) {
-			deltaTime = 0; // Handle clock wraparound
+	// Target 30 FPS for this secondary rendering thread
+	const double TARGET_FRAME_INTERVAL_MS = 1000.0 / 30.0; // Target frame time in milliseconds
+
+	// Timing variables using performance counter
+	double lastFramePointMs = SDL_GetPerformanceCounter() * 1000.0 / (double)perf_freq;
+	double nextFrameTargetMs = lastFramePointMs + TARGET_FRAME_INTERVAL_MS;
+
+	// This thread doesn't have its own full "currentTime_" like the main loop,
+	// but it calculates deltaTime based on its own iterations.
+	// It also doesn't manage the global RetroFE state machine.
+
+	while (!stop_thread.load(std::memory_order_acquire)) {
+		uint64_t loopStartTicks = SDL_GetPerformanceCounter();
+		double nowMs_loopStart = loopStartTicks * 1000.0 / (double)perf_freq;
+
+		// Calculate deltaTime for currentPage.update() in this thread
+		// This deltaTime is specific to this thread's iteration rate.
+		double deltaTime_s = (nowMs_loopStart - lastFramePointMs) / 1000.0;
+		if (deltaTime_s < 0) deltaTime_s = 0; // Handle potential counter issues (rare)
+		// Clamp deltaTime to prevent huge jumps if this thread stalled.
+		const double MAX_SECONDARY_LOOP_DELTA_S = 0.1; // e.g., 100ms
+		if (deltaTime_s > MAX_SECONDARY_LOOP_DELTA_S) {
+			deltaTime_s = MAX_SECONDARY_LOOP_DELTA_S;
 		}
 
-		// Update page with proper deltaTime
-		currentPage.update(deltaTime);
+		lastFramePointMs = nowMs_loopStart; // Update for next iteration
 
-		// Render secondary monitors
+		// --- Update page state (animations on secondary screens) ---
+		// This update is independent of the main loop's update calls for fixed timesteps.
+		// It ensures animations on secondary screens continue smoothly based on this thread's timing.
+		currentPage.update(static_cast<float>(deltaTime_s));
+
+		// --- Process GStreamer bus messages ---
+		// This is important if videos are playing on secondary screens and their
+		// GStreamer instances are managed by the Page/Components being updated.
+		g_main_context_iteration(nullptr, false);
+
+		// --- Render secondary monitors (starting from index 1) ---
 		for (int i = 1; i < SDL::getScreenCount(); ++i) {
+			SDL_Renderer* renderer = SDL::getRenderer(i);
+			SDL_Texture* renderTarget = SDL::getRenderTarget(i);
 
-			SDL_SetRenderTarget(SDL::getRenderer(i), SDL::getRenderTarget(i));
-			SDL_SetRenderDrawColor(SDL::getRenderer(i), 0, 0, 0, 255);
-			SDL_RenderClear(SDL::getRenderer(i));
+			if (!renderer || !renderTarget) continue;
 
-			currentPage.draw(i); // Draw for monitor i
+			SDL_SetRenderTarget(renderer, renderTarget);
+			SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); // Assuming black background
+			SDL_RenderClear(renderer);
 
-			SDL_SetRenderTarget(SDL::getRenderer(i), nullptr);
-			SDL_RenderCopy(SDL::getRenderer(i), SDL::getRenderTarget(i), nullptr, nullptr);
-			SDL_RenderPresent(SDL::getRenderer(i));
+			currentPage.draw(i); // Draw page content for monitor i
+
+			SDL_SetRenderTarget(renderer, nullptr); // Reset render target to default window
+			SDL_RenderCopy(renderer, renderTarget, nullptr, nullptr);
+			SDL_RenderPresent(renderer); // This will VSync if enabled for this renderer/window
 		}
 
-		lastTime = currentTime;
+		// --- Frame Limiting for this thread ---
+		// Catch up nextFrameTargetMs if we fell behind
+		if (nextFrameTargetMs < nowMs_loopStart) {
+			nextFrameTargetMs = nowMs_loopStart;
+		}
+		nextFrameTargetMs += TARGET_FRAME_INTERVAL_MS; // Set target for the end of this frame
 
-		// Sleep to maintain 60 FPS
-		float frameTime = (static_cast<float>(SDL_GetTicks()) / 1000.0f) - currentTime;
-		double sleepTime = fpsTime - frameTime * 1000.0;
-		if (sleepTime > 0 && sleepTime < fpsTime) {
-			SDL_Delay(static_cast<unsigned int>(sleepTime));
+		double timeBeforeSleepMs = SDL_GetPerformanceCounter() * 1000.0 / (double)perf_freq;
+		double sleepTimeMs = nextFrameTargetMs - timeBeforeSleepMs;
+
+		if (sleepTimeMs > 0) {
+			Utils::preciseSleep(sleepTimeMs / 1000.0); // preciseSleep takes seconds
+
+			uint64_t ultimateTargetTicks = (uint64_t)(nextFrameTargetMs * perf_freq / 1000.0);
+			while (SDL_GetPerformanceCounter() < ultimateTargetTicks);
 		}
 	}
+	LOG_INFO("Launcher", "Render thread stopped.");
 }
 
 bool Launcher::launcherName(std::string& launcherName, std::string collection) {

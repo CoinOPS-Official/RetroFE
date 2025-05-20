@@ -50,6 +50,7 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_WINDOWRESIZE,            "false",     global_options::option_type::BOOLEAN,  "Allow window to be resized" },
     { OPTION_FPS,                     "60",        global_options::option_type::INTEGER,  "Requested FPS while in an active state" },
     { OPTION_FPSIDLE,                 "60",        global_options::option_type::INTEGER,  "Request FPS while in an idle state" },
+    { OPTION_SHOWFPS,                 "false",     global_options::option_type::BOOLEAN,  "Defines whether the FPS counter is shown" },
     { OPTION_HIDEMOUSE,               "true",      global_options::option_type::BOOLEAN,  "Defines whether the mouse cursor is hidden" },
     { OPTION_ANIMATEDURINGGAME,       "true",      global_options::option_type::BOOLEAN,  "Pause animated marquees while in the game" },
 

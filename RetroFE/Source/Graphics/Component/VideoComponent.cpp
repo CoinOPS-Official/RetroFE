@@ -69,8 +69,11 @@ bool VideoComponent::update(float dt) {
 	}
 
 	if ((currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0)) {
-		if (videoInst_->isPaused())
-			videoInst_->pause();  // Force pause during game launch
+		// Check if the *desired* state is already Paused, or if it's *actually* paused
+		if (videoInst_->getTargetState() != IVideo::VideoState::Paused && !videoInst_->isPaused()) {
+			videoInst_->pause();  // Request pause only if not already paused or intending to pause
+		}
+		// The video component might still do its base animation updates even if video is paused
 		return Component::update(dt);
 	}
 
