@@ -1061,33 +1061,36 @@ void GStreamerVideo::volumeUpdate() {
 	if (!isPlaying_ || !playbin_)
 		return;
 
-	// Clamp volume_ to valid range (float)
-	volume_ = std::clamp(volume_, 0.0f, 1.0f);
+	// Clamp volume_ to valid range
+	volume_ = std::min(volume_, 1.0f);
 
-	// Gradually adjust currentVolume_ (double) towards volume_
-	double target = static_cast<double>(volume_);
-	double diff = target - currentVolume_;
-	if (std::abs(diff) <= 0.005)
-		currentVolume_ = target;
+	// Gradually adjust currentVolume_ towards volume_
+	if (currentVolume_ > volume_ || currentVolume_ + 0.005 >= volume_)
+		currentVolume_ = volume_;
 	else
-		currentVolume_ += (diff > 0 ? 0.005 : -0.005);
+		currentVolume_ += 0.005;
 
 	// Determine mute state
-	bool shouldMute = (currentVolume_ < 0.1) || Configuration::MuteVideo;
+	bool shouldMute = (currentVolume_ < 0.1);
 
 	// Update volume only if it has changed and is not muted
-	if (!shouldMute && currentVolume_ != lastSetVolume_) {
+	if (!shouldMute && currentVolume_ != lastSetVolume_)
+	{
 		gst_stream_volume_set_volume(
 			GST_STREAM_VOLUME(playbin_),
 			GST_STREAM_VOLUME_FORMAT_LINEAR,
 			currentVolume_);
 		lastSetVolume_ = currentVolume_;
 	}
-	else if (shouldMute != lastSetMuteState_) {
+
+	// Update mute state only if it has changed
+	if (shouldMute != lastSetMuteState_)
+	{
 		gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), shouldMute);
 		lastSetMuteState_ = shouldMute;
 	}
 }
+
 
 int GStreamerVideo::getHeight() {
 	return height_.load(std::memory_order_relaxed);
