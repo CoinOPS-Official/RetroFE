@@ -72,6 +72,7 @@ public:
         KeyCodePause,
         KeyCodeRestart,
         KeyCodeKisok,
+        KeyCodeShowFps,
         KeyCodeSettingsCombo1,
         KeyCodeSettingsCombo2,
         KeyCodeQuitCombo1,

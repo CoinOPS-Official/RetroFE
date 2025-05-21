@@ -76,6 +76,7 @@ bool UserInput::initialize()
     MapKey("reboot", KeyCodeReboot, false);
     MapKey("saveFirstPlaylist", KeyCodeSaveFirstPlaylist, false);
     MapKey("kiosk", KeyCodeKisok, false);
+	MapKey("showFps", KeyCodeShowFps, false);
     MapKey("cycleCollection", KeyCodeCycleCollection, false);
     MapKey("prevCycleCollection", KeyCodePrevCycleCollection, false);
     MapKey("toggleGameInfo", KeyCodeToggleGameInfo, false);

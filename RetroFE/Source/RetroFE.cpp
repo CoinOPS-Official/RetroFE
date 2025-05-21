@@ -114,12 +114,14 @@ RetroFE::~RetroFE() {
 	deInitialize();
 }
 
-void RetroFE::render() { 
+void RetroFE::render() {
 	static double accumulatedRenderMs = 0.0;
 	static int framesSinceFpsUpdate = 0;
 	static double displayedFps = 0.0;
 	static double displayedRenderMs = 0.0;
 	static uint64_t lastFpsUpdateTimestamp = 0;
+	static bool prevShowFps = false; // Detect transition
+	static bool waitingForFpsData = false;
 
 	uint64_t r_startTicks = SDL_GetPerformanceCounter(); // 'r_' prefix for render-specific
 
@@ -135,7 +137,6 @@ void RetroFE::render() {
 	}
 
 	// --- 2. Draw main content and overlay ---
-	// Assuming overlay on screen 0 only
 	if (currentPage_) {
 		for (int i = 0; i < SDL::getScreenCount(); ++i) {
 			SDL_Renderer* currentRenderer = SDL::getRenderer(i);
@@ -145,7 +146,7 @@ void RetroFE::render() {
 			SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
 			currentPage_->draw(i);
 
-			if (showFps_ && i == 0 && fpsOverlayTexture_) { // Check m_showFps
+			if (showFps_ && i == 0 && fpsOverlayTexture_) {
 				SDL_Rect dst = { 20, 20, fpsOverlayW_, fpsOverlayH_ };
 				SDL_RenderCopy(currentRenderer, fpsOverlayTexture_, nullptr, &dst);
 			}
@@ -156,91 +157,89 @@ void RetroFE::render() {
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
 		SDL_Renderer* currentRenderer = SDL::getRenderer(i);
 		SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
-		if (!currentRenderer || !currentRenderTarget) continue; // Should not happen if previous steps worked
+		if (!currentRenderer || !currentRenderTarget) continue;
 
 		SDL_SetRenderTarget(currentRenderer, nullptr);
 		SDL_RenderCopy(currentRenderer, currentRenderTarget, nullptr, nullptr);
-		SDL_RenderPresent(currentRenderer); // This blocks if VSync is on
+		SDL_RenderPresent(currentRenderer); // Blocks if VSync is on
 	}
 
-	// --- Timing for THIS render() call ---
+	// --- 4. Timing for THIS render() call ---
 	uint64_t r_endTicks = SDL_GetPerformanceCounter();
 	uint64_t r_deltaTicks = r_endTicks - r_startTicks;
-	double currentRenderDurationMs = (r_deltaTicks * 1000.0) / freq_; // Duration of this render() call
+	double currentRenderDurationMs = (r_deltaTicks * 1000.0) / freq_;
+
+	// --- 5. FPS display logic ---
+	bool showFpsJustEnabled = (!prevShowFps && showFps_);
+	prevShowFps = showFps_;
+
+	if (showFpsJustEnabled) {
+		lastFpsUpdateTimestamp = SDL_GetTicks64();
+		framesSinceFpsUpdate = 0;
+		accumulatedRenderMs = 0.0;
+		waitingForFpsData = true;
+	}
 
 	if (showFps_) {
 		framesSinceFpsUpdate++;
-		accumulatedRenderMs += currentRenderDurationMs; // Accumulate render duration
+		accumulatedRenderMs += currentRenderDurationMs;
 
-		uint64_t now_ticks64 = SDL_GetTicks64(); // For the 1-second update interval
+		uint64_t now_ticks64 = SDL_GetTicks64();
 		if (now_ticks64 - lastFpsUpdateTimestamp >= 1000) {
-			// Calculate FPS based on how many 'render' calls (frames) happened
 			displayedFps = framesSinceFpsUpdate * 1000.0 / (now_ticks64 - lastFpsUpdateTimestamp);
-			// Calculate average 'render' call duration
-			displayedRenderMs = accumulatedRenderMs / framesSinceFpsUpdate;
+			displayedRenderMs = accumulatedRenderMs / std::max(1, framesSinceFpsUpdate);
 
-			lastFpsUpdateTimestamp = now_ticks64 - (now_ticks64 - lastFpsUpdateTimestamp) % 1000; // Aligned update
+			lastFpsUpdateTimestamp = now_ticks64 - (now_ticks64 - lastFpsUpdateTimestamp) % 1000;
 			framesSinceFpsUpdate = 0;
 			accumulatedRenderMs = 0.0;
+			waitingForFpsData = false;  // Got real data now
+		}
 
-			// --- Compose and update overlay texture ---
-			char overlayText[128];
-			// Use this->lastFrameTimeMs_ (which was updated by the main game loop)
+		// --- Compose overlay text ---
+		char overlayText[128];
+		if (waitingForFpsData) {
+			snprintf(overlayText, sizeof(overlayText), "FPS: -- | Frame: -- ms | Draw: -- ms");
+		}
+		else {
 			snprintf(overlayText, sizeof(overlayText), "FPS: %.1f | Frame: %.2f ms | Draw: %.2f ms",
 				displayedFps, this->lastFrameTimeMs_, displayedRenderMs);
+		}
 
-			if (lastOverlayText_ != overlayText) {
-				lastOverlayText_ = overlayText;
-				if (fpsOverlayTexture_) {
-					SDL_DestroyTexture(fpsOverlayTexture_);
-					fpsOverlayTexture_ = nullptr;
-				}
+		if (lastOverlayText_ != overlayText) {
+			lastOverlayText_ = overlayText;
 
-				if (debugFont_) { // Ensure font is loaded
-					SDL_Color color = { 255, 255, 0, 255 }; // Yellow
-					SDL_Surface* surf = TTF_RenderText_Blended(debugFont_, overlayText, color);
-					if (surf) {
-						SDL_Renderer* renderer0 = SDL::getRenderer(0);
-						if (renderer0) { // Ensure renderer 0 exists
-							fpsOverlayTexture_ = SDL_CreateTextureFromSurface(renderer0, surf);
-							if (fpsOverlayTexture_) {
-								fpsOverlayW_ = surf->w;
-								fpsOverlayH_ = surf->h;
-							}
-							else {
-								fprintf(stderr, "FPS Overlay: Failed to create texture: %s\n", SDL_GetError());
-								fpsOverlayW_ = 0; fpsOverlayH_ = 0;
-							}
-						}
-						else {
-							fprintf(stderr, "FPS Overlay: Renderer 0 not available.\n");
-						}
-						SDL_FreeSurface(surf);
+			if (fpsOverlayTexture_) {
+				SDL_DestroyTexture(fpsOverlayTexture_);
+				fpsOverlayTexture_ = nullptr;
+			}
+
+			if (debugFont_) {
+				SDL_Color color = { 255, 255, 0, 255 };
+				SDL_Surface* surf = TTF_RenderText_Blended(debugFont_, overlayText, color);
+				if (surf) {
+					SDL_Renderer* renderer0 = SDL::getRenderer(0);
+					if (renderer0) {
+						fpsOverlayTexture_ = SDL_CreateTextureFromSurface(renderer0, surf);
+						fpsOverlayW_ = surf->w;
+						fpsOverlayH_ = surf->h;
 					}
-					else {
-						fprintf(stderr, "FPS Overlay: TTF_RenderText_Blended failed: %s\n", TTF_GetError());
-					}
-				}
-				else {
-					fprintf(stderr, "FPS Overlay: Debug font not loaded.\n");
+					SDL_FreeSurface(surf);
 				}
 			}
 		}
 	}
-	else { // showFps_ is false
-		// If FPS display was on and is now turned off (or was never on)
+
+	else {
 		if (fpsOverlayTexture_) {
 			SDL_DestroyTexture(fpsOverlayTexture_);
 			fpsOverlayTexture_ = nullptr;
 			fpsOverlayW_ = 0;
 			fpsOverlayH_ = 0;
-			lastOverlayText_ = ""; // Reset to ensure re-creation if turned back on
+			lastOverlayText_ = "";
 		}
-		// Reset calculation statics if FPS is off, so they don't carry over old values
 		accumulatedRenderMs = 0.0;
 		framesSinceFpsUpdate = 0;
-		// displayedFps, displayedRenderMs, lastFpsUpdateTimestamp will just hold their last values
-		// until showFps_ is true again and a 1-second interval passes.
+		waitingForFpsData = false;
 	}
 }
 
@@ -2549,9 +2548,9 @@ bool RetroFE::run() {
 					}
 				}
 			}
-			
+
 			render();
-			
+
 			bool activelyAnimating = isUserActive(currentTime_)
 				|| currentPage_->isMenuScrolling()
 				|| !currentPage_->isIdle()
@@ -3076,6 +3075,23 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 
 			keyLastTime_ = currentTime_;
 			return RETROFE_IDLE;
+		}
+		else if (input_.keystate(UserInput::KeyCodeShowFps)) {
+			keyLastTime_ = currentTime_;
+			if (!debugFont_) {
+				std::string fontPath = Configuration::absolutePath + "/font.ttf";
+				debugFont_ = TTF_OpenFont(fontPath.c_str(), 24);
+				if (!debugFont_)
+				{
+					LOG_ERROR("RetroFE", "Could not load font: " + fontPath);
+					return state;
+				}
+				else
+				{
+					LOG_INFO("RetroFE", "Loaded debug font: " + fontPath);
+				}
+			}
+			showFps_ = !showFps_;
 		}
 		else if (input_.keystate(UserInput::KeyCodeMenu) && !menuMode_)
 		{
