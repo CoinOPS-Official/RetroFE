@@ -1160,7 +1160,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					LOG_INFO("Launcher", "User input detected during attract mode.");
 					userInputDetected = true;
 					
-					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
+					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled && !firstInputWasExitCommand) {
 						is4waySet = true;
 						std::thread([]() {
 							bool result = gRestrictor->setWay(4);
