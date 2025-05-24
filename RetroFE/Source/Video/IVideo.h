@@ -28,6 +28,7 @@ public:
 	};
 
 	virtual VideoState getTargetState() const = 0;
+	virtual VideoState getActualState() const = 0;
 	virtual ~IVideo() = default;
 	virtual bool initialize() = 0;
 	virtual bool play(const std::string& file) = 0;

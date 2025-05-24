@@ -21,23 +21,22 @@
 #include "../Utility/Log.h"
 #include "IVideo.h"
 #include <atomic>
-#include <shared_mutex>
 #include <string>
-#include <optional>
 #include <functional>
-
+#include <mutex>
+#include <vector>
 
 extern "C" {
 #if (__APPLE__)
-    #if __has_include(<gstreamer-1.0/gst/gst.h>)
-    #include <gstreamer-1.0/gst/gst.h>
-    #include <gstreamer-1.0/gst/video/video.h>
-    #elif __has_include(<GStreamer/gst/gst.h>)
-    #include <GStreamer/gst/gst.h>
-    #include <GStreamer/gst/video/video.h>
-    #else
-    #error "Cannot find Gstreamer headers"
-    #endif
+#if __has_include(<gstreamer-1.0/gst/gst.h>)
+#include <gstreamer-1.0/gst/gst.h>
+#include <gstreamer-1.0/gst/video/video.h>
+#elif __has_include(<GStreamer/gst/gst.h>)
+#include <GStreamer/gst/gst.h>
+#include <GStreamer/gst/video/video.h>
+#else
+#error "Cannot find Gstreamer headers"
+#endif
 #else
 #include <gst/gst.h>
 #include <gst/pbutils/pbutils.h>
@@ -47,21 +46,18 @@ extern "C" {
 
 class GStreamerVideo final : public IVideo {
 public:
-
-    IVideo::VideoState getTargetState() const override {
-        return targetState_;
-    }
-    
     explicit GStreamerVideo(int monitor);
     GStreamerVideo(const GStreamerVideo&) = delete;
     GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo() override;
+
+    // --- Interface methods ---
     bool initialize() override;
+    bool deInitialize() override;
     bool unload();
     bool createPipelineIfNeeded();
     bool play(const std::string& file) override;
     bool stop() override;
-    bool deInitialize() override;
     SDL_Texture* getTexture() const override;
     void volumeUpdate() override;
     void draw() override;
@@ -80,90 +76,89 @@ public:
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
-    static void enablePlugin(const std::string& pluginName);
-    static void disablePlugin(const std::string& pluginName);
-
     void setSoftOverlay(bool value);
-
     void setPerspectiveCorners(const int* corners);
-
 
     bool hasError() const override {
         return hasError_.load(std::memory_order_acquire);
     }
+    IVideo::VideoState getTargetState() const override { return targetState_; }
+    IVideo::VideoState getActualState() const override { return actualState_; }
+    static void enablePlugin(const std::string& pluginName);
+    static void disablePlugin(const std::string& pluginName);
 
 private:
-    
-    std::atomic<IVideo::VideoState> targetState_{ IVideo::VideoState::None };
-
+    // === Thread-shared atomics ===
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
-    std::atomic<bool> hasValidFrame_{ false };
+    std::atomic<int> width_{ 0 };                      // Set by pad probe, read main
+    std::atomic<int> height_{ 0 };                     // Set by pad probe, read main
+    std::atomic<bool> textureValid_{ false };          // Set by pad probe, read main
+    std::atomic<bool> isPlaying_{ false };             // Set/read both
+    std::atomic<bool> video_dimensions_known_{ false };// Set by pad probe, read main
+    std::atomic<bool> hasError_{ false };              // Set by pad probe, read main
 
+    // === Main-thread only ===
+    IVideo::VideoState targetState_{ IVideo::VideoState::None };
+	IVideo::VideoState actualState_{ IVideo::VideoState::None };
 
-    struct PadProbeUserdata {
-        GStreamerVideo* videoInstance;
-        uint64_t playSessionId;
-    };
-
-    mutable std::mutex drawMutex_;
-    std::atomic<uint64_t> mappingGeneration_{ 0 };
-    static std::vector<GStreamerVideo*> activeVideos_;
-    static std::mutex activeVideosMutex_;
-
-    static GStreamerVideo* findInstanceFromGstObject(GstObject* object);
-    
-    static constexpr int ALPHA_TEXTURE_SIZE = 4;
-    void createAlphaTexture();
-    static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
-    static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
-    static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
-    static void initializePlugins();
-    std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
-    bool updateTextureFromFrameIYUV(SDL_Texture*, GstVideoFrame*) const;
-    bool updateTextureFromFrameNV12(SDL_Texture*, GstVideoFrame*) const;
-    bool updateTextureFromFrameRGBA(SDL_Texture*, GstVideoFrame*) const;
-    void createSdlTexture();
-    GstElement* playbin_{ nullptr };          // for playbin3
-    GstElement* videoSink_{ nullptr };     // for appsink
-    GstElement* perspective_{ nullptr };
-    SDL_Texture* videoTexture_ = nullptr;    // Texture for video content
-    SDL_Texture* alphaTexture_ = nullptr;    // Transparent texture for transitions
-    SDL_Texture* texture_ = nullptr;         // Points to either videoTexture_ or alphaTexture_
-    SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
-    void initializeUpdateFunction();
-    guint elementSetupHandlerId_{ 0 };
-    guint padProbeId_{ 0 };
-	guint busWatchId_{ 0 };
-    GValueArray* gva_;
-    std::atomic<int> width_{ 0 };
-    std::atomic<int> height_{ 0 };
-    std::atomic<int> textureWidth_{ -1 };
-    std::atomic<int> textureHeight_{ -1 };
-    std::atomic<bool> textureValid_{ false };
-    std::atomic<bool> isPlaying_{ false };
-    static bool initialized_;
+    bool texture_config_needs_check_{ false };
+    uint64_t mappingGeneration_{ 0 };
+    int textureWidth_{ -1 };
+    int textureHeight_{ -1 };
     int playCount_{ 0 };
     std::string currentFile_{};
     int numLoops_{ 0 };
     float volume_{ 0.0f };
     double currentVolume_{ 0.0 };
     int monitor_;
-    std::atomic<bool>paused_{ false };
     double lastSetVolume_{ -1.0 };
     bool lastSetMuteState_{ false };
-    static bool pluginsInitialized_;
     bool softOverlay_;
-
-    std::atomic<bool> hasError_{false};
-
     int perspectiveCorners_[8]{ 0 };
     bool hasPerspective_{ false };
 
+    // === GStreamer and SDL resource pointers ===
+    GstElement* playbin_{ nullptr };
+    GstElement* videoSink_{ nullptr };
+    GstElement* perspective_{ nullptr };
+    SDL_Texture* videoTexture_{ nullptr };
+    SDL_Texture* alphaTexture_{ nullptr };
+    SDL_Texture* texture_{ nullptr };
+    SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
+    guint elementSetupHandlerId_{ 0 };
+    guint padProbeId_{ 0 };
+    guint busWatchId_{ 0 };
+    GValueArray* gva_{ nullptr };
     GValueArray* perspective_gva_{ nullptr };
+    std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
 
+    // === Static/shared ===
+    static constexpr int ALPHA_TEXTURE_SIZE = 4;
+    static std::vector<GStreamerVideo*> activeVideos_;
+    static std::mutex activeVideosMutex_;
+    static bool initialized_;
+    static bool pluginsInitialized_;
+
+    mutable std::mutex drawMutex_;
+
+    // === Internal helpers ===
+    struct PadProbeUserdata {
+        GStreamerVideo* videoInstance;
+        uint64_t playSessionId;
+    };
+    static GStreamerVideo* findInstanceFromGstObject(GstObject* object);
+    void createAlphaTexture();
+    static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
+    static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
+    static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    static void initializePlugins();
+    void createSdlTexture();
+    void initializeUpdateFunction();
+    bool updateTextureFromFrameIYUV(SDL_Texture*, GstVideoFrame*) const;
+    bool updateTextureFromFrameNV12(SDL_Texture*, GstVideoFrame*) const;
+    bool updateTextureFromFrameRGBA(SDL_Texture*, GstVideoFrame*) const;
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
     static void customGstLogHandler(GstDebugCategory* category, GstDebugLevel level, const gchar* file, const gchar* function, gint line, GObject* object, GstDebugMessage* message, gpointer user_data);
-
 };
 

@@ -730,6 +730,8 @@ bool RetroFE::run() {
 	double nextFrameTime = initial_current_time_ms;
 	lastFrameTimePointMs_ = initial_current_time_ms;
 
+	float glibUpdateInterval = 0.016f; // ~16ms (60Hz)
+	static float glibAccumulator = 0.0f;
 
 	while (running)
 	{
@@ -743,6 +745,15 @@ bool RetroFE::run() {
 		deltaTime = static_cast<float>((nowMs_loopStart - lastFrameTimePointMs_) / 1000.0);
 		currentTime_ = static_cast<float>(nowMs_loopStart / 1000.0);
 		lastFrameTimePointMs_ = nowMs_loopStart; // For next frame's deltaTime
+
+		// ----- GLib processing -----
+		glibAccumulator += deltaTime;
+		while (glibAccumulator >= glibUpdateInterval) {
+			while (g_main_context_pending(nullptr)) {
+				g_main_context_iteration(nullptr, false);
+			}
+			glibAccumulator -= glibUpdateInterval;
+		}
 
 		// Exit splash mode when an active key is pressed
 		if (SDL_Event e; splashMode && (SDL_PollEvent(&e)))
@@ -928,7 +939,7 @@ bool RetroFE::run() {
 				config_.getProperty(OPTION_RANDOMSTART, randomStart);
 				config_.getProperty(OPTION_SCREENSAVER, screensaver);
 
-				if (screensaver || randomStart) {
+				if (screensaver) {
 					currentPage_->selectRandomPlaylist(info, getPlaylistCycle());
 					currentPage_->selectRandom();
 				}
@@ -1121,9 +1132,6 @@ bool RetroFE::run() {
 			if ((settingsCollection == "" || currentPage_->getCollectionName() == settingsCollection) &&
 				(settingsPlaylist == "" || currentPage_->getPlaylistName() == settingsPlaylist))
 			{
-				if (nextPageItem_) {
-					delete nextPageItem_;
-				}
 				nextPageItem_ = new Item();
 				config_.getProperty("lastCollection", nextPageItem_->name);
 				if (currentPage_->getCollectionName() != nextPageItem_->name)
@@ -2509,8 +2517,6 @@ bool RetroFE::run() {
 					attract_.reset();
 				}
 				currentPage_->update(deltaTime);
-				// Let GStreamer process bus messages
-				g_main_context_iteration(nullptr, false);
 				SDL_PumpEvents();
 				// Update keystate at 30Hz
 				if (currentTime_ - lastInputUpdateTime >= inputUpdateInterval)

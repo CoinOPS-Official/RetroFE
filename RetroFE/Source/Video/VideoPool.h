@@ -16,48 +16,35 @@
 
 #pragma once
 
-#include <unordered_map>
-#include <vector>
 #include <deque>
-#include <mutex>
-#include <shared_mutex>
-#include <atomic>
-#include <chrono>
 #include <memory>
-#include <condition_variable>
-#include "../Video/IVideo.h"
-#include "../Video/GStreamerVideo.h"
+#include <unordered_map>
+#include <string>
+#include "GStreamerVideo.h"
 
 class VideoPool {
 public:
+    using VideoPtr = std::unique_ptr<GStreamerVideo>;
+
     static std::unique_ptr<IVideo> acquireVideo(int monitor, int listId, bool softOverlay);
     static void releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId);
     static void cleanup(int monitor, int listId);
     static void shutdown();
-    // Health check method
-    static bool checkPoolHealth(int monitor, int listId);
 
 private:
     struct PoolInfo {
-        std::deque<std::unique_ptr<GStreamerVideo>> instances;
-        std::atomic<size_t> currentActive{0};
-        std::timed_mutex poolMutex;
-        std::condition_variable_any waitCondition;  // Add this line
-        std::atomic<size_t> observedMaxActive{ 0 };  // Track observed maximum active instances
-        std::atomic<bool> initialCountLatched{false};
-        std::atomic<size_t> requiredInstanceCount{0}; // The latched target count (excluding the +1 buffer)
-
-        PoolInfo() = default;
-        PoolInfo(const PoolInfo&) = delete;
-        PoolInfo& operator=(const PoolInfo&) = delete;
-        PoolInfo(PoolInfo&&) = delete;
-        PoolInfo& operator=(PoolInfo&&) = delete;
+        std::deque<VideoPtr> instances;
+        size_t currentActive = 0;
+        size_t observedMaxActive = 0;
+        size_t requiredInstanceCount = 0;
+        bool initialCountLatched = false;
     };
-    using PoolInfoPtr = std::shared_ptr<PoolInfo>;
-    using ListPoolMap = std::map<int, PoolInfoPtr>;
-    using PoolMap = std::map<int, ListPoolMap>;
-    static PoolMap pools_;
-    static std::shared_mutex mapMutex_;
 
-    static PoolInfoPtr getPoolInfo(int monitor, int listId);
+    using ListPoolMap = std::unordered_map<int, PoolInfo>;
+    using PoolMap = std::unordered_map<int, ListPoolMap>;
+
+    static PoolMap pools_;
+
+    static PoolInfo& getPoolInfo(int monitor, int listId);
+    static bool checkPoolHealth(int monitor, int listId);
 };

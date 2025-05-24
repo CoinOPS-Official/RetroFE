@@ -70,16 +70,16 @@ bool VideoComponent::update(float dt) {
 
 	if ((currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0)) {
 		// Check if the *desired* state is already Paused, or if it's *actually* paused
-		if (videoInst_->getTargetState() != IVideo::VideoState::Paused && !videoInst_->isPaused()) {
-			videoInst_->pause();  // Request pause only if not already paused or intending to pause
+		if (videoInst_->getTargetState() != IVideo::VideoState::Paused ||
+			videoInst_->getActualState() != IVideo::VideoState::Paused) {
+			videoInst_->pause();
 		}
 		// The video component might still do its base animation updates even if video is paused
 		return Component::update(dt);
 	}
 
 	bool isVideoPlaying = videoInst_->isPlaying();
-	bool isPaused = videoInst_->isPaused();
-	bool isFastScrolling = currentPage_->isMenuFastScrolling();
+//	bool isFastScrolling = currentPage_->isMenuFastScrolling();
 
 	if (isVideoPlaying) {
 		videoInst_->setVolume(baseViewInfo.Volume);
@@ -105,25 +105,32 @@ bool VideoComponent::update(float dt) {
 		if (isCurrentlyVisible)
 			hasBeenOnScreen_ = true;
 
-		// Only toggle playback state when visibility *changes*
-		if (baseViewInfo.PauseOnScroll) {
-			if (isCurrentlyVisible != wasVisible_) {
-				if (isCurrentlyVisible) {
-					videoInst_->resume();
-					LOG_DEBUG("VideoComponent", "Resumed " + videoFile_);
-				}
-				else {
+		// --- Only toggle playback state when visibility changes (pause on hide, as before) ---
+		if (baseViewInfo.PauseOnScroll && (isCurrentlyVisible != wasVisible_)) {
+			if (!isCurrentlyVisible) {
+				if (videoInst_->getTargetState() != IVideo::VideoState::Paused &&
+					videoInst_->getActualState() != IVideo::VideoState::Paused) {
 					videoInst_->pause();
 					LOG_DEBUG("VideoComponent", "Paused " + videoFile_);
 				}
-				wasVisible_ = isCurrentlyVisible;
+			}
+		}
+		wasVisible_ = isCurrentlyVisible; // Always update!
+
+		if (isCurrentlyVisible && baseViewInfo.PauseOnScroll) {
+			if (videoInst_->getTargetState() != IVideo::VideoState::Playing &&
+				videoInst_->getActualState() != IVideo::VideoState::Playing) {
+				videoInst_->resume();
+				LOG_DEBUG("VideoComponent", "Resumed (catch-up) " + videoFile_);
 			}
 		}
 
 		// Restart support
 		if (baseViewInfo.Restart && hasBeenOnScreen_) {
-			if (videoInst_->getTargetState() == IVideo::VideoState::Playing && videoInst_->isPaused())
+			if (videoInst_->getTargetState() == IVideo::VideoState::Paused &&
+				videoInst_->getActualState() == IVideo::VideoState::Paused) {
 				videoInst_->resume();
+			}
 
 			GstClockTime currentTime = videoInst_->getCurrent();
 			if (currentTime > 1000000) {
