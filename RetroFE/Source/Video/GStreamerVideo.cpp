@@ -1212,7 +1212,7 @@ void GStreamerVideo::volumeUpdate() {
 		currentVolume_ += 0.005;
 
 	// Determine mute state
-	bool shouldMute = (currentVolume_ < 0.1);
+	bool shouldMute = (currentVolume_ < 0.1) || Configuration::MuteVideo;
 
 	// Update volume only if it has changed and is not muted
 	if (!shouldMute && currentVolume_ != lastSetVolume_)
