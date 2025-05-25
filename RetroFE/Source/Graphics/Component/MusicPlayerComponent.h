@@ -91,6 +91,17 @@ private:
 
     // Progress bar
     bool isProgressBar_;
+    SDL_Texture* progressBarTexture_;
+    int progressBarTextureWidth_;
+    int progressBarTextureHeight_;
+    bool progressBarNeedsUpdate_;
+    float lastProgressPercent_; // To track changes in progress
+
+    void createProgressBarTextureIfNeeded();
+    void updateProgressBarTexture();
+    void drawProgressBarTexture(); // Renamed from the content of the old drawProgressBar
+
+
 
     // Create a volume bar texture based on current volume
     void loadVolumeBarTextures();

@@ -54,6 +54,10 @@ void Text::setText(const std::string& text, int id) {
     }
 }
 
+const std::string& Text::getText() const {
+    return textData_;
+}
+
 void Text::draw() {
     Component::draw();
 

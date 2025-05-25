@@ -39,6 +39,7 @@ public:
     Text( const std::string& text, Page &p, FontManager *font, int monitor );
     ~Text( ) override;
     void     setText(const std::string& text, int id = -1) override;
+    const std::string& getText() const;
     void     deInitializeFonts( ) override;
     void     initializeFonts( ) override;
     void     draw( ) override;
