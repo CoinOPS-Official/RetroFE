@@ -213,7 +213,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 					else {
 						LOG_DEBUG("GStreamerVideo", "BusCallback: Finished loops for " + video->currentFile_ + ". Pausing.");
 						video->pause(); // Or perhaps a full stop/unload depending on desired behavior
-						// video->isPlaying_.store(false, std::memory_order_release); // If EOS means it's no longer "playing"
+						video->isPlaying_.store(false, std::memory_order_release); // If EOS means it's no longer "playing"
 					}
 				}
 				else if (video->playbin_) {
