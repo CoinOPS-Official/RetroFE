@@ -26,6 +26,7 @@
 
 // DISPLAY OPTIONS
 #define OPTION_NUMSCREENS            "numScreens"
+#define OPTION_SCREENORDER           "screenOrder"
 #define OPTION_FULLSCREEN            "fullscreen"
 #define OPTION_HORIZONTAL            "horizontal"
 #define OPTION_VERTICAL              "vertical"
@@ -165,6 +166,7 @@ public:
     bool dumpproperties() { return bool_value(OPTION_DUMPPROPERTIES); }
 
     int numscreens() { return int_value(OPTION_NUMSCREENS); }
+	const char* screenorder() { return value(OPTION_SCREENORDER); }
     bool fullscreen() { return bool_value(OPTION_FULLSCREEN); }
     const char* horizontal() { return value(OPTION_HORIZONTAL); }
     const char* vertical() { return value(OPTION_VERTICAL); }
