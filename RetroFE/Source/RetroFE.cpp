@@ -743,6 +743,11 @@ bool RetroFE::run() {
 		}
 
 		deltaTime = static_cast<float>((nowMs_loopStart - lastFrameTimePointMs_) / 1000.0);
+		
+		// If dt is over 100ms (0.1s), clamp it to a "sane" frame time (e.g. 1/60th = 0.0167)
+		// This avoids animation jumps after game launches or big stalls
+		if (deltaTime > 0.1f) deltaTime = 0.0167f;
+		
 		currentTime_ = static_cast<float>(nowMs_loopStart / 1000.0);
 		lastFrameTimePointMs_ = nowMs_loopStart; // For next frame's deltaTime
 
@@ -939,8 +944,9 @@ bool RetroFE::run() {
 				config_.getProperty(OPTION_RANDOMSTART, randomStart);
 				config_.getProperty(OPTION_SCREENSAVER, screensaver);
 
-				if (screensaver) {
-					currentPage_->selectRandomPlaylist(info, getPlaylistCycle());
+				if (screensaver || randomStart) {
+					if (currentPage_->getPlaylistName() == "all")
+						currentPage_->selectRandomPlaylist(info, getPlaylistCycle());
 					currentPage_->selectRandom();
 				}
 
