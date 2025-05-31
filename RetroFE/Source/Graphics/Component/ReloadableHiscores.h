@@ -42,9 +42,12 @@ public:
 
 private:
     void reloadTexture(bool resetScroll = true);
-    void cacheColumnWidths(FontManager* font, float scale, const HighScoreTable& table, float paddingBetweenColumns);
+    float computeTableScaleAndWidths(FontManager* font, const HighScoreTable& table, float& outDrawableHeight, float& outRowPadding, float& outPaddingBetweenColumns, std::vector<float>& outColumnWidths, float& outTotalTableWidth, float widthConstraint);
     void updateVisibleColumns(const HighScoreTable& table);
-    bool createIntermediateTexture(SDL_Renderer* renderer, int width, int height);
+
+    void renderHeaderTexture(FontManager* font, const HighScoreTable& table, float scale, float drawableHeight, float rowPadding, float paddingBetweenColumns, float totalTableWidth);
+
+    void renderTableRowsTexture(FontManager* font, const HighScoreTable& table, float scale, float drawableHeight, float rowPadding, float paddingBetweenColumns, float totalTableWidth);
     
     // Configuration Parameters
     FontManager* fontInst_;
@@ -76,9 +79,16 @@ private:
     std::vector<float> cachedColumnWidths_;
     float cachedTotalTableWidth_;
     std::vector<size_t> visibleColumnIndices_;
+    float cachedViewWidth_;           // Stores the width constraint used for the last full calculation
+    float cachedBaseFontSize_;        // Stores the baseViewInfo.FontSize used
+    float lastComputedDrawableHeight_; // Drawable height based on final scale
+    float lastComputedRowPadding_;     // Row padding based on final scale
 
     // Resources
     Item* lastSelectedItem_;
     HighScoreData* highScoreTable_;
-    SDL_Texture* intermediateTexture_;
+	SDL_Texture* headerTexture_;
+	SDL_Texture* tableRowsTexture_;
+	int tableRowsTextureHeight_;
+	int headerTextureHeight_;
 };

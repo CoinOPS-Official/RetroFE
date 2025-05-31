@@ -57,10 +57,16 @@ ReloadableHiscores::ReloadableHiscores(Configuration& config, std::string textFo
 	, cachedTableIndex_(std::numeric_limits<size_t>::max())
 	, cachedTotalTableWidth_(0.0f)
 	, visibleColumnIndices_()
+	, cachedViewWidth_(-1.0f)
+	, cachedBaseFontSize_(-1.0f)
+	, lastComputedDrawableHeight_(0.0f)
+	, lastComputedRowPadding_(0.0f)
 	, lastSelectedItem_(nullptr)
 	, highScoreTable_(nullptr)
-	, intermediateTexture_(nullptr)
-{
+	, headerTexture_(nullptr)
+	, tableRowsTexture_(nullptr)
+	, tableRowsTextureHeight_(0)
+	, headerTextureHeight_(0) {
 	// Parse the excluded columns
 	std::vector<std::string> excludedColumnsVec;
 	Utils::listToVector(excludedColumns_, excludedColumnsVec, ',');
@@ -85,474 +91,446 @@ bool ReloadableHiscores::update(float dt) {
 	if (waitEndTime_ > 0.0f) {
 		waitEndTime_ -= dt;
 		if (waitEndTime_ <= 0.0f) {
-			// Ready to start scrolling again
+			// Ready to start scrolling again or display next static table
 			currentPosition_ = 0.0f; // Start from the top
 			needsRedraw_ = true;
-			LOG_DEBUG("ReloadableHiscores", "Wait time ended. Starting scroll.");
+			LOG_DEBUG("ReloadableHiscores", "Wait time ended.");
 		}
+		// While waiting, no other updates to scrolling or table logic
 	}
 	else if (waitStartTime_ > 0.0f) {
 		waitStartTime_ -= dt;
+		// Still in initial wait, no scrolling yet
+		needsRedraw_ = true; // Keep drawing current state during initial wait
 	}
 	else {
+		// --- Main Update Logic (Not in initial wait or end-of-scroll wait) ---
+
+		// --- 1. Check for conditions requiring texture/layout recalculation ---
+		bool shouldReloadBasedOnParams = false;
+		bool resetScrollForParamReload = false;
+
+		if (!cacheValid_) { // Cache is not valid (e.g., initial load, or explicitly invalidated)
+			shouldReloadBasedOnParams = true;
+			resetScrollForParamReload = true; // Full reload, reset scroll
+			LOG_DEBUG("ReloadableHiscores", "Cache invalid, scheduling reload.");
+		}
+
+		// Check for view changes
+		float currentWidthConstraint = baseViewInfo.Width > 0 ? baseViewInfo.Width : baseViewInfo.MaxWidth;
+		if (cachedViewWidth_ != currentWidthConstraint && currentWidthConstraint > 0) {
+			shouldReloadBasedOnParams = true;
+			// resetScrollForParamReload = false; // Viewport change shouldn't reset scroll if content is same
+			LOG_DEBUG("ReloadableHiscores", "View width changed, scheduling reload.");
+		}
+		if (cachedBaseFontSize_ != baseViewInfo.FontSize) {
+			shouldReloadBasedOnParams = true;
+			// resetScrollForParamReload = false; // Font size change shouldn't reset scroll
+			LOG_DEBUG("ReloadableHiscores", "Base font size changed, scheduling reload.");
+		}
+		// Potentially add FontManager* check if baseViewInfo.font can change instance
+
+		// If an item is newly selected, it will trigger its own reload at the end of update().
+		// So, only proceed with param-based reload if no new item selection is pending.
+		if (shouldReloadBasedOnParams && !(newItemSelected || (newScrollItemSelected && getMenuScrollReload()))) {
+			// If currentTableIndex_ also changed (e.g. externally), ensure scroll resets
+			if (highScoreTable_ && !highScoreTable_->tables.empty() &&
+				cachedTableIndex_ != currentTableIndex_ && cacheValid_) {
+				resetScrollForParamReload = true;
+			}
+			reloadTexture(resetScrollForParamReload);
+			// reloadTexture sets cacheValid_ = true if successful for a table
+		}
+
+		// --- 2. Scrolling and Table Switching Logic ---
 		if (highScoreTable_ && !highScoreTable_->tables.empty()) {
-			// Ensure currentTableIndex_ is within bounds
+			// Ensure currentTableIndex_ is within bounds before use
 			if (currentTableIndex_ >= highScoreTable_->tables.size()) {
+				LOG_WARNING("ReloadableHiscores", "currentTableIndex_ was out of bounds, resetting to 0.");
 				currentTableIndex_ = 0;
-				LOG_WARNING("ReloadableHiscores", "currentTableIndex_ out of bounds. Resetting to 0.");
+				// This change in currentTableIndex_ should have triggered a reload if cache was valid for old index.
+				// Or will trigger one in the next frame if `shouldReloadBasedOnParams` didn't catch it.
+				// For safety, if it was out of bounds and cache might be stale:
+				if (!shouldReloadBasedOnParams && !(newItemSelected || (newScrollItemSelected && getMenuScrollReload()))) {
+					reloadTexture(true); // Force reload for the new valid index
+				}
 			}
 
-			const HighScoreTable& table = highScoreTable_->tables[currentTableIndex_];
+			// Proceed only if cache is valid for the current table
+			// (reloadTexture above, or from a previous frame, should have made it valid)
+			if (cacheValid_ && cachedTableIndex_ == currentTableIndex_) {
+				const HighScoreTable& table = highScoreTable_->tables[currentTableIndex_];
 
-			// Calculate scaling and positioning
-			FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
-			float scale = baseViewInfo.FontSize / static_cast<float>(font->getHeight());
-			float drawableHeight = static_cast<float>(font->getAscent()) * scale;
-			float rowPadding = baseRowPadding_ * drawableHeight;
-			float paddingBetweenColumns = baseColumnPadding_ * drawableHeight;
+				// Use authoritative geometric values from cache
+				float drawableHeight = lastComputedDrawableHeight_;
+				float rowPadding = lastComputedRowPadding_;
+				// paddingBetweenColumns is used by draw, not directly here for height
 
-			// Cache column widths and compute total table width
-			cacheColumnWidths(font, scale, table, paddingBetweenColumns);
-			float totalTableWidth = cachedTotalTableWidth_;
+				size_t rowsToRender = std::min(table.rows.size(), maxRows_);
 
-			// Adjust scale if the table width exceeds the viewable area
-			if (totalTableWidth > baseViewInfo.Width) {
-				float downScaleFactor = baseViewInfo.Width / totalTableWidth;
-				drawableHeight *= downScaleFactor;
-				rowPadding *= downScaleFactor;
-			}
+				// Calculate conceptual heights based on cached scaled values
+				float titleRowHeight = table.id.empty() ? 0.0f : (drawableHeight + rowPadding);
+				float columnHeaderRowHeight = (drawableHeight + rowPadding); // Assumes headers always take one row height
 
-			// Calculate heights separately
-			size_t rowsToRender = std::min(table.rows.size(), maxRows_);
+				// This is the total height of the static header part (title + column names)
+				// It should match headerTextureHeight_ if rendering was successful.
+				float conceptualHeaderTotalHeight = titleRowHeight + columnHeaderRowHeight;
 
-			// Height of the optional title row
-			float titleHeight = table.id.empty() ? 0.0f : (drawableHeight + rowPadding);
+				// Height of all renderable rows
+				float conceptualRowsTotalHeight = (drawableHeight + rowPadding) * static_cast<float>(rowsToRender);
 
-			// Height of the header row
-			float headerHeight = drawableHeight + rowPadding;
+				// Total conceptual height of the table content to be displayed
+				float totalConceptualTableHeight = conceptualHeaderTotalHeight + conceptualRowsTotalHeight;
 
-			// Height of all visible rows
-			float rowsHeight = (drawableHeight + rowPadding) * static_cast<float>(rowsToRender);
+				// The height used for scroll completion in the original code seemed to be this total conceptual height.
+				float scrollCompletionTarget = totalConceptualTableHeight;
 
-			// Total height of the table (title + header + rows)
-			float totalTableHeight = titleHeight + headerHeight + rowsHeight;
+				// LOG_DEBUG("ReloadableHiscores", "Total Conceptual Table Height: " + std::to_string(totalConceptualTableHeight));
+				// LOG_DEBUG("ReloadableHiscores", "Scroll Completion Target: " + std::to_string(scrollCompletionTarget));
 
-			// Scroll completion height (when all rows have scrolled out, leaving the header/title if present)
-			float scrollCompletionHeight = totalTableHeight - headerHeight - titleHeight;
+				// Determine if scrolling is required based on actual rendered texture heights vs view.
+				// More accurately, compare conceptual total height to available view height.
+				bool needsScrolling = (totalConceptualTableHeight > baseViewInfo.Height);
 
-			LOG_DEBUG("ReloadableHiscores", "Total Table Height: " + std::to_string(totalTableHeight));
-			LOG_DEBUG("ReloadableHiscores", "Scroll Completion Height: " + std::to_string(scrollCompletionHeight));
+				if (needsScrolling) {
+					currentPosition_ += scrollingSpeed_ * dt;
+					needsRedraw_ = true; // Keep redrawing while scrolling
 
-			// Determine if scrolling is required
-			bool needsScrolling = (totalTableHeight > baseViewInfo.Height);
+					// LOG_DEBUG("ReloadableHiscores", "Scrolling... Current Position: " + std::to_string(currentPosition_));
 
-			if (needsScrolling) {
-				currentPosition_ += scrollingSpeed_ * dt;
-
-				LOG_DEBUG("ReloadableHiscores", "Scrolling... Current Position: " + std::to_string(currentPosition_));
-
-				needsRedraw_ = true; // Keep redrawing while scrolling
-
-				// Reset scrolling when it completes
-				if (currentPosition_ >= scrollCompletionHeight) {
-					if (highScoreTable_->tables.size() > 1) {
-						// Switch to next table
-						currentTableIndex_ = (currentTableIndex_ + 1) % highScoreTable_->tables.size();
-						reloadTexture(); // Refresh the texture for the new table
+					if (currentPosition_ >= scrollCompletionTarget) {
+						if (highScoreTable_->tables.size() > 1) {
+							currentTableIndex_ = (currentTableIndex_ + 1) % highScoreTable_->tables.size();
+							waitEndTime_ = startTime_;    // Pause before next table starts scrolling
+							currentPosition_ = 0.0f;      // Reset scroll for the new table
+							tableDisplayTimer_ = 0.0f;
+							reloadTexture(true);          // Reload textures for the new table
+							LOG_INFO("ReloadableHiscores", "Switched to table index (scrolling): " + std::to_string(currentTableIndex_));
+						}
+						else { // Single table, reset scroll
+							currentPosition_ = 0.0f;
+							waitEndTime_ = startTime_;    // Pause before scrolling starts again
+							needsRedraw_ = true;
+							LOG_INFO("ReloadableHiscores", "Scroll reset for single scrolling table.");
+						}
+					}
+				}
+				else { // Not scrolling (table fits or only one page)
+					// Ensure it's at the top if it's not supposed to scroll
+					if (currentPosition_ != 0.0f) {
+						currentPosition_ = 0.0f;
 						needsRedraw_ = true;
-						waitEndTime_ = startTime_; // Pause before scrolling starts again
-						currentPosition_ = 0.0f; // Ensure the table is fully visible during the wait
-						tableDisplayTimer_ = 0.0f;
-						LOG_INFO("ReloadableHiscores", "Switched to table index: " + std::to_string(currentTableIndex_));
+					}
+
+					// Handle multi-table switching for static (non-scrolling) tables
+					if (highScoreTable_->tables.size() > 1) {
+						currentTableDisplayTime_ = displayTime_; // Static display time
+						tableDisplayTimer_ += dt;
+
+						// LOG_DEBUG("ReloadableHiscores", "Static Table Display Timer: " + std::to_string(tableDisplayTimer_) + " / " + std::to_string(currentTableDisplayTime_));
+
+						if (tableDisplayTimer_ >= currentTableDisplayTime_) {
+							currentTableIndex_ = (currentTableIndex_ + 1) % highScoreTable_->tables.size();
+							tableDisplayTimer_ = 0.0f;
+							waitEndTime_ = startTime_; // Optional: Add a pause before showing next static table
+							currentPosition_ = 0.0f;   // Ensure it's at top
+							reloadTexture(true);       // Reload for the new static table
+							LOG_INFO("ReloadableHiscores", "Switched to table index (static): " + std::to_string(currentTableIndex_));
+						}
 					}
 					else {
-						// Single table: reset scroll
-						currentPosition_ = 0.0f; // Ensure the table is fully visible
-						waitEndTime_ = startTime_; // Pause before scrolling starts again
+						// Single static table, do nothing beyond ensuring it's drawn
 						needsRedraw_ = true;
-						LOG_INFO("ReloadableHiscores", "Scroll reset for single table.");
 					}
 				}
 			}
-			else {
-				currentPosition_ = 0.0f; // Ensure non-scrolling tables remain visible
-				needsRedraw_ = true;
-			}
-
-			if (highScoreTable_->tables.size() > 1) {
-				// Update tableDisplayTimer_ only for multi-tables and scrolling tables
-				if (needsScrolling) {
-					currentTableDisplayTime_ = scrollCompletionHeight / scrollingSpeed_;
+			else if (highScoreTable_ && !highScoreTable_->tables.empty()) {
+				// highScoreTable exists, but cache is not valid for currentTableIndex_ OR cacheValid is false.
+				// This implies a reload is needed if not already handled by newItemSelected.
+				if (!(newItemSelected || (newScrollItemSelected && getMenuScrollReload()))) {
+					LOG_DEBUG("ReloadableHiscores", "Cache invalid or mismatched for current table index. Forcing reload.");
+					reloadTexture(true); // Force reload for the current table index
 				}
-				else {
-					currentTableDisplayTime_ = displayTime_;
-				}
-
-				tableDisplayTimer_ += dt;
-
-				LOG_DEBUG("ReloadableHiscores", "Table Display Timer: " + std::to_string(tableDisplayTimer_) + " / " + std::to_string(currentTableDisplayTime_));
 			}
 		}
-	}
+		else { // No highScoreTable_ or it's empty
+			if (cacheValid_) { // If cache was previously valid, invalidate it now
+				LOG_DEBUG("ReloadableHiscores", "No high score table, invalidating cache.");
+				cacheValid_ = false;
+				// Clear textures if they exist, handled by reloadTexture when highScoreTable_ is null
+				if (headerTexture_ || tableRowsTexture_) {
+					reloadTexture(true); // This will clear textures because highScoreTable_ is null/empty
+				}
+				needsRedraw_ = true; // Redraw to clear any old table
+			}
+		}
+	} // End of main update logic (after waits)
 
+	// --- 3. Handle New Item Selection (takes precedence and re-initializes) ---
 	if (newItemSelected || (newScrollItemSelected && getMenuScrollReload())) {
-		LOG_INFO("ReloadableHiscores", "New item selected. Resetting table index to 0.");
-		currentTableIndex_ = 0;
-		tableDisplayTimer_ = 0.0f;  // Reset timer for the new game's table
-		currentPosition_ = 0.0f;     // Reset scroll position
-		reloadTexture(true);
+		LOG_INFO("ReloadableHiscores", "New item selected. Resetting and reloading.");
+		currentTableIndex_ = 0;      // Always start with the first table for a new item
+		tableDisplayTimer_ = 0.0f;   // Reset display timer
+		// currentPosition_ and wait timers will be reset by reloadTexture(true)
+		reloadTexture(true);         // This reloads data, recalculates layout, resets scroll/wait
+
 		newItemSelected = false;
 		newScrollItemSelected = false;
+		// needsRedraw_ is set by reloadTexture
 	}
 
 	return Component::update(dt);
 }
-void ReloadableHiscores::allocateGraphicsMemory()
-{
+
+void ReloadableHiscores::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
 	reloadTexture();
 }
 
 
-void ReloadableHiscores::freeGraphicsMemory()
-{
+void ReloadableHiscores::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
-	if (intermediateTexture_) {
-		SDL_DestroyTexture(intermediateTexture_);
-		intermediateTexture_ = nullptr;
+	if (headerTexture_) {
+		SDL_DestroyTexture(headerTexture_);
+		headerTexture_ = nullptr;
+	}
+	if (tableRowsTexture_) {
+		SDL_DestroyTexture(tableRowsTexture_);
+		tableRowsTexture_ = nullptr;
 	}
 }
 
 
-void ReloadableHiscores::deInitializeFonts()
-{
+void ReloadableHiscores::deInitializeFonts() {
 	fontInst_->deInitialize();
 }
 
 
-void ReloadableHiscores::initializeFonts()
-{
+void ReloadableHiscores::initializeFonts() {
 	fontInst_->initialize();
 }
 
 
 void ReloadableHiscores::reloadTexture(bool resetScroll) {
 	if (resetScroll) {
-		currentPosition_ = 0.0f; // Start scrolling from the defined start position
+		currentPosition_ = 0.0f;
 		waitStartTime_ = startTime_;
 		waitEndTime_ = 0.0f;
 	}
 
 	Item* selectedItem = page.getSelectedItem(displayOffset_);
-	if (selectedItem != lastSelectedItem_) {
+	bool itemChanged = (selectedItem != lastSelectedItem_);
+
+	if (itemChanged) {
 		lastSelectedItem_ = selectedItem;
 		if (selectedItem) {
 			highScoreTable_ = HiScores::getInstance().getHighScoreTable(selectedItem->name);
 			if (highScoreTable_ && !highScoreTable_->tables.empty()) {
-				currentTableIndex_ = 0; // Reset to first table if a new high score table is selected
-				const HighScoreTable& table = highScoreTable_->tables[currentTableIndex_];
-				updateVisibleColumns(table);
-				LOG_INFO("ReloadableHiscores", "Loaded table index: " + std::to_string(currentTableIndex_));
+				currentTableIndex_ = 0; // Reset to first table
 			}
 		}
 		else {
 			highScoreTable_ = nullptr;
-			LOG_WARNING("ReloadableHiscores", "No high score table available for the selected item.");
 		}
-		cachedTableIndex_ = std::numeric_limits<size_t>::max(); // Invalidate column widths cache
-		cacheValid_ = false;
+		// Invalidate cache fully if item changes, forcing re-evaluation of everything
+		// for the new table or lack thereof.
+		// cachedTableIndex_ is effectively invalidated by currentTableIndex_ possibly changing.
+		// And we'll update it below after calculations.
 	}
 
-	needsRedraw_ = true; // Ensure the texture is redrawn after reload
+	// If no table, clear textures and bail
+	if (!highScoreTable_ || highScoreTable_->tables.empty()) {
+		if (headerTexture_) { SDL_DestroyTexture(headerTexture_); headerTexture_ = nullptr; }
+		if (tableRowsTexture_) { SDL_DestroyTexture(tableRowsTexture_); tableRowsTexture_ = nullptr; }
+		cacheValid_ = false; // No valid table data to cache
+		needsRedraw_ = true;
+		return;
+	}
+
+	// Ensure currentTableIndex_ is valid *before* using it.
+	if (currentTableIndex_ >= highScoreTable_->tables.size()) {
+		currentTableIndex_ = 0;
+		// This implies a table switch, scroll should ideally reset if not already handled
+		if (!resetScroll) { // If resetScroll wasn't already true from args
+			currentPosition_ = 0.0f;
+			waitStartTime_ = startTime_;
+			waitEndTime_ = 0.0f;
+		}
+	}
+
+	const HighScoreTable& table = highScoreTable_->tables[currentTableIndex_];
+	if (itemChanged || cachedTableIndex_ != currentTableIndex_) { // Update visible columns if item or table index changed
+		updateVisibleColumns(table);
+	}
+
+
+	FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
+	float effectiveViewWidth = baseViewInfo.MaxWidth; // Default to MaxWidth
+	if (baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth) {
+		effectiveViewWidth = baseViewInfo.Width;
+	}
+	std::vector<float> colWidths;
+	float totalTableWidth = 0;
+	float drawableHeight, rowPadding, paddingBetweenColumns; // These are 'out' params
+
+	float finalScale = computeTableScaleAndWidths(
+		font, table,
+		drawableHeight, rowPadding, paddingBetweenColumns, // Pass by ref to be filled
+		colWidths, totalTableWidth,
+		effectiveViewWidth);
+
+	// Store all authoritative calculated values
+	cachedColumnWidths_ = colWidths;
+	cachedTotalTableWidth_ = totalTableWidth;
+	lastScale_ = finalScale;
+	lastPaddingBetweenColumns_ = paddingBetweenColumns;
+	lastComputedDrawableHeight_ = drawableHeight;
+	lastComputedRowPadding_ = rowPadding;
+
+	// Cache the context under which these values were computed
+	cachedViewWidth_ = effectiveViewWidth;
+	cachedBaseFontSize_ = baseViewInfo.FontSize;
+	cachedTableIndex_ = currentTableIndex_; // The table for which this cache is valid
+	cacheValid_ = true;                     // Mark cache as valid
+
+	// Render textures using these authoritative values
+	renderHeaderTexture(font, table, finalScale, drawableHeight, rowPadding, paddingBetweenColumns, totalTableWidth);
+	renderTableRowsTexture(font, table, finalScale, drawableHeight, rowPadding, paddingBetweenColumns, totalTableWidth);
+
+	needsRedraw_ = true;
 }
 
 void ReloadableHiscores::draw() {
 	Component::draw();
 
-	// Early exit conditions
-	if (!(highScoreTable_ && !highScoreTable_->tables.empty()) ||
-		baseViewInfo.Alpha <= 0.0f) {
+	if (!(highScoreTable_ && !highScoreTable_->tables.empty()) || baseViewInfo.Alpha <= 0.0f)
 		return;
-	}
+	if (!headerTexture_ || !tableRowsTexture_) return;
 
-	// Check if the table requires a redraw
-	HighScoreTable& table = highScoreTable_->tables[currentTableIndex_];
-	if (table.forceRedraw) {
-		needsRedraw_ = true;
-		cacheValid_ = false;
-		table.forceRedraw = false;  // Reset the flag directly
-	}
-
-	// Retrieve font and texture
-	FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
-	SDL_Texture* texture = font ? font->getTexture() : nullptr;
-	if (!texture) {
-		LOG_ERROR("ReloadableHiscores", "Font texture is null.");
-		return;
-	}
-
-	// Retrieve renderer
 	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
-	if (!renderer) {
-		LOG_ERROR("ReloadableHiscores", "Unable to retrieve SDL_Renderer.");
-		return;
+
+	float effectiveViewWidth = baseViewInfo.MaxWidth; // Default to MaxWidth
+	if (baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth) {
+		effectiveViewWidth = baseViewInfo.Width;
 	}
 
+	float xOrigin = baseViewInfo.XRelativeToOrigin() + (effectiveViewWidth - cachedTotalTableWidth_) / 2.0f;
+	float yOrigin = baseViewInfo.YRelativeToOrigin();
 
-	// ======== Start of "hiscores" Rendering with Intermediate Texture ========
-	float imageMaxWidth = (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
-		? baseViewInfo.Width : baseViewInfo.MaxWidth;
-	float imageMaxHeight = (baseViewInfo.Height < baseViewInfo.MaxHeight && baseViewInfo.Height > 0)
-		? baseViewInfo.Height : baseViewInfo.MaxHeight;
-	// Step 1: Save the current render target
-	SDL_Texture* originalTarget = SDL_GetRenderTarget(renderer);
-	if (!originalTarget) {
-		LOG_ERROR("ReloadableHiscores", "Unable to get current render target.");
-		return;
-	}
-
-	// Step 2: Create intermediate texture
-	if (!intermediateTexture_) {
-		if (!createIntermediateTexture(renderer, static_cast<int>(imageMaxWidth), static_cast<int>(imageMaxHeight))) {
-			LOG_ERROR("ReloadableHiscores", "Failed to create intermediate texture.");
-			return;
-		}
-	}
-	if (needsRedraw_) {
-		LOG_DEBUG("ReloadableHiscores", "Redraw triggered due to scrolling or table switch.");
-		float scale = baseViewInfo.FontSize / static_cast<float>(font->getHeight());
-		float drawableHeight = static_cast<float>(font->getAscent()) * scale;
-		float rowPadding = baseRowPadding_ * drawableHeight;
-		float paddingBetweenColumns = baseColumnPadding_ * drawableHeight;
-
-		// Cache column widths and total table width
-		cacheColumnWidths(font, scale, table, paddingBetweenColumns);
-		float totalTableWidth = cachedTotalTableWidth_;
-		float downScaleFactor = 1.0f;
-		// Downscale if the table width exceeds the viewable area
-		if (imageMaxWidth < totalTableWidth) {
-			downScaleFactor = (imageMaxWidth / totalTableWidth) * 0.9f;
-			scale *= downScaleFactor;
-			drawableHeight *= downScaleFactor;
-			rowPadding *= downScaleFactor;
-			paddingBetweenColumns *= downScaleFactor;
-
-			// Invalidate cache due to resizing
-			cacheValid_ = false;
-
-			// Recalculate column widths and table width
-			cacheColumnWidths(font, scale, table, paddingBetweenColumns);
-			totalTableWidth = cachedTotalTableWidth_;
-
-		}
-
-		float scrollOffset = currentPosition_;
-
-		// Recalculate origin for centering
-		float xOrigin = baseViewInfo.XRelativeToOrigin() + (imageMaxWidth - totalTableWidth) / 2.0f;
-		float yOrigin = baseViewInfo.YRelativeToOrigin();
-
-		// Set clipping rectangle
-		SDL_Rect clipRect = { static_cast<int>(xOrigin), static_cast<int>(yOrigin),
-			static_cast<int>(std::min(totalTableWidth, imageMaxWidth)),
-			static_cast<int>(imageMaxHeight) };
-		SDL_RenderSetClipRect(renderer, &clipRect);
-
-		// Clear the intermediate texture
-		SDL_SetRenderTarget(renderer, intermediateTexture_);
-		SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-		SDL_RenderClear(renderer);
-
-		// Render Title, Headers, and Rows (centered using xOrigin and recalculated widths)
-		float adjustedYOrigin = yOrigin;
-
-		// Render title
-		if (!table.id.empty()) {
-			const std::string& title = table.id;
-			float titleWidth = static_cast<float>(font->getWidth(title)) * scale;
-			float titleX = xOrigin + (std::min(imageMaxWidth, totalTableWidth) - titleWidth) / 2.0f;
-			float titleY = adjustedYOrigin;
-
-			for (char c : title) {
-				FontManager::GlyphInfo glyph;
-				if (font->getRect(c, glyph)) {
-					SDL_Rect srcRect = glyph.rect;
-					SDL_FRect destRect = {
-						titleX,
-						titleY,
-						glyph.rect.w * scale,
-						glyph.rect.h * scale
-					};
-					SDL_RenderCopyF(renderer, texture, &srcRect, &destRect);
-					titleX += static_cast<float>(glyph.advance) * scale;
-				}
-			}
-			adjustedYOrigin += drawableHeight + rowPadding;
-		}
-
-		// Render headers
-		float headerY = adjustedYOrigin;
-		float xPos = xOrigin;
-		for (size_t i = 0; i < visibleColumnIndices_.size(); ++i) {
-			size_t colIndex = visibleColumnIndices_[i];
-			const std::string& header = table.columns[colIndex];
-			float headerWidth = static_cast<float>(font->getWidth(header)) * scale;
-			float xAligned = xPos + (cachedColumnWidths_[i] - headerWidth) / 2.0f;
-
-			float charX = xAligned;
-			for (char c : header) {
-				FontManager::GlyphInfo glyph;
-				if (font->getRect(c, glyph)) {
-					SDL_Rect srcRect = glyph.rect;
-					SDL_FRect destRect = {
-						charX,
-						headerY,
-						glyph.rect.w * scale,
-						glyph.rect.h * scale
-					};
-					SDL_RenderCopyF(renderer, texture, &srcRect, &destRect);
-					charX += static_cast<float>(glyph.advance) * scale;
-				}
-			}
-			xPos += cachedColumnWidths_[i] + paddingBetweenColumns;
-		}
-
-		adjustedYOrigin += drawableHeight + rowPadding;
-		// Calculate base position for all rows
-		float baseY = adjustedYOrigin - scrollOffset;
-
-		// Adjusted scrollClipRect calculation
-		SDL_Rect scrollClipRect = {
-			static_cast<int>(xOrigin),
-			static_cast<int>(adjustedYOrigin),
-			static_cast<int>(std::min(totalTableWidth, imageMaxWidth)),
-			static_cast<int>(std::max(imageMaxHeight - (adjustedYOrigin - yOrigin), 0.0f))
-		};
-		SDL_RenderSetClipRect(renderer, &scrollClipRect);
-
-		// Render rows
-		size_t renderedRows = 0; // Track the number of rows rendered
-		for (size_t rowIndex = 0; rowIndex < table.rows.size(); ++rowIndex) {
-			// Stop rendering if the number of rendered rows reaches the maxRows_ limit
-			if (renderedRows >= maxRows_) {
-				break;
-			}
-
-			float currentY = baseY + static_cast<float>(rowIndex) * (drawableHeight + rowPadding);
-
-			float rowTop = currentY;
-			float rowBottom = currentY + drawableHeight;
-
-			if (rowBottom < yOrigin || rowTop > yOrigin + imageMaxHeight) {
-				continue;  // Skip rows fully outside the visible area
-			}
-
-			xPos = xOrigin;
-			for (size_t i = 0; i < visibleColumnIndices_.size(); ++i) {
-				size_t colIndex = visibleColumnIndices_[i];
-				if (colIndex >= table.rows[rowIndex].size()) continue;
-
-				const std::string& cell = table.rows[rowIndex][colIndex];
-				float cellWidth = static_cast<float>(font->getWidth(cell)) * scale;
-				float xAligned = xPos + (cachedColumnWidths_[i] - cellWidth) / 2.0f;
-
-				float charX = xAligned;
-				for (char c : cell) {
-					FontManager::GlyphInfo glyph;
-					if (font->getRect(c, glyph)) {
-						SDL_Rect srcRect = glyph.rect;
-						SDL_FRect destRect = {
-							charX,
-							currentY,
-							glyph.rect.w * scale,
-							glyph.rect.h * scale
-						};
-						SDL_RenderCopyF(renderer, texture, &srcRect, &destRect);
-						charX += static_cast<float>(glyph.advance) * scale;
-					}
-				}
-				xPos += cachedColumnWidths_[i] + paddingBetweenColumns;
-			}
-
-			++renderedRows; // Increment the rendered rows count
-		}
-
-		SDL_RenderSetClipRect(renderer, nullptr);
-		SDL_SetRenderTarget(renderer, originalTarget);
-	}
-
-	// Step 6: Define the destination rectangle where the intermediate texture should be drawn
-	SDL_FRect destRect = {
-		baseViewInfo.XOrigin,
-		baseViewInfo.YOrigin,
-		baseViewInfo.Width,
-		baseViewInfo.Height
+	// HEADER
+	SDL_FRect destHeader = {
+		xOrigin,
+		yOrigin,
+		cachedTotalTableWidth_,
+		static_cast<float>(headerTextureHeight_)
 	};
+	SDL_RenderCopyF(renderer, headerTexture_, nullptr, &destHeader);
 
-	// Step 7: Render the intermediate texture to the original render target
-	SDL::renderCopyF(intermediateTexture_, baseViewInfo.Alpha, nullptr, &destRect, baseViewInfo,
-		page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-		page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+	// ROWS
+	float rowsAreaHeight = baseViewInfo.Height - headerTextureHeight_;
+	float scrollY = currentPosition_;
 
-	needsRedraw_ = false;
+	if (tableRowsTextureHeight_ <= rowsAreaHeight) {
+		// NON-SCROLLING
+		SDL_Rect srcRows = { 0, 0, static_cast<int>(cachedTotalTableWidth_), tableRowsTextureHeight_ };
+		SDL_FRect destRows = { xOrigin, yOrigin + headerTextureHeight_, cachedTotalTableWidth_, static_cast<float>(tableRowsTextureHeight_) };
+		SDL_RenderCopyF(renderer, tableRowsTexture_, &srcRows, &destRows);
+	}
+	else {
+		// SCROLLING
+		if (scrollY < tableRowsTextureHeight_) {
+			int visibleSrcHeight = static_cast<int>(std::min(rowsAreaHeight, tableRowsTextureHeight_ - scrollY));
+			if (visibleSrcHeight > 0) {
+				SDL_Rect srcRows = {
+					0,
+					static_cast<int>(scrollY),
+					static_cast<int>(cachedTotalTableWidth_),
+					visibleSrcHeight
+				};
+				SDL_FRect destRows = {
+					xOrigin,
+					yOrigin + headerTextureHeight_,
+					cachedTotalTableWidth_,
+					static_cast<float>(visibleSrcHeight)
+				};
+				SDL_RenderCopyF(renderer, tableRowsTexture_, &srcRows, &destRows);
+			}
+			// If visibleSrcHeight <= 0, nothing is visible; do not draw
+		}
+		// else: scrollY >= tableRowsTextureHeight_ -> nothing to draw
+	}
 }
 
-void ReloadableHiscores::cacheColumnWidths(FontManager* font, float scale, const HighScoreTable& table, float paddingBetweenColumns) {
-	// Return early if the table hasn't changed and scale/padding are the same
-	if (cacheValid_ && currentTableIndex_ == cachedTableIndex_ &&
-		lastScale_ == scale && lastPaddingBetweenColumns_ == paddingBetweenColumns) {
-		return; // Cache is valid, no need to recalculate
-	}
 
-	// Update cached scale and padding
-	lastScale_ = scale;
-	lastPaddingBetweenColumns_ = paddingBetweenColumns;
+// Returns final scale and updates column widths and total width
+float ReloadableHiscores::computeTableScaleAndWidths(
+	FontManager* font,
+	const HighScoreTable& table,
+	float& outDrawableHeight,
+	float& outRowPadding,
+	float& outPaddingBetweenColumns,
+	std::vector<float>& outColumnWidths,
+	float& outTotalTableWidth,
+	float widthConstraint) {
+	float initialScale = baseViewInfo.FontSize / static_cast<float>(font->getHeight());
+	float drawableHeight = font->getAscent() * initialScale;
+	float rowPadding = baseRowPadding_ * drawableHeight;
+	float paddingBetweenColumns = baseColumnPadding_ * drawableHeight;
 
-	// Initialize or reset cached column widths and total width
-	cachedColumnWidths_.clear();
-	cachedTotalTableWidth_ = 0.0f;
-
-	// Iterate over visible columns
+	// Use your cacheColumnWidths logic but for this context
+	outColumnWidths.clear();
+	outTotalTableWidth = 0.0f;
 	for (size_t visibleIndex = 0; visibleIndex < visibleColumnIndices_.size(); ++visibleIndex) {
 		size_t colIndex = visibleColumnIndices_[visibleIndex];
 		float maxColumnWidth = 0.0f;
-
-		// Compare header width
-		if (colIndex < table.columns.size()) {
-			maxColumnWidth = std::max(maxColumnWidth, static_cast<float>(font->getWidth(table.columns[colIndex])) * scale);
-		}
-
-		// Compare all rows' cell widths
+		// Header
+		if (colIndex < table.columns.size())
+			maxColumnWidth = std::max(maxColumnWidth, float(font->getWidth(table.columns[colIndex])) * initialScale);
+		// Rows
 		for (const auto& row : table.rows) {
-			if (colIndex < row.size()) {
-				float cellWidth = static_cast<float>(font->getWidth(row[colIndex])) * scale;
-				maxColumnWidth = std::max(maxColumnWidth, cellWidth);
-			}
+			if (colIndex < row.size())
+				maxColumnWidth = std::max(maxColumnWidth, float(font->getWidth(row[colIndex])) * initialScale);
 		}
+		outColumnWidths.push_back(maxColumnWidth);
+		outTotalTableWidth += maxColumnWidth + paddingBetweenColumns;
+	}
+	if (!outColumnWidths.empty())
+		outTotalTableWidth -= paddingBetweenColumns; // Remove last extra padding
 
-		// Store the maximum width for the current column
-		cachedColumnWidths_.push_back(maxColumnWidth);
+	// If too wide, downscale
+	float scale = initialScale;
+	if (outTotalTableWidth > widthConstraint) {
+		float downScaleFactor = widthConstraint / outTotalTableWidth;
+		scale = initialScale * downScaleFactor;
 
-		// Update total table width
-		cachedTotalTableWidth_ += maxColumnWidth + paddingBetweenColumns;
+		// Redo everything at downscaled size
+		drawableHeight = font->getAscent() * scale;
+		rowPadding = baseRowPadding_ * drawableHeight;
+		paddingBetweenColumns = baseColumnPadding_ * drawableHeight;
+		outColumnWidths.clear();
+		outTotalTableWidth = 0.0f;
+		for (size_t visibleIndex = 0; visibleIndex < visibleColumnIndices_.size(); ++visibleIndex) {
+			size_t colIndex = visibleColumnIndices_[visibleIndex];
+			float maxColumnWidth = 0.0f;
+			if (colIndex < table.columns.size())
+				maxColumnWidth = std::max(maxColumnWidth, float(font->getWidth(table.columns[colIndex])) * scale);
+			for (const auto& row : table.rows) {
+				if (colIndex < row.size())
+					maxColumnWidth = std::max(maxColumnWidth, float(font->getWidth(row[colIndex])) * scale);
+			}
+			outColumnWidths.push_back(maxColumnWidth);
+			outTotalTableWidth += maxColumnWidth + paddingBetweenColumns;
+		}
+		if (!outColumnWidths.empty())
+			outTotalTableWidth -= paddingBetweenColumns;
 	}
 
-	// Adjust total width by subtracting the last padding
-	if (!cachedColumnWidths_.empty()) {
-		cachedTotalTableWidth_ -= paddingBetweenColumns; // Remove extra padding after the last column
-	}
-
-	// Debugging log for column widths and total table width
-	LOG_DEBUG("ReloadableHiscores", "Cached Column Widths: ");
-	for (const auto& width : cachedColumnWidths_) {
-		LOG_DEBUG("Column Width", std::to_string(width));
-	}
-	LOG_DEBUG("Cached Total Table Width", std::to_string(cachedTotalTableWidth_));
-
-	cacheValid_ = true;
-	// Update the cached table index
-	cachedTableIndex_ = currentTableIndex_;
+	outDrawableHeight = drawableHeight;
+	outRowPadding = rowPadding;
+	outPaddingBetweenColumns = paddingBetweenColumns;
+	return scale;
 }
+
 
 void ReloadableHiscores::updateVisibleColumns(const HighScoreTable& table) {
 	visibleColumnIndices_.clear();
@@ -576,30 +554,111 @@ void ReloadableHiscores::updateVisibleColumns(const HighScoreTable& table) {
 	}
 }
 
+void ReloadableHiscores::renderHeaderTexture(
+	FontManager* font, const HighScoreTable& table, float scale, float drawableHeight, float rowPadding, float paddingBetweenColumns, float totalTableWidth) {
+	if (headerTexture_) SDL_DestroyTexture(headerTexture_);
+	headerTexture_ = nullptr;
 
-bool ReloadableHiscores::createIntermediateTexture(SDL_Renderer* renderer, int width, int height) {
-	// Destroy existing texture if it exists
-	if (intermediateTexture_) {
-		SDL_DestroyTexture(intermediateTexture_);
-		intermediateTexture_ = nullptr;
+	int headerTexHeight = 0;
+	if (!table.id.empty()) headerTexHeight += static_cast<int>(drawableHeight + rowPadding);
+	headerTexHeight += static_cast<int>(drawableHeight + rowPadding);
+	headerTextureHeight_ = headerTexHeight;
+
+	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+	headerTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+		static_cast<int>(totalTableWidth), headerTextureHeight_);
+	SDL_SetTextureBlendMode(headerTexture_, SDL_BLENDMODE_BLEND);
+
+	SDL_Texture* oldTarget = SDL_GetRenderTarget(renderer);
+	SDL_SetRenderTarget(renderer, headerTexture_);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+	SDL_RenderClear(renderer);
+
+	float xOrigin = 0.0f;
+	float y = 0.0f;
+
+	// Title
+	if (!table.id.empty()) {
+		float titleWidth = static_cast<float>(font->getWidth(table.id)) * scale;
+		float titleX = (totalTableWidth - titleWidth) / 2.0f;
+		for (char c : table.id) {
+			FontManager::GlyphInfo glyph;
+			if (font->getRect(c, glyph)) {
+				SDL_Rect src = glyph.rect;
+				SDL_FRect dst = { titleX, y, glyph.rect.w * scale, glyph.rect.h * scale };
+				SDL_RenderCopyF(renderer, font->getTexture(), &src, &dst);
+				titleX += static_cast<float>(glyph.advance) * scale;
+			}
+		}
+		y += drawableHeight + rowPadding;
+	}
+	// Headers
+	float x = xOrigin;
+	for (size_t i = 0; i < visibleColumnIndices_.size(); ++i) {
+		size_t colIndex = visibleColumnIndices_[i];
+		const std::string& header = table.columns[colIndex];
+		float headerWidth = static_cast<float>(font->getWidth(header)) * scale;
+		float xAligned = x + (cachedColumnWidths_[i] - headerWidth) / 2.0f;
+		float charX = xAligned;
+		for (char c : header) {
+			FontManager::GlyphInfo glyph;
+			if (font->getRect(c, glyph)) {
+				SDL_Rect src = glyph.rect;
+				SDL_FRect dst = { charX, y, glyph.rect.w * scale, glyph.rect.h * scale };
+				SDL_RenderCopyF(renderer, font->getTexture(), &src, &dst);
+				charX += static_cast<float>(glyph.advance) * scale;
+			}
+		}
+		x += cachedColumnWidths_[i] + paddingBetweenColumns;
 	}
 
-	// Create the intermediate texture with alpha support
-	intermediateTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, width, height);
-	if (!intermediateTexture_) {
-		LOG_ERROR("ReloadableHiscores", "Failed to create intermediate texture: " + std::string(SDL_GetError()));
-		return false;
-	}
-
-	// Set the blend mode to allow transparency
-	if (SDL_SetTextureBlendMode(intermediateTexture_, SDL_BLENDMODE_BLEND) != 0) {
-		LOG_ERROR("ReloadableHiscores", "Failed to set blend mode for intermediate texture: " + std::string(SDL_GetError()));
-		SDL_DestroyTexture(intermediateTexture_);
-		intermediateTexture_ = nullptr;
-		return false;
-	}
-
-	return true;
+	SDL_SetRenderTarget(renderer, oldTarget);
 }
 
+void ReloadableHiscores::renderTableRowsTexture(
+	FontManager* font, const HighScoreTable& table, float scale, float drawableHeight, float rowPadding, float paddingBetweenColumns, float totalTableWidth) {
+	if (tableRowsTexture_) SDL_DestroyTexture(tableRowsTexture_);
+	tableRowsTexture_ = nullptr;
 
+	size_t numRows = table.rows.size();
+	size_t rowsToActuallyRender = std::min(numRows, maxRows_);
+
+	tableRowsTextureHeight_ = static_cast<int>((drawableHeight + rowPadding) * rowsToActuallyRender);
+	if (tableRowsTextureHeight_ <= 0) tableRowsTextureHeight_ = 1; // Avoid 0-height texture
+
+	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+	tableRowsTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+		static_cast<int>(totalTableWidth), tableRowsTextureHeight_);
+	SDL_SetTextureBlendMode(tableRowsTexture_, SDL_BLENDMODE_BLEND);
+
+	SDL_Texture* oldTarget = SDL_GetRenderTarget(renderer);
+	SDL_SetRenderTarget(renderer, tableRowsTexture_);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+	SDL_RenderClear(renderer);
+
+	float xOrigin = 0.0f;
+	for (int rowIndex = 0; rowIndex < rowsToActuallyRender; ++rowIndex) {
+		float y = (drawableHeight + rowPadding) * rowIndex;
+		float x = xOrigin;
+		for (size_t i = 0; i < visibleColumnIndices_.size(); ++i) {
+			size_t colIndex = visibleColumnIndices_[i];
+			if (colIndex >= table.rows[rowIndex].size()) continue;
+			const std::string& cell = table.rows[rowIndex][colIndex];
+			float cellWidth = static_cast<float>(font->getWidth(cell)) * scale;
+			float xAligned = x + (cachedColumnWidths_[i] - cellWidth) / 2.0f;
+			float charX = xAligned;
+			for (char c : cell) {
+				FontManager::GlyphInfo glyph;
+				if (font->getRect(c, glyph)) {
+					SDL_Rect src = glyph.rect;
+					SDL_FRect dst = { charX, y, glyph.rect.w * scale, glyph.rect.h * scale };
+					SDL_RenderCopyF(renderer, font->getTexture(), &src, &dst);
+					charX += static_cast<float>(glyph.advance) * scale;
+				}
+			}
+			x += cachedColumnWidths_[i] + paddingBetweenColumns;
+		}
+	}
+
+	SDL_SetRenderTarget(renderer, oldTarget);
+}
