@@ -111,48 +111,21 @@ GStreamerVideo::GStreamerVideo(int monitor)
 {
 	initialize();
 	initializePlugins();
-	createAlphaTexture();
 }
 
 
 GStreamerVideo::~GStreamerVideo() {
-	stop();
-}
-
-void GStreamerVideo::createAlphaTexture() {
-	SDL_LockMutex(SDL::getMutex()); // Per-monitor mutex
-	if (alphaTexture_) {
-		SDL_UnlockMutex(SDL::getMutex());
-		return;
+	try {
+		stop();
 	}
-
-	alphaTexture_ = SDL_CreateTexture(
-		SDL::getRenderer(monitor_), SDL_PIXELFORMAT_RGBA32,
-		SDL_TEXTUREACCESS_STREAMING, ALPHA_TEXTURE_SIZE, ALPHA_TEXTURE_SIZE);
-
-	if (!alphaTexture_) {
-		LOG_ERROR("GStreamerVideo", "createAlphaTexture(): Failed to create alpha texture: " + std::string(SDL_GetError()));
-		hasError_.store(true, std::memory_order_release);
-		SDL_UnlockMutex(SDL::getMutex());
-		return;
+	catch (...) {
+		// Destructor must not throw. Optionally log the error.
+		LOG_ERROR("GStreamerVideo", "Exception in destructor during stop()");
 	}
-
-	SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
-	SDL_SetTextureBlendMode(alphaTexture_, blendMode);
-
-	const int pitch = ALPHA_TEXTURE_SIZE * 4;
-	const int size = pitch * ALPHA_TEXTURE_SIZE;
-	std::vector<uint8_t> pixels(size, 0);
-	if (SDL_UpdateTexture(alphaTexture_, nullptr, pixels.data(), pitch) != 0) {
-		LOG_ERROR("GStreamerVideo", "createAlphaTexture(): Failed to update alpha texture: " + std::string(SDL_GetError()));
-		hasError_.store(true, std::memory_order_release);
-	}
-	texture_ = alphaTexture_;
-	SDL_UnlockMutex(SDL::getMutex());
 }
 
 gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user_data) {
-	GStreamerVideo* video = static_cast<GStreamerVideo*>(user_data);
+	auto* video = static_cast<GStreamerVideo*>(user_data);
 
 	if (!video) {
 		LOG_ERROR("GStreamerVideo", "busCallback(): Callback invoked with null user_data.");
@@ -482,21 +455,14 @@ bool GStreamerVideo::stop() {
 	}
 	instanceLock.unlock(); // GStreamer operations specific to playbin_ are done.
 
-	// --- 3. SDL Texture Cleanup (including instance-owned alphaTexture_) ---
+	// --- 3. SDL Texture Cleanup
 	// This lock protects all SDL texture objects and their associated state.
 	SDL_LockMutex(SDL::getMutex());
-	LOG_DEBUG("GStreamerVideo", "stop(): Destroying SDL textures (video and alpha).");
 
 	if (videoTexture_) {
 		SDL_DestroyTexture(videoTexture_);
 		videoTexture_ = nullptr;
 		LOG_DEBUG("GStreamerVideo", "stop (): Destroyed videoTexture_.");
-	}
-
-	if (alphaTexture_) { // Destroy alphaTexture_ as it's owned by this instance
-		SDL_DestroyTexture(alphaTexture_);
-		alphaTexture_ = nullptr;
-		LOG_DEBUG("GStreamerVideo", "stop(): Destroyed alphaTexture_.");
 	}
 
 	texture_ = nullptr; // Since both potential source textures are gone, texture_ must be null.
@@ -558,7 +524,7 @@ bool GStreamerVideo::unload() {
 		width_ = 0;
 		height_ = 0;
 		SDL_LockMutex(SDL::getMutex());
-		texture_ = alphaTexture_; // Default to alpha
+		texture_ = nullptr; // Default to nullptr
 		SDL_UnlockMutex(SDL::getMutex());
 		currentFile_.clear();
 		playCount_ = 0;
@@ -640,9 +606,9 @@ bool GStreamerVideo::unload() {
 	width_ = 0;
 	height_ = 0;
 
-	// Ensure the public texture pointer defaults to the alpha/blank texture
+	// Ensure the public texture pointer defaults to nullptr
 	SDL_LockMutex(SDL::getMutex());
-	texture_ = alphaTexture_;
+	texture_ = nullptr;
 	// We DO NOT destroy videoTexture_ here.
 	// We also DO NOT reset textureWidth_ / textureHeight_.
 	// This allows createSdlTexture() in the next play() to compare new dimensions
@@ -879,7 +845,7 @@ void GStreamerVideo::initializeUpdateFunction() {
 		break;
 		default:
 		LOG_ERROR("GStreamerVideo", "Unsupported pixel format during initialization");
-		updateTextureFunc_ = [](SDL_Texture*, GstVideoFrame*) {
+		updateTextureFunc_ = [](SDL_Texture const*, GstVideoFrame const*) {
 			return false;
 			};
 		break;
@@ -915,7 +881,7 @@ bool GStreamerVideo::play(const std::string& file) {
 		}
 
 		// --- Create Userdata for the Probe ---
-		PadProbeUserdata* userdataForProbe = static_cast<PadProbeUserdata*>(g_malloc(sizeof(PadProbeUserdata)));
+		auto* userdataForProbe = static_cast<PadProbeUserdata*>(g_malloc(sizeof(PadProbeUserdata)));
 		if (!userdataForProbe) {
 			LOG_ERROR("GStreamerVideo", "Failed to allocate memory for PadProbeUserdata for file: " + file);
 			gst_object_unref(sinkPad);
@@ -1010,7 +976,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, 
 }
 
 GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
-	PadProbeUserdata* probeData = static_cast<PadProbeUserdata*>(user_data);
+	auto* probeData = static_cast<PadProbeUserdata*>(user_data);
 
 	// --- 1. Basic Probe Sanity Checks ---
 	if (!probeData || !probeData->videoInstance) {
@@ -1045,7 +1011,8 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 
 		if (caps) {
 			const GstStructure* s = gst_caps_get_structure(caps, 0);
-			int newWidth = 0, newHeight = 0;
+			int newWidth = 0;
+			int	newHeight = 0;
 
 			if (gst_structure_get_int(s, "width", &newWidth) &&
 				gst_structure_get_int(s, "height", &newHeight) &&
@@ -1149,7 +1116,6 @@ void GStreamerVideo::createSdlTexture() {
 		) {
 		LOG_DEBUG("GStreamerVideo", "createSdlTexture(): Video texture already exists with correct dimensions "
 			+ std::to_string(width_) + "x" + std::to_string(height_) + ". No recreation needed.");
-		texture_ = videoTexture_;
 		return;
 	}
 
@@ -1176,74 +1142,11 @@ void GStreamerVideo::createSdlTexture() {
 		return;
 	}
 
-	// --- INITIALIZE THE NEW STREAMING TEXTURE TO A KNOWN "BLANK" STATE ---
-	bool initializedBlank = false;
-	if (sdlFormat_ == SDL_PIXELFORMAT_RGBA32 || sdlFormat_ == SDL_PIXELFORMAT_ABGR8888 ||
-		sdlFormat_ == SDL_PIXELFORMAT_ARGB8888 || sdlFormat_ == SDL_PIXELFORMAT_BGRA32) {
-		// Fill RGBA with transparent black
-		std::vector<uint8_t> zeros(static_cast<size_t>(width_) * height_ * 4, 0);
-		int pitch = width_ * 4;
-		if (SDL_UpdateTexture(videoTexture_, nullptr, zeros.data(), pitch) == 0) {
-			initializedBlank = true;
-			LOG_DEBUG("GStreamerVideo::createSdlTexture", "Initialized new videoTexture_ (STREAMING RGBA) with transparent black.");
-		}
-		else {
-			LOG_ERROR("GStreamerVideo::createSdlTexture", "Failed to SDL_UpdateTexture (RGBA zeros) for videoTexture_: " + std::string(SDL_GetError()));
-		}
-	}
-	else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
-		// Initialize IYUV to "video black" (Y=0, U=128, V=128 for full range black)
-		std::vector<uint8_t> yPlane(static_cast<size_t>(width_) * height_, 0);
-		std::vector<uint8_t> uPlane(static_cast<size_t>(width_ / 2) * (height_ / 2), 128);
-		std::vector<uint8_t> vPlane(static_cast<size_t>(width_ / 2) * (height_ / 2), 128);
-		if (SDL_UpdateYUVTexture(videoTexture_, nullptr,
-			yPlane.data(), width_,
-			uPlane.data(), width_ / 2,
-			vPlane.data(), width_ / 2) == 0) {
-			initializedBlank = true;
-			LOG_DEBUG("GStreamerVideo::createSdlTexture", "Initialized new videoTexture_ (IYUV) with black.");
-		}
-		else {
-			LOG_ERROR("GStreamerVideo::createSdlTexture", "Failed to SDL_UpdateYUVTexture (black) for videoTexture_: " + std::string(SDL_GetError()));
-		}
-	}
-	else if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
-		// Initialize NV12 to "video black" (Y=0, UV interleaved plane, U/V values 128)
-		std::vector<uint8_t> yPlane(static_cast<size_t>(width_) * height_, 0);
-		// For NV12, UV plane has height/2. Each UV pair takes 2 bytes.
-		std::vector<uint8_t> uvPlane(static_cast<size_t>(width_) * (height_ / 2), 128);
-		if (SDL_UpdateNVTexture(videoTexture_, nullptr,
-			yPlane.data(), width_,      // Y plane data, Y plane pitch
-			uvPlane.data(), height_) == 0) { // UV plane data, UV plane pitch
-			initializedBlank = true;
-			LOG_DEBUG("GStreamerVideo::createSdlTexture", "Initialized new videoTexture_ (NV12) with black.");
-		}
-		else {
-			LOG_ERROR("GStreamerVideo::createSdlTexture", "Failed to SDL_UpdateNVTexture (black) for videoTexture_: " + std::string(SDL_GetError()));
-		}
-	}
-	else {
-		LOG_WARNING("GStreamerVideo::createSdlTexture", "New videoTexture_ created with unhandled sdlFormat_ (" +
-			std::string(SDL_GetPixelFormatName(sdlFormat_)) + ") for blank initialization. May appear as garbage/green initially.");
-	}
-
-	if (!initializedBlank) {
-		// If we failed to initialize it to a blank state, it's safer to consider it not fully valid yet,
-		// as it might show garbage. The main draw loop will then try to update it with GStreamer frames.
-		// However, this means the green flash *might* still occur if this initialization fails.
-		// For robustness, perhaps we should only proceed to mark valid if initializedBlank is true.
-		// For now, let's assume the user wants to proceed even if blanking fails, hoping GStreamer frames will fix it.
-	}
-
 	SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
 	SDL_SetTextureBlendMode(videoTexture_, blendMode);
 
 	textureWidth_ = width_;
 	textureHeight_ = height_;
-
-	// ===>>> Set the active pointer!
-	texture_ = videoTexture_;
-
 }
 
 void GStreamerVideo::volumeUpdate() {
@@ -1295,16 +1198,7 @@ void GStreamerVideo::draw() {
 	if (!isPlaying_)
 		return;
 
-	SDL_LockMutex(SDL::getMutex());
-	bool is_video_tex_valid_for_update =
-		(texture_ == videoTexture_ &&
-			videoTexture_ != nullptr);
-	SDL_UnlockMutex(SDL::getMutex());
-
-	if (!is_video_tex_valid_for_update)
-		return;
-
-	// --- Step 3: Pull GStreamer Sample and Update Texture ---
+	// --- Step 1: Pull GStreamer Sample and Update Texture ---
 	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
 	if (!sample) {
 		return;
@@ -1338,10 +1232,14 @@ void GStreamerVideo::draw() {
 
 	SDL_LockMutex(SDL::getMutex());
 	bool success = updateTextureFunc_(videoTexture_, &gst_frame); // Update videoTexture_
+	if (success && !texture_)
+		texture_ = videoTexture_; // Set texture_ to videoTexture_ if it was nullptr
+	
 	if (!success) {
-		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_ + ". Falling back to alphaTexture.");
-		texture_ = alphaTexture_;
+		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_);
+		texture_ = nullptr;
 	}
+	
 	SDL_UnlockMutex(SDL::getMutex());
 
 	gst_video_frame_unmap(&gst_frame);
@@ -1349,9 +1247,9 @@ void GStreamerVideo::draw() {
 }
 
 bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) const {
-	const Uint8* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
-	const Uint8* srcU = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
-	const Uint8* srcV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 2));
+	const auto* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+	const auto* srcU = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
+	const auto* srcV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 2));
 
 	// Stride IS the distance between rows in the source buffer
 	const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
@@ -1368,8 +1266,8 @@ bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFr
 }
 
 bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFrame* frame) const {
-	const uint8_t* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
-	const uint8_t* srcUV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
+	const auto* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+	const auto* srcUV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
 
 	const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
 	const int strideUV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);

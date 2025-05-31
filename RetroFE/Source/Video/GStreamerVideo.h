@@ -127,7 +127,6 @@ private:
     GstElement* videoSink_{ nullptr };
     GstElement* perspective_{ nullptr };
     SDL_Texture* videoTexture_{ nullptr };
-    SDL_Texture* alphaTexture_{ nullptr };
     SDL_Texture* texture_{ nullptr };
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     guint elementSetupHandlerId_{ 0 };
@@ -138,7 +137,6 @@ private:
     std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
 
     // === Static/shared ===
-    static constexpr int ALPHA_TEXTURE_SIZE = 4;
     static std::vector<GStreamerVideo*> activeVideos_;
     static std::mutex activeVideosMutex_;
     static bool initialized_;
@@ -152,7 +150,6 @@ private:
         uint64_t playSessionId;
     };
     static GStreamerVideo* findInstanceFromGstObject(GstObject* object);
-    void createAlphaTexture();
     static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
