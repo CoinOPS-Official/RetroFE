@@ -16,6 +16,10 @@
 
 #include "VideoPool.h"
 #include "../Utility/Log.h"
+#include <algorithm>
+#include <memory>
+#include <deque>
+#include <unordered_map>
 
 namespace {
     constexpr size_t POOL_BUFFER_INSTANCES = 2;
@@ -29,7 +33,7 @@ VideoPool::PoolInfo& VideoPool::getPoolInfo(int monitor, int listId) {
     return pools_[monitor][listId]; // will auto-create if not found
 }
 
-std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool softOverlay) {
+VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOverlay) {
     if (listId == -1) {
         LOG_DEBUG("VideoPool", "Creating non-pooled instance (listId = -1). Monitor: " + std::to_string(monitor));
         auto instance = std::make_unique<GStreamerVideo>(monitor);
@@ -60,7 +64,7 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
         else if (targetPopulationCapacity == 0) targetPopulationCapacity = 1;
     }
 
-    std::unique_ptr<GStreamerVideo> vid;
+    VideoPtr vid;
     bool createdNew = false;
 
     if (currentTotalPopulation < targetPopulationCapacity) {
@@ -89,15 +93,19 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
     }
 
     if (createdNew) {
-        vid = std::make_unique<GStreamerVideo>(monitor);
-        if (vid && vid->hasError()) {
+        auto gstreamerVid = std::make_unique<GStreamerVideo>(monitor);
+        if (gstreamerVid && gstreamerVid->hasError()) {
             LOG_ERROR("VideoPool", "Newly created GStreamerVideo instance has an error. Will be discarded on release.");
-            // If you want, decrement currentActive here, but releaseVideo handles error discards.
         }
+        if (gstreamerVid)
+            gstreamerVid->setSoftOverlay(softOverlay);
+        vid = std::move(gstreamerVid);
     }
 
     if (vid) {
-        vid->setSoftOverlay(softOverlay);
+        // If vid is not null, set the overlay (already done above for new, but ok to repeat)
+        if (auto* gvid = dynamic_cast<GStreamerVideo*>(vid.get()))
+            gvid->setSoftOverlay(softOverlay);
     }
     else if (!createdNew) {
         LOG_ERROR("VideoPool", "Internal error: vid is null but was not newly created. Should not happen.");
@@ -108,10 +116,10 @@ std::unique_ptr<IVideo> VideoPool::acquireVideo(int monitor, int listId, bool so
         return nullptr;
     }
 
-    return std::unique_ptr<IVideo>(std::move(vid));
+    return vid;
 }
 
-void VideoPool::releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId) {
+void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
     if (!vid || listId == -1) return;
 
     auto monitorIt = pools_.find(monitor);
@@ -121,9 +129,10 @@ void VideoPool::releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, i
 
     PoolInfo& pool = listIt->second;
 
-    bool isFaulty = vid->hasError();
+    bool isFaulty = false;
     try {
         vid->unload();
+        isFaulty = vid->hasError();
     }
     catch (const std::exception& e) {
         LOG_ERROR("VideoPool", "Exception during video unload: " + std::string(e.what()));

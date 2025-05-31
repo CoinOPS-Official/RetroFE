@@ -24,16 +24,16 @@
 
 class VideoPool {
 public:
-    using VideoPtr = std::unique_ptr<GStreamerVideo>;
+    using VideoPtr = std::unique_ptr<IVideo>;  // <-- Use base type
 
-    static std::unique_ptr<IVideo> acquireVideo(int monitor, int listId, bool softOverlay);
-    static void releaseVideo(std::unique_ptr<GStreamerVideo> vid, int monitor, int listId);
+    static VideoPtr acquireVideo(int monitor, int listId, bool softOverlay);
+    static void releaseVideo(VideoPtr vid, int monitor, int listId);
     static void cleanup(int monitor, int listId);
     static void shutdown();
 
 private:
     struct PoolInfo {
-        std::deque<VideoPtr> instances;
+        std::deque<VideoPtr> instances;    // Store unique_ptr<IVideo>
         size_t currentActive = 0;
         size_t observedMaxActive = 0;
         size_t requiredInstanceCount = 0;
