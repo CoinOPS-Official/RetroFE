@@ -18,6 +18,7 @@
 #include <SDL2/SDL.h>
 #include <string>
 #include <gst/video/video.h>
+#include <functional>
 
 class IVideo {
 public:
@@ -52,4 +53,7 @@ public:
 	virtual bool isPaused() = 0;
 	virtual bool isPlaying() = 0;
 	virtual bool hasError() const = 0;
+	virtual bool unload() = 0;
+	virtual void setDimensionsReadyCallback(std::function<void(int, int)>) = 0;
+
 };

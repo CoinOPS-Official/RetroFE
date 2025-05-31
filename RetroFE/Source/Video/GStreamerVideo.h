@@ -45,6 +45,9 @@ extern "C" {
 }
 
 class GStreamerVideo final : public IVideo {
+
+    std::function<void(int width, int height)> dimensionsReadyCallback_;
+
 public:
     explicit GStreamerVideo(int monitor);
     GStreamerVideo(const GStreamerVideo&) = delete;
@@ -87,23 +90,24 @@ public:
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
 
+    void setDimensionsReadyCallback(std::function<void(int, int)> cb) {
+        dimensionsReadyCallback_ = std::move(cb);
+    }
+
 private:
     // === Thread-shared atomics ===
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
-    std::atomic<int> width_{ 0 };                      // Set by pad probe, read main
-    std::atomic<int> height_{ 0 };                     // Set by pad probe, read main
-    std::atomic<bool> textureValid_{ false };          // Set by pad probe, read main
-    std::atomic<bool> isPlaying_{ false };             // Set/read both
-    std::atomic<bool> video_dimensions_known_{ false };// Set by pad probe, read main
     std::atomic<bool> hasError_{ false };              // Set by pad probe, read main
 
     // === Main-thread only ===
     IVideo::VideoState targetState_{ IVideo::VideoState::None };
 	IVideo::VideoState actualState_{ IVideo::VideoState::None };
 
-    bool texture_config_needs_check_{ false };
+    bool isPlaying_{false};
     uint64_t mappingGeneration_{ 0 };
+    int width_{ 0 };
+    int height_{ 0 };
     int textureWidth_{ -1 };
     int textureHeight_{ -1 };
     int playCount_{ 0 };

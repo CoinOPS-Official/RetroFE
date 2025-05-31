@@ -128,7 +128,7 @@ void GStreamerVideo::createAlphaTexture() {
 
 	alphaTexture_ = SDL_CreateTexture(
 		SDL::getRenderer(monitor_), SDL_PIXELFORMAT_RGBA32,
-		SDL_TEXTUREACCESS_STATIC, ALPHA_TEXTURE_SIZE, ALPHA_TEXTURE_SIZE);
+		SDL_TEXTUREACCESS_STREAMING, ALPHA_TEXTURE_SIZE, ALPHA_TEXTURE_SIZE);
 
 	if (!alphaTexture_) {
 		LOG_ERROR("GStreamerVideo", "createAlphaTexture(): Failed to create alpha texture: " + std::string(SDL_GetError()));
@@ -163,7 +163,6 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 		return TRUE; // Continue, but state is unusual.
 	}
 
-
 	switch (GST_MESSAGE_TYPE(msg)) {
 		case GST_MESSAGE_STATE_CHANGED: {
 			// Ensure the state change is from our playbin element
@@ -177,20 +176,26 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 				else if (newState == GST_STATE_PAUSED) {
 					video->actualState_ = IVideo::VideoState::Paused;
 				}
-				else if (newState == GST_STATE_NULL || newState == GST_STATE_READY) {
-					// If pipeline goes to NULL or READY unexpectedly (not via explicit stop/unload),
-					// it might indicate an issue or that it has finished/failed.
-					// isPlaying_ should reflect this.
-					if (video->isPlaying_.load(std::memory_order_acquire) && (newState == GST_STATE_NULL || (newState == GST_STATE_READY && oldState != GST_STATE_PAUSED && oldState != GST_STATE_PLAYING))) {
-						LOG_WARNING("GStreamerVideo", "busCallback(): Pipeline for " + video->currentFile_ +
+				if (newState == GST_STATE_NULL || newState == GST_STATE_READY) {
+					bool expected =
+						(newState == GST_STATE_NULL && video->targetState_ == IVideo::VideoState::None) ||
+						(newState == GST_STATE_READY && video->targetState_ == IVideo::VideoState::None);
+
+					if (!expected && video->isPlaying_) {
+						LOG_WARNING("GStreamerVideo",
+							"busCallback(): Pipeline for " + video->currentFile_ +
 							" transitioned to " + std::string(gst_element_state_get_name(newState)) +
 							" unexpectedly from " + std::string(gst_element_state_get_name(oldState)) +
 							". Playback may have stopped.");
 					}
+					else {
+						LOG_DEBUG("GStreamerVideo",
+							"busCallback(): Pipeline for " + video->currentFile_ +
+							" transitioned to " + std::string(gst_element_state_get_name(newState)) +
+							" as requested.");
+					}
 					video->actualState_ = IVideo::VideoState::None;
 				}
-
-
 				LOG_DEBUG("GStreamerVideo", "busCallback(): State changed: " +
 					std::string(gst_element_state_get_name(oldState)) + " -> " +
 					std::string(gst_element_state_get_name(newState)) +
@@ -213,14 +218,14 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 					else {
 						LOG_DEBUG("GStreamerVideo", "BusCallback: Finished loops for " + video->currentFile_ + ". Pausing.");
 						video->pause(); // Or perhaps a full stop/unload depending on desired behavior
-						video->isPlaying_.store(false, std::memory_order_release); // If EOS means it's no longer "playing"
+						video->isPlaying_ = false;
 					}
 				}
 				else if (video->playbin_) {
 					LOG_DEBUG("GStreamerVideo", "BusCallback: EOS received very early for " + video->currentFile_ + ". Not looping.");
 					// Potentially an issue if EOS comes too fast, could indicate a problem loading the file.
 					// video->hasError_.store(true, std::memory_order_release);
-					// video->isPlaying_.store(false, std::memory_order_release);
+					// video->isPlaying_ = false;
 				}
 			}
 			break;
@@ -237,7 +242,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 				(dbg_info ? (std::string(" | Debug: ") + dbg_info) : ""));
 
 			video->hasError_.store(true, std::memory_order_release);
-			video->isPlaying_.store(false, std::memory_order_release); // Typically an error means playback stops
+			video->isPlaying_ = false;
 			video->targetState_ = IVideo::VideoState::None; // Reflect that it's no longer in a valid playing/paused state
 
 			if (err) g_error_free(err);
@@ -250,26 +255,26 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 				const GstStructure* s = gst_message_get_structure(msg);
 
 				// Check for the message posted by padProbeCallback
-				// (Using the name "caps-info-updated-for-texture-check" from the last padProbe example)
-				if (s && gst_structure_has_name(s, "caps-info-updated-for-texture-check")) {
-					LOG_INFO("GStreamerVideo", "busCallback(): Received 'caps-info-updated-for-texture-check' for " + video->currentFile_ +
-						" (Session: " + std::to_string(video->currentPlaySessionId_.load()) + "). Marking texture config as needing check.");
+				if (s && gst_structure_has_name(s, "dimensions")) {
+					int w = 0, h = 0;
+					gst_structure_get_int(s, "width", &w);
+					gst_structure_get_int(s, "height", &h);
+					LOG_INFO("GStreamerVideo", "busCallback(): Received 'dimensions' message for " + video->currentFile_ +
+						" (" + std::to_string(w) + "x" + std::to_string(h) + ")");
+					video->width_ = w;
+					video->height_ = h;
 
-					// Set the flag for draw() to pick up. No SDL operations here.
-					video->texture_config_needs_check_ = true;
-
-				} // End of: if (gst_structure_has_name(s, "caps-info-updated-for-texture-check"))
-				// else if (s && gst_structure_has_name(s, "some-other-app-message-name")) {
-				//    // Handle other custom application messages if you have them
-				// }
+					// fire callback
+					video->createSdlTexture();
+					if (video->dimensionsReadyCallback_) {
+						video->dimensionsReadyCallback_(w, h);
+					}
+				}
 			} // End of: if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_))
-			// else {
-			//    // Handle application messages from other GstObjects if relevant
-			// }
 			break; // Break for case GST_MESSAGE_APPLICATION
 		} // End of case GST_MESSAGE_APPLICATION
 
-		default: // It's good practice to have a default case
+		default:
 		break;
 
 	}
@@ -392,7 +397,7 @@ bool GStreamerVideo::stop() {
 	// --- 1. Signal No Longer Playing ---
 	// This should be done early to prevent other threads (e.g., draw, bus callback)
 	// from attempting operations on a pipeline that's being torn down.
-	isPlaying_.store(false, std::memory_order_release);
+	isPlaying_ = false;
 	targetState_ = IVideo::VideoState::None;
 
 	{
@@ -504,11 +509,9 @@ bool GStreamerVideo::stop() {
 
 	hasError_.store(false, std::memory_order_release);
 
-	video_dimensions_known_.store(false, std::memory_order_release);
-	textureValid_.store(false, std::memory_order_release); // No textures exist
 
-	width_.store(0, std::memory_order_release);
-	height_.store(0, std::memory_order_release);
+	width_ = 0;
+	height_ = 0;
 	textureWidth_ = 0;  // videoTexture_ dimensions are now 0
 	textureHeight_ = 0; // videoTexture_ dimensions are now 0
 
@@ -550,12 +553,10 @@ bool GStreamerVideo::unload() {
 	if (!playbin_) { // If no pipeline, nothing to unload from GStreamer's perspective
 		LOG_WARNING("GStreamerVideo", "unload(): No playbin_ to unload for " + currentFile_);
 		// Ensure local state is reset even if playbin_ was already gone
-		isPlaying_.store(false, std::memory_order_release);
+		isPlaying_ = false;
 		hasError_.store(false, std::memory_order_release); // Clear any previous error
-		video_dimensions_known_.store(false, std::memory_order_release);
-		textureValid_.store(false, std::memory_order_release);
-		width_.store(0);
-		height_.store(0);
+		width_ = 0;
+		height_ = 0;
 		SDL_LockMutex(SDL::getMutex());
 		texture_ = alphaTexture_; // Default to alpha
 		SDL_UnlockMutex(SDL::getMutex());
@@ -569,7 +570,7 @@ bool GStreamerVideo::unload() {
 	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Protect GStreamer operations and shared state
 
 	// --- 2. Signal that we are no longer "playing" this specific stream ---
-	isPlaying_.store(false, std::memory_order_release);
+	isPlaying_ = false;
 	targetState_ = IVideo::VideoState::None; // Reflect that it's not actively playing or paused
 
 	// --- 3. GStreamer Pipeline Management ---
@@ -636,14 +637,8 @@ bool GStreamerVideo::unload() {
 	// --- 4. Reset Instance State for Reuse ---
 	hasError_.store(false, std::memory_order_release); // Clear error from previous playback
 
-	// Reset texture and dimension related flags
-	video_dimensions_known_.store(false, std::memory_order_release);
-	// textureValid_ being false means videoTexture_ (if it exists) is not valid for any *new* stream.
-	// The actual videoTexture_ and its dimensions (textureWidth_/Height_) are kept for potential reuse.
-	textureValid_.store(false, std::memory_order_release);
-
-	width_.store(0, std::memory_order_release);   // Clear dimensions of the unloaded stream
-	height_.store(0, std::memory_order_release);
+	width_ = 0;
+	height_ = 0;
 
 	// Ensure the public texture pointer defaults to the alpha/blank texture
 	SDL_LockMutex(SDL::getMutex());
@@ -967,13 +962,13 @@ bool GStreamerVideo::play(const std::string& file) {
 	if (current != GST_STATE_PAUSED) {
 		GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
 		if (stateRet != GST_STATE_CHANGE_ASYNC && stateRet != GST_STATE_CHANGE_SUCCESS) {
-			isPlaying_.store(false, std::memory_order_release);
+			isPlaying_ = false;
 			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 	}
 	targetState_ = IVideo::VideoState::Paused;  // accurately reflect that we're starting preloaded
-	isPlaying_.store(true, std::memory_order_release);
+	isPlaying_ = true;
 	currentFile_ = file;
 
 	// Mute and volume to 0 by default
@@ -1035,7 +1030,7 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 	}
 
 	// --- 3. Instance State Check (Is this GStreamerVideo instance still actively playing?) ---
-	if (!video->playbin_ || !video->isPlaying_.load(std::memory_order_acquire)) {
+	if (!video->playbin_) {
 		LOG_DEBUG("GStreamerVideo", "padProbeCallback(): Probe for session ID: " + std::to_string(callbackSessionId) +
 			" fired, but playbin_ is NULL or video not playing (file: " + video->currentFile_ + "). Removing probe.");
 		video->padProbeId_ = 0; // Mark that this instance no longer expects this probe to be active.
@@ -1056,17 +1051,17 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 				gst_structure_get_int(s, "height", &newHeight) &&
 				newWidth > 0 && newHeight > 0) {
 
-				LOG_INFO("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) + "): Caps received for " + video->currentFile_ +
-					" (" + std::to_string(newWidth) + "x" + std::to_string(newHeight) + ")");
+				LOG_INFO("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) +
+					"): Caps received for " + video->currentFile_ + " (" +
+					std::to_string(newWidth) + "x" + std::to_string(newHeight) + ")");
 
-				// Store new dimensions from CAPS (target dimensions for videoTexture_)
-				video->width_.store(newWidth, std::memory_order_release);
-				video->height_.store(newHeight, std::memory_order_release);
-				video->video_dimensions_known_.store(true, std::memory_order_release); // Signal main thread that dimensions are known
-
-				// Post a message to the main thread to signal that CAPS info is updated
-				// and texture state needs to be checked/finalized.
-				GstStructure* msg_struct = gst_structure_new_empty("caps-info-updated-for-texture-check"); // More specific name
+				// Instead of writing to atomics, just post a message with these values
+				GstStructure* msg_struct = gst_structure_new(
+					"dimensions",
+					"width", G_TYPE_INT, newWidth,
+					"height", G_TYPE_INT, newHeight,
+					nullptr
+				);
 				GstBus* bus = gst_element_get_bus(video->playbin_);
 				if (bus) {
 					gst_bus_post(bus, gst_message_new_application(GST_OBJECT(video->playbin_), msg_struct));
@@ -1074,7 +1069,7 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 				}
 				else {
 					gst_structure_free(msg_struct);
-					LOG_WARNING("GStreamerVideo", "padProbeCallback(): Failed to get bus to post 'caps-info-updated-for-texture-check' message.");
+					LOG_WARNING("GStreamerVideo", "padProbeCallback(): Failed to get bus to post 'dimensions' message.");
 				}
 
 				// --- Perspective Matrix Calculation and Setting (if applicable) ---
@@ -1119,18 +1114,13 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 				LOG_WARNING("GStreamerVideo", "padProbeCallback(): Session " + std::to_string(callbackSessionId) +
 					": Failed to get valid dimensions from CAPS structure for " + video->currentFile_);
 				video->hasError_.store(true, std::memory_order_release);
-				video->video_dimensions_known_.store(false, std::memory_order_release); // Dimensions are not validly known
-				video->textureValid_.store(false, std::memory_order_release); // Texture cannot be valid
 			}
 		}
 		else { // gst_event_parse_caps failed
 			LOG_WARNING("GStreamerVideo", "padProbeCallback(): Session " + std::to_string(callbackSessionId) +
 				": Caps event, but gst_event_parse_caps failed (returned NULL caps) for " + video->currentFile_);
 			video->hasError_.store(true, std::memory_order_release);
-			video->video_dimensions_known_.store(false, std::memory_order_release);
-			video->textureValid_.store(false, std::memory_order_release);
 		}
-
 		video->padProbeId_ = 0; // This probe has done its job for this CAPS event.
 		return GST_PAD_PROBE_REMOVE; // Remove the probe.
 	}
@@ -1140,62 +1130,120 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 }
 
 void GStreamerVideo::createSdlTexture() {
-	int targetWidth = width_.load(std::memory_order_acquire);   // Dimensions from latest CAPS
-	int targetHeight = height_.load(std::memory_order_acquire); // Dimensions from latest CAPS
 
-	if (targetWidth <= 0 || targetHeight <= 0) {
+	if (width_ <= 0 || height_ <= 0) {
 		LOG_ERROR("GStreamerVideo", "createSdlTexture(): Cannot create texture, target dimensions are invalid: "
-			+ std::to_string(targetWidth) + "x" + std::to_string(targetHeight));
-		// If an old texture exists, destroy it as it's no longer relevant
+			+ std::to_string(width_) + "x" + std::to_string(height_));
 		if (videoTexture_) {
 			SDL_DestroyTexture(videoTexture_);
 			videoTexture_ = nullptr;
 		}
 		textureWidth_ = 0;
 		textureHeight_ = 0;
-		textureValid_.store(false, std::memory_order_release);
 		return;
 	}
 
-	// Check if existing videoTexture_ already matches target dimensions
 	if (videoTexture_ &&
-		textureWidth_ == targetWidth &&
-		textureHeight_ == targetHeight) {
+		textureWidth_ == width_ &&
+		textureHeight_ == height_
+		) {
 		LOG_DEBUG("GStreamerVideo", "createSdlTexture(): Video texture already exists with correct dimensions "
-			+ std::to_string(targetWidth) + "x" + std::to_string(targetHeight) + ". No recreation needed.");
-		textureValid_.store(true, std::memory_order_release); // It's valid and matches
+			+ std::to_string(width_) + "x" + std::to_string(height_) + ". No recreation needed.");
+		texture_ = videoTexture_;
 		return;
 	}
 
-	// If we're here, we need to create or re-create videoTexture_
 	LOG_INFO("GStreamerVideo", "createSdlTexture(): Creating/recreating SDL video texture for "
-		+ std::to_string(targetWidth) + "x" + std::to_string(targetHeight));
+		+ std::to_string(width_) + "x" + std::to_string(height_) +
+		" with format ID: " + std::to_string(sdlFormat_)); // Log the format
 
 	if (videoTexture_) {
 		SDL_DestroyTexture(videoTexture_);
-		videoTexture_ = nullptr; // Important to nullify before creating new
+		videoTexture_ = nullptr;
 	}
 
 	videoTexture_ = SDL_CreateTexture(
-		SDL::getRenderer(monitor_), sdlFormat_,
-		SDL_TEXTUREACCESS_STREAMING, targetWidth, targetHeight);
+		SDL::getRenderer(monitor_),
+		sdlFormat_, // The format determined by GStreamerVideo (e.g., IYUV, NV12, ABGR8888)
+		SDL_TEXTUREACCESS_STREAMING,
+		width_, height_);
 
 	if (!videoTexture_) {
-		LOG_ERROR("GStreamerVideo", "createSdlTexture(): SDL_CreateTexture failed: " + std::string(SDL_GetError()));
-		textureWidth_ = 0; // Reflect failure
+		LOG_ERROR("GStreamerVideo", "createSdlTexture(): SDL_CreateTexture failed for format " +
+			std::string(SDL_GetPixelFormatName(sdlFormat_)) + ": " + std::string(SDL_GetError()));
+		textureWidth_ = 0;
 		textureHeight_ = 0;
-		textureValid_.store(false, std::memory_order_release);
 		return;
+	}
+
+	// --- INITIALIZE THE NEW STREAMING TEXTURE TO A KNOWN "BLANK" STATE ---
+	bool initializedBlank = false;
+	if (sdlFormat_ == SDL_PIXELFORMAT_RGBA32 || sdlFormat_ == SDL_PIXELFORMAT_ABGR8888 ||
+		sdlFormat_ == SDL_PIXELFORMAT_ARGB8888 || sdlFormat_ == SDL_PIXELFORMAT_BGRA32) {
+		// Fill RGBA with transparent black
+		std::vector<uint8_t> zeros(static_cast<size_t>(width_) * height_ * 4, 0);
+		int pitch = width_ * 4;
+		if (SDL_UpdateTexture(videoTexture_, nullptr, zeros.data(), pitch) == 0) {
+			initializedBlank = true;
+			LOG_DEBUG("GStreamerVideo::createSdlTexture", "Initialized new videoTexture_ (STREAMING RGBA) with transparent black.");
+		}
+		else {
+			LOG_ERROR("GStreamerVideo::createSdlTexture", "Failed to SDL_UpdateTexture (RGBA zeros) for videoTexture_: " + std::string(SDL_GetError()));
+		}
+	}
+	else if (sdlFormat_ == SDL_PIXELFORMAT_IYUV) {
+		// Initialize IYUV to "video black" (Y=0, U=128, V=128 for full range black)
+		std::vector<uint8_t> yPlane(static_cast<size_t>(width_) * height_, 0);
+		std::vector<uint8_t> uPlane(static_cast<size_t>(width_ / 2) * (height_ / 2), 128);
+		std::vector<uint8_t> vPlane(static_cast<size_t>(width_ / 2) * (height_ / 2), 128);
+		if (SDL_UpdateYUVTexture(videoTexture_, nullptr,
+			yPlane.data(), width_,
+			uPlane.data(), width_ / 2,
+			vPlane.data(), width_ / 2) == 0) {
+			initializedBlank = true;
+			LOG_DEBUG("GStreamerVideo::createSdlTexture", "Initialized new videoTexture_ (IYUV) with black.");
+		}
+		else {
+			LOG_ERROR("GStreamerVideo::createSdlTexture", "Failed to SDL_UpdateYUVTexture (black) for videoTexture_: " + std::string(SDL_GetError()));
+		}
+	}
+	else if (sdlFormat_ == SDL_PIXELFORMAT_NV12) {
+		// Initialize NV12 to "video black" (Y=0, UV interleaved plane, U/V values 128)
+		std::vector<uint8_t> yPlane(static_cast<size_t>(width_) * height_, 0);
+		// For NV12, UV plane has height/2. Each UV pair takes 2 bytes.
+		std::vector<uint8_t> uvPlane(static_cast<size_t>(width_) * (height_ / 2), 128);
+		if (SDL_UpdateNVTexture(videoTexture_, nullptr,
+			yPlane.data(), width_,      // Y plane data, Y plane pitch
+			uvPlane.data(), height_) == 0) { // UV plane data, UV plane pitch
+			initializedBlank = true;
+			LOG_DEBUG("GStreamerVideo::createSdlTexture", "Initialized new videoTexture_ (NV12) with black.");
+		}
+		else {
+			LOG_ERROR("GStreamerVideo::createSdlTexture", "Failed to SDL_UpdateNVTexture (black) for videoTexture_: " + std::string(SDL_GetError()));
+		}
+	}
+	else {
+		LOG_WARNING("GStreamerVideo::createSdlTexture", "New videoTexture_ created with unhandled sdlFormat_ (" +
+			std::string(SDL_GetPixelFormatName(sdlFormat_)) + ") for blank initialization. May appear as garbage/green initially.");
+	}
+
+	if (!initializedBlank) {
+		// If we failed to initialize it to a blank state, it's safer to consider it not fully valid yet,
+		// as it might show garbage. The main draw loop will then try to update it with GStreamer frames.
+		// However, this means the green flash *might* still occur if this initialization fails.
+		// For robustness, perhaps we should only proceed to mark valid if initializedBlank is true.
+		// For now, let's assume the user wants to proceed even if blanking fails, hoping GStreamer frames will fix it.
 	}
 
 	SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
 	SDL_SetTextureBlendMode(videoTexture_, blendMode);
 
-	// Update the stored dimensions of videoTexture_
-	textureWidth_ = targetWidth;
-	textureHeight_ = targetHeight;
-	textureValid_.store(true, std::memory_order_release); // Texture is now valid and matches target
-	LOG_DEBUG("GStreamerVideo", "createSdlTexture(): Successfully (re)created videoTexture_.");
+	textureWidth_ = width_;
+	textureHeight_ = height_;
+
+	// ===>>> Set the active pointer!
+	texture_ = videoTexture_;
+
 }
 
 void GStreamerVideo::volumeUpdate() {
@@ -1234,74 +1282,27 @@ void GStreamerVideo::volumeUpdate() {
 
 
 int GStreamerVideo::getHeight() {
-	return height_.load(std::memory_order_relaxed);
+	return height_;
 }
 
 int GStreamerVideo::getWidth() {
-	return width_.load(std::memory_order_relaxed);
+	return width_;
 }
 
 void GStreamerVideo::draw() {
 	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Overall instance lock
 
-	// --- Step 1: Handle Texture Configuration if Flagged ---
-	if (texture_config_needs_check_) {
-		// Only proceed if dimensions are actually known (set by padProbe)
-		if (video_dimensions_known_.load(std::memory_order_acquire)) {
-			SDL_LockMutex(SDL::getMutex());
-			LOG_DEBUG("GStreamerVideo::draw", "Texture config needs check for " + currentFile_ + ". Calling createSdlTexture.");
-			createSdlTexture(); // Uses width_, height_; updates videoTexture_, textureWidth/Height, textureValid_
+	if (!isPlaying_)
+		return;
 
-			// After createSdlTexture, textureValid_ reflects readiness. Update active texture_ pointer.
-			if (textureValid_.load(std::memory_order_acquire) && videoTexture_) {
-				if (texture_ != videoTexture_) {
-					texture_ = videoTexture_;
-					LOG_DEBUG("GStreamerVideo::draw", "Promoted videoTexture_ to active texture_ for " + currentFile_);
-				}
-			}
-			else {
-				if (texture_ != alphaTexture_) {
-					texture_ = alphaTexture_;
-					LOG_WARNING("GStreamerVideo::draw", "Using alphaTexture_ for " + currentFile_ +
-						" (videoTexture not valid or null after createSdlTexture).");
-				}
-			}
-			SDL_UnlockMutex(SDL::getMutex());
-			texture_config_needs_check_ = false; // Reset the flag
-		}
-		else {
-			// This case means: padProbe posted a message (so it saw CAPS), but for some reason
-			// video_dimensions_known_ is false (e.g., gst_structure_get_int failed in padProbe).
-			// We should probably ensure alphaTexture is used and wait for a valid state.
-			LOG_WARNING("GStreamerVideo::draw", "Texture config needs check for " + currentFile_ +
-				", but video dimensions are not known. Using alphaTexture.");
-			SDL_LockMutex(SDL::getMutex());
-			if (texture_ != alphaTexture_) texture_ = alphaTexture_;
-			textureValid_.store(false); // Ensure texture is marked not valid for video frames
-			SDL_UnlockMutex(SDL::getMutex());
-			// Keep texture_config_needs_check_ true so we re-evaluate next frame if dimensions become known.
-			// Or, reset it if padProbe also handles error states for dimensions by not posting.
-			// For now, let's assume padProbe always posts if CAPS event occurs.
-		}
-	}
-
-	// --- Step 2: Proceed with Drawing Based on Current Texture State ---
-	if (!isPlaying_.load(std::memory_order_acquire) || !video_dimensions_known_.load(std::memory_order_acquire)) {
-		return; // Not playing or no valid dimensions yet
-	}
-
-	bool is_video_tex_valid_for_update;
 	SDL_LockMutex(SDL::getMutex());
-	is_video_tex_valid_for_update = (
-		texture_ == videoTexture_ &&
-		videoTexture_ != nullptr &&
-		textureValid_.load(std::memory_order_acquire)
-		);
+	bool is_video_tex_valid_for_update =
+		(texture_ == videoTexture_ &&
+			videoTexture_ != nullptr);
 	SDL_UnlockMutex(SDL::getMutex());
 
-	if (!is_video_tex_valid_for_update) {
-		return; // Current render target is not a valid video texture
-	}
+	if (!is_video_tex_valid_for_update)
+		return;
 
 	// --- Step 3: Pull GStreamer Sample and Update Texture ---
 	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
@@ -1339,7 +1340,6 @@ void GStreamerVideo::draw() {
 	bool success = updateTextureFunc_(videoTexture_, &gst_frame); // Update videoTexture_
 	if (!success) {
 		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_ + ". Falling back to alphaTexture.");
-		textureValid_.store(false, std::memory_order_release);
 		texture_ = alphaTexture_;
 	}
 	SDL_UnlockMutex(SDL::getMutex());
@@ -1397,7 +1397,7 @@ bool GStreamerVideo::updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFr
 }
 
 bool GStreamerVideo::isPlaying() {
-	return isPlaying_.load(std::memory_order_acquire);
+	return isPlaying_;
 }
 
 void GStreamerVideo::setVolume(float volume) {

@@ -68,13 +68,14 @@ bool VideoComponent::update(float dt) {
 		return Component::update(dt);
 	}
 
+	if (!dimensionsUpdated_)
+		return Component::update(dt);
+
 	if ((currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0)) {
-		// Check if the *desired* state is already Paused, or if it's *actually* paused
-		if (videoInst_->getTargetState() != IVideo::VideoState::Paused ||
+		if (videoInst_->getTargetState() != IVideo::VideoState::Paused &&
 			videoInst_->getActualState() != IVideo::VideoState::Paused) {
 			videoInst_->pause();
 		}
-		// The video component might still do its base animation updates even if video is paused
 		return Component::update(dt);
 	}
 
@@ -86,20 +87,6 @@ bool VideoComponent::update(float dt) {
 
 		if (!currentPage_->isMenuScrolling())
 			videoInst_->volumeUpdate();
-
-		// One-time dimension fetch
-		if (!dimensionsUpdated_) {
-			auto videoHeight = static_cast<float>(videoInst_->getHeight());
-			auto videoWidth = static_cast<float>(videoInst_->getWidth());
-			if (videoHeight > 0.0f && videoWidth > 0.0f) {
-				baseViewInfo.ImageHeight = videoHeight;
-				baseViewInfo.ImageWidth = videoWidth;
-				dimensionsUpdated_ = true;
-				LOG_DEBUG("VideoComponent", "Updated video dimensions: " +
-					std::to_string(static_cast<int>(videoWidth)) + "x" + std::to_string(static_cast<int>(videoHeight)) +
-					" for " + videoFile_);
-			}
-		}
 
 		bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0f;
 		if (isCurrentlyVisible)
@@ -148,10 +135,22 @@ bool VideoComponent::update(float dt) {
 void VideoComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
 	if (!instanceReady_) {
-		if (!videoInst_ && videoFile_ != "") {
-			videoInst_ = VideoFactory::createVideo(monitor_, numLoops_, softOverlay_, listId_,
-				hasPerspective_ ? perspectiveCorners_ : nullptr);
+		if (!videoInst_ && !videoFile_.empty()) {
+			videoInst_ = VideoFactory::createVideo(
+				monitor_, numLoops_, softOverlay_, listId_,
+				hasPerspective_ ? perspectiveCorners_ : nullptr
+			);
 			if (videoInst_) {
+				dimensionsUpdated_ = false;
+				if (auto* gstreamer = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
+					gstreamer->setDimensionsReadyCallback([this](int w, int h) {
+						baseViewInfo.ImageWidth = static_cast<float>(w);
+						baseViewInfo.ImageHeight = static_cast<float>(h);
+						dimensionsUpdated_ = true;
+						LOG_DEBUG("VideoComponent", "Video dimensions ready: " +
+							std::to_string(w) + "x" + std::to_string(h) + " for " + videoFile_);
+						});
+				}
 				instanceReady_ = videoInst_->play(videoFile_);
 				if (!instanceReady_) {
 					LOG_WARNING("VideoComponent", "play() returned false for: " + videoFile_);
@@ -177,28 +176,21 @@ void VideoComponent::allocateGraphicsMemory() {
 	}
 }
 
-void VideoComponent::freeGraphicsMemory()
-{
+void VideoComponent::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
 	if (videoInst_) {
 		instanceReady_ = false;
 
-		if (listId_ != -1) {  // Simplified check now that markedForDeletion_ is gone
-			if (auto* gstreamerVideo = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
-				LOG_DEBUG("VideoComponent", "Releasing video to pool: " + videoFile_);
-				VideoPool::releaseVideo(
-					std::unique_ptr<GStreamerVideo>(gstreamerVideo),
-					monitor_,
-					listId_
-				);
-				videoInst_.release();  // Release ownership without deletion
-				return;
-			}
+		// Return to pool if pooled (listId_ != -1), else delete
+		if (listId_ != -1) {
+			LOG_DEBUG("VideoComponent", "Releasing video to pool: " + videoFile_);
+			// Pass ownership as std::unique_ptr<IVideo>
+			VideoPool::releaseVideo(std::move(videoInst_), monitor_, listId_);
+			// videoInst_ now nullptr
+			return;
 		}
-
 		LOG_DEBUG("VideoComponent", "Stopping and resetting video: " + videoFile_);
-		//videoInst_->stop();
-		videoInst_.reset();  // Clean deletion for non-pooled instances
+		videoInst_.reset();
 	}
 }
 
