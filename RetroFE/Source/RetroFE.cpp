@@ -809,7 +809,7 @@ bool RetroFE::run() {
 				// account for when returning from a menu and the previous key was still "stuck"
 				if (lastLaunchReturnTime_ == 0 || (currentTime_ - lastLaunchReturnTime_ > .3))
 				{
-					if (currentPage_->isIdle())
+					if (currentPage_ && currentPage_->isIdle())
 					{
 						state_ = processUserInput(currentPage_);
 					}
@@ -846,7 +846,7 @@ bool RetroFE::run() {
 
 			// Wait for onEnter animation to finish
 			case RETROFE_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				bool startCollectionEnter = false;
 				config_.getProperty(OPTION_STARTCOLLECTIONENTER, startCollectionEnter);
@@ -864,7 +864,7 @@ bool RetroFE::run() {
 
 			// Handle end of splash mode
 			case RETROFE_SPLASH_EXIT:
-			if (currentPage_->isIdle()) {
+			if (currentPage_ && currentPage_->isIdle()) {
 				// Save layout information before cleanup
 				int currentLayout = currentPage_->getCurrentLayout();
 
@@ -1021,7 +1021,7 @@ bool RetroFE::run() {
 			setState(RETROFE_PLAYLIST_REQUEST);
 			break;
 			case RETROFE_SCROLL_FORWARD:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->setScrolling(Page::ScrollDirectionForward);
 				currentPage_->scroll(true, false);
@@ -1030,7 +1030,7 @@ bool RetroFE::run() {
 			setState(RETROFE_IDLE);
 			break;
 			case RETROFE_SCROLL_BACK:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->setScrolling(Page::ScrollDirectionBack);
 				currentPage_->scroll(false, false);
@@ -1039,7 +1039,7 @@ bool RetroFE::run() {
 			setState(RETROFE_IDLE);
 			break;
 			case RETROFE_SCROLL_PLAYLIST_FORWARD:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->setScrolling(Page::ScrollDirectionPlaylistForward);
 				currentPage_->scroll(true, true);
@@ -1048,7 +1048,7 @@ bool RetroFE::run() {
 			setState(RETROFE_IDLE);
 			break;
 			case RETROFE_SCROLL_PLAYLIST_BACK:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->setScrolling(Page::ScrollDirectionPlaylistBack);
 				currentPage_->scroll(false, true);
@@ -1235,7 +1235,7 @@ bool RetroFE::run() {
 
 			// Switch playlist; wait for onHighlightExit animation to finish; load art
 			case RETROFE_PLAYLIST_EXIT:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				// lots of different toggles and menu jumps trigger this by accident
 				if (currentPage_->fromPlaylistNav)
@@ -1256,7 +1256,7 @@ bool RetroFE::run() {
 
 			// Switch playlist; start onHighlightEnter animation
 			case RETROFE_PLAYLIST_LOAD_ART:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 
 
@@ -1271,7 +1271,7 @@ bool RetroFE::run() {
 
 			// Switch playlist; wait for onHighlightEnter animation to finish
 			case RETROFE_PLAYLIST_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				setState(RETROFE_IDLE);
 			}
@@ -1296,7 +1296,7 @@ bool RetroFE::run() {
 
 			// Jump in menu; wait for onMenuJumpExit animation to finish; load art
 			case RETROFE_MENUJUMP_EXIT:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				setState(RETROFE_MENUJUMP_LOAD_ART);
 			}
@@ -1304,7 +1304,7 @@ bool RetroFE::run() {
 
 			// Jump in menu; start onMenuJumpEnter animation
 			case RETROFE_MENUJUMP_LOAD_ART:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->onNewItemSelected();
 				currentPage_->reallocateMenuSpritePoints(false); // skip updating playlist menu
@@ -1315,7 +1315,7 @@ bool RetroFE::run() {
 
 			// Jump in menu; wait for onMenuJump animation to finish
 			case RETROFE_MENUJUMP_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				setState(RETROFE_IDLE);
 			}
@@ -1330,7 +1330,7 @@ bool RetroFE::run() {
 
 			// Wait for onHighlightExit animation to finish; load art
 			case RETROFE_HIGHLIGHT_EXIT:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->highlightLoadArt();
 				setState(RETROFE_HIGHLIGHT_LOAD_ART);
@@ -1365,7 +1365,7 @@ bool RetroFE::run() {
 			{
 				state_ = state_tmp;
 			}
-			else if (currentPage_->isIdle())
+			else if (currentPage_ && currentPage_->isIdle())
 			{
 				setState(RETROFE_IDLE);
 			}
@@ -1553,7 +1553,7 @@ bool RetroFE::run() {
 
 			// Wait for onMenuExit animation to finish; load new page if applicable; load art
 			case RETROFE_NEXT_PAGE_MENU_EXIT:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				setState(RETROFE_NEXT_PAGE_MENU_LOAD_ART);
 
@@ -1659,7 +1659,7 @@ bool RetroFE::run() {
 
 			// Start onMenuEnter animation
 			case RETROFE_NEXT_PAGE_MENU_LOAD_ART:
-			if (currentPage_->getMenuDepth() != 1)
+			if (currentPage_ && currentPage_->getMenuDepth() != 1)
 			{
 				currentPage_->enterMenu();
 			}
@@ -1667,14 +1667,14 @@ bool RetroFE::run() {
 			{
 				currentPage_->start();
 			}
-			if (currentPage_->getSelectedItem())
+			if (currentPage_ && currentPage_->getSelectedItem())
 				l.LEDBlinky(9, currentPage_->getSelectedItem()->collectionInfo->name, currentPage_->getSelectedItem());
 			setState(RETROFE_NEXT_PAGE_MENU_ENTER);
 			break;
 
 			// Wait for onMenuEnter animation to finish
 			case RETROFE_NEXT_PAGE_MENU_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				inputClear = false;
 				config_.getProperty(OPTION_COLLECTIONINPUTCLEAR, inputClear);
@@ -1737,7 +1737,7 @@ bool RetroFE::run() {
 
 			// Wait for the menu exit animation to finish
 			case RETROFE_COLLECTION_DOWN_EXIT:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				// remember current collection and playlist
 				std::string collectionName = currentPage_->getCollectionName();
@@ -1837,7 +1837,7 @@ bool RetroFE::run() {
 
 			// Waiting for enter animation to stop
 			case RETROFE_COLLECTION_DOWN_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				int attractModePlaylistCollectionNumber = 0;
 				config_.getProperty("attractModePlaylistCollectionNumber", attractModePlaylistCollectionNumber);
@@ -1908,7 +1908,7 @@ bool RetroFE::run() {
 
 			// Wait for onHighlightExit animation to finish; load art
 			case RETROFE_COLLECTION_HIGHLIGHT_EXIT:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->highlightLoadArt();
 				setState(RETROFE_COLLECTION_HIGHLIGHT_LOAD_ART);
@@ -1925,7 +1925,7 @@ bool RetroFE::run() {
 
 			// Wait for onHighlightEnter animation to finish
 			case RETROFE_COLLECTION_HIGHLIGHT_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				nextPageItem_ = currentPage_->getSelectedItem();
 
@@ -1967,7 +1967,7 @@ bool RetroFE::run() {
 
 			// Wait for the menu exit animation to finish
 			case RETROFE_COLLECTION_UP_EXIT:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				// remember current collection and playlist
 				std::string collectionName = currentPage_->getCollectionName();
@@ -2045,7 +2045,7 @@ bool RetroFE::run() {
 
 			// Waiting for enter animation to stop
 			case RETROFE_COLLECTION_UP_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->setScrolling(Page::ScrollDirectionBack);
 				currentPage_->scroll(false, false);
@@ -2108,7 +2108,7 @@ bool RetroFE::run() {
 			break;
 
 			case RETROFE_ATTRACT_LAUNCH_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				currentPage_->setSelectedItem();
 				currentPage_->onNewItemSelected();
@@ -2119,7 +2119,7 @@ bool RetroFE::run() {
 
 			break;
 			case RETROFE_ATTRACT_LAUNCH_REQUEST:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				nextPageItem_ = currentPage_->getSelectedItem();
 				launchEnter();
@@ -2166,7 +2166,7 @@ bool RetroFE::run() {
 
 			// Wait for onGameEnter animation to finish; launch game; start onGameExit animation
 			case RETROFE_LAUNCH_REQUEST:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				nextPageItem_ = currentPage_->getSelectedItem();
 				launchEnter();
@@ -2233,18 +2233,18 @@ bool RetroFE::run() {
 			// Wait for onGameExit animation to finish
 			case RETROFE_LAUNCH_EXIT: {
 				// Only update `state` if `currentPage_` is idle
-				if (currentPage_->isIdle()) {
+				if (currentPage_ && currentPage_->isIdle()) {
 					setState(RETROFE_IDLE);
 				}
 				break;
 			}
 
 
-									// Go back a page; start onMenuExit animation
+			// Go back a page; start onMenuExit animation
 			case RETROFE_BACK_REQUEST:
-			if (currentPage_->getMenuDepth() == 1)
+			if (currentPage_ && currentPage_->getMenuDepth() == 1)
 			{
-				currentPage_->stop();
+				currentPage_->pause();
 				m.clearPage();
 				menuMode_ = false;
 			}
@@ -2257,7 +2257,7 @@ bool RetroFE::run() {
 
 			// Wait for onMenuExit animation to finish; load previous page; load art
 			case RETROFE_BACK_MENU_EXIT:
-			if (currentPage_->isIdle()) {
+			if (currentPage_ && currentPage_->isIdle()) {
 				// Store current state before transition
 				std::string collectionName = currentPage_->getCollectionName();
 				if (!collectionName.empty()) {
@@ -2367,7 +2367,7 @@ bool RetroFE::run() {
 
 			// Wait for onMenuEnter animation to finish
 			case RETROFE_BACK_MENU_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				bool collectionInputClear = false;
 				config_.getProperty(OPTION_COLLECTIONINPUTCLEAR, collectionInputClear);
@@ -2385,7 +2385,7 @@ bool RetroFE::run() {
 
 			// Start menu mode
 			case RETROFE_MENUMODE_START_REQUEST:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				std::string collectionName = currentPage_->getCollectionName();
 				lastMenuOffsets_[collectionName] = currentPage_->getScrollOffsetIndex();
@@ -2434,7 +2434,7 @@ bool RetroFE::run() {
 			break;
 
 			case RETROFE_MENUMODE_START_ENTER:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				SDL_Event e;
 				while (SDL_PollEvent(&e))
@@ -2446,7 +2446,7 @@ bool RetroFE::run() {
 
 			// Wait for splash mode animation to finish
 			case RETROFE_NEW:
-			if (currentPage_->isIdle())
+			if (currentPage_ && currentPage_->isIdle())
 			{
 				setState(RETROFE_IDLE);
 			}
@@ -3400,18 +3400,18 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 
 		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodeTogglePlaylist))
 		{
-			if (currentPage_->getPlaylistName() != "favorites" &&
-				!isStandalonePlaylist(currentPage_->getPlaylistName()))
+			if ((currentPage_->getPlaylistName() != "favorites"
+				&& currentPage_->getPlaylistName() != "settings"
+				&& currentPage_->getPlaylistName() != "quicklist")
+				&& !isStandalonePlaylist(currentPage_->getPlaylistName()))
 			{
 				attract_.reset();
 				page->rememberSelectedItem();
 				page->togglePlaylist();
-				// don't trigger playlist change events but refresh item states
 				currentPage_->onNewItemSelected();
 				state = RETROFE_PLAYLIST_ENTER;
 			}
 		}
-
 		else if (input_.keystate(UserInput::KeyCodeToggleGameInfo) || (input_.keystate(UserInput::KeyCodeGameInfoCombo1) && input_.keystate(UserInput::KeyCodeGameInfoCombo2)))
 		{
 			attract_.reset();
