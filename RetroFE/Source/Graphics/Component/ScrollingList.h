@@ -160,7 +160,6 @@ public:
     void setSelectedIndex(int selectedIndex);
     Item* getItemByOffset(int offset);
     Item* getSelectedItem();
-    unsigned int getSelectedItemPosition();
     void allocateGraphicsMemory() override;
     void freeGraphicsMemory() override;
     bool update(float dt) override;
@@ -205,7 +204,6 @@ private:
     bool selectedImage_;
     bool textFallback_{ false };
 
-    std::vector<Component*>* spriteList_{ nullptr };
     std::vector<ViewInfo*>* scrollPoints_{ nullptr };
     std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints_;
 

@@ -142,16 +142,6 @@ std::string ScrollingList::getSelectedItemName()
     return (*items_)[(itemIndex_ + selectedOffsetIndex_) % static_cast<int>(size)]->name;
 }
 
-size_t loopIncrement(size_t offset, size_t i, size_t size) {
-    if (size == 0) return 0;
-    return (offset + i) % size;
-}
-
-size_t loopDecrement(size_t offset, size_t i, size_t size) {
-    if (size == 0) return 0;
-    return (offset + size - i) % size; // Adjusted to use size_t and ensure no underflow
-}
-
 void ScrollingList::setScrollAcceleration( float value )
 {
     scrollAcceleration_ = value;
@@ -233,10 +223,12 @@ void ScrollingList::destroyItems()
     // Delete all components
     for (unsigned int i = 0; i < componentSize; ++i) {
         if (Component* component = data[i]) {
+            component->freeGraphicsMemory();
             delete component;
             data[i] = nullptr;
         }
     }
+    data.clear();
 }
 
 
