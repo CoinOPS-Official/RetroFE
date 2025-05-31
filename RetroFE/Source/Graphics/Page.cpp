@@ -50,8 +50,8 @@ Page::Page(Configuration &config, int layoutWidth, int layoutHeight)
     , selectSoundChunk_(NULL)
     , minShowTime_(0)
     , jukebox_(false)
-    , useThreading_(Utils::getOSType() == "windows" && SDL::getRendererBackend(0) == "direct3d11")
-    //, useThreading_(false)
+    //, useThreading_(Utils::getOSType() == "windows" && SDL::getRendererBackend(0) == "direct3d11")
+    , useThreading_(false)
 {
 
     for (int i = 0; i < MAX_LAYOUTS; i++) {
@@ -309,16 +309,14 @@ bool Page::addComponent(Component* c)
 }
 
 
-bool Page::isMenuIdle()
-{
+bool Page::isMenuIdle() {
     if (playlistMenu_ && !playlistMenu_->isScrollingListIdle())
         return false;
 
-    for(auto it = menus_.begin(); it != menus_.end(); ++it) {
-        for(auto it2 = it->begin(); it2 != it->end(); ++it2) {
-            ScrollingList *menu = *it2;
-
-            if(!menu->isScrollingListIdle()) {
+    for (auto it = menus_.begin(); it != menus_.end(); ++it) {
+        for (auto it2 = it->begin(); it2 != it->end(); ++it2) {
+            ScrollingList* menu = *it2;
+            if (menu && !menu->isScrollingListIdle()) {
                 return false;
             }
         }
