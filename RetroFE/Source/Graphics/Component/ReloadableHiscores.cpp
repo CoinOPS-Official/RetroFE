@@ -62,6 +62,7 @@ ReloadableHiscores::ReloadableHiscores(Configuration& config, std::string textFo
 	, lastComputedDrawableHeight_(0.0f)
 	, lastComputedRowPadding_(0.0f)
 	, lastSelectedItem_(nullptr)
+	, intermediateTexture_(nullptr)
 	, highScoreTable_(nullptr)
 	, headerTexture_(nullptr)
 	, tableRowsTexture_(nullptr)
@@ -290,14 +291,9 @@ void ReloadableHiscores::allocateGraphicsMemory() {
 
 void ReloadableHiscores::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
-	if (headerTexture_) {
-		SDL_DestroyTexture(headerTexture_);
-		headerTexture_ = nullptr;
-	}
-	if (tableRowsTexture_) {
-		SDL_DestroyTexture(tableRowsTexture_);
-		tableRowsTexture_ = nullptr;
-	}
+	if (headerTexture_) { SDL_DestroyTexture(headerTexture_); headerTexture_ = nullptr; }
+	if (tableRowsTexture_) { SDL_DestroyTexture(tableRowsTexture_); tableRowsTexture_ = nullptr; }
+	if (intermediateTexture_) { SDL_DestroyTexture(intermediateTexture_); intermediateTexture_ = nullptr; }
 }
 
 
@@ -312,6 +308,10 @@ void ReloadableHiscores::initializeFonts() {
 
 
 void ReloadableHiscores::reloadTexture(bool resetScroll) {
+	
+	if (baseViewInfo.Alpha <= 0.0f)
+		return;
+	
 	if (resetScroll) {
 		currentPosition_ = 0.0f;
 		waitStartTime_ = startTime_;
@@ -403,21 +403,45 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 void ReloadableHiscores::draw() {
 	Component::draw();
 
+	if (baseViewInfo.Alpha <= 0.0f)
+		return;
+
 	if (!(highScoreTable_ && !highScoreTable_->tables.empty()) || baseViewInfo.Alpha <= 0.0f)
 		return;
 	if (!headerTexture_ || !tableRowsTexture_) return;
 
 	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+	if (!renderer) return;
 
-	float effectiveViewWidth = baseViewInfo.MaxWidth; // Default to MaxWidth
-	if (baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth) {
-		effectiveViewWidth = baseViewInfo.Width;
+	// Compute composite/intermediate texture size (covering the whole visible region)
+	float compositeWidth = baseViewInfo.Width;
+	float compositeHeight = baseViewInfo.Height;
+
+	// (Re)create intermediate texture if needed
+	static int prevW = 0, prevH = 0;
+	if (!intermediateTexture_ || prevW != (int)compositeWidth || prevH != (int)compositeHeight) {
+		if (intermediateTexture_) SDL_DestroyTexture(intermediateTexture_);
+		intermediateTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET,
+			(int)compositeWidth, (int)compositeHeight);
+		SDL_SetTextureBlendMode(intermediateTexture_, SDL_BLENDMODE_BLEND);
+		prevW = (int)compositeWidth;
+		prevH = (int)compositeHeight;
 	}
 
-	float xOrigin = baseViewInfo.XRelativeToOrigin() + (effectiveViewWidth - cachedTotalTableWidth_) / 2.0f;
-	float yOrigin = baseViewInfo.YRelativeToOrigin();
+	// Draw header/body into intermediate texture
+	SDL_Texture* oldTarget = SDL_GetRenderTarget(renderer);
+	SDL_SetRenderTarget(renderer, intermediateTexture_);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+	SDL_RenderClear(renderer);
 
-	// HEADER
+	float effectiveViewWidth = baseViewInfo.MaxWidth; // Default to MaxWidth
+	if (baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth)
+		effectiveViewWidth = baseViewInfo.Width;
+
+	float xOrigin = (effectiveViewWidth - cachedTotalTableWidth_) / 2.0f;
+	float yOrigin = 0.0f; // Always draw header at the top of intermediate
+
+	// -- Draw header --
 	SDL_FRect destHeader = {
 		xOrigin,
 		yOrigin,
@@ -426,8 +450,8 @@ void ReloadableHiscores::draw() {
 	};
 	SDL_RenderCopyF(renderer, headerTexture_, nullptr, &destHeader);
 
-	// ROWS
-	float rowsAreaHeight = baseViewInfo.Height - headerTextureHeight_;
+	// -- Draw table body --
+	float rowsAreaHeight = compositeHeight - headerTextureHeight_;
 	float scrollY = currentPosition_;
 
 	if (tableRowsTextureHeight_ <= rowsAreaHeight) {
@@ -455,10 +479,24 @@ void ReloadableHiscores::draw() {
 				};
 				SDL_RenderCopyF(renderer, tableRowsTexture_, &srcRows, &destRows);
 			}
-			// If visibleSrcHeight <= 0, nothing is visible; do not draw
 		}
-		// else: scrollY >= tableRowsTextureHeight_ -> nothing to draw
 	}
+
+#ifndef NDEBUG
+	SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255); // Green, opaque
+	SDL_Rect outlineRect = { 0, 0, static_cast<int>(compositeWidth) - 1, static_cast<int>(compositeHeight) - 1 };
+	SDL_RenderDrawRect(renderer, &outlineRect);
+#endif
+	SDL_SetRenderTarget(renderer, oldTarget);
+
+	// Final: Draw the intermediate texture to the real target using SDL::renderCopyF (handles alpha/rotation/etc)
+	SDL_FRect rect = {
+		baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
+		baseViewInfo.ScaledWidth(), baseViewInfo.ScaledHeight() };
+
+	SDL::renderCopyF(intermediateTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
+		page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+		page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
 }
 
 
@@ -611,7 +649,11 @@ void ReloadableHiscores::renderHeaderTexture(
 		}
 		x += cachedColumnWidths_[i] + paddingBetweenColumns;
 	}
-
+#ifndef NDEBUG
+	SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red, opaque
+	SDL_Rect outlineRect = { 0, 0, static_cast<int>(totalTableWidth), headerTextureHeight_ };
+	SDL_RenderDrawRect(renderer, &outlineRect);
+#endif
 	SDL_SetRenderTarget(renderer, oldTarget);
 }
 
@@ -659,6 +701,10 @@ void ReloadableHiscores::renderTableRowsTexture(
 			x += cachedColumnWidths_[i] + paddingBetweenColumns;
 		}
 	}
-
+#ifndef NDEBUG
+	SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red, opaque
+	SDL_Rect outlineRect = { 0, 0, static_cast<int>(totalTableWidth), tableRowsTextureHeight_ };
+	SDL_RenderDrawRect(renderer, &outlineRect);
+#endif
 	SDL_SetRenderTarget(renderer, oldTarget);
 }

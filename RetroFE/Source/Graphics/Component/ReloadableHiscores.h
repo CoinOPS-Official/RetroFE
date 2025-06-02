@@ -87,6 +87,7 @@ private:
     // Resources
     Item* lastSelectedItem_;
     HighScoreData* highScoreTable_;
+    SDL_Texture* intermediateTexture_;
 	SDL_Texture* headerTexture_;
 	SDL_Texture* tableRowsTexture_;
 	int tableRowsTextureHeight_;
