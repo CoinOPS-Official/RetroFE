@@ -195,7 +195,7 @@ void VideoComponent::freeGraphicsMemory() {
 }
 
 void VideoComponent::draw() {
-	if (!videoInst_ || !instanceReady_ || !videoInst_->isPlaying()) return;
+	if (!videoInst_ || !instanceReady_) return;
 
 	videoInst_->draw();
 
@@ -210,9 +210,9 @@ void VideoComponent::draw() {
 	}
 }
 
-std::string_view VideoComponent::filePath() const  // Add const since this doesn't modify state
+std::string_view VideoComponent::filePath() const
 {
-	return videoFile_;  // This is fine as is since string_view is safe with empty strings
+	return videoFile_;
 }
 
 void VideoComponent::skipForward()
