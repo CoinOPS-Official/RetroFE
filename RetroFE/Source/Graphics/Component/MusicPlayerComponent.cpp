@@ -101,6 +101,14 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	allocateGraphicsMemory();
 }
 
+namespace ImageProcessorConstants {
+	const float SCAN_AREA_TOP_RATIO = 0.3f;
+	const float SCAN_AREA_BOTTOM_RATIO = 0.9f;
+	const Uint8 ALPHA_THRESHOLD = 50;
+	const float LUMINANCE_JUMP_THRESHOLD = 50.0f;
+	const int MIN_SEGMENT_WIDTH = 2;
+}
+
 MusicPlayerComponent::~MusicPlayerComponent() {
 	freeGraphicsMemory();
 }
@@ -384,117 +392,86 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 }
 
 int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
-	if (!surface || !surface->pixels) {
-		LOG_ERROR("MusicPlayerComponent", "Invalid surface or pixel data");
-		return 0;
-	}
+	if (!surface || !surface->pixels) return 0;
+	if (surface->format->BytesPerPixel != 4) return 0;
 
-	int texW = surface->w;
-	int texH = surface->h;
+	const int texW = surface->w;
+	const int texH = surface->h;
+	const auto scanYStart = static_cast<int>(texH * ImageProcessorConstants::SCAN_AREA_TOP_RATIO);
+	const auto scanYEnd = static_cast<int>(texH * ImageProcessorConstants::SCAN_AREA_BOTTOM_RATIO);
 
-	if (surface->format->BytesPerPixel != 4) {
-		LOG_ERROR("MusicPlayerComponent", "Surface format is not 32-bit, cannot detect segments");
-		return 0;
-	}
+	std::map<int, int> segmentCountHistogram;
 
-	const Uint8 alphaThreshold = 50;
+	if (SDL_MUSTLOCK(surface)) SDL_LockSurface(surface);
 
-	if (SDL_MUSTLOCK(surface)) {
-		SDL_LockSurface(surface);
-	}
-
-	int bestSegmentCount = 0;
-	std::vector<int> bestSegmentStarts;
-	int numRowsToCheck = std::min(20, texH);
-
-	for (int rowNum = 0; rowNum < numRowsToCheck; rowNum++) {
-		int y = (texH * rowNum) / numRowsToCheck;
-		if (y < texH * 0.1 || y > texH * 0.9) {
-			continue;
-		}
-
+	for (int y = scanYStart; y < scanYEnd; ++y) {
 		Uint8* pixelData = static_cast<Uint8*>(surface->pixels);
 		Uint32* row = reinterpret_cast<Uint32*>(pixelData + y * surface->pitch);
+
 		std::vector<int> segmentStartXs;
-		bool inSolidSegment = false;
-		int currentSegmentWidth = 0;
-		int lastSegmentStart = -1;
+		bool inSegment = false;
+		int segmentStart = -1;
+
+		float previousLuminance = 0.0f;
 
 		for (int x = 0; x < texW; ++x) {
 			Uint32 pixel = row[x];
 			Uint8 r, g, b, a;
 			SDL_GetRGBA(pixel, surface->format, &r, &g, &b, &a);
-			bool isVisible = (a > alphaThreshold);
 
-			if (isVisible && !inSolidSegment) {
-				inSolidSegment = true;
-				lastSegmentStart = x;
-				currentSegmentWidth = 1;
+			float currentLuminance = 0.0f;
+			if (a > ImageProcessorConstants::ALPHA_THRESHOLD) {
+				currentLuminance = (0.299f * r) + (0.587f * g) + (0.114f * b);
 			}
-			else if (isVisible && inSolidSegment) {
-				currentSegmentWidth++;
+
+			float luminanceChange = currentLuminance - previousLuminance;
+
+			// RISING EDGE: Did we transition from dark to bright?
+			if (!inSegment && luminanceChange > ImageProcessorConstants::LUMINANCE_JUMP_THRESHOLD) {
+				inSegment = true;
+				segmentStart = x;
 			}
-			else if (!isVisible && inSolidSegment) {
-				inSolidSegment = false;
-				if (currentSegmentWidth >= 2) {
-					segmentStartXs.push_back(lastSegmentStart);
+			// FALLING EDGE: Did we transition from bright to dark?
+			else if (inSegment && luminanceChange < -ImageProcessorConstants::LUMINANCE_JUMP_THRESHOLD) {
+				inSegment = false;
+				if (x - segmentStart >= ImageProcessorConstants::MIN_SEGMENT_WIDTH) {
+					segmentStartXs.push_back(segmentStart);
 				}
-				currentSegmentWidth = 0;
 			}
-		}
-		if (inSolidSegment && currentSegmentWidth >= 2) {
-			segmentStartXs.push_back(lastSegmentStart);
-		}
-		if (segmentStartXs.size() < 2) {
-			continue;
+
+			previousLuminance = currentLuminance;
 		}
 
-		bool evenlySpaced = true;
-		double averageSpacing = 0.0;
-		std::vector<int> spacings;
-
-		for (size_t i = 1; i < segmentStartXs.size(); ++i) {
-			int spacing = segmentStartXs[i] - segmentStartXs[i - 1];
-			spacings.push_back(spacing);
-			averageSpacing += spacing;
+		// Handle case where a segment runs to the very edge of the image
+		if (inSegment && texW - segmentStart >= ImageProcessorConstants::MIN_SEGMENT_WIDTH) {
+			segmentStartXs.push_back(segmentStart);
 		}
 
-		if (!spacings.empty()) {
-			averageSpacing /= static_cast<double>(spacings.size());
-			double varianceSum = 0.0;
-			for (int spacing : spacings) {
-				double diff = spacing - averageSpacing;
-				varianceSum += diff * diff;
-			}
-			double stdDev = std::sqrt(varianceSum / static_cast<double>(spacings.size()));
-			if (stdDev > (averageSpacing * 0.2)) {
-				evenlySpaced = false;
-			}
-		}
-
-		if (evenlySpaced && segmentStartXs.size() > static_cast<size_t>(bestSegmentCount)) {
-			bestSegmentCount = static_cast<int>(segmentStartXs.size());
-			bestSegmentStarts = segmentStartXs;
-			if (bestSegmentCount >= 10) {
-				LOG_INFO("MusicPlayerComponent", "Found good segment pattern at row " + std::to_string(y) +
-					" with " + std::to_string(bestSegmentCount) + " segments");
-				break;
-			}
+		if (!segmentStartXs.empty()) {
+			segmentCountHistogram[segmentStartXs.size()]++;
 		}
 	}
 
-	if (SDL_MUSTLOCK(surface)) {
-		SDL_UnlockSurface(surface);
+	if (SDL_MUSTLOCK(surface)) SDL_UnlockSurface(surface);
+
+	if (segmentCountHistogram.empty()) {
+		return 0;
 	}
 
-	if (bestSegmentCount > 0) {
-		LOG_INFO("MusicPlayerComponent", "Detected " + std::to_string(bestSegmentCount) +
-			" segments in volume bar image");
+	if (!segmentCountHistogram.empty()) {
+		auto mostCommonEntry = std::max_element(
+			segmentCountHistogram.begin(),
+			segmentCountHistogram.end(),
+			[](const auto& a, const auto& b) { return a.second < b.second; }
+		);
+		LOG_INFO("MusicPlayerComponent", "Detected " + std::to_string(mostCommonEntry->first) +
+			" segments in volume bar image (modal scanline count)");
+		return mostCommonEntry->first;
 	}
 	else {
 		LOG_INFO("MusicPlayerComponent", "No segments detected in volume bar image");
+		return 0;
 	}
-	return bestSegmentCount;
 }
 
 void MusicPlayerComponent::updateVolumeBarTexture() {
