@@ -108,41 +108,45 @@ bool SDL::initialize(Configuration& config) {
 		LOG_INFO("SDL", "Using configured screenOrder: " + screenOrderStr);
 	}
 	else {
-		// Try legacy screenNumX properties
-		std::vector<int> legacyScreenNums;
-		for (int i = 0;; ++i) {
-			std::string key = "screenNum" + std::to_string(i);
-			int val;
-			if (config.getProperty(key, val)) {
-				legacyScreenNums.push_back(val);
-			}
-			else {
-				break;
-			}
-		}
-		if (!legacyScreenNums.empty()) {
-			// Build CSV
-			for (size_t i = 0; i < legacyScreenNums.size(); ++i) {
-				if (i > 0) screenOrderStr += ",";
-				screenOrderStr += std::to_string(legacyScreenNums[i]);
-			}
-			LOG_INFO("SDL", "No screenOrder specified. Using legacy screenNumX: " + screenOrderStr);
-		}
-		else if (config.propertyExists("numScreens")) {
-			int numScreens = 1;
-			config.getProperty("numScreens", numScreens);
+		// Fallback: use legacy screenNumX or numScreens
+		int numScreens = -1;
+		config.getProperty("numScreens", numScreens);
+
+		if (numScreens > 0) {
 			for (int i = 0; i < numScreens; ++i) {
-				if (i > 0) screenOrderStr += ",";
-				screenOrderStr += std::to_string(i);
+				int screenNum = i;
+				config.getProperty("screenNum" + std::to_string(i), screenNum);
+				if (!screenOrderStr.empty()) screenOrderStr += ",";
+				screenOrderStr += std::to_string(screenNum);
 			}
-			LOG_INFO("SDL", "No screenOrder or screenNumX specified. Using legacy numScreens: " + screenOrderStr);
+			LOG_INFO("SDL", "No screenOrder specified. Using screenNumX and numScreens: " + screenOrderStr);
 		}
 		else {
-			screenOrderStr = "0";
-			LOG_WARNING("SDL", "No screenOrder, screenNumX, or numScreens specified. Defaulting to screen 0.");
+			// Auto-detect as fallback
+			std::vector<int> legacyScreenNums;
+			for (int i = 0;; ++i) {
+				std::string key = "screenNum" + std::to_string(i);
+				int val;
+				if (config.getProperty(key, val)) {
+					legacyScreenNums.push_back(val);
+				}
+				else {
+					break;
+				}
+			}
+			if (!legacyScreenNums.empty()) {
+				for (size_t i = 0; i < legacyScreenNums.size(); ++i) {
+					if (i > 0) screenOrderStr += ",";
+					screenOrderStr += std::to_string(legacyScreenNums[i]);
+				}
+				LOG_INFO("SDL", "No screenOrder or numScreens specified. Using detected screenNumX: " + screenOrderStr);
+			}
+			else {
+				screenOrderStr = "0";
+				LOG_WARNING("SDL", "No screenOrder, screenNumX, or numScreens specified. Defaulting to screen 0.");
+			}
 		}
 	}
-
 	// Split and convert to vector<int>
 	std::vector<std::string> screenOrderStrVec;
 	Utils::listToVector(screenOrderStr, screenOrderStrVec, ',');
