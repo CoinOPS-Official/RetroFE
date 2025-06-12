@@ -111,6 +111,7 @@ public:
     void triggerMenuEnterEvent(int menuIndex = -1);
     void triggerMenuExitEvent(int menuIndex = -1);
     void triggerGameEnterEvent(int menuIndex = -1);
+    void triggerTrackChangeEvent(int menuIndex);
     void triggerGameExitEvent(int menuIndex = -1);
     void triggerHighlightEnterEvent(int menuIndex = -1);
     void triggerHighlightExitEvent(int menuIndex = -1);
@@ -171,6 +172,7 @@ public:
     bool horizontalScroll{ false };
     void deallocateSpritePoints();
     void allocateSpritePoints();
+    void reallocateSpritePoints();
     void resetScrollPeriod();
     void updateScrollPeriod();
     bool isFastScrolling() const;

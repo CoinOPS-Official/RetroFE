@@ -43,6 +43,7 @@ private:
         size_t requiredInstanceCount = 0;
         bool initialCountLatched = false;
         std::mutex poolMutex;
+        bool markedForCleanup = false;
     };
 
     using ListPoolMap = std::unordered_map<int, PoolInfo>;

@@ -182,18 +182,44 @@ void ScrollingList::allocateSpritePoints() {
 
     for (size_t i = 0; i < scrollPointsSize; ++i) {
         size_t index = loopIncrement(itemIndex_, i, itemsSize);
-        Item const* item = (*items_)[index];
+        Item const* item = (*items_)[index];  // using [] instead of at()
 
-        Component* old = components_[i];
-        ViewInfo backupView;
-        if (old && !newItemSelected) {
-            backupView = old->baseViewInfo;
+        Component* old = components_[i];  // using [] instead of at()
+
+        allocateTexture(i, item);
+
+        Component* c = components_[i];  // using [] instead of at()
+        if (c) {
+            c->allocateGraphicsMemory();
+
+            ViewInfo* view = (*scrollPoints_)[i];  // using [] instead of at()
+
+            resetTweens(c, (*tweenPoints_)[i], view, view, 0);  // using [] instead of at()
+
+            if (old && !newItemSelected) {
+                c->baseViewInfo = old->baseViewInfo;
+                delete old;
+            }
         }
+    }
+}
 
-        // Deallocate old component first (safe cleanup)
+void ScrollingList::reallocateSpritePoints() {
+    if (!items_ || items_->empty()) return;
+    if (!scrollPoints_ || scrollPoints_->empty()) return;
+    if (components_.empty()) return;
+
+    size_t scrollPointsSize = scrollPoints_->size();
+    size_t itemsSize = items_->size();
+
+    for (size_t i = 0; i < scrollPointsSize; ++i) {
+        // Deallocate first, before re-allocating!
         deallocateTexture(i);
 
-        // Allocate new component
+        // Figure out which item this slot now represents
+        size_t index = loopIncrement(itemIndex_, i, itemsSize);
+        Item const* item = (*items_)[index];
+
         allocateTexture(i, item);
 
         Component* c = components_[i];
@@ -202,11 +228,7 @@ void ScrollingList::allocateSpritePoints() {
 
             ViewInfo* view = (*scrollPoints_)[i];
             resetTweens(c, (*tweenPoints_)[i], view, view, 0);
-
-            // Restore baseViewInfo if applicable
-            if (!newItemSelected) {
-                c->baseViewInfo = backupView;
-            }
+            // No need to copy baseViewInfo here; old is gone.
         }
     }
 }
@@ -217,6 +239,10 @@ void ScrollingList::destroyItems()
     size_t componentSize = data.size();
 
     // Clean up the pool - listId_ will always be valid
+    if (listId_ == -1) {
+        LOG_ERROR("ScrollingList", "Attempting to clean up video pool with invalid listId_ (-1).");
+        return;
+	}
     LOG_DEBUG("ScrollingList", "Cleaning up video pool for list: " + std::to_string(listId_));
     VideoPool::cleanup(baseViewInfo.Monitor, listId_);
 
@@ -518,11 +544,6 @@ void ScrollingList::freeGraphicsMemory()
     scrollPeriod_ = 0;
     // Clean up components
     deallocateSpritePoints();
-
-    // Clean up the video pool for this list
-    if (listId_ != -1) {
-        VideoPool::cleanup(baseViewInfo.Monitor, listId_);
-    }
 }
 
 void ScrollingList::triggerEnterEvent( )
@@ -548,6 +569,10 @@ void ScrollingList::triggerMenuExitEvent( int menuIndex )
 void ScrollingList::triggerGameEnterEvent( int menuIndex )
 {
     triggerEventOnAll("gameEnter", menuIndex);
+}
+
+void ScrollingList::triggerTrackChangeEvent(int menuIndex) {
+    triggerEventOnAll("trackChange", menuIndex);
 }
 
 void ScrollingList::triggerGameExitEvent( int menuIndex )
