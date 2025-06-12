@@ -1019,6 +1019,7 @@ std::shared_ptr<AnimationEvents> PageBuilder::createTweenInstance(rapidxml::xml_
 	buildTweenSet(tweens.get(), componentXml, "onMenuActionInputExit", "menuActionInputExit");
 	buildTweenSet(tweens.get(), componentXml, "onMenuActionSelectEnter", "menuActionSelectEnter");
 	buildTweenSet(tweens.get(), componentXml, "onMenuActionSelectExit", "menuActionSelectExit");
+	buildTweenSet(tweens.get(), componentXml, "onTrackChange", "trackChange");
 
 	return tweens;
 }

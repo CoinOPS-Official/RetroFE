@@ -59,6 +59,7 @@ public:
     void enterMenu();
     void exitMenu();
     void enterGame();
+    void trackChange();
     void exitGame();
     std::string getPlaylistName() const;
     void favPlaylist();

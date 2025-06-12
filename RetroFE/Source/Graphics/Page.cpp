@@ -1050,6 +1050,11 @@ void Page::enterGame()
     triggerEventOnAllMenus("gameEnter");
 }
 
+void Page::trackChange()
+{
+    triggerEventOnAllMenus("trackChange");
+}
+
 
 void Page::exitGame()
 {
@@ -1450,49 +1455,110 @@ void Page::draw(int monitor) {
 
 
 
-void Page::removePlaylist()
-{
-    if (!selectedItem_)
+void Page::removePlaylist() {
+    if (!selectedItem_) { LOG_WARNING("Page::removePlaylist", "No selectedItem_"); return; }
+
+    MenuInfo_S& info = collections_.back();
+    CollectionInfo* collection = info.collection;
+    std::vector<Item*>* favItems = collection->playlists["favorites"];
+
+    Item* itemToRemove = selectedItem_; // Ensured fresh by caller
+    size_t originalDataIndex_of_itemToRemove = -1;
+    size_t oldFavItemsSize = favItems->size(); // Size BEFORE removal
+
+    if (oldFavItemsSize == 0) {
+        LOG_WARNING("Page::removePlaylist", "Attempting to remove from an already empty favorites list.");
+        return; // Nothing to do
+    }
+
+    auto it_find_original = std::find(favItems->begin(), favItems->end(), itemToRemove);
+    if (it_find_original != favItems->end()) {
+        originalDataIndex_of_itemToRemove = std::distance(favItems->begin(), it_find_original);
+    }
+    else {
+        LOG_ERROR("Page::removePlaylist", "CRITICAL: itemToRemove '" + itemToRemove->name + "' not found in favItems. Page::selectedItem_ was: " + (selectedItem_ ? selectedItem_->name : "nullptr") + ". Aborting.");
         return;
+    }
 
-    MenuInfo_S &info = collections_.back();
-    CollectionInfo *collection = info.collection;
+    // LOG_DEBUG("Page::removePlaylist", "Removing: " + itemToRemove->getName() + " from original index: " + std::to_string(originalDataIndex_of_itemToRemove) + ". List size before: " + std::to_string(oldFavItemsSize));
 
-    std::vector<Item *> *items = collection->playlists["favorites"];
+    // --- Step 1: Determine the Item* that was cyclically previous to itemToRemove ---
+    Item* candidateItemToSelect = nullptr;
+    if (oldFavItemsSize > 1) { // Only if there are other items to select from the original list
+        // Calculate the index of the item cyclically AFTER the one being removed
+        size_t indexOfCyclicallyNext = (originalDataIndex_of_itemToRemove + 1) % oldFavItemsSize;
+        candidateItemToSelect = (*favItems)[indexOfCyclicallyNext];
+        // LOG_DEBUG("Page::removePlaylist", "Candidate for new selection (cyclically next): " + candidateItemToSelect->getName());
+    }
+    else {
+        // List had only one item (itemToRemove). After removal, it will be empty.
+        // candidateItemToSelect remains nullptr.
+        // LOG_DEBUG("Page::removePlaylist", "List had only one item. Will be empty after removal.");
+    }
 
-    if (auto it = std::find(items->begin(), items->end(), selectedItem_); it != items->end()) {
-        size_t index = 0;  // Initialize with 0 instead of NULL
-        ScrollingList const* amenu = nullptr;  // Use nullptr for pointer types
-        // get the deleted item's position
-        if (getPlaylistName() == "favorites") {
-            amenu = getAnActiveMenu();
-            if (amenu) {
-                index = amenu->getScrollOffsetIndex();
+    // --- Step 2: Modify shared data ---
+    favItems->erase(it_find_original); // itemToRemove is now out of favItems
+    itemToRemove->isFavorite = false;
+    collection->sortPlaylists();     // favItems is now shorter and sorted
+    collection->saveRequest = true;
+    size_t newFavItemsSize = favItems->size();
+    // LOG_DEBUG("Page::removePlaylist", "Data modified. New list size: " + std::to_string(newFavItemsSize));
+
+
+    // --- Step 3: Calculate new target index in the final favItems ---
+    size_t newTargetIndexInFavItems = 0; // Default if list becomes empty or candidate not found
+
+    if (newFavItemsSize > 0) { // Only if the list is not empty after removal
+        if (candidateItemToSelect) { // candidateItemToSelect was determined from old list
+            // Find the candidateItemToSelect in the NEW (shorter, sorted) favItems list
+            auto it_find_candidate_new_pos = std::find(favItems->begin(), favItems->end(), candidateItemToSelect);
+            if (it_find_candidate_new_pos != favItems->end()) {
+                newTargetIndexInFavItems = std::distance(favItems->begin(), it_find_candidate_new_pos);
+                // LOG_DEBUG("Page::removePlaylist", "Found candidate '" + candidateItemToSelect->getName() + "' at new index: " + std::to_string(newTargetIndexInFavItems));
+            }
+            else {
+                // This can happen if candidateItemToSelect was ALSO itemToRemove (e.g., list size 1, though caught above)
+                // OR if sorting removed/changed it, or duplicates. Unlikely for favorites.
+                // Fallback: select the new first item if candidate is gone.
+                LOG_WARNING("Page::removePlaylist", "Candidate item '" + candidateItemToSelect->name + "' not found in new list. Selecting first item.");
+                newTargetIndexInFavItems = 0;
             }
         }
-        items->erase(it);
-        selectedItem_->isFavorite = false;
-        collection->sortPlaylists();
-        collection->saveRequest = true;
-
-        // set to position to the old deleted position
-        if (amenu) {
-            setScrollOffsetIndex(index);
+        else {
+            // This case should ideally not be hit if oldFavItemsSize > 0, because if oldFavItemsSize was 1,
+            // newFavItemsSize would be 0 and we wouldn't be in this block.
+            // If oldFavItemsSize was > 1, candidateItemToSelect should have been set.
+            // But as a safeguard, if list is not empty but candidate is null, select first.
+            LOG_WARNING("Page::removePlaylist", "List not empty, but no candidate. Selecting first item.");
+            newTargetIndexInFavItems = 0;
         }
     }
-    bool globalFavLast = false;
-    (void)config_.getProperty(OPTION_GLOBALFAVLAST, globalFavLast);
-    if (globalFavLast && collection->name != "Favorites") {
-        collection->saveRequest = true;
-        collection->saveFavorites(selectedItem_);
+    // LOG_DEBUG("Page::removePlaylist", "Final newTargetIndexInFavItems: " + std::to_string(newTargetIndexInFavItems));
 
-        return;
+
+    // --- Step 4: Update ALL synchronized ScrollingLists in the current view ---
+    if (getPlaylistName() == "favorites") {
+        for (ScrollingList* menu : activeMenu_) { // Page::activeMenu_ is std::vector<ScrollingList*>
+            if (menu && !menu->isPlaylist()) {
+                menu->setItems(favItems); // Inform of new data/size, resets menu->itemIndex_
+                if (newFavItemsSize > 0) {
+                    menu->setScrollOffsetIndex(newTargetIndexInFavItems); // Set to our calculated target
+                }
+                else {
+                    menu->setScrollOffsetIndex(0); // List is empty
+                }
+            }
+        }
     }
 
+    // Refresh Page's main selectedItem_
+    setSelectedItem();
+
+    // --- Save & standard UI update ---
     collection->saveFavorites();
     onNewItemSelected();
+    // Caller (input handler) then calls Page::reallocateMenuSpritePoints().
 }
-
 
 
 void Page::addPlaylist()
@@ -1648,12 +1714,10 @@ bool Page::isSelectPlaying()
 }
 
 
-void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu) const
-{
-    for(ScrollingList *menu : activeMenu_) {
-        if(menu && (!menu->isPlaylist() || updatePlaylistMenu)) {
-            menu->deallocateSpritePoints();
-            menu->allocateSpritePoints();
+void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu) const {
+    for (ScrollingList* menu : activeMenu_) {
+        if (menu && (!menu->isPlaylist() || updatePlaylistMenu)) {
+            menu->reallocateSpritePoints();
         }
     }
 }
