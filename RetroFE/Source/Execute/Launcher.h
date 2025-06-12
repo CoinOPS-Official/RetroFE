@@ -31,7 +31,6 @@ public:
     void startScript();
     void exitScript();
 	void LEDBlinky( int command, std::string collection = "", Item *collectionItem = NULL);
-    void keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) const;
 
 private:
     bool launcherName(std::string &launcherName, std::string collection);

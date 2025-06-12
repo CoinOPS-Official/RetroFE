@@ -741,19 +741,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	LOG_INFO("Launcher", "Attempting to launch: " + executionString);
 	LOG_INFO("Launcher", "     from within folder: " + currentDirectory);
 
-	std::atomic<bool> stop_thread = true;
-	std::thread proc_thread;
-	bool multiple_display = SDL_GetNumVideoDisplays() > 1;
-	bool animateDuringGame = true;
-	config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
-
-	if (animateDuringGame && multiple_display && currentPage != nullptr) {
-		stop_thread = false;
-		proc_thread = std::thread([this, &stop_thread, currentPage]() {
-			this->keepRendering(std::ref(stop_thread), *currentPage);
-			});
-	}
-
 	// Variables to measure gameplay time
 	std::chrono::time_point<std::chrono::steady_clock> startTime;
 	std::chrono::time_point<std::chrono::steady_clock> endTime;
@@ -995,6 +982,40 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		}
 	}
 
+	std::vector<std::string> quitCombo = { "joyButton6", "joyButton7" }; // BACK + START
+
+	std::map<std::string, WORD> sdlToXInput = {
+		{ "joyButton0", XINPUT_GAMEPAD_A },
+		{ "joyButton1", XINPUT_GAMEPAD_B },
+		{ "joyButton2", XINPUT_GAMEPAD_X },
+		{ "joyButton3", XINPUT_GAMEPAD_Y },
+		{ "joyButton4", XINPUT_GAMEPAD_LEFT_SHOULDER },
+		{ "joyButton5", XINPUT_GAMEPAD_RIGHT_SHOULDER },
+		{ "joyButton6", XINPUT_GAMEPAD_BACK },
+		{ "joyButton7", XINPUT_GAMEPAD_START },
+		{ "joyButton8", XINPUT_GAMEPAD_LEFT_THUMB },
+		{ "joyButton9", XINPUT_GAMEPAD_RIGHT_THUMB },
+	};
+
+	auto isQuitComboPressed = [&]() -> bool {
+		for (DWORD userIndex = 0; userIndex < XUSER_MAX_COUNT; ++userIndex) {
+			XINPUT_STATE state = {};
+			if (XInputGetState(userIndex, &state) == ERROR_SUCCESS) {
+				bool allPressed = true;
+				for (const auto& btn : quitCombo) {
+					auto it = sdlToXInput.find(btn);
+					if (it == sdlToXInput.end() || (state.Gamepad.wButtons & it->second) == 0) {
+						allPressed = false;
+						break;
+					}
+				}
+				if (allPressed)
+					return true;
+			}
+		}
+		return false;
+		};
+
 	// Monitoring the process
 	if (handleObtained) {
 		bool restrictorEnabled = false;
@@ -1159,7 +1180,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					interruptionTime = std::chrono::steady_clock::now(); // <-- RECORD INTERRUPTION TIME
 					LOG_INFO("Launcher", "User input detected during attract mode.");
 					userInputDetected = true;
-					
+
 					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled && !firstInputWasExitCommand) {
 						is4waySet = true;
 						std::thread([]() {
@@ -1172,7 +1193,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 							}
 							}).detach();
 					}
-					
+
 					break; // Exit the monitoring loop
 				}
 
@@ -1333,12 +1354,84 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			}
 		} // End of if(isAttractMode)
 		else if (wait) {
-			LOG_INFO("Launcher", "Waiting for launched process to complete.");
-			while (WAIT_OBJECT_0 != MsgWaitForMultipleObjects(1, &hLaunchedProcess, FALSE, INFINITE, QS_ALLINPUT)) {
+			LOG_INFO("Launcher", "Waiting for launched process to complete. Press BACK+START (joyButton6+joyButton7) on any Xbox controller to force quit.");
+			bool comboLatch = false;
+			bool killed = false;
+			bool multiple_display = SDL::getScreenCount() > 1;
+			bool animateDuringGame = true;
+			config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
+			bool shouldAnimate = animateDuringGame && multiple_display;
+			Uint64 frequency = SDL_GetPerformanceFrequency();
+			Uint64 waitLastFrameTimeMs = SDL_GetPerformanceCounter() * (Uint64)1000.0 / frequency; // Initialize with current time			
+			while (WAIT_OBJECT_0 != MsgWaitForMultipleObjects(1, &hLaunchedProcess, FALSE, 33, QS_ALLINPUT)) {
 				MSG msg;
 				while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) {
 					DispatchMessage(&msg);
 				}
+
+				if (shouldAnimate && currentPage)
+				{
+					Uint64 nowMs = SDL_GetPerformanceCounter() * (Uint64)1000.0 / frequency;
+					float deltaTime = static_cast<float>((nowMs - waitLastFrameTimeMs) / 1000.0f);
+					if (deltaTime > 0.1f) deltaTime = 0.0167f;
+					waitLastFrameTimeMs = nowMs;
+
+					while (g_main_context_pending(nullptr)) {
+						g_main_context_iteration(nullptr, false);
+					}
+					currentPage->update(deltaTime);
+					// Clear render targets
+					for (int i = 1; i < SDL::getScreenCount(); ++i) {
+						SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+						SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+						if (!currentRenderer || !currentRenderTarget) continue;
+
+						SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
+						SDL_SetRenderDrawColor(currentRenderer, 0, 0, 0, 255);
+						SDL_RenderClear(currentRenderer);
+					}
+
+					// Draw main content and overlay
+					for (int i = 1; i < SDL::getScreenCount(); ++i) {
+						SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+						SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+						if (!currentRenderer || !currentRenderTarget) continue;
+
+						SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
+						currentPage->draw(i);
+					}
+
+
+					// Present to screens
+					for (int i = 1; i < SDL::getScreenCount(); ++i) {
+						SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+						SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+						if (!currentRenderer || !currentRenderTarget) continue;
+
+						SDL_SetRenderTarget(currentRenderer, nullptr);
+						SDL_RenderCopy(currentRenderer, currentRenderTarget, nullptr, nullptr);
+						SDL_RenderPresent(currentRenderer); // Blocks if VSync is on
+					}
+				}
+
+				if (isQuitComboPressed()) {
+					if (!comboLatch) {
+						comboLatch = true;
+						killed = true;
+						LOG_INFO("Launcher", "Quit combo (joyButton6+joyButton7) pressed, terminating launched process/job.");
+						if (jobAssigned && hJob != NULL) {
+							TerminateJobObject(hJob, 1);
+						}
+						else if (hLaunchedProcess) {
+							TerminateProcess(hLaunchedProcess, 1);
+						}
+					}
+				}
+				else {
+					comboLatch = false;
+				}
+
+				if (killed) break;
 			}
 			LOG_INFO("Launcher", "Process completed.");
 		}
@@ -1550,12 +1643,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 #endif
 
 
-	// Cleanup for animation thread if started
-	if (multiple_display && !stop_thread) {
-		stop_thread = true;
-		proc_thread.join();
-	}
-
 	if (is4waySet) {
 		std::thread([]() {
 			bool result = gRestrictor->setWay(8);
@@ -1607,88 +1694,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 	LOG_INFO("Launcher", "Completed execution for: " + executionString);
 	return retVal;
-}
-
-void Launcher::keepRendering(std::atomic<bool>& stop_thread, Page& currentPage) const {
-	const uint64_t perf_freq = retroFeInstance_.freq_;
-	if (perf_freq == 0) { // Safety check
-		LOG_ERROR("Launcher", "Performance frequency is 0. Cannot run render thread.");
-		return;
-	}
-
-	// Target 30 FPS for this secondary rendering thread
-	const double TARGET_FRAME_INTERVAL_MS = 1000.0 / 30.0; // Target frame time in milliseconds
-
-	// Timing variables using performance counter
-	double lastFramePointMs = SDL_GetPerformanceCounter() * 1000.0 / (double)perf_freq;
-	double nextFrameTargetMs = lastFramePointMs + TARGET_FRAME_INTERVAL_MS;
-
-	// This thread doesn't have its own full "currentTime_" like the main loop,
-	// but it calculates deltaTime based on its own iterations.
-	// It also doesn't manage the global RetroFE state machine.
-
-	while (!stop_thread.load(std::memory_order_acquire)) {
-		uint64_t loopStartTicks = SDL_GetPerformanceCounter();
-		double nowMs_loopStart = loopStartTicks * 1000.0 / (double)perf_freq;
-
-		// Calculate deltaTime for currentPage.update() in this thread
-		// This deltaTime is specific to this thread's iteration rate.
-		double deltaTime_s = (nowMs_loopStart - lastFramePointMs) / 1000.0;
-		if (deltaTime_s < 0) deltaTime_s = 0; // Handle potential counter issues (rare)
-		// Clamp deltaTime to prevent huge jumps if this thread stalled.
-		const double MAX_SECONDARY_LOOP_DELTA_S = 0.1; // e.g., 100ms
-		if (deltaTime_s > MAX_SECONDARY_LOOP_DELTA_S) {
-			deltaTime_s = MAX_SECONDARY_LOOP_DELTA_S;
-		}
-
-		lastFramePointMs = nowMs_loopStart; // Update for next iteration
-
-		// --- Update page state (animations on secondary screens) ---
-		// This update is independent of the main loop's update calls for fixed timesteps.
-		// It ensures animations on secondary screens continue smoothly based on this thread's timing.
-		currentPage.update(static_cast<float>(deltaTime_s));
-
-		// --- Process GStreamer bus messages ---
-		// This is important if videos are playing on secondary screens and their
-		// GStreamer instances are managed by the Page/Components being updated.
-		g_main_context_iteration(nullptr, false);
-
-		// --- Render secondary monitors (starting from index 1) ---
-		for (int i = 1; i < SDL::getScreenCount(); ++i) {
-			SDL_Renderer* renderer = SDL::getRenderer(i);
-			SDL_Texture* renderTarget = SDL::getRenderTarget(i);
-
-			if (!renderer || !renderTarget) continue;
-
-			SDL_SetRenderTarget(renderer, renderTarget);
-			SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255); // Assuming black background
-			SDL_RenderClear(renderer);
-
-			currentPage.draw(i); // Draw page content for monitor i
-
-			SDL_SetRenderTarget(renderer, nullptr); // Reset render target to default window
-			SDL_RenderCopy(renderer, renderTarget, nullptr, nullptr);
-			SDL_RenderPresent(renderer); // This will VSync if enabled for this renderer/window
-		}
-
-		// --- Frame Limiting for this thread ---
-		// Catch up nextFrameTargetMs if we fell behind
-		if (nextFrameTargetMs < nowMs_loopStart) {
-			nextFrameTargetMs = nowMs_loopStart;
-		}
-		nextFrameTargetMs += TARGET_FRAME_INTERVAL_MS; // Set target for the end of this frame
-
-		double timeBeforeSleepMs = SDL_GetPerformanceCounter() * 1000.0 / (double)perf_freq;
-		double sleepTimeMs = nextFrameTargetMs - timeBeforeSleepMs;
-
-		if (sleepTimeMs > 0) {
-			Utils::preciseSleep(sleepTimeMs / 1000.0); // preciseSleep takes seconds
-
-			uint64_t ultimateTargetTicks = (uint64_t)(nextFrameTargetMs * perf_freq / 1000.0);
-			while (SDL_GetPerformanceCounter() < ultimateTargetTicks);
-		}
-	}
-	LOG_INFO("Launcher", "Render thread stopped.");
 }
 
 bool Launcher::launcherName(std::string& launcherName, std::string collection) {
