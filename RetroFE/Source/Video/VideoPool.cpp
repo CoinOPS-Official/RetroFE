@@ -28,6 +28,19 @@ namespace {
 }
 
 VideoPool::PoolMap VideoPool::pools_;
+std::unique_ptr<ThreadPool> VideoPool::threadPool_;
+
+void VideoPool::initializeThreadPool(size_t numThreads) {
+    if (!threadPool_) {
+        threadPool_ = std::make_unique<ThreadPool>(numThreads);
+        LOG_INFO("VideoPool", "ThreadPool initialized with " + std::to_string(numThreads) + " threads");
+    }
+}
+
+void VideoPool::shutdownThreadPool() {
+    threadPool_.reset();
+    LOG_INFO("VideoPool", "ThreadPool shutdown");
+}
 
 VideoPool::PoolInfo& VideoPool::getPoolInfo(int monitor, int listId) {
     return pools_[monitor][listId]; // will auto-create if not found
@@ -50,48 +63,53 @@ VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOv
 
     PoolInfo& pool = getPoolInfo(monitor, listId);
 
-    size_t currentActive = pool.currentActive;
-    size_t pooledCount = pool.instances.size();
-    size_t currentTotalPopulation = currentActive + pooledCount;
-
-    size_t targetPopulationCapacity = 0;
-    if (pool.initialCountLatched) {
-        targetPopulationCapacity = pool.requiredInstanceCount + POOL_BUFFER_INSTANCES;
-    }
-    else {
-        targetPopulationCapacity = pool.observedMaxActive + POOL_BUFFER_INSTANCES;
-        if (targetPopulationCapacity < POOL_BUFFER_INSTANCES) targetPopulationCapacity = POOL_BUFFER_INSTANCES;
-        else if (targetPopulationCapacity == 0) targetPopulationCapacity = 1;
-    }
-
     VideoPtr vid;
     bool createdNew = false;
 
-    if (currentTotalPopulation < targetPopulationCapacity) {
-        LOG_DEBUG("VideoPool", "Acquire: Population (" + std::to_string(currentTotalPopulation) +
-            ") < target (" + std::to_string(targetPopulationCapacity) + "), creating new.");
-        pool.currentActive++;
-        createdNew = true;
-    }
-    else if (!pool.instances.empty()) {
-        LOG_DEBUG("VideoPool", "Acquire: Target met. Reusing from pool.");
-        vid = std::move(pool.instances.front());
-        pool.instances.pop_front();
-        pool.currentActive++;
-    }
-    else {
-        LOG_DEBUG("VideoPool", "Acquire: Target met but pool empty. Creating new as fallback.");
-        pool.currentActive++;
-        createdNew = true;
-    }
+    {
+        std::lock_guard<std::mutex> lock(pool.poolMutex);
 
-    // Update observed max active before latching
-    if (!pool.initialCountLatched) {
-        if (pool.currentActive > pool.observedMaxActive) {
-            pool.observedMaxActive = pool.currentActive;
+        size_t currentActive = pool.currentActive;
+        size_t pooledCount = pool.instances.size();
+        size_t currentTotalPopulation = currentActive + pooledCount;
+
+        size_t targetPopulationCapacity = 0;
+        if (pool.initialCountLatched) {
+            targetPopulationCapacity = pool.requiredInstanceCount + POOL_BUFFER_INSTANCES;
         }
-    }
+        else {
+            targetPopulationCapacity = pool.observedMaxActive + POOL_BUFFER_INSTANCES;
+            if (targetPopulationCapacity < POOL_BUFFER_INSTANCES) targetPopulationCapacity = POOL_BUFFER_INSTANCES;
+            else if (targetPopulationCapacity == 0) targetPopulationCapacity = 1;
+        }
 
+        if (currentTotalPopulation < targetPopulationCapacity) {
+            LOG_DEBUG("VideoPool", "Acquire: Population (" + std::to_string(currentTotalPopulation) +
+                ") < target (" + std::to_string(targetPopulationCapacity) + "), creating new.");
+            pool.currentActive++;
+            createdNew = true;
+        }
+        else if (!pool.instances.empty()) {
+            LOG_DEBUG("VideoPool", "Acquire: Target met. Reusing from pool.");
+            vid = std::move(pool.instances.front());
+            pool.instances.pop_front();
+            pool.currentActive++;
+        }
+        else {
+            LOG_DEBUG("VideoPool", "Acquire: Target met but pool empty. Creating new as fallback.");
+            pool.currentActive++;
+            createdNew = true;
+        }
+
+        // Update observed max active before latching
+        if (!pool.initialCountLatched) {
+            if (pool.currentActive > pool.observedMaxActive) {
+                pool.observedMaxActive = pool.currentActive;
+            }
+        }
+    } // unlock here
+
+    // Only construct outside the lock!
     if (createdNew) {
         auto gstreamerVid = std::make_unique<GStreamerVideo>(monitor);
         if (gstreamerVid && gstreamerVid->hasError()) {
@@ -118,9 +136,13 @@ VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOv
 
     return vid;
 }
-
 void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
     if (!vid || listId == -1) return;
+
+    // Lazily initialize threadPool if needed (thread-safe: single-threaded init is fine here)
+    if (!threadPool_) {
+        initializeThreadPool(3); // Or whatever default you want
+    }
 
     auto monitorIt = pools_.find(monitor);
     if (monitorIt == pools_.end()) return;
@@ -129,40 +151,50 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
 
     PoolInfo& pool = listIt->second;
 
-    bool isFaulty = false;
-    try {
-        vid->unload();
-        isFaulty = vid->hasError();
-    }
-    catch (const std::exception& e) {
-        LOG_ERROR("VideoPool", "Exception during video unload: " + std::string(e.what()));
-        isFaulty = true;
-    }
-    catch (...) {
-        LOG_ERROR("VideoPool", "Unknown exception during video unload.");
-        isFaulty = true;
-    }
+    // Move the pointer so the lambda owns it (capture by move)
+    auto vidForThread = std::move(vid);
 
-    pool.currentActive--;
-    if (isFaulty) {
-        LOG_DEBUG("VideoPool", "Discarded faulty instance. Active: " + std::to_string(pool.currentActive));
-        // unique_ptr goes out of scope, destroyed
-    }
-    else {
-        pool.instances.push_back(std::move(vid));
-        LOG_DEBUG("VideoPool", "Returned instance to pool. Active: " +
-            std::to_string(pool.currentActive) + ", Pooled: " + std::to_string(pool.instances.size()));
-
-        if (!pool.initialCountLatched) {
-            size_t requiredCount = std::max(pool.observedMaxActive, size_t(1));
-            pool.requiredInstanceCount = requiredCount;
-            pool.initialCountLatched = true;
-            LOG_INFO("VideoPool", "Latched count for Monitor: " + std::to_string(monitor) +
-                ", List ID: " + std::to_string(listId) +
-                ". Peak (N): " + std::to_string(requiredCount) +
-                ". Target: N + " + std::to_string(POOL_BUFFER_INSTANCES));
+    threadPool_->enqueue([vidPtr = std::move(vidForThread), &pool, monitor, listId]() mutable {
+        bool isFaulty = false;
+        try {
+            vidPtr->unload();
+            isFaulty = vidPtr->hasError();
         }
-    }
+        catch (const std::exception& e) {
+            LOG_ERROR("VideoPool", "Exception during video unload: " + std::string(e.what()));
+            isFaulty = true;
+        }
+        catch (...) {
+            LOG_ERROR("VideoPool", "Unknown exception during video unload.");
+            isFaulty = true;
+        }
+
+        // All pool state mutations are inside this lock
+        {
+            std::lock_guard<std::mutex> lock(pool.poolMutex);
+
+            pool.currentActive--;
+            if (isFaulty) {
+                LOG_DEBUG("VideoPool", "Discarded faulty instance. Active: " + std::to_string(pool.currentActive));
+                // unique_ptr goes out of scope, destroyed
+            }
+            else {
+                pool.instances.push_back(std::move(vidPtr));
+                LOG_DEBUG("VideoPool", "Returned instance to pool. Active: " +
+                    std::to_string(pool.currentActive) + ", Pooled: " + std::to_string(pool.instances.size()));
+
+                if (!pool.initialCountLatched) {
+                    size_t requiredCount = std::max(pool.observedMaxActive, size_t(1));
+                    pool.requiredInstanceCount = requiredCount;
+                    pool.initialCountLatched = true;
+                    LOG_INFO("VideoPool", "Latched count for Monitor: " + std::to_string(monitor) +
+                        ", List ID: " + std::to_string(listId) +
+                        ". Peak (N): " + std::to_string(requiredCount) +
+                        ". Target: N + " + std::to_string(POOL_BUFFER_INSTANCES));
+                }
+            }
+        }
+        });
 }
 
 void VideoPool::cleanup(int monitor, int listId) {

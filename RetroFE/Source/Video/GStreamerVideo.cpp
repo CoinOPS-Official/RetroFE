@@ -261,7 +261,7 @@ void GStreamerVideo::initializePlugins() {
 		pluginsInitialized_ = true;
 
 #if defined(WIN32)
-		//enablePlugin("directsoundsink");
+		enablePlugin("directsoundsink");
 		disablePlugin("mfdeviceprovider");
 		disablePlugin("nvh264dec");
 		disablePlugin("nvh265dec");
@@ -566,28 +566,15 @@ bool GStreamerVideo::unload() {
 	GstStateChangeReturn setStateRet = gst_element_set_state(playbin_, GST_STATE_READY);
 
 	if (setStateRet == GST_STATE_CHANGE_FAILURE) {
-		LOG_ERROR("GStreamerVideo:", "unload(): Failed to set playbin state to READY for " + currentFile_ + ". This might lead to issues.");
+		LOG_ERROR("GStreamerVideo", "unload(): Failed to set playbin state to READY for " + currentFile_ + ". This might lead to issues.");
 		hasError_.store(true, std::memory_order_release); // Flag an error
 		// Proceed with other cleanup, but this is a bad sign for reuse.
 	}
+	else if (setStateRet == GST_STATE_CHANGE_ASYNC) {
+		LOG_DEBUG("GStreamerVideo", "unload(): Playbin is transitioning to READY asynchronously for " + currentFile_ + ".");
+	}
 	else {
-		// Optionally, wait for the state change to complete to ensure resources are released.
-		// This can block, so use with caution or a timeout if preferred.
-		GstState currentState;
-		GstStateChangeReturn getStateRet = gst_element_get_state(playbin_, &currentState, nullptr, 2 * GST_SECOND); // 2-second timeout
-		if (getStateRet == GST_STATE_CHANGE_SUCCESS && currentState == GST_STATE_READY) {
-			LOG_DEBUG("GStreamerVideo", "unload(): Playbin successfully transitioned to READY for " + currentFile_);
-		}
-		else if (getStateRet == GST_STATE_CHANGE_ASYNC && setStateRet != GST_STATE_CHANGE_NO_PREROLL) {
-			// Async is fine, it means it's transitioning. For NO_PREROLL it is already ready.
-			LOG_DEBUG("GStreamerVideo", "unload(): Playbin transitioning to READY asynchronously for " + currentFile_);
-		}
-		else {
-			LOG_WARNING("GStreamerVideo", "unload(): Playbin did not confirm READY state (or timed out) for " + currentFile_ +
-				". Current state: " + std::string(gst_element_state_get_name(currentState)) +
-				", GetStateReturn: " + std::string(gst_element_state_change_return_get_name(getStateRet)));
-			// This isn't fatal for unload, but good to know.
-		}
+		LOG_DEBUG("GStreamerVideo", "unload(): Playbin transitioned to READY synchronously (or NO_PREROLL) for " + currentFile_ + ".");
 	}
 
 	// Flush the bus to discard any pending messages from the previous playback
@@ -602,29 +589,6 @@ bool GStreamerVideo::unload() {
 
 	// --- 4. Reset Instance State for Reuse ---
 	hasError_.store(false, std::memory_order_release); // Clear error from previous playback
-
-	width_ = 0;
-	height_ = 0;
-
-	// Ensure the public texture pointer defaults to nullptr
-	SDL_LockMutex(SDL::getMutex());
-	texture_ = nullptr;
-	// We DO NOT destroy videoTexture_ here.
-	// We also DO NOT reset textureWidth_ / textureHeight_.
-	// This allows createSdlTexture() in the next play() to compare new dimensions
-	// against the existing videoTexture_'s dimensions for potential reuse.
-	SDL_UnlockMutex(SDL::getMutex());
-
-	// Reset playback-specific details
-	currentFile_.clear();
-	playCount_ = 0;
-	numLoops_ = 0;
-
-	// Reset volume tracking for next playback
-	currentVolume_ = 0.0f; // Assuming default is silent until volume is set
-	lastSetVolume_ = -1.0f; // Force re-application on next volume set
-	lastSetMuteState_ = false; // Or true if default is muted
-	volume_ = 0.0f;
 
 	// Reset GStreamer specific data that might be tied to the previous stream's content
 	// perspective_gva_ was calculated based on previous video's dimensions.
@@ -731,7 +695,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 
 	// Set playbin flags and properties.
 	gint flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO | GST_PLAY_FLAG_SOFT_VOLUME;
-	g_object_set(playbin_, "flags", flags, "instant-uri", TRUE, "async-handling", TRUE, nullptr);
+	g_object_set(playbin_, "flags", flags, "instant-uri", TRUE, nullptr);
 
 	// Configure appsink.
 	g_object_set(videoSink_,
@@ -853,6 +817,24 @@ void GStreamerVideo::initializeUpdateFunction() {
 }
 
 bool GStreamerVideo::play(const std::string& file) {
+	// Reset instance state for new playback
+	width_ = 0;
+	height_ = 0;
+
+	SDL_LockMutex(SDL::getMutex());
+	texture_ = nullptr;
+	// DO NOT destroy videoTexture_ here, so reuse is possible.
+	SDL_UnlockMutex(SDL::getMutex());
+
+	currentFile_.clear();
+	playCount_ = 0;
+	numLoops_ = 0;
+
+	currentVolume_ = 0.0f;
+	lastSetVolume_ = -1.0f;
+	lastSetMuteState_ = false; // or true if you want muted as default
+	volume_ = 0.0f;
+	
 	playCount_ = 0;
 	if (!initialized_) {
 		LOG_ERROR("GStreamerVideo", "Play called but GStreamer not initialized for file: " + file);
@@ -922,16 +904,19 @@ bool GStreamerVideo::play(const std::string& file) {
 	g_free(uriFile);
 
 
-	GstState current, pending;
-	gst_element_get_state(playbin_, &current, &pending, GST_SECOND);
+	GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
 
-	if (current != GST_STATE_PAUSED) {
-		GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
-		if (stateRet != GST_STATE_CHANGE_ASYNC && stateRet != GST_STATE_CHANGE_SUCCESS) {
-			isPlaying_ = false;
-			hasError_.store(true, std::memory_order_release);
-			return false;
-		}
+	if (stateRet == GST_STATE_CHANGE_FAILURE) {
+		isPlaying_ = false;
+		hasError_.store(true, std::memory_order_release);
+		LOG_ERROR("GStreamerVideo", "play(): Failed to set playbin state to PAUSED for " + file);
+		return false;
+	}
+	else if (stateRet == GST_STATE_CHANGE_ASYNC) {
+		LOG_DEBUG("GStreamerVideo", "play(): Playbin is transitioning to PAUSED asynchronously for " + file + ".");
+	}
+	else {
+		LOG_DEBUG("GStreamerVideo", "play(): Playbin transitioned to PAUSED synchronously (or NO_PREROLL) for " + file + ".");
 	}
 	targetState_ = IVideo::VideoState::Paused;  // accurately reflect that we're starting preloaded
 	isPlaying_ = true;
