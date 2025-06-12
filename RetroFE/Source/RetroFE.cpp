@@ -75,7 +75,7 @@
 RetroFE::RetroFE(Configuration& c)
 	: initialized(false), initializeError(false), initializeThread(NULL), config_(c), db_(NULL), metadb_(NULL),
 	input_(config_), currentPage_(NULL), keyInputDisable_(0), currentTime_(0), lastLaunchReturnTime_(0),
-	keyLastTime_(0), keyDelayTime_(.3f), reboot_(false), kioskLock_(false), paused_(false), buildInfo_(false),
+	keyLastTime_(0), keyDelayTime_(.3f), keyLetterSkipDelayTime_(.2f), reboot_(false), kioskLock_(false), paused_(false), buildInfo_(false),
 	collectionInfo_(false), gameInfo_(false), musicPlayer_(nullptr) {
 	menuMode_ = false;
 	attractMode_ = false;
@@ -743,11 +743,11 @@ bool RetroFE::run() {
 		}
 
 		deltaTime = static_cast<float>((nowMs_loopStart - lastFrameTimePointMs_) / 1000.0);
-		
+
 		// If dt is over 100ms (0.1s), clamp it to a "sane" frame time (e.g. 1/60th = 0.0167)
 		// This avoids animation jumps after game launches or big stalls
 		if (deltaTime > 0.1f) deltaTime = 0.0167f;
-		
+
 		currentTime_ = static_cast<float>(nowMs_loopStart / 1000.0);
 		lastFrameTimePointMs_ = nowMs_loopStart; // For next frame's deltaTime
 
@@ -860,6 +860,7 @@ bool RetroFE::run() {
 					setState(RETROFE_IDLE);
 				}
 			}
+
 			break;
 
 			// Handle end of splash mode
@@ -2240,7 +2241,7 @@ bool RetroFE::run() {
 			}
 
 
-			// Go back a page; start onMenuExit animation
+									// Go back a page; start onMenuExit animation
 			case RETROFE_BACK_REQUEST:
 			if (currentPage_ && currentPage_->getMenuDepth() == 1)
 			{
@@ -2561,7 +2562,8 @@ bool RetroFE::run() {
 				}
 			}
 
-			render();
+			if (!currentPage_->getIsLaunched())
+				render();
 
 			bool activelyAnimating = isUserActive(currentTime_)
 				|| currentPage_->isMenuScrolling()
@@ -3246,6 +3248,54 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			}
 		}
 	}
+	if (page->isIdle() && currentTime_ - keyLastTime_ > keyLetterSkipDelayTime_) {
+		if (input_.keystate(UserInput::KeyCodeLetterUp))
+		{
+			resetInfoToggle();
+			attract_.reset();
+			if (currentPage_->getPlaylistName() != "lastplayed")
+			{
+				// if playlist same name as meta sort value then support meta jump
+				if (Item::validSortType(page->getPlaylistName()))
+				{
+					page->metaScroll(Page::ScrollDirectionBack, page->getPlaylistName());
+				}
+				else
+				{
+					bool cfwLetterSub;
+					config_.getProperty(OPTION_CFWLETTERSUB, cfwLetterSub);
+					if (cfwLetterSub && page->hasSubs())
+						page->cfwLetterSubScroll(Page::ScrollDirectionBack);
+					else
+						page->letterScroll(Page::ScrollDirectionBack);
+				}
+				state = RETROFE_MENUJUMP_REQUEST;
+			}
+		}
+
+		else if (input_.keystate(UserInput::KeyCodeLetterDown))
+		{
+			resetInfoToggle();
+			attract_.reset();
+			if (currentPage_->getPlaylistName() != "lastplayed")
+			{
+				if (Item::validSortType(page->getPlaylistName()))
+				{
+					page->metaScroll(Page::ScrollDirectionForward, page->getPlaylistName());
+				}
+				else
+				{
+					bool cfwLetterSub;
+					config_.getProperty(OPTION_CFWLETTERSUB, cfwLetterSub);
+					if (cfwLetterSub && page->hasSubs())
+						page->cfwLetterSubScroll(Page::ScrollDirectionForward);
+					else
+						page->letterScroll(Page::ScrollDirectionForward);
+				}
+				state = RETROFE_MENUJUMP_REQUEST;
+			}
+		}
+	}
 
 	// Ignore other keys while the menu is scrolling
 	if (page->isIdle() && currentTime_ - keyLastTime_ > keyDelayTime_)
@@ -3295,53 +3345,6 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			attract_.reset();
 			page->pageScroll(Page::ScrollDirectionForward);
 			state = RETROFE_MENUJUMP_REQUEST;
-		}
-
-		else if (input_.keystate(UserInput::KeyCodeLetterUp))
-		{
-			resetInfoToggle();
-			attract_.reset();
-			if (currentPage_->getPlaylistName() != "lastplayed")
-			{
-				// if playlist same name as meta sort value then support meta jump
-				if (Item::validSortType(page->getPlaylistName()))
-				{
-					page->metaScroll(Page::ScrollDirectionBack, page->getPlaylistName());
-				}
-				else
-				{
-					bool cfwLetterSub;
-					config_.getProperty(OPTION_CFWLETTERSUB, cfwLetterSub);
-					if (cfwLetterSub && page->hasSubs())
-						page->cfwLetterSubScroll(Page::ScrollDirectionBack);
-					else
-						page->letterScroll(Page::ScrollDirectionBack);
-				}
-				state = RETROFE_MENUJUMP_REQUEST;
-			}
-		}
-
-		else if (input_.keystate(UserInput::KeyCodeLetterDown))
-		{
-			resetInfoToggle();
-			attract_.reset();
-			if (currentPage_->getPlaylistName() != "lastplayed")
-			{
-				if (Item::validSortType(page->getPlaylistName()))
-				{
-					page->metaScroll(Page::ScrollDirectionForward, page->getPlaylistName());
-				}
-				else
-				{
-					bool cfwLetterSub;
-					config_.getProperty(OPTION_CFWLETTERSUB, cfwLetterSub);
-					if (cfwLetterSub && page->hasSubs())
-						page->cfwLetterSubScroll(Page::ScrollDirectionForward);
-					else
-						page->letterScroll(Page::ScrollDirectionForward);
-				}
-				state = RETROFE_MENUJUMP_REQUEST;
-			}
 		}
 
 		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodeFavPlaylist))

@@ -206,6 +206,7 @@ private:
     float              lastLaunchReturnTime_;
     float              keyLastTime_;
     float              keyDelayTime_;
+	float              keyLetterSkipDelayTime_;
     Item              *nextPageItem_;
     FontCache          fontcache_;
     AttractMode        attract_;
