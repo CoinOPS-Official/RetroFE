@@ -309,9 +309,6 @@ void ReloadableHiscores::initializeFonts() {
 
 void ReloadableHiscores::reloadTexture(bool resetScroll) {
 	
-	if (baseViewInfo.Alpha <= 0.0f)
-		return;
-	
 	if (resetScroll) {
 		currentPosition_ = 0.0f;
 		waitStartTime_ = startTime_;
@@ -402,9 +399,6 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 
 void ReloadableHiscores::draw() {
 	Component::draw();
-
-	if (baseViewInfo.Alpha <= 0.0f)
-		return;
 
 	if (!(highScoreTable_ && !highScoreTable_->tables.empty()) || baseViewInfo.Alpha <= 0.0f)
 		return;
