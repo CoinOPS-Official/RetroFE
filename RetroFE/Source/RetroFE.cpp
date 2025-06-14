@@ -325,6 +325,7 @@ void RetroFE::launchEnter() {
 	if (unloadSDL)
 	{
 		freeGraphicsMemory();
+		VideoPool::shutdown();
 	}
 #ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_FALSE);
