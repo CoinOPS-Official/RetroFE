@@ -80,7 +80,7 @@ bool VideoComponent::update(float dt) {
 	}
 
 	bool isVideoPlaying = videoInst_->isPlaying();
-//	bool isFastScrolling = currentPage_->isMenuFastScrolling();
+	bool isFastScrolling = currentPage_->isMenuFastScrolling();
 
 	if (isVideoPlaying) {
 		videoInst_->setVolume(baseViewInfo.Volume);
@@ -91,6 +91,14 @@ bool VideoComponent::update(float dt) {
 		bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0f;
 		if (isCurrentlyVisible)
 			hasBeenOnScreen_ = true;
+
+		if (!baseViewInfo.PauseOnScroll && isCurrentlyVisible) {
+			if (videoInst_->getTargetState() != IVideo::VideoState::Playing &&
+				videoInst_->getActualState() != IVideo::VideoState::Playing) {
+				videoInst_->resume();
+				LOG_DEBUG("VideoComponent", "Auto-played (PauseOnScroll false) " + videoFile_);
+			}
+		}
 
 		// --- Only toggle playback state when visibility changes (pause on hide, as before) ---
 		if (baseViewInfo.PauseOnScroll && (isCurrentlyVisible != wasVisible_)) {
@@ -113,7 +121,7 @@ bool VideoComponent::update(float dt) {
 		}
 
 		// Restart support
-		if (baseViewInfo.Restart && hasBeenOnScreen_) {
+		if (baseViewInfo.Restart && hasBeenOnScreen_ && !isFastScrolling) {
 			if (videoInst_->getTargetState() == IVideo::VideoState::Paused &&
 				videoInst_->getActualState() == IVideo::VideoState::Paused) {
 				videoInst_->resume();
