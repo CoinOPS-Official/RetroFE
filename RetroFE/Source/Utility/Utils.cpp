@@ -26,6 +26,8 @@
 #include <unordered_set>
 #include <unordered_map>
 #include <codecvt>
+#include <thread>
+#include <cmath>
 #ifndef __APPLE__
 #include <charconv>
 #endif
