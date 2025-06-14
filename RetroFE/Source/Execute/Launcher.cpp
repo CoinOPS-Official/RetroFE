@@ -1463,8 +1463,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 #else
 	// Unix/Linux-specific execution logic
 
-
-	bool is4waySet = false;
 	bool restrictorEnabled = false;
 
 	config_.getProperty("restrictorEnabled", restrictorEnabled);
