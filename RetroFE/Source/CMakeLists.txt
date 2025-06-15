@@ -27,6 +27,7 @@ include_directories("${CMAKE_BINARY_DIR}/autogen")
 
 set(SQLITE3_ROOT "${RETROFE_THIRD_PARTY_DIR}/sqlite3")
 set(RAPIDXML_ROOT "${RETROFE_THIRD_PARTY_DIR}/rapidxml-1.13")
+set(KISSFFT_ROOT "${RETROFE_THIRD_PARTY_DIR}/kissfft-131.1.0")
 
 if(WIN32)
     if(MSVC)
@@ -166,6 +167,7 @@ set(RETROFE_INCLUDE_DIRS
     "${SQLITE3_ROOT}"
     "${RAPIDXML_ROOT}"
     "${PACDRIVE_ROOT}"
+    "${KISSFFT_ROOT}"
     "/opt/homebrew/lib/glib-2.0/include"
 )
 
@@ -316,7 +318,9 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Main.cpp"
 	"${RETROFE_DIR}/Source/RetroFE.cpp"
 	"${RETROFE_DIR}/Source/SDL.cpp"
-	"${SQLITE3_ROOT}/sqlite3.c"
+    "${SQLITE3_ROOT}/sqlite3.c"
+    "${KISSFFT_ROOT}/kiss_fft.c"
+    "${KISSFFT_ROOT}/kiss_fftr.c"
 )
 
 set(EXECUTABLE_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORCE)
