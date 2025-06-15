@@ -416,7 +416,7 @@ int Utils::gcd( int a, int b )
     return gcd( b, a % b );
 }
 
-std::string Utils::trim(std::string& str)
+std::string Utils::trim(std::string str)
 {
     str.erase(str.find_last_not_of(' ') + 1);         //suffixing spaces
     str.erase(0, str.find_first_not_of(' '));       //prefixing spaces

@@ -61,7 +61,7 @@ public:
     static std::string trimEnds(const std::string& str);
     static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter);
     static int gcd(int a, int b);
-    static std::string trim(std::string& str);
+    static std::string trim(std::string str);
     static std::string removeAbsolutePath(const std::string& fullPath);
     static bool isOutputATerminal();
     static bool startsWith(const std::string& fullString, const std::string& startOfString);
