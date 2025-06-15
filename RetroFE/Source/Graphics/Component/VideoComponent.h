@@ -21,10 +21,14 @@
 #include "../../Video/IVideo.h"
 #include "../../Video/VideoFactory.h"
 #include <SDL2/SDL.h>
+#include "../ThreadPool.h"
+#include <thread>
 #include <string>
 #include <string_view>
 #include <atomic>
 #include <memory>
+
+inline ThreadPool videoThreadPool{ std::thread::hardware_concurrency() };
 
 class VideoComponent : public Component
 {

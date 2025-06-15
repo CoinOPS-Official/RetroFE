@@ -142,7 +142,7 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
 
 	// Lazily initialize threadPool if needed (thread-safe: single-threaded init is fine here)
 	if (!threadPool_) {
-		initializeThreadPool(3);
+		initializeThreadPool(std::thread::hardware_concurrency());
 	}
 
 	// Move the pointer so the lambda owns it (capture by move)

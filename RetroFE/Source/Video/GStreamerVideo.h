@@ -99,12 +99,13 @@ private:
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
     std::atomic<bool> hasError_{ false };              // Set by pad probe, read main
+    std::atomic<bool> isPlaying_{ false };
+
 
     // === Main-thread only ===
     IVideo::VideoState targetState_{ IVideo::VideoState::None };
 	IVideo::VideoState actualState_{ IVideo::VideoState::None };
 
-    bool isPlaying_{false};
     uint64_t mappingGeneration_{ 0 };
     int width_{ 0 };
     int height_{ 0 };

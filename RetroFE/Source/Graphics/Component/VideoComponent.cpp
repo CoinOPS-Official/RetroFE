@@ -158,47 +158,52 @@ bool VideoComponent::update(float dt) {
 
 void VideoComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
-	if (!instanceReady_) {
-		if (!videoInst_ && !videoFile_.empty()) {
-			videoInst_ = VideoFactory::createVideo(
-				monitor_, numLoops_, softOverlay_, listId_,
-				hasPerspective_ ? perspectiveCorners_ : nullptr
-			);
-			if (videoInst_) {
-				dimensionsUpdated_ = false;
-				if (auto* gstreamer = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
-					gstreamer->setDimensionsReadyCallback([this](int w, int h) {
-						baseViewInfo.ImageWidth = static_cast<float>(w);
-						baseViewInfo.ImageHeight = static_cast<float>(h);
-						dimensionsUpdated_ = true;
-						LOG_DEBUG("VideoComponent", "Video dimensions ready: " +
-							std::to_string(w) + "x" + std::to_string(h) + " for " + videoFile_);
-						});
+
+	if (instanceReady_) return; // Already ready
+
+	if (!videoInst_ && !videoFile_.empty()) {
+		videoInst_ = VideoFactory::createVideo(
+			monitor_, numLoops_, softOverlay_, listId_,
+			hasPerspective_ ? perspectiveCorners_ : nullptr
+		);
+		if (videoInst_) {
+			dimensionsUpdated_ = false;
+
+			if (auto* gstreamer = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
+				gstreamer->setDimensionsReadyCallback([this](int w, int h) {
+					baseViewInfo.ImageWidth = static_cast<float>(w);
+					baseViewInfo.ImageHeight = static_cast<float>(h);
+					dimensionsUpdated_ = true;
+					LOG_DEBUG("VideoComponent", "Video dimensions ready: " +
+						std::to_string(w) + "x" + std::to_string(h) + " for " + videoFile_);
+					});
+			}
+
+			// Offload play() to thread pool
+			videoThreadPool.enqueue([this] {
+				LOG_DEBUG("VideoComponent", "ThreadPool: play() starting for: " + videoFile_);
+				bool result = videoInst_->play(videoFile_);
+				instanceReady_ = result;
+				if (result) {
+					LOG_DEBUG("VideoComponent", "ThreadPool: play() finished SUCCESS for: " + videoFile_);
 				}
-				instanceReady_ = videoInst_->play(videoFile_);
-				if (!instanceReady_) {
-					LOG_WARNING("VideoComponent", "play() returned false for: " + videoFile_);
+				else {
+					LOG_WARNING("VideoComponent", "ThreadPool: play() finished FAIL for: " + videoFile_);
 					if (videoInst_->hasError()) {
 						LOG_ERROR("VideoComponent", "GStreamerVideo instance for " + videoFile_ +
 							" is marked with hasError_ after play() attempt. Video will not display.");
-						// The videoInst_ is now "tainted".
-						// VideoPool will handle its disposal when freeGraphicsMemory() is called.
+						// The videoInst_ is now "tainted". Pool will handle on freeGraphicsMemory.
 					}
 					else {
 						LOG_WARNING("VideoComponent", "play() returned false for " + videoFile_ +
-							" but GStreamerVideo instance not marked with error. (e.g. file not found by GStreamer, URI error before pipeline interaction)");
-						// This is a non-fatal error, but the video will not display.	
+							" but not marked as error (could be file not found or URI error).");
 					}
-					// instanceReady_ is false, so draw() should not attempt to use it.
 				}
-				else {
-					LOG_DEBUG("VideoComponent", "play() succeeded for: " + videoFile_);
-					// Potentially set volume, loops here if needed, though GStreamerVideo::play handles initial mute.
-				}
-			}
+				});
 		}
 	}
 }
+
 
 void VideoComponent::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();

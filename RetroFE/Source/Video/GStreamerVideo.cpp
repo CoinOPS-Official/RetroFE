@@ -535,6 +535,26 @@ bool GStreamerVideo::unload() {
 
 	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Protect GStreamer operations and shared state
 
+	// Reset instance state for new playback
+	width_ = 0;
+	height_ = 0;
+
+	SDL_LockMutex(SDL::getMutex());
+	texture_ = nullptr;
+	// DO NOT destroy videoTexture_ here, so reuse is possible.
+	SDL_UnlockMutex(SDL::getMutex());
+
+	currentFile_.clear();
+	playCount_ = 0;
+	numLoops_ = 0;
+
+	currentVolume_ = 0.0f;
+	lastSetVolume_ = -1.0f;
+	lastSetMuteState_ = false; // or true if you want muted as default
+	volume_ = 0.0f;
+
+	playCount_ = 0;
+
 	// --- 2. Signal that we are no longer "playing" this specific stream ---
 	isPlaying_ = false;
 	targetState_ = IVideo::VideoState::None; // Reflect that it's not actively playing or paused
@@ -581,8 +601,6 @@ bool GStreamerVideo::unload() {
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 	if (bus) {
 		gst_bus_set_flushing(bus, TRUE); // Start flushing
-		// gst_bus_pop_filtered(bus, GST_MESSAGE_ANY, 0); // Pop all messages without processing, with timeout 0
-		gst_bus_set_flushing(bus, FALSE); // Stop flushing
 		gst_object_unref(bus);
 		LOG_DEBUG("GStreamerVideo", "unload(): Flushed bus for " + currentFile_);
 	}
@@ -818,25 +836,7 @@ void GStreamerVideo::initializeUpdateFunction() {
 
 bool GStreamerVideo::play(const std::string& file) {
 	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Protect whole method
-	// Reset instance state for new playback
-	width_ = 0;
-	height_ = 0;
 
-	SDL_LockMutex(SDL::getMutex());
-	texture_ = nullptr;
-	// DO NOT destroy videoTexture_ here, so reuse is possible.
-	SDL_UnlockMutex(SDL::getMutex());
-
-	currentFile_.clear();
-	playCount_ = 0;
-	numLoops_ = 0;
-
-	currentVolume_ = 0.0f;
-	lastSetVolume_ = -1.0f;
-	lastSetMuteState_ = false; // or true if you want muted as default
-	volume_ = 0.0f;
-	
-	playCount_ = 0;
 	if (!initialized_) {
 		LOG_ERROR("GStreamerVideo", "Play called but GStreamer not initialized for file: " + file);
 		hasError_.store(true, std::memory_order_release);
@@ -888,9 +888,11 @@ bool GStreamerVideo::play(const std::string& file) {
 	}
 
 	GstBus* bus = gst_element_get_bus(playbin_);
-	busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
-	gst_object_unref(bus);
-
+	if (bus) {
+		gst_bus_set_flushing(bus, FALSE); // Ensure bus is not in flushing state before adding watch
+		busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
+		gst_object_unref(bus);
+	}
 	// Convert file path to URI
 	gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
 	if (!uriFile) {
@@ -1220,12 +1222,12 @@ void GStreamerVideo::draw() {
 	bool success = updateTextureFunc_(videoTexture_, &gst_frame); // Update videoTexture_
 	if (success && !texture_)
 		texture_ = videoTexture_; // Set texture_ to videoTexture_ if it was nullptr
-	
+
 	if (!success) {
 		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_);
 		texture_ = nullptr;
 	}
-	
+
 	SDL_UnlockMutex(SDL::getMutex());
 
 	gst_video_frame_unmap(&gst_frame);
