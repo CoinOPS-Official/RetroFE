@@ -17,6 +17,7 @@
 #include "MusicPlayer.h"
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
+#include "../Graphics/Component/MusicPlayerComponent.h"
 #include <SDL2/SDL_image.h>
 #include <algorithm>
 #include <cstddef>
@@ -25,12 +26,12 @@
 #include <iomanip>
 #include <sstream>
 
+
 namespace fs = std::filesystem;
 
 MusicPlayer* MusicPlayer::instance_ = nullptr;
 
-MusicPlayer* MusicPlayer::getInstance()
-{
+MusicPlayer* MusicPlayer::getInstance() {
 	if (!instance_)
 	{
 		instance_ = new MusicPlayer();
@@ -51,6 +52,7 @@ MusicPlayer::MusicPlayer()
 	, loopMode_(false)
 	, shuffleMode_(false)
 	, isShuttingDown_(false)
+	, fadeSerial_(0)
 	, rng_()                    // will be seeded below
 	, isPendingPause_(false)
 	, pausedMusicPosition_(0.0)
@@ -63,9 +65,10 @@ MusicPlayer::MusicPlayer()
 	, hasStartedPlaying_(false)
 	, lastVolumeChangeTime_(0)
 	, volumeChangeIntervalMs_(0)
+	, hasVisualizer_(false)
 	, audioLevels_()
 	, audioChannels_(2)           // Default to stereo
-	, hasVisualizer_(false)
+	, hasVuMeter_(false)
 	, sampleSize_(2)              // Default to 16-bit samples
 {
 	// Seed the random number generator with current time
@@ -80,19 +83,17 @@ MusicPlayer::MusicPlayer()
 
 }
 
-MusicPlayer::~MusicPlayer()
-{
+MusicPlayer::~MusicPlayer() {
 	isShuttingDown_ = true;
-	stopMusic();
 	if (currentMusic_)
 	{
 		Mix_FreeMusic(currentMusic_);
 		currentMusic_ = nullptr;
 	}
+	stopMusic();
 }
 
-bool MusicPlayer::initialize(Configuration& config)
-{
+bool MusicPlayer::initialize(Configuration& config) {
 	this->config_ = &config;
 
 	// Get volume from config if available
@@ -175,15 +176,10 @@ bool MusicPlayer::initialize(Configuration& config)
 	return true;
 }
 
-bool MusicPlayer::registerVisualizerCallback()
-{
-	if (hasVisualizer_) {
-		return true;  // Already registered
-	}
 
-	// Register our post-mix callback
-	Mix_SetPostMix(MusicPlayer::postMixCallback, this);
-	hasVisualizer_ = true;
+
+void MusicPlayer::addVisualizerListener(MusicPlayerComponent* listener) {
+	std::lock_guard<std::mutex> lock(visualizerMutex_);
 
 	// Get format info from currently open audio device
 	int frequency;
@@ -191,6 +187,7 @@ bool MusicPlayer::registerVisualizerCallback()
 	int channels;
 	if (Mix_QuerySpec(&frequency, &format, &channels) == 1) {
 		audioChannels_ = channels;
+		audioSampleRate_ = frequency;
 
 		// Determine sample size based on format
 		if (format == AUDIO_U8 || format == AUDIO_S8) {
@@ -208,30 +205,41 @@ bool MusicPlayer::registerVisualizerCallback()
 		audioLevels_.resize(audioChannels_, 0.0f);
 	}
 
-	LOG_INFO("MusicPlayer", "Visualizer registered with " + std::to_string(audioChannels_) +
-		" channels and " + std::to_string(sampleSize_ * 8) + "-bit samples");
-
-	return true;
-}
-
-void MusicPlayer::unregisterVisualizerCallback()
-{
-	if (!hasVisualizer_) {
-		return;  // Not registered
+	// Prevent duplicates
+	if (std::find(visualizerListeners_.begin(), visualizerListeners_.end(), listener) != visualizerListeners_.end()) {
+		return;
 	}
 
-	// Unregister the callback
-	Mix_SetPostMix(nullptr, nullptr);
-	hasVisualizer_ = false;
+	visualizerListeners_.push_back(listener);
+	LOG_INFO("MusicPlayer", "Visualizer listener added. Total listeners: " + std::to_string(visualizerListeners_.size()));
 
-	// Reset audio levels
-	std::fill(audioLevels_.begin(), audioLevels_.end(), 0.0f);
-
-	LOG_INFO("MusicPlayer", "Visualizer unregistered");
+	// If this is the FIRST listener, register the master callback.
+	if (!hasActiveVisualizers_) {
+		Mix_SetPostMix(MusicPlayer::postMixCallback, this);
+		hasActiveVisualizers_ = true;
+		LOG_INFO("MusicPlayer", "Master post-mix callback registered.");
+	}
 }
 
-void MusicPlayer::postMixCallback(void* udata, Uint8* stream, int len)
-{
+void MusicPlayer::removeVisualizerListener(MusicPlayerComponent* listener) {
+	std::lock_guard<std::mutex> lock(visualizerMutex_);
+
+	visualizerListeners_.erase(
+		std::remove(visualizerListeners_.begin(), visualizerListeners_.end(), listener),
+		visualizerListeners_.end()
+	);
+	LOG_INFO("MusicPlayer", "Visualizer listener removed. Total listeners: " + std::to_string(visualizerListeners_.size()));
+
+	// If this was the LAST listener, unregister the master callback to save CPU.
+	if (visualizerListeners_.empty() && hasActiveVisualizers_) {
+		Mix_SetPostMix(nullptr, nullptr);
+		hasActiveVisualizers_ = false;
+		LOG_INFO("MusicPlayer", "Master post-mix callback unregistered.");
+	}
+}
+
+
+void MusicPlayer::postMixCallback(void* udata, Uint8* stream, int len) {
 	// This is a static callback, so we need to get the instance
 	if (udata) {
 		MusicPlayer* player = static_cast<MusicPlayer*>(udata);
@@ -239,69 +247,81 @@ void MusicPlayer::postMixCallback(void* udata, Uint8* stream, int len)
 	}
 }
 
-void MusicPlayer::processAudioData(Uint8* stream, int len)
-{
-	if (!hasVisualizer_ || !stream || len <= 0) {
+void MusicPlayer::processAudioData(Uint8* stream, int len) {
+	if (!hasActiveVisualizers_ || !stream || len <= 0) {
 		return;
 	}
 
-	// Reset audio levels
-	std::fill(audioLevels_.begin(), audioLevels_.end(), 0.0f);
-
-	// Number of samples per channel
-	int samplesPerChannel = len / (sampleSize_ * audioChannels_);
-	if (samplesPerChannel <= 0) {
+	std::lock_guard<std::mutex> lock(visualizerMutex_);
+	if (visualizerListeners_.empty()) {
 		return;
 	}
 
-	// Process each channel
-	for (int channel = 0; channel < audioChannels_; ++channel) {
-		float sum = 0.0f;
+	// Broadcast the PCM data to every registered listener.
+	for (MusicPlayerComponent* listener : visualizerListeners_) {
+		if (listener) {
+			listener->onPcmDataReceived(stream, len);
+		}
+	}
 
-		// Process samples for this channel
-		for (int i = 0; i < samplesPerChannel; ++i) {
-			// Calculate position in the stream for this sample and channel
-			int samplePos = (i * audioChannels_ + channel) * sampleSize_;
+	if (hasVuMeter_) {
+		// Reset audio levels
+		std::fill(audioLevels_.begin(), audioLevels_.end(), 0.0f);
 
-			// Make sure we're within bounds
-			if (samplePos + sampleSize_ > len) {
-				break;
-			}
-
-			// Get sample value based on format
-			float sampleValue = 0.0f;
-
-			if (sampleSize_ == 1) {
-				// 8-bit sample (0-255, center at 128)
-				Uint8 val = stream[samplePos];
-				sampleValue = (static_cast<float>(val) - 128.0f) / 128.0f;
-			}
-			else if (sampleSize_ == 2) {
-				// 16-bit sample (-32768 to 32767)
-				Sint16 val = *reinterpret_cast<Sint16*>(stream + samplePos);
-				sampleValue = static_cast<float>(val) / 32768.0f;
-			}
-			else if (sampleSize_ == 4) {
-				// 32-bit sample (float -1.0 to 1.0)
-				float val = *reinterpret_cast<float*>(stream + samplePos);
-				sampleValue = val;
-			}
-
-			// Accumulate absolute value for RMS calculation
-			sum += sampleValue * sampleValue;
+		// Number of samples per channel
+		int samplesPerChannel = len / (sampleSize_ * audioChannels_);
+		if (samplesPerChannel <= 0) {
+			return;
 		}
 
-		// Calculate RMS (Root Mean Square) value for this channel
-		float rms = std::sqrt(sum / samplesPerChannel);
+		// Process each channel
+		for (int channel = 0; channel < audioChannels_; ++channel) {
+			float sum = 0.0f;
 
-		// Store normalized level (0.0 - 1.0)
-		audioLevels_[channel] = std::min(1.0f, rms);
+			// Process samples for this channel
+			for (int i = 0; i < samplesPerChannel; ++i) {
+				// Calculate position in the stream for this sample and channel
+				int samplePos = (i * audioChannels_ + channel) * sampleSize_;
+
+				// Make sure we're within bounds
+				if (samplePos + sampleSize_ > len) {
+					break;
+				}
+
+				// Get sample value based on format
+				float sampleValue = 0.0f;
+
+				if (sampleSize_ == 1) {
+					// 8-bit sample (0-255, center at 128)
+					Uint8 val = stream[samplePos];
+					sampleValue = (static_cast<float>(val) - 128.0f) / 128.0f;
+				}
+				else if (sampleSize_ == 2) {
+					// 16-bit sample (-32768 to 32767)
+					Sint16 val = *reinterpret_cast<Sint16*>(stream + samplePos);
+					sampleValue = static_cast<float>(val) / 32768.0f;
+				}
+				else if (sampleSize_ == 4) {
+					// 32-bit sample (float -1.0 to 1.0)
+					float val = *reinterpret_cast<float*>(stream + samplePos);
+					sampleValue = val;
+				}
+
+				// Accumulate absolute value for RMS calculation
+				sum += sampleValue * sampleValue;
+			}
+
+			// Calculate RMS (Root Mean Square) value for this channel
+			float rms = std::sqrt(sum / samplesPerChannel);
+
+			// Store normalized level (0.0 - 1.0)
+			audioLevels_[channel] = std::min(1.0f, rms);
+		}
 	}
 }
 
 // Helper method to extract the folder loading logic
-void MusicPlayer::loadMusicFolderFromConfig()
-{
+void MusicPlayer::loadMusicFolderFromConfig() {
 	std::string musicFolder;
 	if (config_ && config_->getProperty("musicPlayer.folder", musicFolder))
 	{
@@ -314,8 +334,7 @@ void MusicPlayer::loadMusicFolderFromConfig()
 	}
 }
 
-bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
-{
+bool MusicPlayer::loadMusicFolder(const std::string& folderPath) {
 	// Clear existing music files
 	musicFiles_.clear();
 	musicNames_.clear();
@@ -378,8 +397,7 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPath)
 	return !musicFiles_.empty();
 }
 
-bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPath)
-{
+bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPath) {
 	// Clear existing music files
 	musicFiles_.clear();
 	musicNames_.clear();
@@ -397,8 +415,7 @@ bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPath)
 	return !musicFiles_.empty();
 }
 
-bool MusicPlayer::parseM3UFile(const std::string& playlistPath)
-{
+bool MusicPlayer::parseM3UFile(const std::string& playlistPath) {
 	try
 	{
 		if (!fs::exists(playlistPath))
@@ -479,16 +496,14 @@ bool MusicPlayer::parseM3UFile(const std::string& playlistPath)
 	}
 }
 
-bool MusicPlayer::isValidAudioFile(const std::string& filePath) const
-{
+bool MusicPlayer::isValidAudioFile(const std::string& filePath) const {
 	std::string ext = fs::path(filePath).extension().string();
 	std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
 
 	return (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".mod");
 }
 
-void MusicPlayer::loadTrack(int index)
-{
+void MusicPlayer::loadTrack(int index) {
 	// Free any currently playing music
 	if (currentMusic_)
 	{
@@ -516,71 +531,147 @@ void MusicPlayer::loadTrack(int index)
 	LOG_INFO("MusicPlayer", "Loaded track: " + musicNames_[index]);
 }
 
-bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const
-{
-	// Default to filename without extension as title
-	std::string fileName = fs::path(filePath).filename().string();
-	size_t lastDot = fileName.find_last_of('.');
-	if (lastDot != std::string::npos) {
-		metadata.title = fileName.substr(0, lastDot);
+// Utility: Convert syncsafe integer (for ID3v2.4)
+static uint32_t syncsafe_to_int(const uint8_t* buf) {
+	return ((buf[0] & 0x7f) << 21) | ((buf[1] & 0x7f) << 14) | ((buf[2] & 0x7f) << 7) | (buf[3] & 0x7f);
+}
+
+static std::string read_id3v2_text_frame(const char* data, size_t size) {
+	if (size < 2) return "";
+	uint8_t encoding = data[0];
+
+	if (encoding == 0 || encoding == 3) {
+		// ISO-8859-1 or UTF-8
+		std::string value(data + 1, size - 1);
+		size_t end = value.find_last_not_of(" \0");
+		if (end != std::string::npos)
+			value.erase(end + 1);
+		else
+			value.clear();
+		return value;
+	}
+	else if (encoding == 1 || encoding == 2) {
+		// UTF-16 (with or without BOM)
+		if (size < 4) return "";
+		bool bigEndian = false;
+		size_t offset = 1;
+		if ((unsigned char)data[1] == 0xFE && (unsigned char)data[2] == 0xFF) {
+			bigEndian = true;
+			offset = 3;
+		}
+		else if ((unsigned char)data[1] == 0xFF && (unsigned char)data[2] == 0xFE) {
+			bigEndian = false;
+			offset = 3;
+		}
+		size_t len = size - offset;
+		if (len % 2 != 0) --len;
+
+		std::wstring wstr;
+		for (size_t i = 0; i < len; i += 2) {
+			wchar_t ch;
+			if (bigEndian)
+				ch = (static_cast<unsigned char>(data[offset + i]) << 8) | static_cast<unsigned char>(data[offset + i + 1]);
+			else
+				ch = (static_cast<unsigned char>(data[offset + i + 1]) << 8) | static_cast<unsigned char>(data[offset + i]);
+			wstr.push_back(ch);
+		}
+
+		std::string value = Utils::wstringToString(wstr);
+		size_t end = value.find_last_not_of(" \0");
+		if (end != std::string::npos)
+			value.erase(end + 1);
+		else
+			value.clear();
+		return value;
 	}
 	else {
-		metadata.title = fileName;
+		return "";
+	}
+}
+
+bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const {
+	// 1. Try ID3v2 at the start of the file
+	std::ifstream file(filePath, std::ios::binary);
+	bool tagFound = false;
+	if (file) {
+		char header[10];
+		file.read(header, 10);
+		if (file.gcount() == 10 && std::memcmp(header, "ID3", 3) == 0) {
+			int version = header[3];
+			uint32_t tag_size = syncsafe_to_int(reinterpret_cast<uint8_t*>(header + 6));
+			uint32_t bytesRead = 0;
+			while (bytesRead < tag_size) {
+				char frame_header[10];
+				file.read(frame_header, 10);
+				if (file.gcount() != 10) break;
+				if (std::all_of(frame_header, frame_header + 4, [](char c) { return c == 0; })) break;
+				std::string frame_id(frame_header, 4);
+				uint32_t frame_size = (version == 4)
+					? syncsafe_to_int(reinterpret_cast<uint8_t*>(frame_header + 4))
+					: ((uint8_t)frame_header[4] << 24) | ((uint8_t)frame_header[5] << 16) | ((uint8_t)frame_header[6] << 8) | (uint8_t)frame_header[7];
+				if (frame_size == 0 || frame_size > 1024 * 1024) break; // sanity check
+
+				std::vector<char> frame_data(frame_size);
+				file.read(frame_data.data(), frame_size);
+				if ((size_t)file.gcount() != frame_size) break;
+
+				if (frame_id == "TIT2") metadata.title = read_id3v2_text_frame(frame_data.data(), frame_size);
+				if (frame_id == "TPE1") metadata.artist = read_id3v2_text_frame(frame_data.data(), frame_size);
+				if (frame_id == "TALB") metadata.album = read_id3v2_text_frame(frame_data.data(), frame_size);
+				if (frame_id == "TYER" || frame_id == "TDRC") metadata.year = read_id3v2_text_frame(frame_data.data(), frame_size);
+				if (frame_id == "TRCK") metadata.trackNumber = std::atoi(read_id3v2_text_frame(frame_data.data(), frame_size).c_str());
+				if (frame_id == "TCON") metadata.genre = read_id3v2_text_frame(frame_data.data(), frame_size);
+				if (frame_id == "COMM") metadata.comment = "[comment]";
+				bytesRead += 10 + frame_size;
+			}
+			tagFound = !metadata.title.empty() || !metadata.artist.empty() || !metadata.album.empty();
+		}
+		file.close();
 	}
 
-	bool metadataFound = false;
-
-	// Use SDL_mixer to get metadata when available
-	Mix_Music* music = Mix_LoadMUS(filePath.c_str());
-	if (music) {
-		// Get basic metadata
-		const char* title = Mix_GetMusicTitle(music);
-		const char* artist = Mix_GetMusicArtistTag(music);
-		const char* album = Mix_GetMusicAlbumTag(music);
-
-		if (title && strlen(title) > 0) {
-			metadata.title = title;
-			metadataFound = true;
+	// 2. If no ID3v2, try ID3v1 at the end of the file
+	if (!tagFound) {
+		std::ifstream filev1(filePath, std::ios::binary);
+		if (filev1) {
+			filev1.seekg(-128, std::ios::end);
+			char tag[128] = { 0 };
+			filev1.read(tag, 128);
+			if (filev1.gcount() == 128 && std::string(tag, 3) == "TAG") {
+				metadata.title = Utils::trim(std::string(tag + 3, 30));
+				metadata.artist = Utils::trim(std::string(tag + 33, 30));
+				metadata.album = Utils::trim(std::string(tag + 63, 30));
+				metadata.year = Utils::trim(std::string(tag + 93, 4));
+				if (tag[125] == 0) {
+					metadata.comment = Utils::trim(std::string(tag + 97, 28));
+					metadata.trackNumber = static_cast<unsigned char>(tag[126]);
+				}
+				else {
+					metadata.comment = Utils::trim(std::string(tag + 97, 30));
+					metadata.trackNumber = 0;
+				}
+				metadata.genre = std::to_string(static_cast<unsigned char>(tag[127]));
+				tagFound = !metadata.title.empty() || !metadata.artist.empty() || !metadata.album.empty();
+			}
+			filev1.close();
 		}
-
-		if (artist && strlen(artist) > 0) {
-			metadata.artist = artist;
-			metadataFound = true;
-		}
-
-		if (album && strlen(album) > 0) {
-			metadata.album = album;
-			metadataFound = true;
-		}
-
-		// Try to get additional tag information
-		// Note: Not all of these functions may be available depending on your SDL_mixer version
-		// Add conditionals if needed
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-		// SDL_mixer 2.6.0 or newer has more tag functions
-		const char* copyright = Mix_GetMusicCopyrightTag(music);
-		if (copyright && strlen(copyright) > 0) {
-			metadata.comment = copyright;
-			metadataFound = true;
-		}
-#endif
-
-		Mix_FreeMusic(music);
 	}
 
-	// If we didn't find any metadata, try to parse the filename for artist - title format
-	if (!metadataFound && metadata.artist.empty()) {
-		// Check for common patterns like "Artist - Title" or "Artist_-_Title"
-		std::string name = metadata.title;
-		size_t dashPos = name.find(" - ");
+	// 3. Fallback: filename parsing if still nothing
+	if (!tagFound) {
+		std::string fileName = std::filesystem::path(filePath).filename().string();
+		size_t lastDot = fileName.find_last_of('.');
+		metadata.title = (lastDot != std::string::npos) ? fileName.substr(0, lastDot) : fileName;
+
+		// Try to guess artist/title from filename: "Artist - Title"
+		size_t dashPos = metadata.title.find(" - ");
 		if (dashPos != std::string::npos) {
-			metadata.artist = name.substr(0, dashPos);
-			metadata.title = name.substr(dashPos + 3);
+			metadata.artist = metadata.title.substr(0, dashPos);
+			metadata.title = metadata.title.substr(dashPos + 3);
 		}
-		else if ((dashPos = name.find("_-_")) != std::string::npos) {
-			metadata.artist = name.substr(0, dashPos);
+		else if ((dashPos = metadata.title.find("_-_")) != std::string::npos) {
+			metadata.artist = metadata.title.substr(0, dashPos);
 			std::replace(metadata.artist.begin(), metadata.artist.end(), '_', ' ');
-			metadata.title = name.substr(dashPos + 3);
+			metadata.title = metadata.title.substr(dashPos + 3);
 			std::replace(metadata.title.begin(), metadata.title.end(), '_', ' ');
 		}
 	}
@@ -588,8 +679,8 @@ bool MusicPlayer::readTrackMetadata(const std::string& filePath, TrackMetadata& 
 	return true;
 }
 
-const MusicPlayer::TrackMetadata& MusicPlayer::getCurrentTrackMetadata() const
-{
+
+const MusicPlayer::TrackMetadata& MusicPlayer::getCurrentTrackMetadata() const {
 	static TrackMetadata emptyMetadata;
 
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
@@ -598,8 +689,7 @@ const MusicPlayer::TrackMetadata& MusicPlayer::getCurrentTrackMetadata() const
 	return emptyMetadata;
 }
 
-const MusicPlayer::TrackMetadata& MusicPlayer::getTrackMetadata(int index) const
-{
+const MusicPlayer::TrackMetadata& MusicPlayer::getTrackMetadata(int index) const {
 	static TrackMetadata emptyMetadata;
 
 	if (index >= 0 && index < static_cast<int>(trackMetadata_.size())) {
@@ -608,69 +698,60 @@ const MusicPlayer::TrackMetadata& MusicPlayer::getTrackMetadata(int index) const
 	return emptyMetadata;
 }
 
-size_t MusicPlayer::getTrackMetadataCount() const
-{
+size_t MusicPlayer::getTrackMetadataCount() const {
 	return trackMetadata_.size();
 }
 
-std::string MusicPlayer::getCurrentTitle() const
-{
+std::string MusicPlayer::getCurrentTitle() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
 		return trackMetadata_[currentIndex_].title;
 	}
 	return "";
 }
 
-std::string MusicPlayer::getCurrentArtist() const
-{
+std::string MusicPlayer::getCurrentArtist() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
 		return trackMetadata_[currentIndex_].artist;
 	}
 	return "";
 }
 
-std::string MusicPlayer::getCurrentAlbum() const
-{
+std::string MusicPlayer::getCurrentAlbum() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
 		return trackMetadata_[currentIndex_].album;
 	}
 	return "";
 }
 
-std::string MusicPlayer::getCurrentYear() const
-{
+std::string MusicPlayer::getCurrentYear() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
 		return trackMetadata_[currentIndex_].year;
 	}
 	return "";
 }
 
-std::string MusicPlayer::getCurrentGenre() const
-{
+std::string MusicPlayer::getCurrentGenre() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
 		return trackMetadata_[currentIndex_].genre;
 	}
 	return "";
 }
 
-std::string MusicPlayer::getCurrentComment() const
-{
+std::string MusicPlayer::getCurrentComment() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
 		return trackMetadata_[currentIndex_].comment;
 	}
 	return "";
 }
 
-int MusicPlayer::getCurrentTrackNumber() const
-{
+int MusicPlayer::getCurrentTrackNumber() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(trackMetadata_.size())) {
 		return trackMetadata_[currentIndex_].trackNumber;
 	}
 	return 0;
 }
 
-std::string MusicPlayer::getFormattedTrackInfo(int index) const
-{
+std::string MusicPlayer::getFormattedTrackInfo(int index) const {
 	if (index == -1) {
 		index = currentIndex_;
 	}
@@ -686,19 +767,18 @@ std::string MusicPlayer::getFormattedTrackInfo(int index) const
 		info += " - " + meta.artist;
 	}
 
-//	if (!meta.album.empty()) {
-	//	info += " (" + meta.album;
-	//	if (!meta.year.empty()) {
-	//		info += ", " + meta.year;
-	//	}
-	//	info += ")";
-	//}
+	//	if (!meta.album.empty()) {
+		//	info += " (" + meta.album;
+		//	if (!meta.year.empty()) {
+		//		info += ", " + meta.year;
+		//	}
+		//	info += ")";
+		//}
 
 	return info;
 }
 
-std::string MusicPlayer::getTrackArtist(int index) const
-{
+std::string MusicPlayer::getTrackArtist(int index) const {
 	if (index == -1) {
 		index = currentIndex_;
 	}
@@ -710,8 +790,7 @@ std::string MusicPlayer::getTrackArtist(int index) const
 	return trackMetadata_[index].artist;
 }
 
-std::string MusicPlayer::getTrackAlbum(int index) const
-{
+std::string MusicPlayer::getTrackAlbum(int index) const {
 	if (index == -1) {
 		index = currentIndex_;
 	}
@@ -723,8 +802,7 @@ std::string MusicPlayer::getTrackAlbum(int index) const
 	return trackMetadata_[index].album;
 }
 
-bool MusicPlayer::playMusic(int index, int customFadeMs)
-{
+bool MusicPlayer::playMusic(int index, int customFadeMs) {
 	// Use default fade if -1 is passed
 	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
@@ -766,7 +844,7 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 	isPendingPause_ = false;
 
 	// If music is already playing or fading, fade it out first
-	if (Mix_PlayingMusic() || Mix_FadingMusic() != MIX_NO_FADING)
+	if (Mix_PlayingMusic() || isFading())
 	{
 		if (useFadeMs > 0)
 		{
@@ -839,17 +917,16 @@ bool MusicPlayer::playMusic(int index, int customFadeMs)
 	setPlaybackState(PlaybackState::PLAYING);
 	LOG_INFO("MusicPlayer", "Now playing track: " + getFormattedTrackInfo(index));
 	isPendingTrackChange_ = false;
-	
+
 	if (!hasStartedPlaying_)
 	{
 		hasStartedPlaying_ = true;
 	}
-	
+
 	return true;
 }
 
-double MusicPlayer::saveCurrentMusicPosition()
-{
+double MusicPlayer::saveCurrentMusicPosition() {
 	if (currentMusic_)
 	{
 		// Get the current position in the music in seconds
@@ -864,9 +941,8 @@ double MusicPlayer::saveCurrentMusicPosition()
 	return 0.0;
 }
 
-bool MusicPlayer::pauseMusic(int customFadeMs)
-{
-	if (!isPlaying() || isPaused() || !Mix_FadingMusic() == MIX_NO_FADING)
+bool MusicPlayer::pauseMusic(int customFadeMs) {
+	if (!isPlaying() || isPaused() || isFading())
 	{
 		return false;
 	}
@@ -908,11 +984,10 @@ bool MusicPlayer::pauseMusic(int customFadeMs)
 	return true;
 }
 
-bool MusicPlayer::resumeMusic(int customFadeMs)
-{
-	if (!Mix_FadingMusic() == MIX_NO_FADING)
+bool MusicPlayer::resumeMusic(int customFadeMs) {
+	if (isFading())
 		return false;
-	
+
 	// Use default fade if -1 is passed
 	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
@@ -1008,8 +1083,7 @@ bool MusicPlayer::resumeMusic(int customFadeMs)
 	return false; // Nothing to resume
 }
 
-bool MusicPlayer::stopMusic(int customFadeMs)
-{
+bool MusicPlayer::stopMusic(int customFadeMs) {
 	if (!Mix_PlayingMusic() && !Mix_PausedMusic() && !isPendingPause_)
 	{
 		return false;
@@ -1050,9 +1124,8 @@ bool MusicPlayer::stopMusic(int customFadeMs)
 	return true;
 }
 
-bool MusicPlayer::nextTrack(int customFadeMs)
-{
-	if (musicFiles_.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
+bool MusicPlayer::nextTrack(int customFadeMs) {
+	if (musicFiles_.empty() || isFading())
 	{
 		return false;
 	}
@@ -1074,8 +1147,7 @@ bool MusicPlayer::nextTrack(int customFadeMs)
 	return playMusic(nextIndex, customFadeMs);
 }
 
-int MusicPlayer::getNextTrackIndex()
-{
+int MusicPlayer::getNextTrackIndex() {
 	if (shuffleMode_)
 	{
 		// In shuffle mode, step forward in the shuffled order.
@@ -1100,9 +1172,8 @@ int MusicPlayer::getNextTrackIndex()
 	}
 }
 
-bool MusicPlayer::previousTrack(int customFadeMs)
-{
-	if (musicFiles_.empty() || !Mix_FadingMusic() == MIX_NO_FADING)
+bool MusicPlayer::previousTrack(int customFadeMs) {
+	if (musicFiles_.empty() || isFading())
 	{
 		return false;
 	}
@@ -1124,13 +1195,11 @@ bool MusicPlayer::previousTrack(int customFadeMs)
 	return playMusic(prevIndex, customFadeMs);
 }
 
-bool MusicPlayer::isPlaying() const
-{
+bool MusicPlayer::isPlaying() const {
 	return Mix_PlayingMusic() == 1 && !Mix_PausedMusic();
 }
 
-bool MusicPlayer::isPaused() const
-{
+bool MusicPlayer::isPaused() const {
 	return Mix_PausedMusic() == 1 || isPendingPause_;
 }
 
@@ -1155,9 +1224,9 @@ void MusicPlayer::changeVolume(bool increase) {
 	setButtonPressed(true); // Trigger volume bar update
 }
 
-void MusicPlayer::setVolume(int newVolume)
-{
-	if (Mix_FadingMusic() != MIX_NO_FADING)
+void MusicPlayer::setVolume(int newVolume) {
+	++fadeSerial_; // cancel any ongoing fade
+	if (isFading())
 		return;
 
 	// Ensure volume is within SDL_Mixer's range (0-128)
@@ -1192,44 +1261,35 @@ int MusicPlayer::getLogicalVolume() {
 }
 
 
-int MusicPlayer::getVolume() const
-{
+int MusicPlayer::getVolume() const {
 	return Mix_VolumeMusic(-1);
 }
 
-void MusicPlayer::fadeToVolume(int targetPercent)
-{
-	// Clamp target percentage between 0 and 100.
-	targetPercent = std::max(0, std::min(100, targetPercent));
-	// Convert percentage to Mix_VolumeMusic range.
-	int targetVolume = static_cast<int>((targetPercent / 100.0f) * MIX_MAX_VOLUME + 0.5f);
-
-	// Save the current volume (in the 0-128 range) for later restoration.
+void MusicPlayer::fadeToVolume(int targetVolume, int customFadeMs) {
+	int durationMs = (customFadeMs >= 0) ? customFadeMs : fadeMs_;
+	targetVolume = std::max(0, std::min(MIX_MAX_VOLUME, targetVolume));
 	previousVolume_ = getVolume();
 
-	// Determine the number of steps for a smooth fade.
 	const int steps = 50;
-	int sleepDuration = (fadeMs_ > 0) ? (fadeMs_ / steps) : 0;
+	int sleepDuration = (durationMs > 0) ? (durationMs / steps) : 0;
+	uint32_t mySerial = ++fadeSerial_; // aborts previous fades
 
-	// Launch a detached thread to perform the fade.
-	std::thread([this, targetVolume, steps, sleepDuration]() {
-		int startVolume = getVolume();
+	int startVolume = getVolume();
+
+	std::thread([this, mySerial, startVolume, targetVolume, steps, sleepDuration]() {
 		for (int i = 0; i <= steps; ++i)
 		{
-			// Linear interpolation between startVolume and targetVolume.
+			if (mySerial != fadeSerial_ || isShuttingDown_) return; // abort this fade
 			float t = static_cast<float>(i) / steps;
 			int newVolume = static_cast<int>(startVolume + t * (targetVolume - startVolume));
 			Mix_VolumeMusic(newVolume);
 			if (sleepDuration > 0)
-			{
 				std::this_thread::sleep_for(std::chrono::milliseconds(sleepDuration));
-			}
 		}
 		}).detach();
 }
 
-void MusicPlayer::fadeBackToPreviousVolume()
-{
+void MusicPlayer::fadeBackToPreviousVolume() {
 	int targetVolume = previousVolume_;
 	const int steps = 50;
 	int sleepDuration = (fadeMs_ > 0) ? (fadeMs_ / steps) : 0;
@@ -1249,8 +1309,7 @@ void MusicPlayer::fadeBackToPreviousVolume()
 		}).detach();
 }
 
-std::string MusicPlayer::getCurrentTrackName() const
-{
+std::string MusicPlayer::getCurrentTrackName() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicNames_.size()))
 	{
 		return musicNames_[currentIndex_];
@@ -1258,8 +1317,7 @@ std::string MusicPlayer::getCurrentTrackName() const
 	return "";
 }
 
-std::string MusicPlayer::getCurrentTrackNameWithoutExtension() const
-{
+std::string MusicPlayer::getCurrentTrackNameWithoutExtension() const {
 	// First get the full filename with extension
 	std::string fullName;
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicNames_.size()))
@@ -1284,8 +1342,7 @@ std::string MusicPlayer::getCurrentTrackNameWithoutExtension() const
 	return fullName.substr(0, lastDotPos);
 }
 
-std::string MusicPlayer::getCurrentTrackPath() const
-{
+std::string MusicPlayer::getCurrentTrackPath() const {
 	if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicFiles_.size()))
 	{
 		return musicFiles_[currentIndex_];
@@ -1293,18 +1350,15 @@ std::string MusicPlayer::getCurrentTrackPath() const
 	return "";
 }
 
-int MusicPlayer::getCurrentTrackIndex() const
-{
+int MusicPlayer::getCurrentTrackIndex() const {
 	return currentIndex_;
 }
 
-int MusicPlayer::getTrackCount() const
-{
+int MusicPlayer::getTrackCount() const {
 	return static_cast<int>(musicFiles_.size());
 }
 
-void MusicPlayer::setLoop(bool loop)
-{
+void MusicPlayer::setLoop(bool loop) {
 	loopMode_ = loop;
 
 	// If music is currently playing, adjust the loop setting
@@ -1323,13 +1377,11 @@ void MusicPlayer::setLoop(bool loop)
 	LOG_INFO("MusicPlayer", "Loop mode " + std::string(loopMode_ ? "enabled" : "disabled"));
 }
 
-bool MusicPlayer::getLoop() const
-{
+bool MusicPlayer::getLoop() const {
 	return loopMode_;
 }
 
-bool MusicPlayer::shuffle()
-{
+bool MusicPlayer::shuffle() {
 	if (musicFiles_.empty())
 	{
 		return false;
@@ -1341,8 +1393,7 @@ bool MusicPlayer::shuffle()
 	return playMusic(randomIndex);
 }
 
-bool MusicPlayer::setShuffle(bool shuffle)
-{
+bool MusicPlayer::setShuffle(bool shuffle) {
 	shuffleMode_ = shuffle;
 
 	if (shuffleMode_)
@@ -1385,13 +1436,11 @@ bool MusicPlayer::setShuffle(bool shuffle)
 	return true;
 }
 
-bool MusicPlayer::getShuffle() const
-{
+bool MusicPlayer::getShuffle() const {
 	return shuffleMode_;
 }
 
-void MusicPlayer::musicFinishedCallback()
-{
+void MusicPlayer::musicFinishedCallback() {
 	// This is a static callback, so we need to get the instance
 	if (instance_)
 	{
@@ -1399,8 +1448,7 @@ void MusicPlayer::musicFinishedCallback()
 	}
 }
 
-void MusicPlayer::onMusicFinished()
-{
+void MusicPlayer::onMusicFinished() {
 	// Don't proceed if shutting down
 	if (isShuttingDown_)
 	{
@@ -1438,8 +1486,7 @@ void MusicPlayer::onMusicFinished()
 	}
 }
 
-void MusicPlayer::setFadeDuration(int ms)
-{
+void MusicPlayer::setFadeDuration(int ms) {
 	fadeMs_ = std::max(0, ms);
 
 	// Save to config if available
@@ -1449,31 +1496,36 @@ void MusicPlayer::setFadeDuration(int ms)
 	}
 }
 
-int MusicPlayer::getFadeDuration() const
-{
+int MusicPlayer::getFadeDuration() const {
 	return fadeMs_;
 }
 
-void MusicPlayer::resetShutdownFlag()
-{
+void MusicPlayer::resetShutdownFlag() {
 	isShuttingDown_ = false;
 }
 
-void MusicPlayer::shutdown()
-{
+void MusicPlayer::shutdown() {
 	LOG_INFO("MusicPlayer", "Shutting down music player");
 
 	// Set flag first to prevent callbacks
 	isShuttingDown_ = true;
 
-	if(hasVisualizer_)
-		unregisterVisualizerCallback();
+	// If music is playing, fade out synchronously
+	if (Mix_PlayingMusic()) {
+		int steps = 50;
+		int fadeMs = fadeMs_; // or use a custom fade for shutdown
+		int startVolume = Mix_VolumeMusic(-1);
 
-	// Stop any playing music
-	if (Mix_PlayingMusic() || Mix_PausedMusic())
-	{
-		Mix_HaltMusic();
+		for (int i = 0; i <= steps; ++i) {
+			if (!Mix_PlayingMusic()) break; // music stopped early
+			float t = static_cast<float>(i) / steps;
+			int newVolume = static_cast<int>(startVolume * (1.0f - t));
+			Mix_VolumeMusic(newVolume);
+			std::this_thread::sleep_for(std::chrono::milliseconds(fadeMs / steps));
+		}
 	}
+	Mix_HaltMusic();
+
 
 	// Free resources
 	if (currentMusic_)
@@ -1490,8 +1542,7 @@ void MusicPlayer::shutdown()
 	LOG_INFO("MusicPlayer", "Music player shutdown complete");
 }
 
-bool MusicPlayer::hasTrackChanged()
-{
+bool MusicPlayer::hasTrackChanged() {
 	std::string currentTrackPath = getCurrentTrackPath();
 	bool changed = !currentTrackPath.empty() && (currentTrackPath != lastCheckedTrackPath_);
 
@@ -1503,8 +1554,7 @@ bool MusicPlayer::hasTrackChanged()
 	return changed;
 }
 
-bool MusicPlayer::isPlayingNewTrack()
-{
+bool MusicPlayer::isPlayingNewTrack() {
 	// Only report change if music is actually playing
 	return isPlaying() && hasTrackChanged();
 }
@@ -1888,8 +1938,7 @@ bool MusicPlayer::getAlbumArt(int trackIndex, std::vector<unsigned char>& albumA
 	}
 }
 
-double MusicPlayer::getCurrent()
-{
+double MusicPlayer::getCurrent() {
 	if (!currentMusic_) {
 		return -1.0;
 	}
@@ -1897,8 +1946,7 @@ double MusicPlayer::getCurrent()
 	return Mix_GetMusicPosition(currentMusic_);
 }
 
-double MusicPlayer::getDuration()
-{
+double MusicPlayer::getDuration() {
 	if (!currentMusic_) {
 		return -1.0;
 	}
@@ -1914,13 +1962,11 @@ std::pair<int, int> MusicPlayer::getCurrentAndDurationSec() {
 	};
 }
 
-bool MusicPlayer::isFading() const
-{
+bool MusicPlayer::isFading() const {
 	return Mix_FadingMusic() != MIX_NO_FADING;
 }
 
-bool MusicPlayer::hasStartedPlaying() const
-{
+bool MusicPlayer::hasStartedPlaying() const {
 	return hasStartedPlaying_;
 }
 
@@ -1930,4 +1976,8 @@ void MusicPlayer::setButtonPressed(bool buttonPressed) {
 
 bool MusicPlayer::getButtonPressed() {
 	return buttonPressed_;
+}
+
+int MusicPlayer::getSampleSize() const {
+	return sampleSize_;
 }

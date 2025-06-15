@@ -26,10 +26,44 @@
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
+#include "kiss_fft.h"
+#include <gst/app/gstappsink.h>
+#include <gst/app/gstappsrc.h>
 #include <sstream>
 #include <iomanip>
 #include <algorithm>
 #include <charconv>
+#include <numeric>
+
+static const SDL_BlendMode softOverlayBlendMode = SDL_ComposeCustomBlendMode(
+	SDL_BLENDFACTOR_SRC_ALPHA,           // Source color factor: modulates source color by the alpha value set dynamically
+	SDL_BLENDFACTOR_ONE,                 // Destination color factor: keep the destination as is
+	SDL_BLENDOPERATION_ADD,              // Color operation: add source and destination colors based on alpha
+	SDL_BLENDFACTOR_ONE,                 // Source alpha factor
+	SDL_BLENDFACTOR_ONE_MINUS_SRC_ALPHA, // Destination alpha factor: inverse of source alpha
+	SDL_BLENDOPERATION_ADD               // Alpha operation: add alpha values
+);
+
+bool parseHexColor(const std::string& hexString, SDL_Color& outColor) {
+	std::string_view sv = hexString;
+	if (sv.length() != 6) return false;
+	for (char c : sv) {
+		if (!std::isxdigit(static_cast<unsigned char>(c))) return false;
+	}
+	unsigned int r, g, b;
+	auto result_r = std::from_chars(sv.data(), sv.data() + 2, r, 16);
+	auto result_g = std::from_chars(sv.data() + 2, sv.data() + 4, g, 16);
+	auto result_b = std::from_chars(sv.data() + 4, sv.data() + 6, b, 16);
+	if (result_r.ec != std::errc() || result_g.ec != std::errc() || result_b.ec != std::errc() ||
+		result_r.ptr != sv.data() + 2 || result_g.ptr != sv.data() + 4 || result_b.ptr != sv.data() + 6) {
+		return false;
+	}
+	outColor.r = static_cast<Uint8>(r);
+	outColor.g = static_cast<Uint8>(g);
+	outColor.b = static_cast<Uint8>(b);
+	outColor.a = 255;
+	return true;
+}
 
 MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMode, const std::string& type, Page& p, int monitor, FontManager* font)
 	: Component(p)
@@ -71,24 +105,13 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	, volumeStableTimer_(0.0f)    // Reset timer
 	, volumeFadeDelay_(1.5f)      // Wait 1.5 seconds before fading out
 	, volumeChanging_(false)      // Not changing initially
-	, isVuMeter_(Utils::toLower(type) == "vumeter")
-	, vuBarCount_(40)  // Default number of bars
-	, vuDecayRate_(2.0f)  // How quickly the bars fall
-	, vuPeakDecayRate_(0.4f)  // How quickly the peak markers fall
-	, vuMeterTexture_(nullptr)
-	, vuMeterTextureWidth_(0)
-	, vuMeterTextureHeight_(0)
-	, vuMeterNeedsUpdate_(true)
-	, vuMeterIsMono_(false) // Initialize to default (stereo)
-	, vuBottomColor_({ 0, 220, 0, 255 })
-	, vuMiddleColor_({ 220, 220, 0, 255 })
-	, vuTopColor_({ 220, 0, 0, 255 })
-	, vuBackgroundColor_({ 40, 40, 40, 255 })
-	, vuPeakColor_({ 255, 255, 255, 255 })
-	, vuGreenThreshold_(0.4f)
-	, vuYellowThreshold_(0.6f)
+	, gstreamerVisType_(GStreamerVisType::None)
 	, totalSegments_{ 0 }
-	, useSegmentedVolume_{ false } {
+	, useSegmentedVolume_{ false }
+	, isIsoVisualizer_(Utils::toLower(type) == "iso")
+	, isVuMeter_(Utils::toLower(type) == "vumeter")
+	, vuMeterNeedsUpdate_{ true } // State flag remains
+{
 	// Set the monitor for this component
 	baseViewInfo.Monitor = monitor;
 
@@ -97,6 +120,13 @@ MusicPlayerComponent::MusicPlayerComponent(Configuration& config, bool commonMod
 	if (config.getProperty("musicPlayer.refreshRate", configRefreshInterval)) {
 		refreshInterval_ = static_cast<float>(configRefreshInterval) / 1000.0f; // Convert from ms to seconds
 	}
+
+	std::string typeLower = Utils::toLower(type);
+	if (typeLower == "goom") gstreamerVisType_ = GStreamerVisType::Goom;
+	else if (typeLower == "wavescope") gstreamerVisType_ = GStreamerVisType::Wavescope;
+	else if (typeLower == "synaescope") gstreamerVisType_ = GStreamerVisType::Synaescope;
+	else if (typeLower == "spectrascope") gstreamerVisType_ = GStreamerVisType::Spectrascope;
+	else gstreamerVisType_ = GStreamerVisType::None;
 
 	allocateGraphicsMemory();
 }
@@ -109,12 +139,20 @@ namespace ImageProcessorConstants {
 	const int MIN_SEGMENT_WIDTH = 2;
 }
 
-MusicPlayerComponent::~MusicPlayerComponent() {
-	freeGraphicsMemory();
-}
+MusicPlayerComponent::~MusicPlayerComponent() = default;
 
 void MusicPlayerComponent::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
+
+	if (isFftVisualizer() || gstreamerVisType_ != GStreamerVisType::None) {
+		musicPlayer_->removeVisualizerListener(this);
+	}
+
+	if(fftTexture_ != nullptr) {
+		SDL_DestroyTexture(fftTexture_);
+		fftTexture_ = nullptr;
+		fftTexW_ = fftTexH_ = 0;
+	}
 
 	// Clean up volume bar textures
 	if (volumeEmptyTexture_ != nullptr) {
@@ -130,14 +168,31 @@ void MusicPlayerComponent::freeGraphicsMemory() {
 		volumeBarTexture_ = nullptr;
 	}
 
-	if (vuMeterTexture_ != nullptr) {
-		SDL_DestroyTexture(vuMeterTexture_);
-		vuMeterTexture_ = nullptr;
-	}
-
 	if (progressBarTexture_ != nullptr) {
 		SDL_DestroyTexture(progressBarTexture_);
 		progressBarTexture_ = nullptr;
+	}
+
+	if (albumArtTexture_) {
+		SDL_DestroyTexture(albumArtTexture_);
+		albumArtTexture_ = nullptr;
+	}
+
+	if (gstPipeline_) {
+		// Set pipeline state to NULL before unref (ensures clean shutdown)
+		gst_element_set_state(gstPipeline_, GST_STATE_NULL);
+		gst_object_unref(gstPipeline_);
+		gstPipeline_ = nullptr;
+	}
+
+	if (gstTexture_ != nullptr) {
+		SDL_DestroyTexture(gstTexture_);
+		gstTexture_ = nullptr;
+	}
+
+	if (isFftVisualizer_ && kissfft_cfg_) {
+		kiss_fftr_free(kissfft_cfg_); // Use the REAL FFT free function
+		kissfft_cfg_ = nullptr;
 	}
 
 	if (loadedComponent_ != nullptr) {
@@ -151,98 +206,50 @@ void MusicPlayerComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
 
 	// Get the renderer if we're going to handle album art or volume bar or progress bar or VU meter
-	if (isAlbumArt_ || isVolumeBar_ || isProgressBar_ || isVuMeter_) {
+	if (isAlbumArt_ || isVolumeBar_ || isProgressBar_ || gstreamerVisType_ != GStreamerVisType::None || isFftVisualizer()) {
 		renderer_ = SDL::getRenderer(baseViewInfo.Monitor);
 	}
 
-	if (isVuMeter_) {
-		musicPlayer_->registerVisualizerCallback();
+	if (isFftVisualizer()) {
+		if (!kissfft_cfg_) {
+			// Use the REAL FFT allocation function
+			kissfft_cfg_ = kiss_fftr_alloc(FFT_SIZE, 0, nullptr, nullptr);
 
-		config_.getProperty("musicPlayer.vuMeter.mono", vuMeterIsMono_);
-		if (vuMeterIsMono_) {
-			LOG_INFO("MusicPlayerComponent", "VU Meter configured for mono display.");
+			pcmBuffer_.clear();
+			// Size the output buffer correctly.
+			fftOutput_.assign(FFT_SIZE / 2 + 1, { 0.0f, 0.0f });
+			fftMagnitudes_.assign(NR_OF_FREQ, 0.0f);
 		}
-		else {
-			LOG_INFO("MusicPlayerComponent", "VU Meter configured for stereo display (default).");
-		}
+		musicPlayer_->addVisualizerListener(this);
 
-		int configBarCount;
-		if (config_.getProperty("musicPlayer.vuMeter.barCount", configBarCount)) {
-			vuBarCount_ = std::max(1, std::min(32, configBarCount));
-		}
+		// Shared texture for all FFT visualizers
+		fftTexture_ = nullptr;
+		fftTexW_ = fftTexH_ = 0;
 
-		float configDecayRate;
-		if (config_.getProperty("musicPlayer.vuMeter.decayRate", configDecayRate)) {
-			vuDecayRate_ = std::max(0.1f, configDecayRate);
-		}
+		if (isIsoVisualizer_) {
+			iso_grid_.assign(ISO_HISTORY, std::vector<IsoPoint>(NR_OF_FREQ));
+			const int base_spacing_x = 8;
+			const int base_spacing_y = 12;
 
-		float configPeakDecayRate;
-		if (config_.getProperty("musicPlayer.vuMeter.peakDecayRate", configPeakDecayRate)) {
-			vuPeakDecayRate_ = std::max(0.1f, configPeakDecayRate);
-		}
-
-		std::string colorStr;
-		SDL_Color parsedColor;
-
-		if (config_.getProperty("musicPlayer.vuMeter.bottomColor", colorStr)) {
-			if (parseHexColor(colorStr, parsedColor)) {
-				vuBottomColor_ = parsedColor;
-			}
-			else {
-				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.bottomColor: '" + colorStr + "'. Using default.");
+			for (int i = 0; i < ISO_HISTORY; ++i) {
+				for (int j = 0; j < NR_OF_FREQ; ++j) {
+					iso_grid_[i][j].x = (j - (NR_OF_FREQ / 2)) * base_spacing_x;
+					iso_grid_[i][j].y = i * base_spacing_y;
+					iso_grid_[i][j].z = 0.0f;
+				}
 			}
 		}
 
-		if (config_.getProperty("musicPlayer.vuMeter.middleColor", colorStr)) {
-			if (parseHexColor(colorStr, parsedColor)) {
-				vuMiddleColor_ = parsedColor;
-			}
-			else {
-				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.middleColor: '" + colorStr + "'. Using default.");
-			}
+		if (isVuMeter_) {
+			loadVuMeterConfig();
+			vuLevels_.assign(vuMeterConfig_.barCount, 0.0f);
+			vuPeaks_.assign(vuMeterConfig_.barCount, 0.0f);
 		}
-
-		if (config_.getProperty("musicPlayer.vuMeter.topColor", colorStr)) {
-			if (parseHexColor(colorStr, parsedColor)) {
-				vuTopColor_ = parsedColor;
-			}
-			else {
-				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.topColor: '" + colorStr + "'. Using default.");
-			}
-		}
-
-		if (config_.getProperty("musicPlayer.vuMeter.backgroundColor", colorStr)) {
-			if (parseHexColor(colorStr, parsedColor)) {
-				vuBackgroundColor_ = parsedColor;
-			}
-			else {
-				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.backgroundColor: '" + colorStr + "'. Using default.");
-			}
-		}
-
-		if (config_.getProperty("musicPlayer.vuMeter.peakColor", colorStr)) {
-			if (parseHexColor(colorStr, parsedColor)) {
-				vuPeakColor_ = parsedColor;
-			}
-			else {
-				LOG_WARNING("MusicPlayerComponent", "Invalid format for musicPlayer.vuMeter.peakColor: '" + colorStr + "'. Using default.");
-			}
-		}
-
-		float threshold;
-		if (config_.getProperty("musicPlayer.vuMeter.greenThreshold", threshold)) {
-			vuGreenThreshold_ = std::max(0.0f, std::min(1.0f, threshold));
-		}
-
-		if (config_.getProperty("musicPlayer.vuMeter.yellowThreshold", threshold)) {
-			vuYellowThreshold_ = std::max(0.0f, std::min(1.0f, threshold));
-			vuYellowThreshold_ = std::max(vuYellowThreshold_, vuGreenThreshold_);
-		}
-
-		vuLevels_.resize(vuBarCount_, 0.0f);
-		vuPeaks_.resize(vuBarCount_, 0.0f);
 	}
 
+	if (gstreamerVisType_ != GStreamerVisType::None) {
+		musicPlayer_->addVisualizerListener(this);
+	}
 
 	if (isVolumeBar_) {
 		loadVolumeBarTextures();
@@ -261,13 +268,25 @@ void MusicPlayerComponent::allocateGraphicsMemory() {
 	}
 	// Only create loadedComponent if this isn't a special type we handle directly
 	// (album art, volume bar, progress bar, vu meter)
-	else if (!isAlbumArt_ && !isVolumeBar_ && !isProgressBar_ && !isVuMeter_) {
+	else if (!isAlbumArt_ && !isVolumeBar_ && !isProgressBar_ && gstreamerVisType_ == GStreamerVisType::None && !isFftVisualizer()) {
 		loadedComponent_ = reloadComponent();
 		if (loadedComponent_ != nullptr) {
 			loadedComponent_->allocateGraphicsMemory();
 		}
 	}
 }
+
+void MusicPlayerComponent::onPcmDataReceived(const Uint8* data, int len) {
+	// If this component is any type of visualizer, queue the data.
+	if (isFftVisualizer() || gstreamerVisType_ != GStreamerVisType::None) {
+		std::lock_guard<std::mutex> lock(pcmMutex_);
+		pcmQueue_.emplace_back(data, data + len);
+		while (pcmQueue_.size() > 10) {
+			pcmQueue_.pop_front();
+		}
+	}
+}
+
 
 void MusicPlayerComponent::loadVolumeBarTextures() {
 	// Get layout name from config
@@ -390,6 +409,33 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 
 	updateVolumeBarTexture();
 }
+
+void MusicPlayerComponent::pushToGst(const Uint8* data, int len) {
+	if (!gstAppSrc_) return;
+	GstBuffer* buffer = gst_buffer_new_allocate(nullptr, len, nullptr);
+	gst_buffer_fill(buffer, 0, data, len);
+
+	// -- Add this block to set timestamps! --
+	static GstClockTime pts = 0;
+	// Each audio frame: bytes_per_sample * num_channels = 4 for S16LE stereo, 2 for S16LE mono, etc.
+	const int bytes_per_frame = 2 /*bytes/sample*/ * 2 /*channels*/; // assuming S16LE, stereo
+	const int sample_rate = 44100; // or whatever your pipeline uses
+
+	// Number of frames (samples per channel) in this buffer:
+	int nframes = len / bytes_per_frame;
+
+	// Duration in nanoseconds for this buffer
+	GstClockTime duration = (GstClockTime)((nframes * GST_SECOND) / sample_rate);
+
+	GST_BUFFER_PTS(buffer) = pts;
+	GST_BUFFER_DTS(buffer) = pts;
+	GST_BUFFER_DURATION(buffer) = duration;
+	pts += duration;
+	// ----------------------------------------
+
+	gst_app_src_push_buffer(GST_APP_SRC(gstAppSrc_), buffer);
+}
+
 
 int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 	if (!surface || !surface->pixels) return 0;
@@ -535,21 +581,80 @@ std::string_view MusicPlayerComponent::filePath() {
 	return "";
 }
 
+
 bool MusicPlayerComponent::update(float dt) {
 	refreshTimer_ += dt;
 
 	if (!musicPlayer_->hasStartedPlaying())
 		return Component::update(dt);
 
-	if (isVuMeter_) {
-		updateVuLevels();
-		for (int i = 0; i < vuBarCount_; i++) {
-			vuLevels_[i] = std::max(0.0f, vuLevels_[i] - (vuDecayRate_ * dt));
-			if (vuPeaks_[i] > vuLevels_[i]) {
-				vuPeaks_[i] = std::max(vuLevels_[i], vuPeaks_[i] - (vuPeakDecayRate_ * dt));
+	if (isFftVisualizer()) {
+		if (isIsoVisualizer_) {
+			// updateIsoFFT now returns true if it updated fftMagnitudes_.
+			if (updateIsoFFT()) {
+				// We only need to flag for a redraw if there's new data.
+				isoNeedsUpdate_ = true;
+			}
+			updateIsoState(dt);
+		}
+		else if (isVuMeter_) {
+			updateVuMeterFFT(dt); 
+			vuMeterNeedsUpdate_ = true;
+		}
+		int targetW = static_cast<int>(baseViewInfo.ScaledWidth());
+		int targetH = static_cast<int>(baseViewInfo.ScaledHeight());
+		if (!fftTexture_ || fftTexW_ != targetW || fftTexH_ != targetH) {
+			if (fftTexture_) SDL_DestroyTexture(fftTexture_);
+
+			// Ensure we don't try to create a 0x0 texture
+			if (targetW > 0 && targetH > 0) {
+				fftTexture_ = SDL_CreateTexture(
+					renderer_,
+					SDL_PIXELFORMAT_RGBA8888,
+					SDL_TEXTUREACCESS_TARGET,
+					targetW,
+					targetH
+				);
+				if (fftTexture_) {
+					SDL_SetTextureBlendMode(fftTexture_, softOverlayBlendMode);
+					fftTexW_ = targetW;
+					fftTexH_ = targetH;
+					if (isVuMeter_) vuMeterNeedsUpdate_ = true; // Force redraw on new texture
+				}
+				else {
+					LOG_ERROR("MusicPlayerComponent", "Failed to create FFT texture.");
+					fftTexW_ = 0;
+					fftTexH_ = 0;
+				}
+			}
+			else {
+				// Dimensions are invalid, so ensure texture is null
+				fftTexture_ = nullptr;
+				fftTexW_ = 0;
+				fftTexH_ = 0;
 			}
 		}
-		vuMeterNeedsUpdate_ = true;
+		return Component::update(dt);
+	}
+	if (gstreamerVisType_ != GStreamerVisType::None) {
+		// --- RESTORED LOGIC ---
+		// This loop now runs on the main thread, pulling from our private queue.
+		while (true) {
+			std::vector<Uint8> pcmBlock;
+			{
+				std::lock_guard<std::mutex> lock(pcmMutex_);
+				if (pcmQueue_.empty()) {
+					break; // No more data this frame
+				}
+				pcmBlock = std::move(pcmQueue_.front());
+				pcmQueue_.pop_front();
+			}
+
+			// This can now safely block without hanging the audio thread.
+			pushToGst(pcmBlock.data(), static_cast<int>(pcmBlock.size()));
+		}
+
+		updateGstTextureFromAppSink();
 		return Component::update(dt);
 	}
 
@@ -688,6 +793,252 @@ bool MusicPlayerComponent::update(float dt) {
 	return Component::update(dt);
 }
 
+void MusicPlayerComponent::updateIsoState(float dt) {
+	if (fftMagnitudes_.empty()) return;
+
+	// 1. Advance scroll progress based on a constant rate and elapsed time.
+	// This is the key to smooth, frame-rate independent animation.
+	iso_scroll_offset_ += iso_scroll_rate_ * dt;
+
+	// 2. If we have scrolled past a full row, update the backing data grid.
+	if (iso_scroll_offset_ >= 1.0f) {
+		// Shift all Z values down one row.
+		for (int i = ISO_HISTORY - 1; i > 0; --i) {
+			for (int j = 0; j < NR_OF_FREQ; ++j)
+				iso_grid_[i][j].z = iso_grid_[i - 1][j].z;
+		}
+
+		// Populate the top row with new FFT data.
+		const float amplitude = 10.0f;
+		const float logScale = 30.0f;
+		for (int j = 1; j < NR_OF_FREQ; ++j) {
+			float pre_emphasis = std::sqrt((float)j / (float)NR_OF_FREQ);
+			float mag = fftMagnitudes_[j] * pre_emphasis;
+			iso_grid_[0][j].z = amplitude * std::log2f(1 + logScale * mag);
+		}
+		iso_grid_[0][0].z = iso_grid_[0][1].z; // Mirror bin
+
+		// Decrement offset, keeping the remainder for the next frame's calculation.
+		iso_scroll_offset_ -= 1.0f;
+	}
+
+	// 3. Update beat pulse (optional animation flair).
+	iso_beat_pulse_ *= (1.0f - (3.0f * dt)); // Frame-rate independent decay
+}
+
+// In MusicPlayerComponent.cpp
+
+void MusicPlayerComponent::loadVuMeterConfig() {
+	// Load boolean for mono/stereo mode
+	config_.getProperty("musicPlayer.vuMeter.mono", vuMeterConfig_.isMono);
+
+	// Load integer for the number of bars
+	int configInt;
+	if (config_.getProperty("musicPlayer.vuMeter.barCount", configInt)) {
+		vuMeterConfig_.barCount = std::max(1, configInt);
+	}
+
+	// Load float values for decay rates and visual tuning
+	float configFloat;
+	if (config_.getProperty("musicPlayer.vuMeter.decayRate", configFloat)) {
+		vuMeterConfig_.decayRate = std::max(0.1f, configFloat);
+	}
+	if (config_.getProperty("musicPlayer.vuMeter.peakDecayRate", configFloat)) {
+		vuMeterConfig_.peakDecayRate = std::max(0.1f, configFloat);
+	}
+	if (config_.getProperty("musicPlayer.vuMeter.amplification", configFloat)) {
+		vuMeterConfig_.amplification = std::max(0.1f, configFloat);
+	}
+	if (config_.getProperty("musicPlayer.vuMeter.curvePower", configFloat)) {
+		vuMeterConfig_.curvePower = std::clamp(configFloat, 0.1f, 2.0f);
+	}
+
+	// Load float values for color thresholds
+	if (config_.getProperty("musicPlayer.vuMeter.greenThreshold", configFloat)) {
+		vuMeterConfig_.greenThreshold = std::clamp(configFloat, 0.0f, 1.0f);
+	}
+	if (config_.getProperty("musicPlayer.vuMeter.yellowThreshold", configFloat)) {
+		// Ensure yellow threshold is always >= green threshold
+		vuMeterConfig_.yellowThreshold = std::clamp(configFloat, vuMeterConfig_.greenThreshold, 1.0f);
+	}
+
+	// Load color strings and parse them
+	std::string colorStr;
+	SDL_Color parsedColor;
+	if (config_.getProperty("musicPlayer.vuMeter.bottomColor", colorStr) && parseHexColor(colorStr, parsedColor)) {
+		vuMeterConfig_.bottomColor = parsedColor;
+	}
+	if (config_.getProperty("musicPlayer.vuMeter.middleColor", colorStr) && parseHexColor(colorStr, parsedColor)) {
+		vuMeterConfig_.middleColor = parsedColor;
+	}
+	if (config_.getProperty("musicPlayer.vuMeter.topColor", colorStr) && parseHexColor(colorStr, parsedColor)) {
+		vuMeterConfig_.topColor = parsedColor;
+	}
+	if (config_.getProperty("musicPlayer.vuMeter.backgroundColor", colorStr) && parseHexColor(colorStr, parsedColor)) {
+		vuMeterConfig_.backgroundColor = parsedColor;
+	}
+	if (config_.getProperty("musicPlayer.vuMeter.peakColor", colorStr) && parseHexColor(colorStr, parsedColor)) {
+		vuMeterConfig_.peakColor = parsedColor;
+	}
+}
+
+// Minimal replacement for MusicPlayerComponent::updateVuMeterFFT
+void MusicPlayerComponent::updateVuMeterFFT(float dt) {
+	if (!fillPcmBuffer() || !kissfft_cfg_) return;
+
+	// --- FFT Processing ---
+	std::vector<kiss_fft_scalar> fftInput(FFT_SIZE);
+	std::copy(pcmBuffer_.begin(), pcmBuffer_.begin() + FFT_SIZE, fftInput.begin());
+
+	// Erase from the main buffer immediately after copying (hop size = half window for smoothness)
+	pcmBuffer_.erase(pcmBuffer_.begin(), pcmBuffer_.begin() + FFT_SIZE / 2);
+
+	kiss_fftr(kissfft_cfg_, fftInput.data(), fftOutput_.data());
+
+	// Compute magnitudes (NR_OF_FREQ = FFT_SIZE/2 + 1 for kiss_fftr)
+	std::vector<float> magnitudes(NR_OF_FREQ);
+	for (int i = 0; i < NR_OF_FREQ; ++i)
+		magnitudes[i] = std::sqrt(fftOutput_[i].r * fftOutput_[i].r + fftOutput_[i].i * fftOutput_[i].i);
+
+	int barCount = vuMeterConfig_.barCount;
+	if (vuLevels_.size() != barCount)
+		vuLevels_.assign(barCount, 0.0f);
+
+	// Linear mapping: group bins into bars
+	int binsPerBar = NR_OF_FREQ / barCount;
+	for (int b = 0; b < barCount; ++b) {
+		float sum = 0.0f;
+		for (int i = 0; i < binsPerBar; ++i) {
+			int idx = b * binsPerBar + i;
+			if (idx < NR_OF_FREQ)
+				sum += magnitudes[idx];
+		}
+		vuLevels_[b] = binsPerBar > 0 ? sum / binsPerBar : 0.0f;
+	}
+
+	// Normalize
+	float maxVal = *std::max_element(vuLevels_.begin(), vuLevels_.end());
+	if (maxVal > 0.0f)
+		for (auto& v : vuLevels_) v /= maxVal;
+
+	vuMeterNeedsUpdate_ = true;
+}
+
+bool MusicPlayerComponent::fillPcmBuffer() {
+	// 1. If we already have enough data, we're done.
+	if (pcmBuffer_.size() >= FFT_SIZE) {
+		return true;
+	}
+
+	// 2. Collect new PCM blocks from the queue
+	size_t buffered = pcmBuffer_.size();
+	while (buffered < FFT_SIZE && !pcmQueue_.empty()) {
+		std::vector<Uint8> pcmBlock;
+		{
+			std::lock_guard<std::mutex> lock(pcmMutex_);
+			pcmBlock = std::move(pcmQueue_.front());
+			pcmQueue_.pop_front();
+		}
+
+		// 3. Convert raw bytes to mono float samples and add to our buffer
+		int sampleSize = musicPlayer_->getSampleSize();
+		int channels = musicPlayer_->getAudioChannels();
+		if (sampleSize <= 0 || channels <= 0) continue; // Safety check
+
+		int numFrames = static_cast<int>(pcmBlock.size()) / (sampleSize * channels);
+		for (int i = 0; i < numFrames && buffered < FFT_SIZE; ++i) {
+			float sampleMono = 0.0f;
+			for (int ch = 0; ch < channels; ++ch) {
+				int pos = (i * channels + ch) * sampleSize;
+				// Assuming S16LE format as before
+				int16_t val = *reinterpret_cast<const int16_t*>(&pcmBlock[pos]);
+				sampleMono += static_cast<float>(val) / 32768.0f;
+			}
+			sampleMono /= channels;
+			pcmBuffer_.push_back(sampleMono);
+			++buffered;
+		}
+	}
+
+	// 4. Return whether we have enough data for a full FFT analysis
+	return pcmBuffer_.size() >= FFT_SIZE;
+}
+
+bool MusicPlayerComponent::updateIsoFFT() {
+	// If there's not enough data or FFT isn't configured, return an empty vector.
+	if (!fillPcmBuffer() || !kissfft_cfg_) {
+		return {};
+	}
+
+	// --- Step 1: Prepare Input and Perform Real FFT ---
+
+	// Create a dedicated, clean buffer for this frame's FFT input.
+	std::vector<float> fftInput(FFT_SIZE);
+	std::copy(pcmBuffer_.begin(), pcmBuffer_.begin() + FFT_SIZE, fftInput.begin());
+
+	// Calculate the mean of this specific window for DC offset removal.
+	float mean = 0.0f;
+	for (int i = 0; i < FFT_SIZE; ++i) mean += fftInput[i];
+	mean /= FFT_SIZE;
+
+	// Apply windowing and DC offset directly to the float input buffer.
+	for (int i = 0; i < FFT_SIZE; ++i) {
+		const float PI_F = 3.1415926535f;
+		float window = 0.5f * (1.0f - cosf(2.0f * PI_F * static_cast<float>(i) / (FFT_SIZE - 1.0f)));
+		fftInput[i] = (fftInput[i] - mean) * window;
+	}
+
+	// Perform the real-to-complex FFT.
+	kiss_fftr(kissfft_cfg_, fftInput.data(), fftOutput_.data());
+
+	// Update the main rolling buffer for the next frame.
+	pcmBuffer_.erase(pcmBuffer_.begin(), pcmBuffer_.begin() + FFT_SIZE / 2);
+
+	for (int i = 1; i < NR_OF_FREQ; ++i) {
+		fftMagnitudes_[i] = sqrtf(fftOutput_[i].r * fftOutput_[i].r + fftOutput_[i].i * fftOutput_[i].i);
+	}
+
+	return true;
+}
+
+bool detect_beat_from_fft(const float* input, int nr_of_bins) {
+	static std::vector<float> energy_buffer(128, 0.0f);
+	static int energy_idx = 0;
+
+	int drum_bin_start = 1;
+	int drum_bin_end = nr_of_bins / 5;
+	float current_energy = 0.0f;
+	for (int j = drum_bin_start; j < drum_bin_end; ++j)
+		current_energy += std::abs(input[j]);
+
+	energy_buffer[energy_idx] = current_energy;
+	energy_idx = (energy_idx + 1) % energy_buffer.size();
+
+	const int window = 12;
+	float avg = 0.0f;
+	for (int k = 1; k <= window; ++k)
+		avg += energy_buffer[(energy_idx - k + energy_buffer.size()) % energy_buffer.size()];
+	avg /= window;
+
+	return current_energy > avg * 1.4f && avg > 1.0f;
+}
+
+void HSVtoRGB(float h, float s, float v, Uint8& r, Uint8& g, Uint8& b) {
+	float c = v * s;
+	float x = c * (1 - fabsf(fmodf(h * 6.0f, 2.0f) - 1.0f));
+	float m = v - c;
+	float rp, gp, bp;
+	if (h < 1.0f / 6.0f) { rp = c;  gp = x;  bp = 0; }
+	else if (h < 2.0f / 6.0f) { rp = x;  gp = c;  bp = 0; }
+	else if (h < 3.0f / 6.0f) { rp = 0;  gp = c;  bp = x; }
+	else if (h < 4.0f / 6.0f) { rp = 0;  gp = x;  bp = c; }
+	else if (h < 5.0f / 6.0f) { rp = x;  gp = 0;  bp = c; }
+	else { rp = c;  gp = 0;  bp = x; }
+	r = static_cast<Uint8>(std::clamp((rp + m) * 255.0f, 0.0f, 255.0f));
+	g = static_cast<Uint8>(std::clamp((gp + m) * 255.0f, 0.0f, 255.0f));
+	b = static_cast<Uint8>(std::clamp((bp + m) * 255.0f, 0.0f, 255.0f));
+}
+
 void MusicPlayerComponent::draw() {
 	Component::draw();
 
@@ -705,13 +1056,45 @@ void MusicPlayerComponent::draw() {
 		volumeBarNeedsUpdate_ = false;
 	}
 
-	if (isVuMeter_) {
-		createVuMeterTextureIfNeeded();
-		if (vuMeterTexture_ && vuMeterNeedsUpdate_) {
-			updateVuMeterTexture(); // vuMeterNeedsUpdate_ is set in update()
+	if (isFftVisualizer() && renderer_ && fftTexture_) {
+		bool needsRedraw = false;
+		if (isIsoVisualizer_ && isoNeedsUpdate_) needsRedraw = true;
+		if (isVuMeter_ && vuMeterNeedsUpdate_) needsRedraw = true;
+
+		if (needsRedraw) {
+			SDL_Texture* prevTarget = SDL_GetRenderTarget(renderer_);
+			SDL_SetRenderTarget(renderer_, fftTexture_);
+
+			// Select the correct drawing function
+			if (isIsoVisualizer_) {
+				SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
+				SDL_RenderClear(renderer_);
+				drawIsoVisualizer(renderer_, fftTexW_, fftTexH_);
+				//isoNeedsUpdate_ = false; // Mark as drawn
+			}
+			else if (isVuMeter_) {
+				drawVuMeterToTexture();
+				//vuMeterNeedsUpdate_ = false; // Mark as drawn
+			}
+
+			SDL_SetRenderTarget(renderer_, prevTarget);
 		}
-		drawVuMeter();
+
+		// Render the final texture to the screen
+		SDL_FRect rect;
+		rect.x = baseViewInfo.XRelativeToOrigin();
+		rect.y = baseViewInfo.YRelativeToOrigin();
+		rect.w = baseViewInfo.ScaledWidth();
+		rect.h = baseViewInfo.ScaledHeight();
+		SDL::renderCopyF(fftTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutWidthByMonitor(baseViewInfo.Monitor));
 		return;
+	}
+
+	if (gstreamerVisType_ != GStreamerVisType::None) {
+		if (!gstPipeline_) {
+			createGstPipeline();
+		}
+		drawGstTexture();
 	}
 
 	if (isAlbumArt_) {
@@ -739,245 +1122,338 @@ void MusicPlayerComponent::draw() {
 	}
 }
 
+void MusicPlayerComponent::drawVuMeterToTexture() {
+	if (!renderer_ || !fftTexture_) return;
 
-void MusicPlayerComponent::createVuMeterTextureIfNeeded() {
-	if (!renderer_) return;
+	// The target is already set to fftTexture_ by the draw() function.
 
-	int targetWidth = static_cast<int>(baseViewInfo.ScaledWidth());
-	int targetHeight = static_cast<int>(baseViewInfo.ScaledHeight());
-
-	if (targetWidth <= 0 || targetHeight <= 0) {
-		if (vuMeterTexture_ != nullptr) {
-			SDL_DestroyTexture(vuMeterTexture_);
-			vuMeterTexture_ = nullptr;
-			vuMeterTextureWidth_ = 0;
-			vuMeterTextureHeight_ = 0;
-		}
-		return;
-	}
-
-	if (vuMeterTexture_ == nullptr || vuMeterTextureWidth_ != targetWidth || vuMeterTextureHeight_ != targetHeight) {
-		if (vuMeterTexture_ != nullptr) {
-			SDL_DestroyTexture(vuMeterTexture_);
-			vuMeterTexture_ = nullptr;
-		}
-		vuMeterTextureWidth_ = targetWidth;
-		vuMeterTextureHeight_ = targetHeight;
-
-		vuMeterTexture_ = SDL_CreateTexture(
-			renderer_,
-			SDL_PIXELFORMAT_RGBA8888,
-			SDL_TEXTUREACCESS_TARGET,
-			vuMeterTextureWidth_,
-			vuMeterTextureHeight_
-		);
-
-		if (vuMeterTexture_) {
-			SDL_SetTextureBlendMode(vuMeterTexture_, SDL_BLENDMODE_BLEND);
-			vuMeterNeedsUpdate_ = true;
-			LOG_INFO("MusicPlayerComponent", "Created/Resized VU Meter texture: " +
-				std::to_string(vuMeterTextureWidth_) + "x" +
-				std::to_string(vuMeterTextureHeight_));
-		}
-		else {
-			LOG_ERROR("MusicPlayerComponent", "Failed to create VU meter texture");
-			vuMeterTextureWidth_ = 0;
-			vuMeterTextureHeight_ = 0;
-		}
-	}
-}
-
-void MusicPlayerComponent::updateVuMeterTexture() {
-	if (!renderer_ || !vuMeterTexture_) { // Removed !vuMeterNeedsUpdate_ check, as it's called when needed
-		return;
-	}
-
-	SDL_Texture* previousTarget = SDL::getRenderTarget(baseViewInfo.Monitor);
-	SDL_SetRenderTarget(renderer_, vuMeterTexture_);
-	SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);
+	// Clear with transparent background (or the configured one)
+	SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.backgroundColor.r, vuMeterConfig_.backgroundColor.g, vuMeterConfig_.backgroundColor.b, vuMeterConfig_.backgroundColor.a);
 	SDL_RenderClear(renderer_);
-
-	float barWidth = static_cast<float>(vuMeterTextureWidth_) / static_cast<float>(vuBarCount_);
-	float barSpacing = barWidth * 0.1f;
-	float actualBarWidth = barWidth - barSpacing;
-
 	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
-	for (int i = 0; i < vuBarCount_; i++) {
-		float barX = static_cast<float>(i * barWidth);
-		float barHeight = static_cast<float>(vuMeterTextureHeight_) * vuLevels_[i];
-		float peakHeight = static_cast<float>(vuMeterTextureHeight_) * vuPeaks_[i];
+	// Use fftTexW_ and fftTexH_ for dimensions
+	int numChannels = vuMeterConfig_.isMono ? 1 : 2;
+	float totalWidth = static_cast<float>(fftTexW_);
+	float channelSpacing = totalWidth * 0.05f;
+	float availableWidth = totalWidth - (channelSpacing * (numChannels - 1));
+	float channelWidth = availableWidth / numChannels;
 
-		SDL_SetRenderDrawColor(renderer_, vuBackgroundColor_.r, vuBackgroundColor_.g, vuBackgroundColor_.b, 255);
-		SDL_FRect bgRect = { barX, 0, actualBarWidth, static_cast<float>(vuMeterTextureHeight_) };
-		SDL_RenderFillRectF(renderer_, &bgRect);
+	for (int channel = 0; channel < numChannels; ++channel) {
+		int barStart = vuMeterConfig_.isMono ? 0 : (channel == 0 ? 0 : vuMeterConfig_.barCount / 2);
+		int barEnd = vuMeterConfig_.isMono ? vuMeterConfig_.barCount : (channel == 0 ? vuMeterConfig_.barCount / 2 : vuMeterConfig_.barCount);
+		int barsInChannel = barEnd - barStart;
+		if (barsInChannel <= 0) continue;
 
-		float greenZone = vuMeterTextureHeight_ * vuGreenThreshold_;
-		float yellowZone = vuMeterTextureHeight_ * (vuYellowThreshold_ - vuGreenThreshold_);
-		float redZone = vuMeterTextureHeight_ * (1.0f - vuYellowThreshold_);
+		float channelX = channel * (channelWidth + channelSpacing);
+		float barWidth = channelWidth / static_cast<float>(barsInChannel);
+		float barSpacing = barWidth * 0.2f;
+		float actualBarWidth = barWidth - barSpacing;
 
-		if (barHeight > 0) {
-			SDL_SetRenderDrawColor(renderer_, vuBottomColor_.r, vuBottomColor_.g, vuBottomColor_.b, 255);
-			float segmentHeight = std::min(barHeight, greenZone);
-			SDL_FRect greenRect = { barX + barSpacing * 0.5f, vuMeterTextureHeight_ - segmentHeight, actualBarWidth - barSpacing, segmentHeight };
-			SDL_RenderFillRectF(renderer_, &greenRect);
-		}
-		if (barHeight > greenZone) {
-			SDL_SetRenderDrawColor(renderer_, vuMiddleColor_.r, vuMiddleColor_.g, vuMiddleColor_.b, 255);
-			float segmentHeight = std::min(barHeight - greenZone, yellowZone);
-			SDL_FRect yellowRect = { barX + barSpacing * 0.5f, vuMeterTextureHeight_ - greenZone - segmentHeight, actualBarWidth - barSpacing, segmentHeight };
-			SDL_RenderFillRectF(renderer_, &yellowRect);
-		}
-		if (barHeight > greenZone + yellowZone) {
-			SDL_SetRenderDrawColor(renderer_, vuTopColor_.r, vuTopColor_.g, vuTopColor_.b, 255);
-			float segmentHeight = std::min(barHeight - greenZone - yellowZone, redZone);
-			SDL_FRect redRect = { barX + barSpacing * 0.5f, vuMeterTextureHeight_ - greenZone - yellowZone - segmentHeight, actualBarWidth - barSpacing, segmentHeight };
-			SDL_RenderFillRectF(renderer_, &redRect);
-		}
-		if (peakHeight > 0 && peakHeight >= barHeight) {
-			SDL_SetRenderDrawColor(renderer_, vuPeakColor_.r, vuPeakColor_.g, vuPeakColor_.b, 255);
-			SDL_FRect peakRect = { barX + barSpacing * 0.5f, vuMeterTextureHeight_ - peakHeight - 2, actualBarWidth - barSpacing, 2 };
-			SDL_RenderFillRectF(renderer_, &peakRect);
+		for (int i = 0; i < barsInChannel; i++) {
+			int barIndex = barStart + i;
+			float barX = channelX + static_cast<float>(i * barWidth) + (barSpacing / 2.0f);
+
+			float barHeight = static_cast<float>(fftTexH_) * vuLevels_[barIndex];
+			float peakHeight = static_cast<float>(fftTexH_) * vuPeaks_[barIndex];
+			float greenZone = fftTexH_ * vuMeterConfig_.greenThreshold;
+			float yellowZone = fftTexH_ * (vuMeterConfig_.yellowThreshold - vuMeterConfig_.greenThreshold);
+
+			// Green
+			if (barHeight > 0) {
+				SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.bottomColor.r, vuMeterConfig_.bottomColor.g, vuMeterConfig_.bottomColor.b, 255);
+				float segmentHeight = std::min(barHeight, greenZone);
+				SDL_FRect greenRect = { barX, fftTexH_ - segmentHeight, actualBarWidth, segmentHeight };
+				SDL_RenderFillRectF(renderer_, &greenRect);
+			}
+			// Yellow
+			if (barHeight > greenZone) {
+				SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.middleColor.r, vuMeterConfig_.middleColor.g, vuMeterConfig_.middleColor.b, 255);
+				float segmentHeight = std::min(barHeight - greenZone, yellowZone);
+				SDL_FRect yellowRect = { barX, fftTexH_ - greenZone - segmentHeight, actualBarWidth, segmentHeight };
+				SDL_RenderFillRectF(renderer_, &yellowRect);
+			}
+			// Red
+			if (barHeight > greenZone + yellowZone) {
+				SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.topColor.r, vuMeterConfig_.topColor.g, vuMeterConfig_.topColor.b, 255);
+				float redSegmentHeight = barHeight - greenZone - yellowZone;
+				// CORRECTED Y-COORDINATE: Start from the top of the bar.
+				SDL_FRect redRect = { barX, fftTexH_ - barHeight, actualBarWidth, redSegmentHeight };
+				SDL_RenderFillRectF(renderer_, &redRect);
+			}
+			// Peak marker
+			if (peakHeight > 0 && peakHeight >= barHeight) {
+				SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.peakColor.r, vuMeterConfig_.peakColor.g, vuMeterConfig_.peakColor.b, 255);
+				SDL_FRect peakRect = { barX, fftTexH_ - peakHeight - 2, actualBarWidth, 2.0f };
+				SDL_RenderFillRectF(renderer_, &peakRect);
+			}
 		}
 	}
-	SDL_SetRenderTarget(renderer_, previousTarget);
-	vuMeterNeedsUpdate_ = false;
 }
 
+void MusicPlayerComponent::drawIsoVisualizer(SDL_Renderer* renderer, int win_w, int win_h) {
+	if (iso_grid_.empty() || win_w <= 0 || win_h <= 0) return;
 
-bool MusicPlayerComponent::parseHexColor(const std::string& hexString, SDL_Color& outColor) {
-	std::string_view sv = hexString;
-	if (sv.length() != 6) {
-		LOG_WARNING("MusicPlayerComponent", "Invalid length for hex string: " + hexString);
-		return false;
-	}
-	for (char c : sv) {
-		if (!std::isxdigit(static_cast<unsigned char>(c))) {
-			LOG_WARNING("parseHexColor", "Non-hex character found in string: " + hexString);
-			return false;
+	// --- 1. Define Scale Factors and Tweakable Constants ---
+	const float ref_w = 1280.0f;
+	const float ref_h = 720.0f;
+	const float scale_w = float(win_w) / ref_w;
+	const float scale_h = float(win_h) / ref_h;
+
+	// --- Vignette & Color Controls ---
+	const float vignette_power = 2.0f;
+	const float vignette_radius = 1.0f;
+	const float arch_factor = 0.0005f;
+
+	// --- Peak Color Controls ---
+	const float BASE_HUE = 120.0f / 360.0f; // Green
+	const float PEAK_HUE = 0.0f / 360.0f;   // Red
+	const float MIN_BRIGHTNESS = 0.4f;      // Brightness of valleys (0.0 to 1.0)
+	const float MAX_Z_FOR_COLOR = 50.0f;    // The Z-height that corresponds to peak color/brightness
+
+	// --- 2. Animation and Geometry Constants ---
+	float eased_offset = 0.5f * (1.0f - cosf(iso_scroll_offset_ * float(M_PI)));
+	const int tall = ISO_HISTORY;
+	const int nr = NR_OF_FREQ;
+	const float inc = 0.7f;
+	const float yOffset = float(win_h) * 0.7f;
+
+	// The grid stores the final 2D point AND its Z-amplitude for coloring.
+	struct PointData { SDL_FPoint pos; float z_amp; };
+	std::vector<std::vector<PointData>> td_grid(tall, std::vector<PointData>(nr));
+
+	// --- 3. Projection Loop: Calculate all point data first ---
+	for (int i = 0; i < tall - 1; ++i) {
+		float arch_term = arch_factor * float(i) * float(i);
+		float i_over_10 = float(i) / 10.0f;
+
+		for (int j = 0; j < nr; ++j) {
+			float z_amplitude = iso_grid_[i][j].z * (1.0f - eased_offset) + iso_grid_[i + 1][j].z * eased_offset;
+			td_grid[i][j].z_amp = z_amplitude;
+
+			float static_x = iso_grid_[i][j].x;
+			float static_y = iso_grid_[i][j].y;
+			float local_x = inc * static_x * (8.0f / 10.0f + static_y * static_y * 0.0001f);
+			float local_y = arch_term * static_y - z_amplitude - z_amplitude * i_over_10 * inc;
+
+			td_grid[i][j].pos.x = local_x * scale_w + float(win_w) / 2.0f;
+			td_grid[i][j].pos.y = local_y * scale_h + yOffset;
 		}
 	}
-	unsigned int r, g, b;
-	auto result_r = std::from_chars(sv.data(), sv.data() + 2, r, 16);
-	auto result_g = std::from_chars(sv.data() + 2, sv.data() + 4, g, 16);
-	auto result_b = std::from_chars(sv.data() + 4, sv.data() + 6, b, 16);
 
-	if (result_r.ec != std::errc() || result_g.ec != std::errc() || result_b.ec != std::errc() ||
-		result_r.ptr != sv.data() + 2 ||
-		result_g.ptr != sv.data() + 4 ||
-		result_b.ptr != sv.data() + 6)
-	{
-		LOG_WARNING("MusicPlayerComponent", "Hex conversion failed for string: " + hexString);
-		return false;
+	// --- 4. Drawing Loop with Per-Line Vignette and Color Modulation ---
+	const float centerX = float(win_w) / 2.0f;
+	const float centerY = float(win_h) / 2.0f;
+
+	const float centerX_div = centerX * vignette_radius;
+	const float centerY_div = centerY * vignette_radius;
+
+	for (int i = 1; i < tall - 2; ++i) {
+		for (int j = 1; j < nr; ++j) {
+			// --- Horizontal Line ---
+			PointData p1_h = td_grid[i][j - 1];
+			PointData p2_h = td_grid[i][j];
+
+			// VIGNETTE calculation
+			float mid_x_h = (p1_h.pos.x + p2_h.pos.x) / 2.0f;
+			float mid_y_h = (p1_h.pos.y + p2_h.pos.y) / 2.0f;
+			float dx_h = (mid_x_h - centerX) / centerX_div;
+			float dy_h = (mid_y_h - centerY) / centerY_div;
+			float distance_h = std::clamp(std::sqrt(dx_h * dx_h + dy_h * dy_h), 0.0f, 1.0f);
+			float vignette_fade = 1.0f - std::pow(distance_h, vignette_power);
+
+			// PEAK COLOR calculation
+			float avg_z_h = (p1_h.z_amp + p2_h.z_amp) / 2.0f;
+			float peak_mix = std::clamp(avg_z_h / MAX_Z_FOR_COLOR, 0.0f, 1.0f);
+			float hue_h = BASE_HUE * (1.0f - peak_mix) + PEAK_HUE * peak_mix;
+			float value_h = MIN_BRIGHTNESS * (1.0f - peak_mix) + 1.0f * peak_mix;
+
+			// Combine vignette and peak brightness
+			Uint8 r_h, g_h, b_h;
+			HSVtoRGB(hue_h, 1.0f, value_h * vignette_fade, r_h, g_h, b_h);
+
+			SDL_SetRenderDrawColor(renderer, r_h, g_h, b_h, 255);
+			SDL_RenderDrawLineF(renderer, p1_h.pos.x, p1_h.pos.y, p2_h.pos.x, p2_h.pos.y);
+
+			// --- Vertical Line ---
+			PointData p1_v = td_grid[i - 1][j];
+			PointData p2_v = td_grid[i][j];
+
+			float mid_x_v = (p1_v.pos.x + p2_v.pos.x) / 2.0f;
+			float mid_y_v = (p1_v.pos.y + p2_v.pos.y) / 2.0f;
+			float dx_v = (mid_x_v - centerX) / (centerX * vignette_radius);
+			float dy_v = (mid_y_v - centerY) / (centerY * vignette_radius);
+			float distance_v = std::clamp(std::sqrt(dx_v * dx_v + dy_v * dy_v), 0.0f, 1.0f);
+			float vignette_fade_v = 1.0f - std::pow(distance_v, vignette_power);
+
+			float avg_z_v = (p1_v.z_amp + p2_v.z_amp) / 2.0f;
+			float peak_mix_v = std::clamp(avg_z_v / MAX_Z_FOR_COLOR, 0.0f, 1.0f);
+			float hue_v = BASE_HUE * (1.0f - peak_mix_v) + PEAK_HUE * peak_mix_v;
+			float value_v = MIN_BRIGHTNESS * (1.0f - peak_mix_v) + 1.0f * peak_mix_v;
+
+			Uint8 r_v, g_v, b_v;
+			HSVtoRGB(hue_v, 1.0f, value_v * vignette_fade_v, r_v, g_v, b_v);
+
+			SDL_SetRenderDrawColor(renderer, r_v, g_v, b_v, 255);
+			SDL_RenderDrawLineF(renderer, p1_v.pos.x, p1_v.pos.y, p2_v.pos.x, p2_v.pos.y);
+		}
 	}
-
-	outColor.r = static_cast<Uint8>(r);
-	outColor.g = static_cast<Uint8>(g);
-	outColor.b = static_cast<Uint8>(b);
-	outColor.a = 255;
-	return true;
 }
 
-void MusicPlayerComponent::updateVuLevels() {
-	const std::vector<float>& audioLevels = musicPlayer_->getAudioLevels();
-	int channels = musicPlayer_->getAudioChannels();
+void MusicPlayerComponent::createGstPipeline() {
+	const char* visElementName = nullptr;
+	const char* visElementNick = nullptr;
 
-	if (!musicPlayer_->isPlaying() || audioLevels.empty()) {
-		for (auto& level : vuLevels_) { level *= 0.8f; }
-		for (auto& peak : vuPeaks_) { peak *= 0.9f; }
+	switch (gstreamerVisType_) {
+		case GStreamerVisType::Goom:
+		visElementName = "goom";
+		visElementNick = "goom";
+		break;
+		case GStreamerVisType::Wavescope:
+		visElementName = "wavescope";
+		visElementNick = "wavescope";
+		break;
+		case GStreamerVisType::Synaescope:
+		visElementName = "synaescope";
+		visElementNick = "synaescope";
+		break;
+		case GStreamerVisType::Spectrascope:
+		visElementName = "spectrascope";
+		visElementNick = "spectrascope";
+		break;
+		default:
+		LOG_ERROR("MusicPlayerComponent", "Invalid or missing visualizer type");
 		return;
 	}
 
-	const float amplification = 5.0f;
+	gstPipeline_ = gst_pipeline_new("vizualizer-pipeline");
+	gstAppSrc_ = gst_element_factory_make("appsrc", "audio-input");
+	GstElement* convert = gst_element_factory_make("audioconvert", "convert");
+	GstElement* resample = gst_element_factory_make("audioresample", "resample");
+	GstElement* visualizer = gst_element_factory_make(visElementName, visElementNick);
+	GstElement* vconvert = gst_element_factory_make("videoconvert", "vconvert");
+	gstAppSink_ = gst_element_factory_make("appsink", "video-output");
 
-	if (vuMeterIsMono_) {
-		float averageLevel = 0.0f;
-		float sum = 0.0f;
-		for (float level : audioLevels) { sum += level; }
-		if (!audioLevels.empty()) { averageLevel = sum / static_cast<float>(audioLevels.size()); }
-		float monoLevel = std::min(1.0f, averageLevel * amplification);
-		for (int i = 0; i < vuBarCount_; i++) {
-			float barPos = static_cast<float>(i) / vuBarCount_;
-			float patternFactor;
-			if (i % 2 == 0) { patternFactor = 1.0f - std::abs(barPos - 0.5f) * 0.6f; }
-			else { patternFactor = 1.0f + 0.3f * std::sin(barPos * 3.14159f * 4); }
-			float randomFactor = 1.0f + ((rand() % 25) - 10) / 100.0f;
-			float newLevel = monoLevel * patternFactor * randomFactor;
-			newLevel = std::min(1.0f, std::pow(newLevel, 0.75f));
-			if (newLevel > vuLevels_[i]) {
-				vuLevels_[i] = newLevel;
-				vuPeaks_[i] = std::max(vuPeaks_[i], newLevel);
-			}
-		}
-	}
-	else {
-		if (channels >= 2) {
-			int leftBars = vuBarCount_ / 2;
-			int rightBars = vuBarCount_ - leftBars;
-			float leftLevel = std::min(1.0f, audioLevels[0] * amplification);
-			for (int i = 0; i < leftBars; i++) {
-				float barFactor = 1.0f - (static_cast<float>(i) / leftBars) * 0.5f;
-				float randomFactor = 1.0f + ((rand() % 20) - 10) / 100.0f;
-				float newLevel = leftLevel * barFactor * randomFactor;
-				newLevel = std::min(1.0f, std::pow(newLevel, 0.8f));
-				if (newLevel > vuLevels_[i]) {
-					vuLevels_[i] = newLevel;
-					vuPeaks_[i] = std::max(vuPeaks_[i], newLevel);
-				}
-			}
-			float rightLevel = std::min(1.0f, audioLevels[1] * amplification);
-			for (int i = 0; i < rightBars; i++) {
-				int barIndex = leftBars + i;
-				float barFactor = 1.0f - (static_cast<float>(i) / rightBars) * 0.5f;
-				float randomFactor = 1.0f + ((rand() % 20) - 10) / 100.0f;
-				float newLevel = rightLevel * barFactor * randomFactor;
-				newLevel = std::min(1.0f, std::pow(newLevel, 0.8f));
-				if (newLevel > vuLevels_[barIndex]) {
-					vuLevels_[barIndex] = newLevel;
-					vuPeaks_[barIndex] = std::max(vuPeaks_[barIndex], newLevel);
-				}
-			}
-			if ((rand() % 10) < 3) {
-				int barToBoost = rand() % vuBarCount_;
-				vuLevels_[barToBoost] = std::min(1.0f, vuLevels_[barToBoost] * 1.3f);
-				vuPeaks_[barToBoost] = std::max(vuPeaks_[barToBoost], vuLevels_[barToBoost]);
-			}
-		}
-		else {
-			float level = std::min(1.0f, audioLevels[0] * amplification);
-			for (int i = 0; i < vuBarCount_; i++) {
-				float randomFactor = 1.0f + ((rand() % 10) - 5) / 100.0f;
-				float newLevel = std::min(1.0f, level * randomFactor);
-				if (newLevel > vuLevels_[i]) {
-					vuLevels_[i] = newLevel;
-					vuPeaks_[i] = std::max(vuPeaks_[i], newLevel);
-				}
-			}
-		}
-	}
-}
-
-void MusicPlayerComponent::drawVuMeter() {
-	if (!renderer_ || !vuMeterTexture_ || !musicPlayer_->hasStartedPlaying()) {
+	if (!gstPipeline_ || !gstAppSrc_ || !convert || !visualizer || !vconvert || !gstAppSink_) {
+		LOG_ERROR("MusicPlayerComponent", "Failed to create goom pipeline elements");
 		return;
 	}
-	// createVuMeterTextureIfNeeded is called in draw() before this
-	// updateVuMeterTexture is called in draw() if vuMeterNeedsUpdate_ is true
-	SDL_FRect rect;
-	rect.x = baseViewInfo.XRelativeToOrigin();
-	rect.y = baseViewInfo.YRelativeToOrigin();
-	rect.w = baseViewInfo.ScaledWidth();
-	rect.h = baseViewInfo.ScaledHeight();
 
-	SDL::renderCopyF(
-		vuMeterTexture_,
-		baseViewInfo.Alpha,
-		nullptr,
-		&rect,
-		baseViewInfo,
-		page.getLayoutWidth(baseViewInfo.Monitor),
-		page.getLayoutHeight(baseViewInfo.Monitor)
-	);
+	// 2. Add & link
+	gst_bin_add_many(GST_BIN(gstPipeline_), gstAppSrc_, convert, resample, visualizer, vconvert, gstAppSink_, NULL);
+	if (!gst_element_link_many(gstAppSrc_, convert, resample, visualizer, vconvert, gstAppSink_, NULL)) {
+		LOG_ERROR("MusicPlayerComponent", "Failed to link goom pipeline elements");
+		return;
+	}
+
+	// 3. Set audio caps for appsrc
+	GstCaps* audio_caps = gst_caps_new_simple("audio/x-raw",
+		"format", G_TYPE_STRING, "S16LE",
+		"rate", G_TYPE_INT, 44100,
+		"channels", G_TYPE_INT, 2,
+		"layout", G_TYPE_STRING, "interleaved",
+		NULL);
+	g_object_set(gstAppSrc_, "caps", audio_caps,
+		"stream-type", 0 /* GST_APP_STREAM_TYPE_STREAM */,
+		"format", GST_FORMAT_TIME,
+		"is-live", TRUE,
+		NULL);
+	gst_caps_unref(audio_caps);
+
+	int width = static_cast<int>(baseViewInfo.ScaledWidth());
+	int height = static_cast<int>(baseViewInfo.ScaledHeight());
+
+	// 4. Set appsink caps (video)
+	GstCaps* video_caps = gst_caps_new_simple("video/x-raw",
+		"format", G_TYPE_STRING, "RGB",
+		"width", G_TYPE_INT, width,
+		"height", G_TYPE_INT, height,
+		"framerate", GST_TYPE_FRACTION, 60, 1, // <-- 60 fps
+		NULL);
+	if (gstreamerVisType_ == GStreamerVisType::Wavescope) {
+		g_object_set(visualizer, "style", 3, NULL); // 1 for default mode
+	}
+	
+	g_object_set(gstAppSink_, "caps", video_caps,
+		"emit-signals", FALSE,
+		"sync", FALSE,
+		"max-buffers", 2,
+		"drop", TRUE,
+		NULL);
+	gst_caps_unref(video_caps);
+
+	// 7. Start pipeline in PAUSED, then PLAYING (optional)
+	//gst_element_set_state(gstPipeline_, GST_STATE_PAUSED);
+	gst_element_set_state(gstPipeline_, GST_STATE_PLAYING);
+}
+
+void MusicPlayerComponent::updateGstTextureFromAppSink() {
+	if (!gstAppSink_)
+		return;
+
+	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(gstAppSink_), 0); // non-blocking
+	if (!sample)
+		return; // No new frame
+
+	GstCaps* caps = gst_sample_get_caps(sample);
+	GstStructure* s = gst_caps_get_structure(caps, 0);
+	int width = 0, height = 0;
+	gst_structure_get_int(s, "width", &width);
+	gst_structure_get_int(s, "height", &height);
+
+	GstBuffer* buffer = gst_sample_get_buffer(sample);
+	GstMapInfo map;
+	if (buffer && gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+		if (!gstTexture_ || gstTexW_ != width || gstTexH_ != height) {
+			if (gstTexture_) SDL_DestroyTexture(gstTexture_);
+			gstTexture_ = SDL_CreateTexture(SDL::getRenderer(baseViewInfo.Monitor),
+				SDL_PIXELFORMAT_RGB24,
+				SDL_TEXTUREACCESS_STREAMING,
+				width, height);
+			SDL_SetTextureBlendMode(gstTexture_, softOverlayBlendMode);
+			gstTexW_ = width;
+			gstTexH_ = height;
+		}
+		// We'll make a copy to tint before uploading
+		std::vector<uint8_t> tintedData(width * height * 3);
+		uint8_t* src = map.data;
+		uint8_t* dst = tintedData.data();
+
+		for (int y = 0; y < height; ++y) {
+			float pos = float(y) / float(height - 1); // 0.0 at top, 1.0 at bottom
+			uint8_t r, g, b;
+
+			if (pos < 0.5f) {
+				// Top half: red -> yellow
+				float t = pos / 0.7f; // 0.0 to 1.0
+				r = 255;
+				g = uint8_t(255 * t);
+				b = 0;
+			}
+			else {
+				// Bottom half: yellow -> green
+				float t = (pos - 0.5f) / 0.5f; // 0.0 to 1.0
+				r = uint8_t(255 * (1.0f - t));
+				g = 255;
+				b = 0;
+			}
+
+			for (int x = 0; x < width; ++x) {
+				int i = (y * width + x) * 3;
+				uint8_t srcVal = src[i]; // Since the bar output is white, all channels are same (RGB)
+
+				// Apply color by scaling: srcVal/255.0 * gradient
+				dst[i + 0] = uint8_t((srcVal * r) / 255);
+				dst[i + 1] = uint8_t((srcVal * g) / 255);
+				dst[i + 2] = uint8_t((srcVal * b) / 255);
+			}
+		}
+
+		// You can replace the Lock/Unlock section with UpdateTexture:
+		SDL_UpdateTexture(gstTexture_, nullptr, map.data, width * 3);
+		gst_buffer_unmap(buffer, &map);
+	}
+	gst_sample_unref(sample);
 }
 
 void MusicPlayerComponent::createProgressBarTextureIfNeeded() {
@@ -1080,6 +1556,28 @@ void MusicPlayerComponent::updateProgressBarTexture() {
 	progressBarNeedsUpdate_ = false;
 	lastProgressPercent_ = progressPercent; // Store the progress for which this texture was rendered
 }
+
+void MusicPlayerComponent::drawGstTexture() {
+	if (!renderer_ || !gstTexture_ || baseViewInfo.Alpha <= 0.0f)
+		return;
+
+	SDL_FRect rect;
+	rect.x = baseViewInfo.XRelativeToOrigin();
+	rect.y = baseViewInfo.YRelativeToOrigin();
+	rect.w = baseViewInfo.ScaledWidth();
+	rect.h = baseViewInfo.ScaledHeight();
+
+	SDL::renderCopyF(
+		gstTexture_,
+		baseViewInfo.Alpha,
+		nullptr, // Full source texture
+		&rect,
+		baseViewInfo,
+		page.getLayoutWidth(baseViewInfo.Monitor),
+		page.getLayoutHeight(baseViewInfo.Monitor)
+	);
+}
+
 
 void MusicPlayerComponent::drawProgressBarTexture() {
 	if (!renderer_ || !progressBarTexture_) {
@@ -1202,8 +1700,7 @@ void MusicPlayerComponent::drawVolumeBar() {
 }
 
 Component* MusicPlayerComponent::reloadComponent() {
-	// ... (initial checks for album art, volume bar, etc. remain the same) ...
-	if (isAlbumArt_ || isVolumeBar_ || isProgressBar_ || isVuMeter_ || !musicPlayer_->hasStartedPlaying()) {
+	if (isAlbumArt_ || isVolumeBar_ || isProgressBar_ || gstreamerVisType_ != GStreamerVisType::None || isFftVisualizer_ || !musicPlayer_->hasStartedPlaying()) {
 		return nullptr;
 	}
 
@@ -1286,8 +1783,6 @@ Component* MusicPlayerComponent::reloadComponent() {
 	}
 
 	// --- Image-based components (state, shuffle, loop) ---
-	// This part can remain largely the same as creating new Image components
-	// is generally less expensive than new Text components, and image paths might change.
 	std::string basename;
 	if (typeLC == "state") {
 		// ... (state logic as before) ...
@@ -1328,7 +1823,6 @@ Component* MusicPlayerComponent::reloadComponent() {
 	if (newImageComponent) {
 		if (loadedComponent_ && loadedComponent_ != newImageComponent) { // If different or old one exists
 			// Check if the file path actually changed to avoid needless reload
-			// This requires Image component to expose its file path.
 			Image* oldImage = dynamic_cast<Image*>(loadedComponent_);
 			Image* newPotentialImage = dynamic_cast<Image*>(newImageComponent);
 			bool pathChanged = true;

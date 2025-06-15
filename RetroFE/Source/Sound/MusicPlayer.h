@@ -21,32 +21,35 @@
 #include <memory>
 #include <random>
 #include <atomic>
+#include <deque>
+#include <mutex>
+
 #if __has_include(<SDL2/SDL_mixer.h>)
-    #include <SDL2/SDL_mixer.h>
+#include <SDL2/SDL_mixer.h>
 #elif __has_include(<SDL2_mixer/SDL_mixer.h>)
-    #include <SDL2_mixer/SDL_mixer.h>
+#include <SDL2_mixer/SDL_mixer.h>
 #else
-    #error "Cannot find SDL_mixer header"
+#error "Cannot find SDL_mixer header"
 #endif
 #if __has_include(<SDL2/SDL_image.h>)
-    #include <SDL2/SDL_image.h>
+#include <SDL2/SDL_image.h>
 #elif __has_include(<SDL2_image/SDL_image.h>)
-    #include <SDL2_image/SDL_image.h>
+#include <SDL2_image/SDL_image.h>
 #else
-    #error "Cannot find SDL_image header"
+#error "Cannot find SDL_image header"
 #endif
 #include "../Database/Configuration.h"
 
-class MusicPlayer
-{
+
+class MusicPlayerComponent;
+class MusicPlayer {
 public:
     // Singleton & Basic Setup
     static MusicPlayer* getInstance();
     bool hasStartedPlaying() const;  // Returns true once the first track begins playing
 
     // Track Metadata Structure
-    struct TrackMetadata
-    {
+    struct TrackMetadata {
         std::string title;
         std::string artist;
         std::string album;
@@ -95,6 +98,7 @@ public:
     double getDuration();   // Duration of current track (sec)
     std::pair<int, int> getCurrentAndDurationSec();
     bool getButtonPressed();
+    int getSampleSize() const;
     void setButtonPressed(bool buttonPressed);
 
     // Volume & Loop Settings
@@ -102,7 +106,7 @@ public:
     void setLogicalVolume(int v);
     int getLogicalVolume();
     int getVolume() const;
-    void fadeToVolume(int targetPercent);
+    void fadeToVolume(int targetVolume, int customFadeMs = -1);
     void fadeBackToPreviousVolume();
     void setLoop(bool loop);
     bool getLoop() const;
@@ -143,13 +147,16 @@ public:
     bool getAlbumArt(int trackIndex, std::vector<unsigned char>& albumArtData);
 
     // Audio Visualization & Processing
-    static void postMixCallback(void* udata, Uint8* stream, int len);
-    void processAudioData(Uint8* stream, int len);
     const std::vector<float>& getAudioLevels() const { return audioLevels_; }
     int getAudioChannels() const { return audioChannels_; }
+	int getAudioSampleRate() const { return audioSampleRate_; }
     bool registerVisualizerCallback();
     void unregisterVisualizerCallback();
-    bool hasVisualizer() const { return hasVisualizer_; }
+    bool hasVuMeter() const { return hasVuMeter_; }
+    void setHasVuMeter(bool enable) { hasVuMeter_ = enable; }
+
+    void addVisualizerListener(MusicPlayerComponent* listener);
+    void removeVisualizerListener(MusicPlayerComponent* listener);
 
 private:
     // Constructors / Destructors
@@ -160,6 +167,8 @@ private:
 
     // Private Helper Functions
     void loadTrack(int index);
+    bool readTrackMetadataWithGst(const std::string& filePath, TrackMetadata& metadata);
+    bool read_id3v2_tags(const std::string& path, TrackMetadata& meta);
     bool readTrackMetadata(const std::string& filePath, TrackMetadata& metadata) const;
     bool parseM3UFile(const std::string& playlistPath);
     bool isValidAudioFile(const std::string& filePath) const;
@@ -169,6 +178,14 @@ private:
     int getNextTrackIndex();
     static void musicFinishedCallback();
     void onMusicFinished();
+
+    static void postMixCallback(void* udata, Uint8* stream, int len);
+    void processAudioData(Uint8* stream, int len);
+
+    bool hasActiveVisualizers_ = false; // Replaces hasVisualizer_ and hasGstVisualizer_
+
+    std::vector<MusicPlayerComponent*> visualizerListeners_;
+    std::mutex visualizerMutex_; // To protect access to the listener list.
 
     // Singleton Instance
     static MusicPlayer* instance_;
@@ -186,7 +203,8 @@ private:
     int logicalVolume_;
     bool loopMode_;
     bool shuffleMode_;
-    bool isShuttingDown_;
+    std::atomic<bool> isShuttingDown_;
+    std::atomic<uint32_t> fadeSerial_;
     std::mt19937 rng_;
     bool isPendingPause_;
     double pausedMusicPosition_;
@@ -200,9 +218,13 @@ private:
     Uint64 lastVolumeChangeTime_;
     Uint64 volumeChangeIntervalMs_;
 
+
     // Audio Visualization Members
+    bool hasVisualizer_;
     std::vector<float> audioLevels_;
     int audioChannels_;
-    bool hasVisualizer_;
+	int audioSampleRate_;
+    bool hasVuMeter_;
     int sampleSize_;  // 1, 2, or 4 bytes per sample
+
 };

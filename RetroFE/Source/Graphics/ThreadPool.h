@@ -17,6 +17,12 @@ public:
     explicit ThreadPool(size_t threads);
     ~ThreadPool();
 
+    // A thread pool is a unique resource. It should not be copied or moved.
+    ThreadPool(const ThreadPool&) = delete;
+    ThreadPool& operator=(const ThreadPool&) = delete;
+    ThreadPool(ThreadPool&&) = delete;
+    ThreadPool& operator=(ThreadPool&&) = delete;
+
     // Enqueue tasks to the thread pool
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args)

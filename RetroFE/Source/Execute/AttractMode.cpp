@@ -75,8 +75,8 @@ void AttractMode::reset(bool set) {
     if (!set) {
         updateLaunchTarget();
         idleCycleCount_ = 0;  // Only reset counter on full reset
-        elapsedPlaylistTime_ = 0;
-        elapsedCollectionTime_ = 0;
+//      elapsedPlaylistTime_ = 0;
+//      elapsedCollectionTime_ = 0;
     }
 }
 

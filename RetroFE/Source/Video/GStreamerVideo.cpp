@@ -817,6 +817,7 @@ void GStreamerVideo::initializeUpdateFunction() {
 }
 
 bool GStreamerVideo::play(const std::string& file) {
+	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Protect whole method
 	// Reset instance state for new playback
 	width_ = 0;
 	height_ = 0;
