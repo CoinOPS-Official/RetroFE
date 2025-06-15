@@ -101,7 +101,7 @@ WaitResult runFrontendWaitLoop(
 		// Animate and draw secondary screens
 		if (shouldAnimate && currentPage && multiDisplay) {
 			Uint64 nowMs = SDL_GetPerformanceCounter() * (Uint64)1000.0 / frequency;
-			float deltaTime = static_cast<float>((nowMs - lastFrameTimeMs) / 1000.0f);
+			auto deltaTime = static_cast<float>((nowMs - lastFrameTimeMs) / 1000.0f);
 			if (deltaTime > 0.1f) deltaTime = 0.0167f;
 			lastFrameTimeMs = nowMs;
 
@@ -844,6 +844,14 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	bool is4waySet = false;
 	bool firstInputWasExitCommand = false; // True if quitcombo was first input
 	std::string executionString = "\"" + executable + "\""; // Start with quoted executable
+
+	std::vector<std::string> quitCombo = { "joyButton6", "joyButton7" }; // Default: BACK+START
+	std::string quitComboStr;
+	if (config_.getProperty("controls.quitCombo", quitComboStr)) {
+		quitCombo.clear(); // Clear default
+		Utils::listToVector(quitComboStr, quitCombo, ',');
+	}
+
 	if (!args.empty()) {
 		executionString += " " + args; // Append arguments if they exist
 	}
@@ -1092,8 +1100,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		}
 	}
 
-	std::vector<std::string> quitCombo = { "joyButton6", "joyButton7" }; // BACK + START
-
 	std::map<std::string, WORD> sdlToXInput = {
 		{ "joyButton0", XINPUT_GAMEPAD_A },
 		{ "joyButton1", XINPUT_GAMEPAD_B },
@@ -1153,7 +1159,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			// --- Attract Mode Initialization ---
 
 			Uint64 frequency = SDL_GetPerformanceFrequency();
-			Uint64 waitLastFrameTimeMs = SDL_GetPerformanceCounter() * (Uint64)1000.0 / frequency;
 			bool multiple_display = SDL::getScreenCount() > 1;
 			bool animateDuringGame = true;
 			config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
@@ -1161,20 +1166,14 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 			int attractModeLaunchRunTime = 30; // Default timeout in seconds
 			config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, attractModeLaunchRunTime); // Read timeout from config
-			auto attractStart = std::chrono::high_resolution_clock::now(); // Record the start time for the timeout
 
 			// Flags to track state during the loop
 			bool processTerminated = false;   // Becomes true if the process exits on its own
 
 			// Flags for "Last Played" logic
-			bool firstInputWasExitCommand = false; // True if the *first* input was ESC or START+BACK
 			bool anyInputRegistered = false;     // True once *any* input is detected
 
 			// Variables for START+BACK combo detection
-			bool startButtonDown = false;
-			bool backButtonDown = false;
-			auto startPressTime = std::chrono::high_resolution_clock::now();
-			auto backPressTime = std::chrono::high_resolution_clock::now();
 			const int simultaneousThresholdMs = 200; // Max time diff for combo
 
 			// Variables for checking process/window state
@@ -1232,20 +1231,54 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					anyInputRegistered = true; inputDetected = true;
 				}
 
-				// Check controller for START+BACK combo
+				// --- Custom controller quitCombo support ---
+				static std::map<std::string, bool> btnDownState;
+				static std::map<std::string, std::chrono::high_resolution_clock::time_point> btnDownTime;
+
 				XINPUT_STATE state; ZeroMemory(&state, sizeof(XINPUT_STATE));
 				if (!inputDetected && XInputGetState(0, &state) == ERROR_SUCCESS) {
-					bool startCurrentlyDown = (state.Gamepad.wButtons & XINPUT_GAMEPAD_START) != 0;
-					if (startCurrentlyDown != startButtonDown) { startButtonDown = startCurrentlyDown; if (startButtonDown) { startPressTime = currentTime; LOG_DEBUG("Launcher", "START button pressed"); } }
-					bool backCurrentlyDown = (state.Gamepad.wButtons & XINPUT_GAMEPAD_BACK) != 0;
-					if (backCurrentlyDown != backButtonDown) { backButtonDown = backCurrentlyDown; if (backButtonDown) { backPressTime = currentTime; LOG_DEBUG("Launcher", "BACK button pressed"); } }
-					if (startButtonDown && backButtonDown) {
-						auto timeDiff = std::chrono::duration_cast<std::chrono::milliseconds>(std::max(startPressTime, backPressTime) - std::min(startPressTime, backPressTime)).count();
-						if (timeDiff <= simultaneousThresholdMs) {
-							if (!anyInputRegistered) { firstInputWasExitCommand = true; LOG_INFO("Launcher", "START+BACK combo detected (within " + std::to_string(timeDiff) + "ms) - game will not be added to last played"); }
-							else { LOG_DEBUG("Launcher", "START+BACK combo detected (within " + std::to_string(timeDiff) + "ms)"); }
-							inputDetected = true;
+					bool allComboPressed = true;
+					std::chrono::high_resolution_clock::time_point earliest, latest;
+					bool firstBtn = true;
+					// For each button in quitCombo, track timing
+					for (const auto& btn : quitCombo) {
+						auto it = sdlToXInput.find(btn);
+						if (it == sdlToXInput.end()) {
+							allComboPressed = false;
+							break; // Unknown button name
 						}
+						bool btnIsDown = (state.Gamepad.wButtons & it->second) != 0;
+
+						// Record the time the button was pressed down (only on edge)
+						if (btnIsDown && (!btnDownState[btn])) {
+							btnDownTime[btn] = currentTime;
+							btnDownState[btn] = true;
+							LOG_DEBUG("Launcher", btn + " pressed");
+						}
+						if (!btnIsDown && btnDownState[btn]) {
+							btnDownState[btn] = false;
+						}
+						if (btnIsDown) {
+							if (firstBtn) {
+								earliest = latest = btnDownTime[btn];
+								firstBtn = false;
+							}
+							else {
+								if (btnDownTime[btn] < earliest) earliest = btnDownTime[btn];
+								if (btnDownTime[btn] > latest)  latest = btnDownTime[btn];
+							}
+						}
+						else {
+							allComboPressed = false;
+						}
+					}
+					// All buttons must be down, and pressed within the threshold
+					if (allComboPressed && quitCombo.size() > 0 &&
+						std::chrono::duration_cast<std::chrono::milliseconds>(latest - earliest).count() <= simultaneousThresholdMs) {
+						if (!anyInputRegistered) {
+							firstInputWasExitCommand = true;
+						}
+						inputDetected = true;
 					}
 					// Any other controller buttons
 					if (!inputDetected && state.Gamepad.wButtons != 0) {
@@ -1256,7 +1289,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				}
 				// Other keyboard keys if no input detected yet
 				if (!inputDetected) {
-					for (int virtualKey : {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, 0x5A, //A-Z
+					for (int virtualKey : {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, //A-Z
 						0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, //0-9
 						VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_SPACE, VK_TAB, VK_BACK, VK_SHIFT, VK_CONTROL, VK_MENU}) {
 						if (GetAsyncKeyState(virtualKey) & 0x8000) {
@@ -1374,7 +1407,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 		} // End of if(isAttractMode)
 		else if (wait) {
-			LOG_INFO("Launcher", "Waiting for launched process to complete. Press BACK+START (joyButton6+joyButton7) on any Xbox controller to force quit.");
+			LOG_INFO("Launcher", "Waiting for launched process to complete. Press quitCombo to force quit.");
 			bool comboLatch = false;
 			bool killed = false;
 			bool multiple_display = SDL::getScreenCount() > 1;
@@ -1382,7 +1415,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
 			bool shouldAnimate = animateDuringGame && multiple_display;
 
-			WaitResult waitResult = runFrontendWaitLoop(
+			runFrontendWaitLoop(
 				currentPage,
 				hLaunchedProcess,
 				0, // infinite wait
@@ -1676,7 +1709,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		}
 	}
 
-	if (executable.find("mame") != std::string::npos) {
+	if (executable.find("mame") != std::string::npos && collectionItem != nullptr) {
 		HiScores::getInstance().runHi2TxtAsync(collectionItem->name);
 	}
 
