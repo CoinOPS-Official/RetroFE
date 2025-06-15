@@ -62,18 +62,26 @@ void Utils::postMessage( LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lP
         PostMessage(hwnd, Msg, wParam, lParam);
     }
 }
+#endif
 
 // Utility function to convert std::wstring to std::string
-std::string Utils::wstringToString(const std::wstring& wstr) {
+std::string Utils::wstringToString(const std::wstring wstr) {
     if (wstr.empty()) {
         return std::string();
     }
-    int size_needed = WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), NULL, 0, NULL, NULL);
+
+#ifdef WIN32
+    // Windows: use native WinAPI for best compatibility
+    int size_needed = WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), nullptr, 0, nullptr, nullptr);
     std::string strTo(size_needed, 0);
-    WideCharToMultiByte(CP_UTF8, 0, &wstr[0], (int)wstr.size(), &strTo[0], size_needed, NULL, NULL);
+    WideCharToMultiByte(CP_UTF8, 0, wstr.data(), (int)wstr.size(), strTo.data(), size_needed, nullptr, nullptr);
     return strTo;
-}
+#else
+    // Non-Windows: use standard library conversion
+    static std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+    return converter.to_bytes(wstr);
 #endif
+}
 
 void Utils::preciseSleep(double seconds_to_sleep) {
     using namespace std::chrono;

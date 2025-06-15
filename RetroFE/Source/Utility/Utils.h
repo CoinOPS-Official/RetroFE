@@ -46,8 +46,8 @@ public:
     static void replaceSlashesWithUnderscores(std::string& content);
 #ifdef WIN32    
     static void postMessage(LPCTSTR windowTitle, UINT Msg, WPARAM wParam, LPARAM lParam);
-    static std::string wstringToString(const std::wstring& wstr);
-#endif    
+#endif
+    static std::string wstringToString(const std::wstring wstr);
     static std::string getDirectory(const std::string& filePath);
     static std::string getParentDirectory(std::string filePath);
     static std::string getEnvVar(std::string const& key);
