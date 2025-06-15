@@ -82,7 +82,23 @@ bool VideoComponent::update(float dt) {
 	bool isVideoPlaying = videoInst_->isPlaying();
 	bool isFastScrolling = currentPage_->isMenuFastScrolling();
 
+
 	if (isVideoPlaying) {
+		if (isFastScrolling) {
+			// Always ensure video is playing during fast scroll
+			if (videoInst_->getTargetState() != IVideo::VideoState::Playing &&
+				videoInst_->getActualState() != IVideo::VideoState::Playing) {
+				videoInst_->resume();
+				LOG_DEBUG("VideoComponent", "Force-resume during fast scroll: " + videoFile_);
+			}
+			// No restart logic here, as we want the video to continue playing
+			if (baseViewInfo.Restart) {
+				baseViewInfo.Restart = false;
+				LOG_DEBUG("VideoComponent", "Restarted (fast scroll) " + Utils::getFileName(videoFile_));
+			}
+			return Component::update(dt);
+		}
+		
 		videoInst_->setVolume(baseViewInfo.Volume);
 
 		if (!currentPage_->isMenuScrolling())
@@ -121,7 +137,7 @@ bool VideoComponent::update(float dt) {
 		}
 
 		// Restart support
-		if (baseViewInfo.Restart && hasBeenOnScreen_ && !isFastScrolling) {
+		if (baseViewInfo.Restart && hasBeenOnScreen_) {
 			if (videoInst_->getTargetState() == IVideo::VideoState::Paused &&
 				videoInst_->getActualState() == IVideo::VideoState::Paused) {
 				videoInst_->resume();
