@@ -2567,36 +2567,34 @@ bool RetroFE::run() {
 			if (!currentPage_->getIsLaunched())
 				render();
 
-			bool activelyAnimating = isUserActive(currentTime_)
-				|| currentPage_->isMenuScrolling()
-				|| !currentPage_->isIdle()
-				|| !currentPage_->isGraphicsIdle()
-				|| currentPage_->isPlaylistScrolling()
-				|| currentPage_->isGamesScrolling();
+			// Only do custom frame pacing if vsync is OFF
+			if (!vSync) {
+				bool activelyAnimating = isUserActive(currentTime_)
+					|| currentPage_->isMenuScrolling()
+					|| !currentPage_->isIdle()
+					|| !currentPage_->isGraphicsIdle()
+					|| currentPage_->isPlaylistScrolling()
+					|| currentPage_->isGamesScrolling();
 
-			double currentFrameIntervalMs = activelyAnimating ? fpsTime : fpsIdleTime;
+				double currentFrameIntervalMs = activelyAnimating ? fpsTime : fpsIdleTime;
 
-			// Advance nextFrameTime by one interval FROM ITS CURRENT VALUE
-			// This nextFrameTime now represents the target END time for the current frame (after sleeping)
-			nextFrameTime += currentFrameIntervalMs;
+				// Advance nextFrameTime by one interval FROM ITS CURRENT VALUE
+				nextFrameTime += currentFrameIntervalMs;
 
-			// Get current time right before sleep
-			double timeBeforeSleepMs = SDL_GetPerformanceCounter() * 1000.0 / freq_;
+				double timeBeforeSleepMs = SDL_GetPerformanceCounter() * 1000.0 / freq_;
+				double sleepTimeMs = nextFrameTime - timeBeforeSleepMs;
 
-			// Calculate sleep duration
-			double sleepTimeMs = nextFrameTime - timeBeforeSleepMs;
-			//Clamp and advance the target frame time
-
-			if (!vSync && sleepTimeMs > 0.0) {
-				Utils::preciseSleep(sleepTimeMs / 1000.0);
-				uint64_t ultimateTargetTicks = (uint64_t)(nextFrameTime * freq_ / 1000.0);
-				while (SDL_GetPerformanceCounter() < ultimateTargetTicks);
+				if (sleepTimeMs > 0.0) {
+					Utils::preciseSleep(sleepTimeMs / 1000.0);
+					uint64_t ultimateTargetTicks = (uint64_t)(nextFrameTime * freq_ / 1000.0);
+					while (SDL_GetPerformanceCounter() < ultimateTargetTicks);
+				}
 			}
 
-			//Measure how long the full frame took (update + render + sleep)
+			// Measure how long the full frame took (update + render + sleep)
 			uint64_t loopEnd = SDL_GetPerformanceCounter();
-			double actualTotalFrameDurationMs = (loopEnd - loopStart) * 1000.0 / freq_; // loopStart was actual start
-			lastFrameTimeMs_ = actualTotalFrameDurationMs; // For display
+			double actualTotalFrameDurationMs = (loopEnd - loopStart) * 1000.0 / freq_;
+			lastFrameTimeMs_ = actualTotalFrameDurationMs;
 		}
 	}
 
