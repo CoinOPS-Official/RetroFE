@@ -118,11 +118,13 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_ATTRACTMODELAUNCHRUNTIME,  "30",      global_options::option_type::INTEGER,  "If attractModeLaunch = true, the length of time a launched item will run" },
     { OPTION_ATTRACTMODELAUNCHMINMAXSCROLLS,   "3,5",     global_options::option_type::MSTRING,  "If attractModeLaunch = true, comma separated min and max number of scrolls before launch" },
 
+    { OPTION_AMBIENTMODEMINUTESPERIMAGE,   "2",       global_options::option_type::INTEGER,  "Number of minutes between changing images in ambient mode" },
+
     { nullptr,                         nullptr,    global_options::option_type::HEADER,   "INPUT OPTIONS" },
     { OPTION_COLLECTIONINPUTCLEAR,     "false",    global_options::option_type::BOOLEAN,  "Clear input queue on collection change" },
     { OPTION_PLAYLISTINPUTCLEAR,       "false",    global_options::option_type::BOOLEAN,  "Clear input queue on playlist change" },
     { OPTION_JUMPINPUTCLEAR,           "false",    global_options::option_type::BOOLEAN,  "Clear input queue while jumping through the menu" },
-    { OPTION_CONTROLLERCOMBOEXIT,      "true",     global_options::option_type::BOOLEAN,  "Close RetroFE with the controller combo set in controls.conf" },
+    { OPTION_CONTROLLERCOMBOEXITACTION, "QUIT",    global_options::option_type::STRING,   "Specify what happens on  the controller combo set in controls.conf. Valid valies: QUIT, AMBIENT, NONE" },
     { OPTION_CONTROLLERCOMBOSETTINGS,  "false",    global_options::option_type::BOOLEAN,  "Open settings playlist with the controller combo set in controls.conf" },
     { OPTION_SETTINGSCOLLECTIONPLAYLIST,"Arcades:settings", global_options::option_type::STRING,   "Used by settings toggle to go to the playlist in collection:playlist format, defaults to settings.txt in the current collection" },
     { OPTION_SERVOSTIKENABLED,         "false",    global_options::option_type::BOOLEAN,   "Enable ServoStik support" },
