@@ -38,6 +38,7 @@ AttractMode::AttractMode()
     , activeTime_(0)
     , cooldownTime_(2.0f)           // Make configurable
     , cooldownElapsedTime_(0)
+	, cooldownAfterSwitch_(false) // cooldown after switching playlists/collections
     , launchInitiated_(false)
     , currentState_(State::IDLE)
     , stateTransitionTime_(0)
@@ -100,13 +101,15 @@ int AttractMode::update(float dt, Page& page) {
 
     // FIRST - Handle state transitions for playlist/collection changes
 
-    // Check for playlist changes 
+// Check for playlist changes 
     if (!isActive_ && elapsedPlaylistTime_ > idlePlaylistTime && idlePlaylistTime > 0)
     {
         // Reset timers when changing playlists
         elapsedTime_ = 0;
         elapsedPlaylistTime_ = 0;
-        setState(State::PLAYLIST_CHANGED, 0);
+        setState(State::COOLDOWN, 0);
+        cooldownElapsedTime_ = 0;
+        cooldownAfterSwitch_ = true;  // <--- Add this
         return 1;  // Signal playlist change
     }
 
@@ -117,7 +120,9 @@ int AttractMode::update(float dt, Page& page) {
         elapsedTime_ = 0;
         elapsedPlaylistTime_ = 0;
         elapsedCollectionTime_ = 0;
-        setState(State::COLLECTION_CHANGED, 0);
+        setState(State::COOLDOWN, 0);
+        cooldownElapsedTime_ = 0;
+        cooldownAfterSwitch_ = true;  // <--- Add this
         return 2;  // Signal collection change
     }
 
@@ -143,25 +148,32 @@ int AttractMode::update(float dt, Page& page) {
 
     // THIRD - Handle the active state machine
 
-    // Handle cooldown and launch states first - these have priority
+// Handle cooldown and launch states first - these have priority
     if (currentState_ == State::COOLDOWN) {
         cooldownElapsedTime_ += dt;
 
         // Log cooldown progress occasionally (every half second)
         if (fmod(cooldownElapsedTime_, 0.5f) < dt) {
-            LOG_INFO("AttractMode", "Launch cooldown: " + std::to_string(cooldownElapsedTime_) + "/" +
+            LOG_INFO("AttractMode", "Cooldown: " + std::to_string(cooldownElapsedTime_) + "/" +
                 std::to_string(cooldownTime_) + "s");
         }
 
-        // Check if it's time to launch
-        if (cooldownElapsedTime_ >= cooldownTime_)
-        {
-            LOG_INFO("AttractMode", "Launch sequence initiated");
-            setState(State::LAUNCH_READY, currentTime);
-            elapsedTime_ = 0;
-            isActive_ = false;
+        if (cooldownElapsedTime_ >= cooldownTime_) {
+            if (cooldownAfterSwitch_) {
+                LOG_INFO("AttractMode", "Cooldown after switch complete, returning to IDLE.");
+                setState(State::IDLE, elapsedTime_);
+                cooldownAfterSwitch_ = false;  // Reset flag
+            }
+            else {
+                LOG_INFO("AttractMode", "Launch sequence initiated");
+                setState(State::LAUNCH_READY, elapsedTime_);
+                // Note: Don't reset cooldownAfterSwitch_ here (should already be false)
+                elapsedTime_ = 0;
+                isActive_ = false;
+                cooldownElapsedTime_ = 0.0f;
+                return 3;  // Signal to launch a game
+            }
             cooldownElapsedTime_ = 0.0f;
-            return 3;  // Signal to launch a game
         }
 
         // Skip the rest of the update when in cooldown

@@ -59,6 +59,7 @@ private:
     float activeTime_;
     float cooldownTime_;            // Instead of static
     float cooldownElapsedTime_;     // Instead of static
+    bool cooldownAfterSwitch_;
     bool launchInitiated_;          // New: Track if launch has been initiated
     State currentState_;             // Current state of attract mode
     float stateTransitionTime_;      // Time when last state change occurred
