@@ -1,4 +1,7 @@
 #include "ThreadPool.h"
+#include "Log.h"
+#include <cstdlib>   // for std::getenv
+#include <algorithm> // for std::clamp
 
 // Constructor
 ThreadPool::ThreadPool(size_t threads) : stop(false) {
@@ -36,12 +39,20 @@ ThreadPool::~ThreadPool() {
 }
 
 ThreadPool& ThreadPool::getInstance() {
-    // Default to hardware concurrency
-    static ThreadPool instance(std::thread::hardware_concurrency());
+    static ThreadPool instance([] {
+        unsigned hw = std::thread::hardware_concurrency();
+        unsigned suggested = (hw > 4) ? hw / 2 : std::max(2u, hw);
+        suggested = std::clamp(suggested, 2u, 6u);
+        if (const char* env_p = std::getenv("RETROFE_THREADPOOL_SIZE")) {
+            unsigned user = std::atoi(env_p);
+            if (user > 0 && user < 64)
+                suggested = user;
+        }
+        LOG_INFO("ThreadPool", "Initializing ThreadPool with " + std::to_string(suggested) + " threads (hardware_concurrency=" + std::to_string(hw) + ")");
+        return suggested;
+        }());
     return instance;
 }
-
-// ThreadPool.cpp
 
 void ThreadPool::shutdown() {
     {
