@@ -243,11 +243,11 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Graphics/FontCache.h"
 	"${RETROFE_DIR}/Source/Graphics/PageBuilder.h"
 	"${RETROFE_DIR}/Source/Graphics/Page.h"
-	"${RETROFE_DIR}/Source/Graphics/ThreadPool.h"
 	"${RETROFE_DIR}/Source/Menu/Menu.h"
 	"${RETROFE_DIR}/Source/Sound/Sound.h"
     "${RETROFE_DIR}/Source/Sound/MusicPlayer.h"
 	"${RETROFE_DIR}/Source/Utility/Log.h"
+	"${RETROFE_DIR}/Source/Utility/ThreadPool.h"
 	"${RETROFE_DIR}/Source/Utility/Utils.h"
 	"${RETROFE_DIR}/Source/Video/IVideo.h"
 	"${RETROFE_DIR}/Source/Video/GStreamerVideo.h"
@@ -286,7 +286,6 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Graphics/FontCache.cpp"
 	"${RETROFE_DIR}/Source/Graphics/PageBuilder.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Page.cpp"
-	"${RETROFE_DIR}/Source/Graphics/ThreadPool.cpp"
 	"${RETROFE_DIR}/Source/Graphics/ViewInfo.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Animate/Animation.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Animate/AnimationEvents.cpp"
@@ -311,6 +310,7 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Sound/Sound.cpp"
     "${RETROFE_DIR}/Source/Sound/MusicPlayer.cpp"
 	"${RETROFE_DIR}/Source/Utility/Log.cpp"
+	"${RETROFE_DIR}/Source/Utility/ThreadPool.cpp"
 	"${RETROFE_DIR}/Source/Utility/Utils.cpp"
 	"${RETROFE_DIR}/Source/Video/GStreamerVideo.cpp"
 	"${RETROFE_DIR}/Source/Video/VideoFactory.cpp"
@@ -413,8 +413,14 @@ if(MSVC)
 else()
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g -O0 -Wall -ggdb")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -Wall -ggdb")
-	if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
-		set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -march=x86-64-v2 -msse4.2 -mavx -Wall -Wextra -funroll-loops")
-    	set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -march=x86-64-v2 -msse4.2 -mavx -Wall -Wextra -Wno-reorder -funroll-loops")
-	endif()
+
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -march=x86-64-v2 -msse4.2 -mavx -Wall -Wextra -funroll-loops")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -march=x86-64-v2 -msse4.2 -mavx -Wall -Wextra -Wno-reorder -funroll-loops")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
+        set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} -O2 -mcpu=native -funroll-loops -fstrict-aliasing -ffast-math -Wall -Wextra")
+        set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -O2 -mcpu=native -funroll-loops -fstrict-aliasing -ffast-math -Wall -Wextra -Wno-reorder")
+    endif()
+    message(STATUS "Using C Flags: ${CMAKE_C_FLAGS}")
+    message(STATUS "Using CXX Flags: ${CMAKE_CXX_FLAGS}")
 endif()

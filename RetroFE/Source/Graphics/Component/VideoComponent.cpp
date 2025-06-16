@@ -23,10 +23,10 @@
 #include <memory>
 
 #include "../../Video/GStreamerVideo.h"
-
 #include "../../Graphics/ViewInfo.h"
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
+#include "../../Utility/ThreadPool.h"
 #include "../../Utility/Utils.h"
 #include "../../Video/IVideo.h"
 #include "../../Video/VideoFactory.h"
@@ -180,7 +180,7 @@ void VideoComponent::allocateGraphicsMemory() {
 			}
 
 			// Offload play() to thread pool
-			videoThreadPool.enqueue([this] {
+			ThreadPool::getInstance().enqueue([this] {
 				LOG_DEBUG("VideoComponent", "ThreadPool: play() starting for: " + videoFile_);
 				bool result = videoInst_->play(videoFile_);
 				instanceReady_ = result;

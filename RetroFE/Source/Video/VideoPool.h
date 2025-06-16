@@ -22,7 +22,6 @@
 #include <string>
 #include <mutex>
 #include "GStreamerVideo.h"
-#include "../Graphics/ThreadPool.h"
 
 class VideoPool {
 public:
@@ -34,8 +33,7 @@ public:
     static void shutdown();
 
 private:
-    static std::unique_ptr<ThreadPool> threadPool_;
-    
+   
     struct PoolInfo {
         std::deque<VideoPtr> instances;    // Store unique_ptr<IVideo>
         size_t currentActive = 0;
@@ -50,10 +48,6 @@ private:
     using PoolMap = std::unordered_map<int, ListPoolMap>;
 
     static PoolMap pools_;
-
-    static void initializeThreadPool(size_t numThreads);
-
-    static void shutdownThreadPool();
 
     static PoolInfo& getPoolInfo(int monitor, int listId);
     static bool checkPoolHealth(int monitor, int listId);

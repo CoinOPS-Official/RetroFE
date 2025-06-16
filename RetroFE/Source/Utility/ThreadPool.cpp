@@ -34,3 +34,9 @@ ThreadPool::~ThreadPool() {
     for (std::thread& worker : workers)
         worker.join();
 }
+
+ThreadPool& ThreadPool::getInstance() {
+    // Default to hardware concurrency
+    static ThreadPool instance(std::thread::hardware_concurrency());
+    return instance;
+}

@@ -16,7 +16,6 @@
 #pragma once
 
 #include "../Collection/CollectionInfo.h"
-#include "ThreadPool.h"
 
 #include <map>
 #include <string>
@@ -35,8 +34,7 @@ class Page
 
 public:
 
-    ThreadPool pool_{ 4 };
-    ;    enum ScrollDirection
+    enum ScrollDirection
     {
         ScrollDirectionForward,
         ScrollDirectionBack,
@@ -241,7 +239,6 @@ private:
     std::vector<int> layoutWidthByMonitor_;
     std::vector<int> layoutHeightByMonitor_;
     bool jukebox_;
-    bool useThreading_;
     bool isLaunched_ = false;
 
 };

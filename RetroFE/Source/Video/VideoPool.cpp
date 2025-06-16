@@ -16,6 +16,7 @@
 
 #include "VideoPool.h"
 #include "../Utility/Log.h"
+#include "../Utility/ThreadPool.h"
 #include <algorithm>
 #include <memory>
 #include <deque>
@@ -28,19 +29,6 @@ namespace {
 }
 
 VideoPool::PoolMap VideoPool::pools_;
-std::unique_ptr<ThreadPool> VideoPool::threadPool_;
-
-void VideoPool::initializeThreadPool(size_t numThreads) {
-	if (!threadPool_) {
-		threadPool_ = std::make_unique<ThreadPool>(numThreads);
-		LOG_INFO("VideoPool", "ThreadPool initialized with " + std::to_string(numThreads) + " threads");
-	}
-}
-
-void VideoPool::shutdownThreadPool() {
-	threadPool_.reset();
-	LOG_INFO("VideoPool", "ThreadPool shutdown");
-}
 
 VideoPool::PoolInfo& VideoPool::getPoolInfo(int monitor, int listId) {
 	return pools_[monitor][listId]; // will auto-create if not found
@@ -140,15 +128,10 @@ VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOv
 void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
 	if (!vid || listId == -1) return;
 
-	// Lazily initialize threadPool if needed (thread-safe: single-threaded init is fine here)
-	if (!threadPool_) {
-		initializeThreadPool(std::thread::hardware_concurrency());
-	}
-
 	// Move the pointer so the lambda owns it (capture by move)
 	auto vidForThread = std::move(vid);
 
-	threadPool_->enqueue([vidPtr = std::move(vidForThread), monitor, listId]() mutable {
+	ThreadPool::getInstance().enqueue([vidPtr = std::move(vidForThread), monitor, listId]() mutable {
 		bool isFaulty = false;
 		try {
 			vidPtr->unload();
@@ -248,7 +231,6 @@ void VideoPool::cleanup(int monitor, int listId) {
 }
 
 void VideoPool::shutdown() {
-	if (threadPool_) threadPool_.reset();  // <--- Will join all threads, finish all queued tasks
 	LOG_INFO("VideoPool", "Starting VideoPool shutdown...");
 	for (auto& [monitor, listMap] : pools_) {
 		for (auto& [listId, pool] : listMap) {
