@@ -40,3 +40,18 @@ ThreadPool& ThreadPool::getInstance() {
     static ThreadPool instance(std::thread::hardware_concurrency());
     return instance;
 }
+
+// ThreadPool.cpp
+
+void ThreadPool::shutdown() {
+    {
+        std::unique_lock<std::mutex> lock(queueMutex);
+        stop = true;
+    }
+    condition.notify_all();
+    for (std::thread& worker : workers)
+        if (worker.joinable())
+            worker.join();
+    workers.clear(); // Not strictly necessary but makes state explicit
+}
+

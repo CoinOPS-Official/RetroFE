@@ -16,7 +16,7 @@ class ThreadPool {
 public:
     explicit ThreadPool(size_t threads);
     ~ThreadPool();
-
+    void shutdown();
     // A thread pool is a unique resource. It should not be copied or moved.
     ThreadPool(const ThreadPool&) = delete;
     ThreadPool& operator=(const ThreadPool&) = delete;

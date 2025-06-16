@@ -34,6 +34,7 @@
 #include "Menu/Menu.h"
 #include "SDL.h"
 #include "Utility/Log.h"
+#include "Utility/ThreadPool.h"
 #include "Utility/Utils.h"
 #include "Video/VideoFactory.h"
 #include "Video/VideoPool.h"
@@ -483,7 +484,7 @@ bool RetroFE::deInitialize() {
 
 	// Free textures
 	freeGraphicsMemory();
-
+	ThreadPool::getInstance().shutdown();
 	VideoPool::shutdown();
 
 	// Delete page

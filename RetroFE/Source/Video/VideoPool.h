@@ -25,30 +25,31 @@
 
 class VideoPool {
 public:
-    using VideoPtr = std::unique_ptr<IVideo>;  // <-- Use base type
+	using VideoPtr = std::unique_ptr<IVideo>;  // <-- Use base type
 
-    static VideoPtr acquireVideo(int monitor, int listId, bool softOverlay);
-    static void releaseVideo(VideoPtr vid, int monitor, int listId);
-    static void cleanup(int monitor, int listId);
-    static void shutdown();
+	static VideoPtr acquireVideo(int monitor, int listId, bool softOverlay);
+	static void releaseVideo(VideoPtr vid, int monitor, int listId);
+	static void cleanup(int monitor, int listId);
+	static void shutdown();
 
 private:
-   
-    struct PoolInfo {
-        std::deque<VideoPtr> instances;    // Store unique_ptr<IVideo>
-        size_t currentActive = 0;
-        size_t observedMaxActive = 0;
-        size_t requiredInstanceCount = 0;
-        bool initialCountLatched = false;
-        std::mutex poolMutex;
-        bool markedForCleanup = false;
-    };
 
-    using ListPoolMap = std::unordered_map<int, PoolInfo>;
-    using PoolMap = std::unordered_map<int, ListPoolMap>;
+	struct PoolInfo {
+		std::deque<VideoPtr> ready;      // Ready for reuse
+		std::deque<VideoPtr> pending;    // Being reset/unloaded
+		size_t currentActive = 0;
+		size_t observedMaxActive = 0;
+		size_t requiredInstanceCount = 0;
+		bool initialCountLatched = false;
+		std::mutex poolMutex;
+		bool markedForCleanup = false;
+	};
 
-    static PoolMap pools_;
+	using ListPoolMap = std::unordered_map<int, PoolInfo>;
+	using PoolMap = std::unordered_map<int, ListPoolMap>;
 
-    static PoolInfo& getPoolInfo(int monitor, int listId);
-    static bool checkPoolHealth(int monitor, int listId);
+	static PoolMap pools_;
+
+	static PoolInfo& getPoolInfo(int monitor, int listId);
+	static bool checkPoolHealth(int monitor, int listId);
 };
