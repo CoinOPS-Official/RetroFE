@@ -154,7 +154,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 						(newState == GST_STATE_NULL && video->targetState_ == IVideo::VideoState::None) ||
 						(newState == GST_STATE_READY && video->targetState_ == IVideo::VideoState::None);
 
-					if (!expected && video->isPlaying_) {
+					if (!expected && video->pipeLineReady_) {
 						LOG_WARNING("GStreamerVideo",
 							"busCallback(): Pipeline for " + video->currentFile_ +
 							" transitioned to " + std::string(gst_element_state_get_name(newState)) +
@@ -191,7 +191,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 					else {
 						LOG_DEBUG("GStreamerVideo", "BusCallback: Finished loops for " + video->currentFile_ + ". Pausing.");
 						video->pause(); // Or perhaps a full stop/unload depending on desired behavior
-						video->isPlaying_ = false;
+						video->pipeLineReady_ = false;
 					}
 				}
 				else if (video->playbin_) {
@@ -215,7 +215,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 				(dbg_info ? (std::string(" | Debug: ") + dbg_info) : ""));
 
 			video->hasError_.store(true, std::memory_order_release);
-			video->isPlaying_ = false;
+			video->pipeLineReady_ = false;
 			video->targetState_ = IVideo::VideoState::None; // Reflect that it's no longer in a valid playing/paused state
 
 			if (err) g_error_free(err);
@@ -370,7 +370,7 @@ bool GStreamerVideo::stop() {
 	// --- 1. Signal No Longer Playing ---
 	// This should be done early to prevent other threads (e.g., draw, bus callback)
 	// from attempting operations on a pipeline that's being torn down.
-	isPlaying_ = false;
+	pipeLineReady_ = false;
 	targetState_ = IVideo::VideoState::None;
 
 	{
@@ -519,7 +519,7 @@ bool GStreamerVideo::unload() {
 	if (!playbin_) { // If no pipeline, nothing to unload from GStreamer's perspective
 		LOG_WARNING("GStreamerVideo", "unload(): No playbin_ to unload for " + currentFile_);
 		// Ensure local state is reset even if playbin_ was already gone
-		isPlaying_ = false;
+		pipeLineReady_ = false;
 		hasError_.store(false, std::memory_order_release); // Clear any previous error
 		width_ = 0;
 		height_ = 0;
@@ -556,7 +556,7 @@ bool GStreamerVideo::unload() {
 	playCount_ = 0;
 
 	// --- 2. Signal that we are no longer "playing" this specific stream ---
-	isPlaying_ = false;
+	pipeLineReady_ = false;
 	targetState_ = IVideo::VideoState::None; // Reflect that it's not actively playing or paused
 
 	// --- 3. GStreamer Pipeline Management ---
@@ -585,16 +585,17 @@ bool GStreamerVideo::unload() {
 	LOG_DEBUG("GStreamerVideo", "unload(): Setting playbin state to READY for " + currentFile_);
 	GstStateChangeReturn setStateRet = gst_element_set_state(playbin_, GST_STATE_READY);
 
-	if (setStateRet == GST_STATE_CHANGE_FAILURE) {
-		LOG_ERROR("GStreamerVideo", "unload(): Failed to set playbin state to READY for " + currentFile_ + ". This might lead to issues.");
-		hasError_.store(true, std::memory_order_release); // Flag an error
-		// Proceed with other cleanup, but this is a bad sign for reuse.
-	}
-	else if (setStateRet == GST_STATE_CHANGE_ASYNC) {
-		LOG_DEBUG("GStreamerVideo", "unload(): Playbin is transitioning to READY asynchronously for " + currentFile_ + ".");
+	GstState currentStateRead = GST_STATE_VOID_PENDING;
+	GstStateChangeReturn getStateRet = gst_element_get_state(
+		playbin_, &currentStateRead, nullptr, 2 * GST_SECOND); // Wait up to 2 seconds
+
+	if (getStateRet == GST_STATE_CHANGE_SUCCESS && currentStateRead == GST_STATE_READY) {
+		LOG_DEBUG("GStreamerVideo", "playbin_ confirmed in READY state for " + currentFile_);
 	}
 	else {
-		LOG_DEBUG("GStreamerVideo", "unload(): Playbin transitioned to READY synchronously (or NO_PREROLL) for " + currentFile_ + ".");
+		LOG_WARNING("GStreamerVideo", "playbin_ did not confirm READY state (or timed out). GetStateReturn: " +
+			std::string(gst_element_state_change_return_get_name(getStateRet)) +
+			", Actual State: " + std::string(gst_element_state_get_name(currentStateRead)));
 	}
 
 	// Flush the bus to discard any pending messages from the previous playback
@@ -906,23 +907,23 @@ bool GStreamerVideo::play(const std::string& file) {
 	g_object_set(playbin_, "uri", uriFile, nullptr);
 	g_free(uriFile);
 
+	targetState_ = IVideo::VideoState::Paused;  // accurately reflect that we're starting preloaded
 
 	GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
 
-	if (stateRet == GST_STATE_CHANGE_FAILURE) {
-		isPlaying_ = false;
+	GstState newState, pendingState;
+	GstStateChangeReturn getStateResult = gst_element_get_state(
+		GST_ELEMENT(playbin_), &newState, &pendingState, 2 * GST_SECOND);
+
+	if (getStateResult != GST_STATE_CHANGE_SUCCESS || newState != GST_STATE_PAUSED) {
+		LOG_ERROR("GStreamerVideo", "Pipeline failed to reach PAUSED for " + file +
+			" (got " + std::string(gst_element_state_get_name(newState)) + ")");
+		pipeLineReady_ = false;
 		hasError_.store(true, std::memory_order_release);
-		LOG_ERROR("GStreamerVideo", "play(): Failed to set playbin state to PAUSED for " + file);
 		return false;
 	}
-	else if (stateRet == GST_STATE_CHANGE_ASYNC) {
-		LOG_DEBUG("GStreamerVideo", "play(): Playbin is transitioning to PAUSED asynchronously for " + file + ".");
-	}
-	else {
-		LOG_DEBUG("GStreamerVideo", "play(): Playbin transitioned to PAUSED synchronously (or NO_PREROLL) for " + file + ".");
-	}
-	targetState_ = IVideo::VideoState::Paused;  // accurately reflect that we're starting preloaded
-	isPlaying_ = true;
+
+	pipeLineReady_ = true;
 	currentFile_ = file;
 
 	// Mute and volume to 0 by default
@@ -1138,7 +1139,7 @@ void GStreamerVideo::createSdlTexture() {
 }
 
 void GStreamerVideo::volumeUpdate() {
-	if (!isPlaying_ || !playbin_)
+	if (!pipeLineReady_ || !playbin_)
 		return;
 
 	// Clamp volume_ to valid range
@@ -1183,7 +1184,7 @@ int GStreamerVideo::getWidth() {
 void GStreamerVideo::draw() {
 	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Overall instance lock
 
-	if (!isPlaying_)
+	if (!pipeLineReady_)
 		return;
 
 	// --- Step 1: Pull GStreamer Sample and Update Texture ---
@@ -1227,7 +1228,6 @@ void GStreamerVideo::draw() {
 		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_);
 		texture_ = nullptr;
 	}
-
 	SDL_UnlockMutex(SDL::getMutex());
 
 	gst_video_frame_unmap(&gst_frame);
@@ -1283,7 +1283,7 @@ bool GStreamerVideo::updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFr
 }
 
 bool GStreamerVideo::isPlaying() {
-	return isPlaying_;
+	return actualState_ == IVideo::VideoState::Playing;
 }
 
 void GStreamerVideo::setVolume(float volume) {
@@ -1291,7 +1291,7 @@ void GStreamerVideo::setVolume(float volume) {
 }
 
 void GStreamerVideo::skipForward() {
-	if (!isPlaying_)
+	if (!pipeLineReady_)
 		return;
 	gint64 current;
 	gint64 duration;
@@ -1307,7 +1307,7 @@ void GStreamerVideo::skipForward() {
 }
 
 void GStreamerVideo::skipBackward() {
-	if (!isPlaying_)
+	if (!pipeLineReady_)
 		return;
 	gint64 current;
 	if (!gst_element_query_position(playbin_, GST_FORMAT_TIME, &current))
@@ -1321,7 +1321,7 @@ void GStreamerVideo::skipBackward() {
 }
 
 void GStreamerVideo::skipForwardp() {
-	if (!isPlaying_)
+	if (!pipeLineReady_)
 		return;
 	gint64 current;
 	gint64 duration;
@@ -1338,7 +1338,7 @@ void GStreamerVideo::skipForwardp() {
 
 void GStreamerVideo::skipBackwardp() {
 
-	if (!isPlaying_)
+	if (!pipeLineReady_)
 		return;
 	gint64 current;
 	gint64 duration;
@@ -1391,7 +1391,7 @@ void GStreamerVideo::resume() {
 }
 
 void GStreamerVideo::restart() {
-	if (!isPlaying_)
+	if (!pipeLineReady_)
 		return;
 	if (!gst_element_seek(playbin_, 1.0, GST_FORMAT_TIME,
 		GST_SEEK_FLAG_FLUSH,
@@ -1403,14 +1403,14 @@ void GStreamerVideo::restart() {
 
 unsigned long long GStreamerVideo::getCurrent() {
 	gint64 ret = 0;
-	if (!gst_element_query_position(playbin_, GST_FORMAT_TIME, &ret) || !isPlaying_)
+	if (!gst_element_query_position(playbin_, GST_FORMAT_TIME, &ret) || !pipeLineReady_)
 		ret = 0;
 	return (unsigned long long)ret;
 }
 
 unsigned long long GStreamerVideo::getDuration() {
 	gint64 ret = 0;
-	if (!gst_element_query_duration(playbin_, GST_FORMAT_TIME, &ret) || !isPlaying_)
+	if (!gst_element_query_duration(playbin_, GST_FORMAT_TIME, &ret) || !pipeLineReady_)
 		ret = 0;
 	return (unsigned long long)ret;
 }

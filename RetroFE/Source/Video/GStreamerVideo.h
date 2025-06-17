@@ -99,7 +99,7 @@ private:
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
     std::atomic<bool> hasError_{ false };              // Set by pad probe, read main
-    std::atomic<bool> isPlaying_{ false };
+    std::atomic<bool> pipeLineReady_{ false };
 
 
     // === Main-thread only ===
