@@ -60,7 +60,7 @@ public:
     void     freeGraphicsMemory( );
     void     allocateGraphicsMemory( );
     void     launchEnter( );
-    void     launchExit( );
+    void     launchExit(bool userInitiated = true);
     std::vector<std::string>     getPlaylistCycle();
     bool getAttractModeCyclePlaylist();
     MetadataDatabase* getMetaDb();

@@ -76,8 +76,8 @@ void AttractMode::reset(bool set) {
     if (!set) {
         updateLaunchTarget();
         idleCycleCount_ = 0;  // Only reset counter on full reset
-//      elapsedPlaylistTime_ = 0;
-//      elapsedCollectionTime_ = 0;
+        //elapsedPlaylistTime_ = 0;
+        //elapsedCollectionTime_ = 0;
     }
 }
 
@@ -91,8 +91,10 @@ int AttractMode::update(float dt, Page& page) {
 
     // Update main timers
     elapsedTime_ = currentTime;
-    elapsedPlaylistTime_ += dt;
-    elapsedCollectionTime_ += dt;
+    if (isSet_) {
+        elapsedPlaylistTime_ += dt;
+        elapsedCollectionTime_ += dt;
+    }
 
     float timeInCurrentState = currentTime - stateTransitionTime_;
 
@@ -256,8 +258,6 @@ int AttractMode::update(float dt, Page& page) {
                     else {
                         // Not enough cycles, go back to IDLE
                         setState(State::IDLE, currentTime);
-                        isActive_ = false;
-                        elapsedTime_ = 0;
                     }
                 }
             }

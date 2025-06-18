@@ -366,7 +366,7 @@ void RetroFE::launchEnter() {
 }
 
 // Return from the launch of a game/program
-void RetroFE::launchExit() {
+void RetroFE::launchExit(bool userInitiated) {
 	currentPage_->setIsLaunched(false);
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
@@ -391,7 +391,9 @@ void RetroFE::launchExit() {
 	currentPage_->updateReloadables(0);
 	currentPage_->onNewItemSelected();
 	currentPage_->reallocateMenuSpritePoints(false);
-	attract_.reset(false);
+	if (userInitiated) {
+		attract_.reset(false); // Only reset if user-driven
+	}
 	currentTime_ = static_cast<float>((SDL_GetPerformanceCounter() * 1.0 / freq_)); // currentTime_ in seconds
 	keyLastTime_ = currentTime_;
 	lastLaunchReturnTime_ = currentTime_;
@@ -2137,14 +2139,14 @@ bool RetroFE::run() {
 					config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
 					if (unloadSDL)
 					{
-						launchExit();
+						launchExit(false); // <-- not user-initiated
 					}
 					reboot_ = true;
 					setState(RETROFE_QUIT_REQUEST);
 				}
 				else
 				{
-					launchExit();
+					launchExit(false); // <-- not user-initiated
 					l.LEDBlinky(4);
 					currentPage_->exitGame();
 
