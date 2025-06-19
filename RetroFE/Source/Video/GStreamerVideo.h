@@ -90,10 +90,6 @@ public:
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
 
-    void setDimensionsReadyCallback(std::function<void(int, int)> cb) {
-        dimensionsReadyCallback_ = std::move(cb);
-    }
-
 private:
     // === Thread-shared atomics ===
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };

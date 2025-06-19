@@ -236,12 +236,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 						" (" + std::to_string(w) + "x" + std::to_string(h) + ")");
 					video->width_ = w;
 					video->height_ = h;
-
-					// fire callback
 					video->createSdlTexture();
-					if (video->dimensionsReadyCallback_) {
-						video->dimensionsReadyCallback_(w, h);
-					}
 				}
 			} // End of: if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_))
 			break; // Break for case GST_MESSAGE_APPLICATION
