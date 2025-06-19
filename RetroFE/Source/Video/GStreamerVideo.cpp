@@ -969,7 +969,7 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 
 	// --- 1. Basic Probe Sanity Checks ---
 	if (!probeData || !probeData->videoInstance) {
-		LOG_WARNING("GStreamerVideo", "padProbeCallback(): Probe fired with invalid user_data or videoInstance.");
+		LOG_ERROR("GStreamerVideo", "padProbeCallback(): Probe fired with invalid user_data or videoInstance.");
 		return GST_PAD_PROBE_REMOVE;
 	}
 
@@ -979,14 +979,14 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 	// --- 2. Session ID Check (Crucial for Stale Probes) ---
 	uint64_t videoCurrentSessionId = video->currentPlaySessionId_.load(std::memory_order_acquire);
 	if (videoCurrentSessionId != callbackSessionId) {
-		LOG_DEBUG("GStreamerVideo", "padProbeCallback(): Stale probe for session ID: " + std::to_string(callbackSessionId) +
+		LOG_ERROR("GStreamerVideo", "padProbeCallback(): Stale probe for session ID: " + std::to_string(callbackSessionId) +
 			" (current: " + std::to_string(videoCurrentSessionId) + " for file: " + video->currentFile_ + "). Removing probe.");
 		return GST_PAD_PROBE_REMOVE;
 	}
 
 	// --- 3. Instance State Check (Is this GStreamerVideo instance still actively playing?) ---
 	if (!video->playbin_) {
-		LOG_DEBUG("GStreamerVideo", "padProbeCallback(): Probe for session ID: " + std::to_string(callbackSessionId) +
+		LOG_ERROR("GStreamerVideo", "padProbeCallback(): Probe for session ID: " + std::to_string(callbackSessionId) +
 			" fired, but playbin_ is NULL or video not playing (file: " + video->currentFile_ + "). Removing probe.");
 		video->padProbeId_ = 0; // Mark that this instance no longer expects this probe to be active.
 		return GST_PAD_PROBE_REMOVE;
@@ -1025,7 +1025,7 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 				}
 				else {
 					gst_structure_free(msg_struct);
-					LOG_WARNING("GStreamerVideo", "padProbeCallback(): Failed to get bus to post 'dimensions' message.");
+					LOG_ERROR("GStreamerVideo", "padProbeCallback(): Failed to get bus to post 'dimensions' message.");
 				}
 
 				// --- Perspective Matrix Calculation and Setting (if applicable) ---
@@ -1067,13 +1067,13 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 
 			}
 			else { // Failed to get width/height from CAPS
-				LOG_WARNING("GStreamerVideo", "padProbeCallback(): Session " + std::to_string(callbackSessionId) +
+				LOG_ERROR("GStreamerVideo", "padProbeCallback(): Session " + std::to_string(callbackSessionId) +
 					": Failed to get valid dimensions from CAPS structure for " + video->currentFile_);
 				video->hasError_.store(true, std::memory_order_release);
 			}
 		}
 		else { // gst_event_parse_caps failed
-			LOG_WARNING("GStreamerVideo", "padProbeCallback(): Session " + std::to_string(callbackSessionId) +
+			LOG_ERROR("GStreamerVideo", "padProbeCallback(): Session " + std::to_string(callbackSessionId) +
 				": Caps event, but gst_event_parse_caps failed (returned NULL caps) for " + video->currentFile_);
 			video->hasError_.store(true, std::memory_order_release);
 		}
@@ -1244,6 +1244,8 @@ bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFr
 	const int strideU = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
 	const int strideV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 2);
 
+	LOG_DEBUG("GStreamerVideo", "Before update, SDL_GetError()=" + std::string(SDL_GetError()));
+	
 	// Update the texture using the explicit frame rectangle
 	if (SDL_UpdateYUVTexture(texture, nullptr, srcY, strideY, srcU, strideU, srcV, strideV) != 0) {
 		LOG_ERROR("GStreamerVideo", std::string("SDL_UpdateYUVTexture failed: ") + SDL_GetError());
