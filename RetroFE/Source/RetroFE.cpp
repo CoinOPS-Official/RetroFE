@@ -390,7 +390,6 @@ void RetroFE::launchExit(bool userInitiated) {
 	input_.resetStates();
 	currentPage_->updateReloadables(0);
 	currentPage_->onNewItemSelected();
-	currentPage_->reallocateMenuSpritePoints(false);
 	if (userInitiated) {
 		attract_.reset(false); // Only reset if user-driven
 	}
