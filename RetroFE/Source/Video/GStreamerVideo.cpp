@@ -476,10 +476,8 @@ bool GStreamerVideo::stop() {
 	hasError_.store(false, std::memory_order_release);
 
 
-	width_ = 0;
-	height_ = 0;
-	textureWidth_ = 0;  // videoTexture_ dimensions are now 0
-	textureHeight_ = 0; // videoTexture_ dimensions are now 0
+	width_ = -1;
+	height_ = -1;
 
 	currentFile_.clear();
 	playCount_ = 0;
@@ -1086,7 +1084,6 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 }
 
 void GStreamerVideo::createSdlTexture() {
-
 	if (width_ <= 0 || height_ <= 0) {
 		LOG_ERROR("GStreamerVideo", "createSdlTexture(): Cannot create texture, target dimensions are invalid: "
 			+ std::to_string(width_) + "x" + std::to_string(height_));
@@ -1094,48 +1091,59 @@ void GStreamerVideo::createSdlTexture() {
 			SDL_DestroyTexture(videoTexture_);
 			videoTexture_ = nullptr;
 		}
-		textureWidth_ = 0;
-		textureHeight_ = 0;
 		return;
 	}
 
-	if (videoTexture_ &&
-		textureWidth_ == width_ &&
-		textureHeight_ == height_
-		) {
-		LOG_DEBUG("GStreamerVideo", "createSdlTexture(): Video texture already exists with correct dimensions "
-			+ std::to_string(width_) + "x" + std::to_string(height_) + ". No recreation needed.");
-		return;
+	bool recreate = false;
+
+	if (videoTexture_) {
+		int actualW = 0, actualH = 0, access = 0;
+		Uint32 format = 0;
+		if (SDL_QueryTexture(videoTexture_, &format, &access, &actualW, &actualH) != 0) {
+			LOG_WARNING("GStreamerVideo", std::string("createSdlTexture(): SDL_QueryTexture failed, recreating texture: ") + SDL_GetError());
+			recreate = true;
+		}
+		else if (actualW != width_ || actualH != height_ || format != sdlFormat_) {
+			LOG_DEBUG("GStreamerVideo", "createSdlTexture(): Texture dimensions or format mismatch. Expected: "
+				+ std::to_string(width_) + "x" + std::to_string(height_) +
+				" format: " + std::to_string(sdlFormat_) +
+				" Found: " + std::to_string(actualW) + "x" + std::to_string(actualH) +
+				" format: " + std::to_string(format));
+			recreate = true;
+		}
+	}
+	else {
+		recreate = true;
 	}
 
-	LOG_INFO("GStreamerVideo", "createSdlTexture(): Creating/recreating SDL video texture for "
-		+ std::to_string(width_) + "x" + std::to_string(height_) +
-		" with format ID: " + std::to_string(sdlFormat_)); // Log the format
+	if (!recreate) {
+		LOG_DEBUG("GStreamerVideo", "createSdlTexture(): Video texture already valid, no recreation needed.");
+		return;
+	}
 
 	if (videoTexture_) {
 		SDL_DestroyTexture(videoTexture_);
 		videoTexture_ = nullptr;
 	}
 
+	LOG_INFO("GStreamerVideo", "createSdlTexture(): Creating SDL video texture for "
+		+ std::to_string(width_) + "x" + std::to_string(height_) +
+		" with format ID: " + std::to_string(sdlFormat_));
+
 	videoTexture_ = SDL_CreateTexture(
 		SDL::getRenderer(monitor_),
-		sdlFormat_, // The format determined by GStreamerVideo (e.g., IYUV, NV12, ABGR8888)
+		sdlFormat_,
 		SDL_TEXTUREACCESS_STREAMING,
 		width_, height_);
 
 	if (!videoTexture_) {
 		LOG_ERROR("GStreamerVideo", "createSdlTexture(): SDL_CreateTexture failed for format " +
 			std::string(SDL_GetPixelFormatName(sdlFormat_)) + ": " + std::string(SDL_GetError()));
-		textureWidth_ = 0;
-		textureHeight_ = 0;
 		return;
 	}
 
 	SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
 	SDL_SetTextureBlendMode(videoTexture_, blendMode);
-
-	textureWidth_ = width_;
-	textureHeight_ = height_;
 }
 
 void GStreamerVideo::volumeUpdate() {

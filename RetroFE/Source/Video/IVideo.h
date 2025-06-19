@@ -54,6 +54,4 @@ public:
 	virtual bool isPlaying() = 0;
 	virtual bool hasError() const = 0;
 	virtual bool unload() = 0;
-	virtual void setDimensionsReadyCallback(std::function<void(int, int)>) = 0;
-
 };

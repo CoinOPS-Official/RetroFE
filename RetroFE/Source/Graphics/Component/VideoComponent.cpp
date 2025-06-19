@@ -66,8 +66,19 @@ bool VideoComponent::update(float dt) {
 		return Component::update(dt);
 	}
 
-	if (!dimensionsUpdated_)
-		return Component::update(dt);
+	if (!dimensionsUpdated_) {
+		if (videoInst_->getWidth() >= 0 && videoInst_->getHeight() >= 0) {
+			baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
+			baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
+			dimensionsUpdated_ = true;
+			LOG_DEBUG("VideoComponent", "Video dimensions ready: " +
+				std::to_string(videoInst_->getWidth()) + "x" +
+				std::to_string(videoInst_->getHeight()) + " for " + videoFile_);
+		}
+		else {
+			return Component::update(dt);
+		}
+	}
 
 	if ((currentPage_->getIsLaunched() && monitor_ == 0)) {
 		if (videoInst_->getTargetState() != IVideo::VideoState::Paused &&
@@ -77,10 +88,7 @@ bool VideoComponent::update(float dt) {
 		return Component::update(dt);
 	}
 
-	bool isFastScrolling = currentPage_->isMenuFastScrolling();
-
-
-	if (isFastScrolling) {
+	if (currentPage_->isMenuFastScrolling()) {
 		// Always ensure video is playing during fast scroll
 		if (videoInst_->getTargetState() != IVideo::VideoState::Playing &&
 			videoInst_->getActualState() != IVideo::VideoState::Playing) {
@@ -155,18 +163,6 @@ void VideoComponent::allocateGraphicsMemory() {
 			hasPerspective_ ? perspectiveCorners_ : nullptr
 		);
 		if (videoInst_) {
-			dimensionsUpdated_ = false;
-
-			if (auto* gstreamer = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
-				gstreamer->setDimensionsReadyCallback([this](int w, int h) {
-					baseViewInfo.ImageWidth = static_cast<float>(w);
-					baseViewInfo.ImageHeight = static_cast<float>(h);
-					dimensionsUpdated_ = true;
-					LOG_DEBUG("VideoComponent", "Video dimensions ready: " +
-						std::to_string(w) + "x" + std::to_string(h) + " for " + videoFile_);
-					});
-			}
-
 			// Offload play() to thread pool
 			ThreadPool::getInstance().enqueue([this] {
 				LOG_DEBUG("VideoComponent", "ThreadPool: play() starting for: " + videoFile_);
