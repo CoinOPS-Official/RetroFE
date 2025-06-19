@@ -486,8 +486,6 @@ bool RetroFE::deInitialize() {
 
 	// Free textures
 	freeGraphicsMemory();
-	ThreadPool::getInstance().shutdown();
-	VideoPool::shutdown();
 
 	// Delete page
 	if (currentPage_)
@@ -510,11 +508,6 @@ bool RetroFE::deInitialize() {
 		db_ = nullptr;
 	}
 
-	if (musicPlayer_)
-	{
-		musicPlayer_->shutdown();
-	}
-
 	if (debugFont_) {
 		TTF_CloseFont(debugFont_);
 		debugFont_ = nullptr;
@@ -535,6 +528,12 @@ bool RetroFE::deInitialize() {
 	else
 	{
 		LOG_INFO("RetroFE", "Exiting");
+		if (musicPlayer_)
+		{
+			musicPlayer_->shutdown();
+		}
+		ThreadPool::getInstance().shutdown();
+		VideoPool::shutdown();
 		gst_deinit();
 		SDL::deInitialize();
 	}
