@@ -382,7 +382,7 @@ bool GStreamerVideo::stop() {
 
 	// --- 2. GStreamer Pipeline Teardown ---
 	// This lock protects GStreamer element operations and GStreamer-related shared state.
-	std::unique_lock<std::mutex> instanceLock(drawMutex_);
+	std::lock_guard<std::mutex> lock(pipelineMutex_);
 
 	if (playbin_) {
 		// Remove active pad probe if one was registered for the current session
@@ -416,6 +416,9 @@ bool GStreamerVideo::stop() {
 			LOG_DEBUG("GStreamerVideo::stop", "Disconnected element-setup signal handler.");
 		}
 
+		GstSample* s = stagedSample_.exchange(nullptr);
+		if (s) gst_sample_unref(s);
+
 		// Set the pipeline state to NULL to release all GStreamer resources.
 		LOG_DEBUG("GStreamerVideo::stop", "Setting playbin state to NULL.");
 		GstStateChangeReturn setStateRet = gst_element_set_state(playbin_, GST_STATE_NULL);
@@ -448,7 +451,6 @@ bool GStreamerVideo::stop() {
 	else {
 		LOG_DEBUG("GStreamerVideo", "stop(): No playbin_ was active to stop and unref.");
 	}
-	instanceLock.unlock(); // GStreamer operations specific to playbin_ are done.
 
 	// --- 3. SDL Texture Cleanup
 	// This lock protects all SDL texture objects and their associated state.
@@ -463,10 +465,6 @@ bool GStreamerVideo::stop() {
 	texture_ = nullptr; // Since both potential source textures are gone, texture_ must be null.
 	// The renderer must be able to handle a null texture from getTexture().
 	SDL_UnlockMutex(SDL::getMutex());
-
-	// --- 4. Reset All Other Instance Member Variables to Initial/Safe State ---
-	// Re-acquire instance lock for consistent reset of remaining members.
-	std::lock_guard<std::mutex> finalInstanceLock(drawMutex_);
 
 	hasError_.store(false, std::memory_order_release);
 
@@ -526,7 +524,7 @@ bool GStreamerVideo::unload() {
 		return true; // Or false if this state is unexpected
 	}
 
-	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Protect GStreamer operations and shared state
+	std::lock_guard<std::mutex> lock(pipelineMutex_);
 
 	// Reset instance state for new playback
 	width_ = 0;
@@ -573,6 +571,9 @@ bool GStreamerVideo::unload() {
 		busWatchId_ = 0;
 		LOG_DEBUG("GStreamerVideo", "unload(): Removed bus watch for " + currentFile_);
 	}
+
+	GstSample* s = stagedSample_.exchange(nullptr);
+	if (s) gst_sample_unref(s);
 
 	// Set pipeline to GST_STATE_READY to release resources but keep pipeline structure for reuse
 	LOG_DEBUG("GStreamerVideo", "unload(): Setting playbin state to READY for " + currentFile_);
@@ -796,7 +797,17 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		std::lock_guard<std::mutex> lock(activeVideosMutex_);
 		activeVideos_.push_back(this);
 	}
+	GstAppSinkCallbacks callbacks = {};
+	callbacks.eos = nullptr; // You can add an EOS handler if you want
+	callbacks.new_preroll = nullptr; // You can handle preroll if needed
+	callbacks.new_sample = &GStreamerVideo::on_new_sample; // Or just on_new_sample if static
 
+	gst_app_sink_set_callbacks(
+		GST_APP_SINK(videoSink_), // your appsink pointer
+		&callbacks,
+		this,     // user_data, e.g., your GStreamerVideo instance
+		nullptr   // GDestroyNotify
+	);
 	initializeUpdateFunction();
 
 	return true;
@@ -829,7 +840,7 @@ void GStreamerVideo::initializeUpdateFunction() {
 }
 
 bool GStreamerVideo::play(const std::string& file) {
-	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Protect whole method
+	std::lock_guard<std::mutex> lock(pipelineMutex_);
 
 	if (!initialized_) {
 		LOG_ERROR("GStreamerVideo", "Play called but GStreamer not initialized for file: " + file);
@@ -955,6 +966,33 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, 
 			"max-threads", Configuration::AvdecMaxThreads,
 			"direct-rendering", FALSE, "std-compliance", 0, nullptr);
 	}
+}
+
+GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
+	auto* self = static_cast<GStreamerVideo*>(user_data);
+	GstSample* sample = gst_app_sink_pull_sample(sink);
+	if (!sample) return GST_FLOW_OK;
+
+	// We expect the mailbox (stagedSample_) to be empty (nullptr).
+	GstSample* expected_null = nullptr;
+
+	// Atomically try to replace nullptr with our new sample.
+	// std::memory_order_release: Make sure the sample data is fully visible
+	// before the pointer is published.
+	// std::memory_order_relaxed: We don't care about the value read on failure.
+	if (self->stagedSample_.compare_exchange_strong(expected_null, sample,
+		std::memory_order_release,
+		std::memory_order_relaxed)) {
+		// Success! The sample is now in the mailbox for the draw() thread.
+	}
+	else {
+		// The mailbox was not empty, meaning the draw() thread hasn't picked up
+		// the last frame yet. We have no choice but to drop the *new* frame.
+		// This is better than dropping the one the draw thread is about to render.
+		gst_sample_unref(sample);
+	}
+
+	return GST_FLOW_OK;
 }
 
 GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
@@ -1185,16 +1223,9 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-	std::lock_guard<std::mutex> instanceLock(drawMutex_); // Overall instance lock
-
-	if (!pipeLineReady_)
-		return;
-
-	// --- Step 1: Pull GStreamer Sample and Update Texture ---
-	GstSample* sample = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
-	if (!sample) {
-		return;
-	}
+	// Atomically swap out the current staged sample.
+	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
+	if (!sample) return;		// Nothing new; optionally draw last frame.
 
 	GstBuffer* buf = gst_sample_get_buffer(sample);
 	if (!buf) {
@@ -1202,30 +1233,29 @@ void GStreamerVideo::draw() {
 		return;
 	}
 
-	GstCaps const* caps = gst_sample_get_caps(sample);
+	const GstCaps* caps = gst_sample_get_caps(sample);
 	if (!caps) {
-		gst_sample_unref(sample); // Unref sample which owns buf
-		return;
-	}
-
-	GstVideoInfo frame_info;
-	if (!gst_video_info_from_caps(&frame_info, caps)) {
-		LOG_WARNING("GStreamerVideo", "draw(): Could not get video info from sample caps for " + currentFile_);
 		gst_sample_unref(sample);
 		return;
 	}
 
-	GstVideoFrame gst_frame;
-	if (!gst_video_frame_map(&gst_frame, &frame_info, buf, GST_MAP_READ)) {
-		LOG_WARNING("GStreamerVideo", "draw():Could not map GStreamer video frame for " + currentFile_);
+	GstVideoInfo info;
+	if (!gst_video_info_from_caps(&info, caps)) {
 		gst_sample_unref(sample);
 		return;
 	}
 
+	GstVideoFrame frame;
+	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
+		gst_sample_unref(sample);
+		return;
+	}
+
+	// Update the texture.
 	SDL_LockMutex(SDL::getMutex());
-	bool success = updateTextureFunc_(videoTexture_, &gst_frame); // Update videoTexture_
+	bool success = updateTextureFunc_(videoTexture_, &frame);
 	if (success && !texture_)
-		texture_ = videoTexture_; // Set texture_ to videoTexture_ if it was nullptr
+		texture_ = videoTexture_;
 
 	if (!success) {
 		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_);
@@ -1233,8 +1263,8 @@ void GStreamerVideo::draw() {
 	}
 	SDL_UnlockMutex(SDL::getMutex());
 
-	gst_video_frame_unmap(&gst_frame);
-	gst_sample_unref(sample);
+	gst_video_frame_unmap(&frame);
+	gst_sample_unref(sample); // We're done with this frame.
 }
 
 bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) const {
@@ -1248,7 +1278,7 @@ bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFr
 	const int strideV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 2);
 
 	LOG_DEBUG("GStreamerVideo", "Before update, SDL_GetError()=" + std::string(SDL_GetError()));
-	
+
 	// Update the texture using the explicit frame rectangle
 	if (SDL_UpdateYUVTexture(texture, nullptr, srcY, strideY, srcU, strideU, srcV, strideV) != 0) {
 		LOG_ERROR("GStreamerVideo", std::string("SDL_UpdateYUVTexture failed: ") + SDL_GetError());

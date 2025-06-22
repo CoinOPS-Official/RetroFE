@@ -39,6 +39,7 @@ extern "C" {
 #endif
 #else
 #include <gst/gst.h>
+#include <gst/app/gstappsink.h>
 #include <gst/pbutils/pbutils.h>
 #include <gst/video/video.h>
 #endif
@@ -100,7 +101,7 @@ private:
 
     // === Main-thread only ===
     IVideo::VideoState targetState_{ IVideo::VideoState::None };
-	IVideo::VideoState actualState_{ IVideo::VideoState::None };
+    IVideo::VideoState actualState_{ IVideo::VideoState::None };
 
     uint64_t mappingGeneration_{ 0 };
     int width_{ -1 };
@@ -131,13 +132,15 @@ private:
     GValueArray* perspective_gva_{ nullptr };
     std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
 
+    std::atomic<GstSample*> stagedSample_{ nullptr };
+
     // === Static/shared ===
     static std::vector<GStreamerVideo*> activeVideos_;
     static std::mutex activeVideosMutex_;
     static bool initialized_;
     static bool pluginsInitialized_;
 
-    mutable std::mutex drawMutex_;
+    mutable std::mutex pipelineMutex_;
 
     // === Internal helpers ===
     struct PadProbeUserdata {
@@ -147,6 +150,7 @@ private:
     static GStreamerVideo* findInstanceFromGstObject(GstObject* object);
     static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
+    static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer user_data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
     void createSdlTexture();
