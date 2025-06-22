@@ -82,7 +82,6 @@ WaitResult runFrontendWaitLoop(
 	InputCheckFn inputCheck,          // returns true on user action
 	ExtraCheckFn extraCheck,          // returns true on window/process exit (optional)
 	bool shouldAnimate,
-	bool multiDisplay,
 	int startScreen,                  // typically 1 for secondary screens
 	int frameMs                       // frame duration in ms (16=~60Hz, 33=~30Hz)
 ) {
@@ -98,17 +97,18 @@ WaitResult runFrontendWaitLoop(
 			DispatchMessage(&msg);
 		}
 
-		// Animate and draw secondary screens
-		if (shouldAnimate && currentPage && multiDisplay) {
-			Uint64 nowMs = SDL_GetPerformanceCounter() * (Uint64)1000.0 / frequency;
-			auto deltaTime = static_cast<float>((nowMs - lastFrameTimeMs) / 1000.0f);
-			if (deltaTime > 0.1f) deltaTime = 0.0167f;
-			lastFrameTimeMs = nowMs;
+		Uint64 nowMs = SDL_GetPerformanceCounter() * (Uint64)1000.0 / frequency;
+		float deltaTime = static_cast<float>((nowMs - lastFrameTimeMs) / 1000.0f);
+		if (deltaTime > 0.1f) deltaTime = 0.0167f;
+		lastFrameTimeMs = nowMs;
 
-			while (g_main_context_pending(nullptr)) {
-				g_main_context_iteration(nullptr, false);
-			}
-			currentPage->update(deltaTime);
+		while (g_main_context_pending(nullptr)) {
+			g_main_context_iteration(nullptr, false);
+		}
+		currentPage->update(deltaTime);
+
+		// Animate and draw secondary screens
+		if (shouldAnimate && currentPage) {
 
 			for (int i = startScreen; i < screenCount; ++i) {
 				SDL_Renderer* currentRenderer = SDL::getRenderer(i);
@@ -1189,7 +1189,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				nullptr,
 				0.5,            // 500ms warmup
 				nullptr, nullptr,
-				shouldAnimate, multiple_display, 1, 33
+				shouldAnimate, 1, 33
 			);
 
 			auto findGameWindow = [launchedProcessId]() -> HWND {
@@ -1319,7 +1319,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				attractModeLaunchRunTime,
 				checkInputs,
 				windowClosedCheck,
-				shouldAnimate, multiple_display, 1, 33
+				shouldAnimate, 1, 33
 			);			// --- End Attract Mode Main Monitoring Loop ---
 
 
@@ -1352,7 +1352,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 								return false;
 							},
 							shouldAnimate,
-							multiple_display,
 							1,
 							33
 						);
@@ -1447,7 +1446,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				},
 				nullptr, // No extra check needed; processHandle covers exit
 				shouldAnimate,
-				multiple_display,
 				1,
 				33 // or 16 if you want 60Hz
 			);
