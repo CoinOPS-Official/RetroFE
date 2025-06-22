@@ -103,9 +103,10 @@ private:
     IVideo::VideoState targetState_{ IVideo::VideoState::None };
     IVideo::VideoState actualState_{ IVideo::VideoState::None };
 
-    uint64_t mappingGeneration_{ 0 };
     int width_{ -1 };
     int height_{ -1 };
+	int textureWidth_{ -1 };
+	int textureHeight_{ -1 };
     int playCount_{ 0 };
     std::string currentFile_{};
     int numLoops_{ 0 };
