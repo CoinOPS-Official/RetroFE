@@ -133,6 +133,13 @@ void ScrollingList::selectItemByName(std::string_view name)
     }
 }
 
+void ScrollingList::restartByMonitor(int monitor) {
+    for (Component* c : getComponents()) {
+        if (c && c->baseViewInfo.Monitor == monitor)
+            c->restart();
+    }
+}
+
 std::string ScrollingList::getSelectedItemName()
 {
     size_t size = items_->size();

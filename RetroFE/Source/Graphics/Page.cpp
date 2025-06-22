@@ -1794,6 +1794,25 @@ void Page::restart() {
 	}
 }
 
+void Page::restartAllByMonitor(int monitor) {
+	// 1. Restart all LayerComponents_ for this monitor
+	for (auto& layerComponents : LayerComponents_) {
+		for (Component* component : layerComponents) {
+			if (component && component->baseViewInfo.Monitor == monitor)
+				component->restart();
+		}
+	}
+
+	// 2. Restart all menu (ScrollingList) components for this monitor
+	for (const auto& menuVector : menus_) {
+		for (ScrollingList* menu : menuVector) {
+			if (menu) {
+				menu->restartByMonitor(monitor);
+			}
+		}
+	}
+}
+
 unsigned long long Page::getCurrent() {
 	unsigned long long ret = 0;
 	for (const auto& layerComponents : LayerComponents_) {

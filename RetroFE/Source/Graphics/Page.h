@@ -173,6 +173,7 @@ public:
     void  pause( );
     void resume();
     void  restart( );
+    void restartAllByMonitor(int monitor);
     unsigned long long getCurrent( );
     unsigned long long getDuration( );
     bool  isPaused( );
