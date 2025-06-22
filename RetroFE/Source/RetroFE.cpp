@@ -318,6 +318,7 @@ void RetroFE::initializeMusicPlayer() {
 // Launch a game/program
 void RetroFE::launchEnter() {
 	currentPage_->setIsLaunched(true);
+	currentPage_->restartAllByMonitor(0);
 	// Disable window focus
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_FALSE);
 	// Free textures and shut down SDL if unloadSDL flag is set
