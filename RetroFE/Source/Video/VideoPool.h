@@ -43,12 +43,14 @@ private:
 		bool initialCountLatched = false;
 		std::mutex poolMutex;
 		bool markedForCleanup = false;
+		bool cleanupInProgress = false;
 	};
 
 	using ListPoolMap = std::unordered_map<int, PoolInfo>;
 	using PoolMap = std::unordered_map<int, ListPoolMap>;
 
 	static PoolMap pools_;
+	static std::mutex s_poolsMutex;
 
 	static PoolInfo& getPoolInfo(int monitor, int listId);
 	static bool checkPoolHealth(int monitor, int listId);
