@@ -45,9 +45,6 @@
 bool GStreamerVideo::initialized_ = false;
 bool GStreamerVideo::pluginsInitialized_ = false;
 
-std::vector<GStreamerVideo*> GStreamerVideo::activeVideos_;
-std::mutex GStreamerVideo::activeVideosMutex_;
-
 // Initialize the static session ID generator
 std::atomic<uint64_t> GStreamerVideo::nextUniquePlaySessionId_{ 1 };
 
@@ -346,7 +343,6 @@ bool GStreamerVideo::initialize() {
 		//gst_registry_scan_path(registry, path.c_str());
 #endif
 	}
-	gst_debug_add_log_function(customGstLogHandler, nullptr, nullptr);
 	initialized_ = true;
 	return true;
 }
@@ -367,18 +363,6 @@ bool GStreamerVideo::stop() {
 	// from attempting operations on a pipeline that's being torn down.
 	pipeLineReady_ = false;
 	targetState_ = IVideo::VideoState::None;
-
-	{
-		std::lock_guard<std::mutex> lock(activeVideosMutex_);
-		auto it = std::find(activeVideos_.begin(), activeVideos_.end(), this);
-		if (it != activeVideos_.end()) {
-			activeVideos_.erase(it);
-			LOG_DEBUG("GStreamerVideo::stop", "Removed instance from activeVideos_ list.");
-		}
-		else {
-			LOG_WARNING("GStreamerVideo::stop", "Instance was not found in activeVideos_ list during stop. This might indicate a double stop or an issue with registration.");
-		}
-	}
 
 	// --- 2. GStreamer Pipeline Teardown ---
 	// This lock protects GStreamer element operations and GStreamer-related shared state.
@@ -740,8 +724,22 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	gst_app_sink_set_caps(GST_APP_SINK(videoSink_), videoCaps);
 	gst_caps_unref(videoCaps);
 
+	// --- CREATE QUEUE AND BIN ---
+	GstElement* queue = gst_element_factory_make("queue", "video_queue");
+	if (!queue) {
+		LOG_DEBUG("GStreamerVideo", "Could not create queue element");
+		hasError_.store(true, std::memory_order_release);
+		return false;
+	}
+
+	GstElement* videoBin = gst_bin_new("video_bin");
+	if (!videoBin) {
+		LOG_DEBUG("GStreamerVideo", "Could not create video bin");
+		hasError_.store(true, std::memory_order_release);
+		return false;
+	}
+
 	if (hasPerspective_) {
-		// Create and set up the perspective pipeline.
 		perspective_ = gst_element_factory_make("perspective", "perspective");
 		if (!perspective_) {
 			LOG_DEBUG("GStreamerVideo", "Could not create perspective element");
@@ -749,23 +747,14 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			return false;
 		}
 
-		GstElement* videoBin = gst_bin_new("video_bin");
-		if (!videoBin) {
-			LOG_DEBUG("GStreamerVideo", "Could not create video bin");
+		// Add all to bin and link: perspective ? queue ? appsink
+		gst_bin_add_many(GST_BIN(videoBin), perspective_, queue, videoSink_, nullptr);
+		if (!gst_element_link_many(perspective_, queue, videoSink_, nullptr)) {
+			LOG_DEBUG("GStreamerVideo", "Could not link perspective to queue to appsink");
 			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 
-		gst_bin_add_many(GST_BIN(videoBin), perspective_, videoSink_, nullptr);
-
-		// Link perspective to appsink.
-		if (!gst_element_link(perspective_, videoSink_)) {
-			LOG_DEBUG("GStreamerVideo", "Could not link perspective to appsink");
-			hasError_.store(true, std::memory_order_release);
-			return false;
-		}
-
-		// Create a ghost pad to expose the sink pad of the perspective element.
 		GstPad* perspectiveSinkPad = gst_element_get_static_pad(perspective_, "sink");
 		if (!perspectiveSinkPad) {
 			LOG_DEBUG("GStreamerVideo", "Could not get sink pad from perspective element");
@@ -779,29 +768,46 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
-
-		// Set the bin as the video-sink.
-		g_object_set(playbin_, "video-sink", videoBin, nullptr);
 	}
 	else {
-		// Simple pipeline: set appsink directly as video-sink.
-		g_object_set(playbin_, "video-sink", videoSink_, nullptr);
+		// Normal: queue ? appsink
+		gst_bin_add_many(GST_BIN(videoBin), queue, videoSink_, nullptr);
+		if (!gst_element_link(queue, videoSink_)) {
+			LOG_DEBUG("GStreamerVideo", "Could not link queue to appsink");
+			hasError_.store(true, std::memory_order_release);
+			return false;
+		}
+
+		GstPad* queueSinkPad = gst_element_get_static_pad(queue, "sink");
+		if (!queueSinkPad) {
+			LOG_DEBUG("GStreamerVideo", "Could not get sink pad from queue");
+			hasError_.store(true, std::memory_order_release);
+			return false;
+		}
+		GstPad* ghostPad = gst_ghost_pad_new("sink", queueSinkPad);
+		gst_object_unref(queueSinkPad);
+		if (!gst_element_add_pad(videoBin, ghostPad)) {
+			LOG_DEBUG("GStreamerVideo", "Could not add ghost pad to video bin");
+			hasError_.store(true, std::memory_order_release);
+			return false;
+		}
 	}
 
-	{
-		std::lock_guard<std::mutex> lock(activeVideosMutex_);
-		activeVideos_.push_back(this);
-	}
+	g_object_set(queue, "leaky", 0, "silent", TRUE/* upstream */, nullptr);
+
+	// Set the bin as playbin's video-sink
+	g_object_set(playbin_, "video-sink", videoBin, nullptr);
+
 	GstAppSinkCallbacks callbacks = {};
-	callbacks.eos = nullptr; // You can add an EOS handler if you want
-	callbacks.new_preroll = nullptr; // You can handle preroll if needed
-	callbacks.new_sample = &GStreamerVideo::on_new_sample; // Or just on_new_sample if static
+	callbacks.eos = nullptr;
+	callbacks.new_preroll = nullptr;
+	callbacks.new_sample = &GStreamerVideo::on_new_sample;
 
 	gst_app_sink_set_callbacks(
-		GST_APP_SINK(videoSink_), // your appsink pointer
+		GST_APP_SINK(videoSink_),
 		&callbacks,
-		this,     // user_data, e.g., your GStreamerVideo instance
-		nullptr   // GDestroyNotify
+		this,
+		nullptr
 	);
 	initializeUpdateFunction();
 
@@ -846,6 +852,8 @@ bool GStreamerVideo::play(const std::string& file) {
 	// Atomically increment and assign a new unique session ID for this play attempt.
 	// This ID is unique across all GStreamerVideo instances and all play attempts.
 	currentPlaySessionId_.store(nextUniquePlaySessionId_++, std::memory_order_release);
+
+	currentFile_ = file;
 
 	// 1. Create the pipeline if we haven’t already
 	if (!createPipelineIfNeeded()) {
@@ -923,7 +931,6 @@ bool GStreamerVideo::play(const std::string& file) {
 	}
 
 	pipeLineReady_ = true;
-	currentFile_ = file;
 
 	// Mute and volume to 0 by default
 	gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
@@ -965,27 +972,13 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, 
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
 	auto* self = static_cast<GStreamerVideo*>(user_data);
-	GstSample* sample = gst_app_sink_pull_sample(sink);
-	if (!sample) return GST_FLOW_OK;
+	GstSample* newSample = gst_app_sink_pull_sample(sink);
+	if (!newSample) return GST_FLOW_OK;
 
-	// We expect the mailbox (stagedSample_) to be empty (nullptr).
-	GstSample* expected_null = nullptr;
-
-	// Atomically try to replace nullptr with our new sample.
-	// std::memory_order_release: Make sure the sample data is fully visible
-	// before the pointer is published.
-	// std::memory_order_relaxed: We don't care about the value read on failure.
-	if (self->stagedSample_.compare_exchange_strong(expected_null, sample,
-		std::memory_order_release,
-		std::memory_order_relaxed)) {
-		// Success! The sample is now in the mailbox for the draw() thread.
-	}
-	else {
-		// The mailbox was not empty, meaning the draw() thread hasn't picked up
-		// the last frame yet. We have no choice but to drop the *new* frame.
-		// This is better than dropping the one the draw thread is about to render.
-		gst_sample_unref(sample);
-	}
+	// Atomically swap in new sample, drop old
+	GstSample* oldSample = self->stagedSample_.exchange(newSample, std::memory_order_acq_rel);
+	if (oldSample)
+		gst_sample_unref(oldSample);
 
 	return GST_FLOW_OK;
 }
@@ -1120,8 +1113,8 @@ void GStreamerVideo::createSdlTexture() {
 			SDL_DestroyTexture(videoTexture_);
 			videoTexture_ = nullptr;
 		}
-		textureWidth_ = 0;
-		textureHeight_ = 0;
+		textureWidth_ = -1;
+		textureHeight_ = -1;
 		return;
 	}
 
@@ -1152,8 +1145,8 @@ void GStreamerVideo::createSdlTexture() {
 	if (!videoTexture_) {
 		LOG_ERROR("GStreamerVideo", "createSdlTexture(): SDL_CreateTexture failed for format " +
 			std::string(SDL_GetPixelFormatName(sdlFormat_)) + ": " + std::string(SDL_GetError()));
-		textureWidth_ = 0;
-		textureHeight_ = 0;
+		textureWidth_ = -1;
+		textureHeight_ = -1;
 		return;
 	}
 
@@ -1208,27 +1201,20 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-	// Atomically swap out the current staged sample.
+	std::lock_guard<std::mutex> lock(pipelineMutex_);
+	if (!pipeLineReady_) return;
+
 	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
-	if (!sample) return;		// Nothing new; optionally draw last frame.
+	if (!sample) return;
 
 	GstBuffer* buf = gst_sample_get_buffer(sample);
-	if (!buf) {
-		gst_sample_unref(sample);
-		return;
-	}
+	if (!buf) { gst_sample_unref(sample); return; }
 
 	const GstCaps* caps = gst_sample_get_caps(sample);
-	if (!caps) {
-		gst_sample_unref(sample);
-		return;
-	}
+	if (!caps) { gst_sample_unref(sample); return; }
 
 	GstVideoInfo info;
-	if (!gst_video_info_from_caps(&info, caps)) {
-		gst_sample_unref(sample);
-		return;
-	}
+	if (!gst_video_info_from_caps(&info, caps)) { gst_sample_unref(sample); return; }
 
 	GstVideoFrame frame;
 	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
@@ -1236,8 +1222,12 @@ void GStreamerVideo::draw() {
 		return;
 	}
 
-	// Update the texture.
-	SDL_LockMutex(SDL::getMutex());
+	if (!videoTexture_) {
+		gst_video_frame_unmap(&frame);
+		gst_sample_unref(sample);
+		return;
+	}
+
 	bool success = updateTextureFunc_(videoTexture_, &frame);
 	if (success && !texture_)
 		texture_ = videoTexture_;
@@ -1486,66 +1476,4 @@ void GStreamerVideo::setPerspectiveCorners(const int* corners) {
 		std::fill(perspectiveCorners_, perspectiveCorners_ + 8, 0);
 		hasPerspective_ = false;  // Reset flag when corners are cleared
 	}
-}
-
-void GStreamerVideo::customGstLogHandler(GstDebugCategory* category, GstDebugLevel level,
-	const gchar* file, const gchar* function, gint line,
-	GObject* object, GstDebugMessage* message, gpointer user_data) {
-	std::string logMsg = gst_debug_message_get(message);
-	std::string componentName = (category && gst_debug_category_get_name(category)) ? gst_debug_category_get_name(category) : "Unknown";
-
-	std::string component = "GStreamerLog";
-	std::string finalMessage = componentName + ": " + logMsg;
-
-	// Try to associate the log with a playing file
-	if (object) {
-		if (GstObject* gstObj = GST_OBJECT(object)) {
-			if (GStreamerVideo* owner = findInstanceFromGstObject(gstObj)) {
-				if (!owner->currentFile_.empty()) {
-					std::string relativePath = owner->currentFile_;
-					const std::string& basePath = Configuration::absolutePath;
-
-					// Remove base path if it matches
-					if (relativePath.find(basePath) == 0) {
-						relativePath = relativePath.substr(basePath.length());
-						if (!relativePath.empty() && (relativePath[0] == '/' || relativePath[0] == '\\')) {
-							relativePath.erase(0, 1);  // Trim leading separator
-						}
-					}
-
-					finalMessage = "[" + relativePath + "] " + finalMessage;
-				}
-			}
-		}
-	}
-
-	// Map log level to your logging macros
-	switch (level) {
-		case GST_LEVEL_ERROR:   LOG_ERROR(component, finalMessage);   break;
-		case GST_LEVEL_WARNING: LOG_WARNING(component, finalMessage); break;
-		case GST_LEVEL_FIXME:   LOG_NOTICE(component, finalMessage);  break;
-		case GST_LEVEL_INFO:    LOG_INFO(component, finalMessage);    break;
-		case GST_LEVEL_DEBUG:
-		case GST_LEVEL_LOG:
-		case GST_LEVEL_TRACE:
-		case GST_LEVEL_MEMDUMP:
-		default:                LOG_DEBUG(component, finalMessage);  break;
-	}
-}
-
-GStreamerVideo* GStreamerVideo::findInstanceFromGstObject(GstObject* object) {
-	if (!object)
-		return nullptr;
-
-	GstObject* cur = object;
-	while (cur) {
-		std::lock_guard<std::mutex> lock(activeVideosMutex_);
-		for (GStreamerVideo* video : activeVideos_) {
-			if (video->playbin_ == GST_ELEMENT(cur)) {
-				return video;
-			}
-		}
-		cur = GST_OBJECT_PARENT(cur);
-	}
-	return nullptr;
 }

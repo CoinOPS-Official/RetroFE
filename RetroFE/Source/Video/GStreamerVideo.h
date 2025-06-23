@@ -136,8 +136,6 @@ private:
     std::atomic<GstSample*> stagedSample_{ nullptr };
 
     // === Static/shared ===
-    static std::vector<GStreamerVideo*> activeVideos_;
-    static std::mutex activeVideosMutex_;
     static bool initialized_;
     static bool pluginsInitialized_;
 
@@ -148,7 +146,6 @@ private:
         GStreamerVideo* videoInstance;
         uint64_t playSessionId;
     };
-    static GStreamerVideo* findInstanceFromGstObject(GstObject* object);
     static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer user_data);
@@ -160,6 +157,5 @@ private:
     bool updateTextureFromFrameNV12(SDL_Texture*, GstVideoFrame*) const;
     bool updateTextureFromFrameRGBA(SDL_Texture*, GstVideoFrame*) const;
     std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
-    static void customGstLogHandler(GstDebugCategory* category, GstDebugLevel level, const gchar* file, const gchar* function, gint line, GObject* object, GstDebugMessage* message, gpointer user_data);
 };
 
