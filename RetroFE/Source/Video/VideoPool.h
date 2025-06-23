@@ -21,6 +21,7 @@
 #include <unordered_map>
 #include <string>
 #include <mutex>
+#include <condition_variable>
 #include "GStreamerVideo.h"
 
 class VideoPool {
@@ -44,6 +45,7 @@ private:
 		std::mutex poolMutex;
 		bool markedForCleanup = false;
 		bool cleanupInProgress = false;
+		std::condition_variable poolCond;
 	};
 
 	using ListPoolMap = std::unordered_map<int, PoolInfo>;
