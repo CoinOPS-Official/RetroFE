@@ -163,27 +163,24 @@ void VideoComponent::allocateGraphicsMemory() {
 			hasPerspective_ ? perspectiveCorners_ : nullptr
 		);
 		if (videoInst_) {
-			// Offload play() to thread pool
-			ThreadPool::getInstance().enqueue([this] {
-				LOG_DEBUG("VideoComponent", "ThreadPool: play() starting for: " + videoFile_);
-				bool result = videoInst_->play(videoFile_);
-				instanceReady_ = result;
-				if (result) {
-					LOG_DEBUG("VideoComponent", "ThreadPool: play() finished SUCCESS for: " + videoFile_);
+			LOG_DEBUG("VideoComponent", "ThreadPool: play() starting for: " + videoFile_);
+			bool result = videoInst_->play(videoFile_);
+			instanceReady_ = result;
+			if (result) {
+				LOG_DEBUG("VideoComponent", "ThreadPool: play() finished SUCCESS for: " + videoFile_);
+			}
+			else {
+				LOG_WARNING("VideoComponent", "ThreadPool: play() finished FAIL for: " + videoFile_);
+				if (videoInst_->hasError()) {
+					LOG_ERROR("VideoComponent", "GStreamerVideo instance for " + videoFile_ +
+						" is marked with hasError_ after play() attempt. Video will not display.");
+					// The videoInst_ is now "tainted". Pool will handle on freeGraphicsMemory.
 				}
 				else {
-					LOG_WARNING("VideoComponent", "ThreadPool: play() finished FAIL for: " + videoFile_);
-					if (videoInst_->hasError()) {
-						LOG_ERROR("VideoComponent", "GStreamerVideo instance for " + videoFile_ +
-							" is marked with hasError_ after play() attempt. Video will not display.");
-						// The videoInst_ is now "tainted". Pool will handle on freeGraphicsMemory.
-					}
-					else {
-						LOG_WARNING("VideoComponent", "play() returned false for " + videoFile_ +
-							" but not marked as error (could be file not found or URI error).");
-					}
+					LOG_WARNING("VideoComponent", "play() returned false for " + videoFile_ +
+						" but not marked as error (could be file not found or URI error).");
 				}
-				});
+			}
 		}
 	}
 }

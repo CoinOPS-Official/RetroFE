@@ -724,22 +724,8 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	gst_app_sink_set_caps(GST_APP_SINK(videoSink_), videoCaps);
 	gst_caps_unref(videoCaps);
 
-	// --- CREATE QUEUE AND BIN ---
-	GstElement* queue = gst_element_factory_make("queue", "video_queue");
-	if (!queue) {
-		LOG_DEBUG("GStreamerVideo", "Could not create queue element");
-		hasError_.store(true, std::memory_order_release);
-		return false;
-	}
-
-	GstElement* videoBin = gst_bin_new("video_bin");
-	if (!videoBin) {
-		LOG_DEBUG("GStreamerVideo", "Could not create video bin");
-		hasError_.store(true, std::memory_order_release);
-		return false;
-	}
-
 	if (hasPerspective_) {
+		// Create and set up the perspective pipeline.
 		perspective_ = gst_element_factory_make("perspective", "perspective");
 		if (!perspective_) {
 			LOG_DEBUG("GStreamerVideo", "Could not create perspective element");
@@ -747,14 +733,23 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			return false;
 		}
 
-		// Add all to bin and link: perspective ? queue ? appsink
-		gst_bin_add_many(GST_BIN(videoBin), perspective_, queue, videoSink_, nullptr);
-		if (!gst_element_link_many(perspective_, queue, videoSink_, nullptr)) {
-			LOG_DEBUG("GStreamerVideo", "Could not link perspective to queue to appsink");
+		GstElement* videoBin = gst_bin_new("video_bin");
+		if (!videoBin) {
+			LOG_DEBUG("GStreamerVideo", "Could not create video bin");
 			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
 
+		gst_bin_add_many(GST_BIN(videoBin), perspective_, videoSink_, nullptr);
+
+		// Link perspective to appsink.
+		if (!gst_element_link(perspective_, videoSink_)) {
+			LOG_DEBUG("GStreamerVideo", "Could not link perspective to appsink");
+			hasError_.store(true, std::memory_order_release);
+			return false;
+		}
+
+		// Create a ghost pad to expose the sink pad of the perspective element.
 		GstPad* perspectiveSinkPad = gst_element_get_static_pad(perspective_, "sink");
 		if (!perspectiveSinkPad) {
 			LOG_DEBUG("GStreamerVideo", "Could not get sink pad from perspective element");
@@ -768,46 +763,26 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
+
+		// Set the bin as the video-sink.
+		g_object_set(playbin_, "video-sink", videoBin, nullptr);
 	}
 	else {
-		// Normal: queue ? appsink
-		gst_bin_add_many(GST_BIN(videoBin), queue, videoSink_, nullptr);
-		if (!gst_element_link(queue, videoSink_)) {
-			LOG_DEBUG("GStreamerVideo", "Could not link queue to appsink");
-			hasError_.store(true, std::memory_order_release);
-			return false;
-		}
-
-		GstPad* queueSinkPad = gst_element_get_static_pad(queue, "sink");
-		if (!queueSinkPad) {
-			LOG_DEBUG("GStreamerVideo", "Could not get sink pad from queue");
-			hasError_.store(true, std::memory_order_release);
-			return false;
-		}
-		GstPad* ghostPad = gst_ghost_pad_new("sink", queueSinkPad);
-		gst_object_unref(queueSinkPad);
-		if (!gst_element_add_pad(videoBin, ghostPad)) {
-			LOG_DEBUG("GStreamerVideo", "Could not add ghost pad to video bin");
-			hasError_.store(true, std::memory_order_release);
-			return false;
-		}
+		// Simple pipeline: set appsink directly as video-sink.
+		g_object_set(playbin_, "video-sink", videoSink_, nullptr);
 	}
 
-	g_object_set(queue, "leaky", 0, "silent", TRUE/* upstream */, nullptr);
-
-	// Set the bin as playbin's video-sink
-	g_object_set(playbin_, "video-sink", videoBin, nullptr);
 
 	GstAppSinkCallbacks callbacks = {};
-	callbacks.eos = nullptr;
-	callbacks.new_preroll = nullptr;
-	callbacks.new_sample = &GStreamerVideo::on_new_sample;
+	callbacks.eos = nullptr; // You can add an EOS handler if you want
+	callbacks.new_preroll = nullptr; // You can handle preroll if needed
+	callbacks.new_sample = &GStreamerVideo::on_new_sample; // Or just on_new_sample if static
 
 	gst_app_sink_set_callbacks(
-		GST_APP_SINK(videoSink_),
+		GST_APP_SINK(videoSink_), // your appsink pointer
 		&callbacks,
-		this,
-		nullptr
+		this,     // user_data, e.g., your GStreamerVideo instance
+		nullptr   // GDestroyNotify
 	);
 	initializeUpdateFunction();
 
@@ -918,16 +893,19 @@ bool GStreamerVideo::play(const std::string& file) {
 
 	GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
 
-	GstState newState, pendingState;
-	GstStateChangeReturn getStateResult = gst_element_get_state(
-		GST_ELEMENT(playbin_), &newState, &pendingState, 2 * GST_SECOND);
-
-	if (getStateResult != GST_STATE_CHANGE_SUCCESS || newState != GST_STATE_PAUSED) {
-		LOG_ERROR("GStreamerVideo", "Pipeline failed to reach PAUSED for " + file +
-			" (got " + std::string(gst_element_state_get_name(newState)) + ")");
+	if (stateRet == GST_STATE_CHANGE_FAILURE) {
+		LOG_ERROR("GStreamerVideo", "Pipeline failed to set PAUSED for " + file);
 		pipeLineReady_ = false;
 		hasError_.store(true, std::memory_order_release);
 		return false;
+	}
+
+	// If it's ASYNC, that's expected — the bus callback will confirm when PAUSED is reached.
+	if (stateRet == GST_STATE_CHANGE_ASYNC) {
+		LOG_DEBUG("GStreamerVideo", "Pipeline state change to PAUSED is async for " + file);
+	}
+	else {
+		LOG_DEBUG("GStreamerVideo", "Pipeline set to PAUSED immediately for " + file);
 	}
 
 	pipeLineReady_ = true;
