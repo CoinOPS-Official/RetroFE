@@ -694,6 +694,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		"max-buffers", 1,  // Only keep latest buffer.
 		"drop", TRUE,      // Drop old buffers.
 		"wait-on-eos", FALSE,
+		"qos", FALSE,
 		nullptr);
 
 	// Set caps depending on whether perspective is enabled.
