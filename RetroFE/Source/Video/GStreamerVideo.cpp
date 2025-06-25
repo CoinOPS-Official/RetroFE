@@ -949,15 +949,18 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, 
 	}
 }
 
-GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
-	auto* self = static_cast<GStreamerVideo*>(user_data);
-	GstSample* newSample = gst_app_sink_pull_sample(sink);
-	if (!newSample) return GST_FLOW_OK;
+GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer userData) {
+	auto* self = static_cast<GStreamerVideo*>(userData);
 
-	// Atomically swap in new sample, drop old
-	GstSample* oldSample = self->stagedSample_.exchange(newSample, std::memory_order_acq_rel);
-	if (oldSample)
-		gst_sample_unref(oldSample);
+	// Skip sample if we're not actually playing (e.g. transitioning, released, or idle)
+	if (self->targetState_ != VideoState::Playing || self->actualState_ != VideoState::Playing) {
+		return GST_FLOW_OK;  // Discard quietly
+	}
+
+	GstSample* sample = gst_app_sink_pull_sample(sink);
+
+	GstSample* old = self->stagedSample_.exchange(sample, std::memory_order_acq_rel);
+	if (old) gst_sample_unref(old);
 
 	return GST_FLOW_OK;
 }
@@ -1181,7 +1184,7 @@ int GStreamerVideo::getWidth() {
 
 void GStreamerVideo::draw() {
 	std::lock_guard<std::mutex> lock(pipelineMutex_);
-	if (!pipeLineReady_) return;
+	if (!pipeLineReady_ || !videoTexture_) return;
 
 	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
 	if (!sample) return;
@@ -1197,12 +1200,6 @@ void GStreamerVideo::draw() {
 
 	GstVideoFrame frame;
 	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
-		gst_sample_unref(sample);
-		return;
-	}
-
-	if (!videoTexture_) {
-		gst_video_frame_unmap(&frame);
 		gst_sample_unref(sample);
 		return;
 	}
