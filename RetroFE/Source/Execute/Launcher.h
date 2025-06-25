@@ -18,6 +18,10 @@
 #include <string>
 #include "../Graphics/Page.h"
 #include <atomic>
+#ifdef WIN32
+#include <Windows.h>
+#include <dinput.h>
+#endif
 
 class Configuration;
 class Item;
@@ -31,6 +35,10 @@ public:
     void startScript();
     void exitScript();
 	void LEDBlinky( int command, std::string collection = "", Item *collectionItem = NULL);
+#ifdef WIN32
+    void initDirectInput();
+    void shutdownDirectInput();
+#endif
 
 private:
     bool launcherName(std::string &launcherName, std::string collection);
@@ -43,4 +51,9 @@ private:
     bool execute(std::string executable, std::string args, std::string currentDirectory, bool wait = true, Page* currentPage = nullptr, bool isAttractMode = false, Item* collectionItem = nullptr);
     Configuration &config_;
     RetroFE &retroFeInstance_;
+#ifdef WIN32
+    static BOOL CALLBACK enumCallback(const DIDEVICEINSTANCE* instance, VOID* ref);
+    LPDIRECTINPUT8 dinput_ = nullptr;
+    LPDIRECTINPUTDEVICE8 dinputDevice_ = nullptr;
+#endif
 };

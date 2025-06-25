@@ -42,10 +42,12 @@
 #include <chrono>
 #pragma comment(lib, "Xinput.lib")
 #include <Xinput.h>
+#include <dinput.h>
 #include <cstring>
 #include "StdAfx.h"
 #include <tlhelp32.h>
 #include <Psapi.h>
+#include <SDL2/SDL_syswm.h>
 #endif
 #if defined(__linux__) || defined(__APPLE__)
 #include <libusb-1.0/libusb.h>
@@ -76,6 +78,7 @@ using ExtraCheckFn = std::function<bool()>;
 
 // Wait and animate loop (for attract/wait/warmup)
 WaitResult runFrontendWaitLoop(
+	Launcher* self,
 	Page* currentPage,
 	HANDLE processHandle,             // NULL if not applicable
 	double maxSeconds,                // 0 or negative = infinite
@@ -89,6 +92,7 @@ WaitResult runFrontendWaitLoop(
 	Uint64 lastFrameTimeMs = SDL_GetPerformanceCounter() * (Uint64)1000.0 / frequency;
 	auto startTime = std::chrono::high_resolution_clock::now();
 	int screenCount = SDL::getScreenCount();
+	self->initDirectInput();
 
 	while (true) {
 		// Message pump
@@ -137,11 +141,13 @@ WaitResult runFrontendWaitLoop(
 
 		// Input check (user interruption)
 		if (inputCheck && inputCheck()) {
+			self->shutdownDirectInput();
 			return WaitResult::UserInput;
 		}
 
 		// Window/process closed/other exit (optional)
 		if (extraCheck && extraCheck()) {
+			self->shutdownDirectInput();
 			return WaitResult::ProcessExit;
 		}
 
@@ -149,6 +155,7 @@ WaitResult runFrontendWaitLoop(
 		if (processHandle) {
 			DWORD exitCode = STILL_ACTIVE;
 			if (!GetExitCodeProcess(processHandle, &exitCode) || exitCode != STILL_ACTIVE) {
+				self->shutdownDirectInput();
 				return WaitResult::ProcessExit;
 			}
 		}
@@ -157,6 +164,7 @@ WaitResult runFrontendWaitLoop(
 		if (maxSeconds > 0) {
 			auto now = std::chrono::high_resolution_clock::now();
 			if (std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count() >= maxSeconds * 1000) {
+				self->shutdownDirectInput();
 				return WaitResult::Timeout;
 			}
 		}
@@ -169,8 +177,54 @@ WaitResult runFrontendWaitLoop(
 			MsgWaitForMultipleObjects(0, nullptr, FALSE, frameMs, QS_ALLINPUT);
 		}
 	}
+	self->shutdownDirectInput();
 	return WaitResult::None;
 }
+
+BOOL CALLBACK Launcher::enumCallback(const DIDEVICEINSTANCE* instance, VOID* ref) {
+	auto self = static_cast<Launcher*>(ref);
+	if (SUCCEEDED(self->dinput_->CreateDevice(instance->guidInstance, &self->dinputDevice_, nullptr))) {
+		return DIENUM_STOP;
+	}
+	return DIENUM_CONTINUE;
+}
+
+
+void Launcher::initDirectInput() {
+	SDL_Window* sdlWindow = SDL::getWindow(0);
+
+	SDL_SysWMinfo wmInfo;
+	SDL_VERSION(&wmInfo.version);
+	SDL_GetWindowWMInfo(sdlWindow, &wmInfo);
+	HWND hwnd = wmInfo.info.win.window;
+
+	if (FAILED(DirectInput8Create(GetModuleHandle(nullptr), DIRECTINPUT_VERSION,
+		IID_IDirectInput8, (void**)&dinput_, nullptr)))
+		return;
+
+	dinput_->EnumDevices(DI8DEVCLASS_GAMECTRL, enumCallback, this, DIEDFL_ATTACHEDONLY);
+
+	if (dinputDevice_) {
+		dinputDevice_->SetDataFormat(&c_dfDIJoystick2);
+		dinputDevice_->SetCooperativeLevel(hwnd, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
+		dinputDevice_->Acquire();
+	}
+}
+
+void Launcher::shutdownDirectInput() {
+	if (dinputDevice_) {
+		dinputDevice_->Unacquire();     // Unhook the device from DirectInput
+		dinputDevice_->Release();       // Release the COM interface
+		dinputDevice_ = nullptr;
+	}
+
+	if (dinput_) {
+		dinput_->Release();             // Release the DirectInput interface
+		dinput_ = nullptr;
+	}
+}
+
+
 
 #endif
 
@@ -1113,7 +1167,16 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		{ "joyButton9", XINPUT_GAMEPAD_RIGHT_THUMB },
 	};
 
+	std::map<std::string, int> sdlToDInput_ = {
+	{ "joyButton0", 0 }, { "joyButton1", 1 },
+	{ "joyButton2", 2 }, { "joyButton3", 3 },
+	{ "joyButton4", 4 }, { "joyButton5", 5 },
+	{ "joyButton6", 6 }, { "joyButton7", 7 },
+	{ "joyButton8", 8 }, { "joyButton9", 9 }
+	};
+
 	auto isQuitComboPressed = [&]() -> bool {
+		// First try XInput
 		for (DWORD userIndex = 0; userIndex < XUSER_MAX_COUNT; ++userIndex) {
 			XINPUT_STATE state = {};
 			if (XInputGetState(userIndex, &state) == ERROR_SUCCESS) {
@@ -1129,8 +1192,28 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					return true;
 			}
 		}
+
+		// Fallback to DirectInput
+		if (dinputDevice_) {
+			DIJOYSTATE2 js = {};
+			if (SUCCEEDED(dinputDevice_->Poll()) &&
+				SUCCEEDED(dinputDevice_->GetDeviceState(sizeof(js), &js))) {
+				bool allPressed = true;
+				for (const auto& btn : quitCombo) {
+					auto it = sdlToDInput_.find(btn);
+					if (it == sdlToDInput_.end() || js.rgbButtons[it->second] == 0) {
+						allPressed = false;
+						break;
+					}
+				}
+				if (allPressed)
+					return true;
+			}
+		}
+
 		return false;
 		};
+
 
 	if (!handleObtained) {
 		LOG_WARNING("Launcher", "No handle was obtained; process monitoring and stats updates will not occur.");
@@ -1185,6 +1268,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 			// Give the launched process a moment to initialize and potentially create its window
 			runFrontendWaitLoop(
+				this,
 				currentPage,
 				nullptr,
 				0.5,            // 500ms warmup
@@ -1314,6 +1398,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			// --- Attract Mode Main Monitoring Loop ---
 			LOG_INFO("Launcher", "Entering Attract Mode monitoring loop (Timeout: " + std::to_string(attractModeLaunchRunTime) + "s)");
 			WaitResult attractResult = runFrontendWaitLoop(
+				this,
 				currentPage,
 				hLaunchedProcess,
 				attractModeLaunchRunTime,
@@ -1340,6 +1425,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					// Wait for process exit (as before)
 					if (hLaunchedProcess != NULL) {
 						WaitResult waitResult = runFrontendWaitLoop(
+							this,
 							currentPage,
 							hLaunchedProcess,
 							0, // infinite wait
@@ -1415,6 +1501,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			bool shouldAnimate = animateDuringGame && multiple_display;
 
 			runFrontendWaitLoop(
+				this,
 				currentPage,
 				hLaunchedProcess,
 				0, // infinite wait
