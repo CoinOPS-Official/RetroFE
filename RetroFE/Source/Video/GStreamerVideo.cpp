@@ -1180,11 +1180,22 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-	std::lock_guard<std::mutex> lock(pipelineMutex_);
-	if (!pipeLineReady_ || !videoTexture_) return;
+	std::lock_guard<std::mutex> pipelineLock(pipelineMutex_); // Protects pipeline state
+	if (!pipeLineReady_) return;
 
 	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
 	if (!sample) return;
+
+	// Now, lock the SDL mutex before touching any SDL textures
+	SDL_LockMutex(SDL::getMutex());
+
+	if (!videoTexture_) {
+		// If the texture doesn't exist, we can't draw.
+		// Clean up the sample and release the mutex.
+		gst_sample_unref(sample);
+		SDL_UnlockMutex(SDL::getMutex());
+		return;
+	}
 
 	GstBuffer* buf = gst_sample_get_buffer(sample);
 	if (!buf) { gst_sample_unref(sample); return; }
@@ -1198,6 +1209,7 @@ void GStreamerVideo::draw() {
 	GstVideoFrame frame;
 	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
 		gst_sample_unref(sample);
+		SDL_UnlockMutex(SDL::getMutex());
 		return;
 	}
 
@@ -1209,6 +1221,7 @@ void GStreamerVideo::draw() {
 		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_);
 		texture_ = nullptr;
 	}
+
 	SDL_UnlockMutex(SDL::getMutex());
 
 	gst_video_frame_unmap(&frame);
