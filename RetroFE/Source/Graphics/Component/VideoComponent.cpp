@@ -140,7 +140,7 @@ bool VideoComponent::update(float dt) {
 		}
 
 		GstClockTime currentTime = videoInst_->getCurrent();
-		if (currentTime > 1000000) {
+		if (currentTime > GST_SECOND) {
 			videoInst_->restart();
 			baseViewInfo.Restart = false;
 			LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
