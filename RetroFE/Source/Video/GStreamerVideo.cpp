@@ -695,6 +695,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		"drop", TRUE,      // Drop old buffers.
 		"wait-on-eos", FALSE,
 		"qos", FALSE,
+		"sync", FALSE,
 		nullptr);
 
 	// Set caps depending on whether perspective is enabled.
@@ -885,6 +886,7 @@ bool GStreamerVideo::play(const std::string& file) {
 		return false;
 	}
 
+	g_object_set(videoSink_, "sync", FALSE, nullptr);
 
 	// Update URI - no need to set to READY first
 	g_object_set(playbin_, "uri", uriFile, nullptr);
@@ -951,11 +953,6 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, 
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer userData) {
 	auto* self = static_cast<GStreamerVideo*>(userData);
-
-	// Skip sample if we're not actually playing (e.g. transitioning, released, or idle)
-	if (self->targetState_ != VideoState::Playing || self->actualState_ != VideoState::Playing) {
-		return GST_FLOW_OK;  // Discard quietly
-	}
 
 	GstSample* sample = gst_app_sink_pull_sample(sink);
 
@@ -1342,14 +1339,18 @@ void GStreamerVideo::skipBackwardp() {
 
 void GStreamerVideo::pause() {
 	if (!playbin_) return;
-	// Only return early if actual state is already paused
+
+	// Only return early if already paused
 	if (actualState_ == IVideo::VideoState::Paused)
 		return;
-	// Already requested pause?
 	if (targetState_ == IVideo::VideoState::Paused)
 		return;
 
 	targetState_ = IVideo::VideoState::Paused;
+
+	// Allow first frame to render even while paused
+	if (videoSink_)
+		g_object_set(videoSink_, "sync", FALSE, nullptr);
 
 	LOG_DEBUG("GStreamerVideo", "Requesting PAUSED for " + currentFile_);
 	if (gst_element_set_state(playbin_, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
@@ -1368,6 +1369,9 @@ void GStreamerVideo::resume() {
 		return;
 
 	targetState_ = IVideo::VideoState::Playing;
+	
+	if (videoSink_)
+		g_object_set(videoSink_, "sync", TRUE, nullptr);
 
 	LOG_DEBUG("GStreamerVideo", "Requesting PLAYING for " + currentFile_);
 	if (gst_element_set_state(playbin_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
