@@ -400,8 +400,7 @@ bool GStreamerVideo::stop() {
 			LOG_DEBUG("GStreamerVideo::stop", "Disconnected element-setup signal handler.");
 		}
 
-		GstSample* s = stagedSample_.exchange(nullptr);
-		if (s) gst_sample_unref(s);
+		stagedSample_.clear();
 
 		// Set the pipeline state to NULL to release all GStreamer resources.
 		LOG_DEBUG("GStreamerVideo::stop", "Setting playbin state to NULL.");
@@ -554,8 +553,7 @@ bool GStreamerVideo::unload() {
 		LOG_DEBUG("GStreamerVideo", "unload(): Removed bus watch for " + currentFile_);
 	}
 
-	GstSample* s = stagedSample_.exchange(nullptr);
-	if (s) gst_sample_unref(s);
+	stagedSample_.clear();
 
 	// Set pipeline to GST_STATE_READY to release resources but keep pipeline structure for reuse
 	LOG_DEBUG("GStreamerVideo", "unload(): Setting playbin state to READY for " + currentFile_);
@@ -695,7 +693,6 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		"drop", TRUE,      // Drop old buffers.
 		"wait-on-eos", FALSE,
 		"qos", FALSE,
-		"sync", FALSE,
 		nullptr);
 
 	// Set caps depending on whether perspective is enabled.
@@ -955,9 +952,13 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer userData)
 	auto* self = static_cast<GStreamerVideo*>(userData);
 
 	GstSample* sample = gst_app_sink_pull_sample(sink);
+	if (!sample) {
+		return GST_FLOW_FLUSHING;  // EOS or error
+	}
 
-	GstSample* old = self->stagedSample_.exchange(sample, std::memory_order_acq_rel);
-	if (old) gst_sample_unref(old);
+	if (!self->stagedSample_.try_enqueue(sample)) {
+		gst_sample_unref(sample);  // Drop frame if not consumed
+	}
 
 	return GST_FLOW_OK;
 }
@@ -1183,7 +1184,7 @@ void GStreamerVideo::draw() {
 	std::lock_guard<std::mutex> pipelineLock(pipelineMutex_); // Protects pipeline state
 	if (!pipeLineReady_) return;
 
-	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
+	GstSample* sample = stagedSample_.try_dequeue();
 	if (!sample) return;
 
 	// Now, lock the SDL mutex before touching any SDL textures

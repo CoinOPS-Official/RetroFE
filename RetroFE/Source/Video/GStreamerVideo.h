@@ -92,6 +92,31 @@ public:
     static void disablePlugin(const std::string& pluginName);
 
 private:
+    // Inline atomic slot for thread-safe sample exchange
+    struct AtomicSampleSlot {
+        std::atomic<GstSample*> slot_{ nullptr };
+
+        // Called from GStreamer thread (producer)
+        bool try_enqueue(GstSample* newSample) {
+            GstSample* expected = nullptr;
+            return slot_.compare_exchange_strong(expected, newSample,
+                std::memory_order_release, std::memory_order_relaxed);
+        }
+
+        // Called from draw thread (consumer)
+        GstSample* try_dequeue() {
+            GstSample* sample = slot_.load(std::memory_order_acquire);
+            if (!sample) return nullptr;
+            return slot_.exchange(nullptr, std::memory_order_acquire);
+        }
+
+        // Cleanup on shutdown
+        void clear() {
+            GstSample* sample = slot_.exchange(nullptr, std::memory_order_acquire);
+            if (sample) gst_sample_unref(sample);
+        }
+    };
+    
     // === Thread-shared atomics ===
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
@@ -133,7 +158,7 @@ private:
     GValueArray* perspective_gva_{ nullptr };
     std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
 
-    std::atomic<GstSample*> stagedSample_{ nullptr };
+    AtomicSampleSlot stagedSample_;
 
     // === Static/shared ===
     static bool initialized_;
