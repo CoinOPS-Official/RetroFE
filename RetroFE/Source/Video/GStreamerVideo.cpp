@@ -26,6 +26,7 @@
 #include "../SDL.h"
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
+#include "../Utility/ThreadPool.h"
 #include <SDL2/SDL.h>
 #include <cstdio>
 #include <cstdlib>
@@ -121,56 +122,49 @@ GStreamerVideo::~GStreamerVideo() {
 	}
 }
 
+IVideo::VideoState GStreamerVideo::toVideoState(GstState state) {
+	switch (state) {
+		case GST_STATE_PLAYING: return IVideo::VideoState::Playing;
+		case GST_STATE_PAUSED:  return IVideo::VideoState::Paused;
+		default:                return IVideo::VideoState::None;
+	}
+}
+
 gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user_data) {
 	auto* video = static_cast<GStreamerVideo*>(user_data);
 
-	if (!video) {
-		LOG_ERROR("GStreamerVideo", "busCallback(): Callback invoked with null user_data.");
-		return TRUE;
-	}
-	if (!video->playbin_) {
-		LOG_WARNING("GStreamerVideo", "busCallback(): Callback invoked but playbin_ is null for file: " + video->currentFile_);
-		return TRUE; // Continue, but state is unusual.
+	if (!video || !video->playbin_ || GST_MESSAGE_SRC(msg) != GST_OBJECT(video->playbin_)) {
+		return TRUE; // Ignore messages not from our current pipeline
 	}
 
 	switch (GST_MESSAGE_TYPE(msg)) {
 		case GST_MESSAGE_STATE_CHANGED: {
-			// Ensure the state change is from our playbin element
+			// We only care about state changes from the pipeline itself.
 			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
-				GstState oldState, newState, pending;
-				gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
+				GstState old_state, new_state, pending_state;
+				gst_message_parse_state_changed(msg, &old_state, &new_state, &pending_state);
 
-				if (newState == GST_STATE_PLAYING) {
-					video->actualState_ = IVideo::VideoState::Playing;
+				std::string log_msg = "Bus: Pipeline state changed from " +
+					std::string(gst_element_state_get_name(old_state)) + " to " +
+					std::string(gst_element_state_get_name(new_state));
+				if (pending_state != GST_STATE_VOID_PENDING) {
+					log_msg += " (pending: " + std::string(gst_element_state_get_name(pending_state)) + ")";
 				}
-				else if (newState == GST_STATE_PAUSED) {
-					video->actualState_ = IVideo::VideoState::Paused;
-				}
-				if (newState == GST_STATE_NULL || newState == GST_STATE_READY) {
-					bool expected =
-						(newState == GST_STATE_NULL && video->targetState_ == IVideo::VideoState::None) ||
-						(newState == GST_STATE_READY && video->targetState_ == IVideo::VideoState::None);
+				LOG_DEBUG("GStreamerVideo", log_msg);
 
-					if (!expected && video->pipeLineReady_) {
-						LOG_WARNING("GStreamerVideo",
-							"busCallback(): Pipeline for " + video->currentFile_ +
-							" transitioned to " + std::string(gst_element_state_get_name(newState)) +
-							" unexpectedly from " + std::string(gst_element_state_get_name(oldState)) +
-							". Playback may have stopped.");
-					}
-					else {
-						LOG_DEBUG("GStreamerVideo",
-							"busCallback(): Pipeline for " + video->currentFile_ +
-							" transitioned to " + std::string(gst_element_state_get_name(newState)) +
-							" as requested.");
-					}
-					video->actualState_ = IVideo::VideoState::None;
+				// Update our internal 'actualState_' tracker
+				video->actualState_ = GStreamerVideo::toVideoState(new_state);
+
+				// If we have successfully reached the PAUSED state, we are ready.
+				if (new_state == GST_STATE_PAUSED && old_state != GST_STATE_PAUSED) {
+					LOG_INFO("GStreamerVideo::busCallback", "Pipeline is now PAUSED and ready to be used.");
+					video->pipeLineReady_ = true;
 				}
-				LOG_DEBUG("GStreamerVideo", "busCallback(): State changed: " +
-					std::string(gst_element_state_get_name(oldState)) + " -> " +
-					std::string(gst_element_state_get_name(newState)) +
-					(pending == GST_STATE_VOID_PENDING ? "" : " (pending: " + std::string(gst_element_state_get_name(pending)) + ")") +
-					" for " + video->currentFile_ + " (Session: " + std::to_string(video->currentPlaySessionId_.load()) + ")");
+
+				// If we are no longer in PAUSED or PLAYING, we are not ready.
+				if (new_state < GST_STATE_PAUSED) {
+					video->pipeLineReady_ = false;
+				}
 			}
 			break;
 		}
@@ -354,133 +348,178 @@ bool GStreamerVideo::deInitialize() {
 }
 
 bool GStreamerVideo::stop() {
-	std::string currentFileForLog = currentFile_; // Cache for logging before it's cleared
-	LOG_INFO("GStreamerVideo", "Stop called for " + (!currentFileForLog.empty() ? currentFileForLog : "unspecified video") +
-		" (Session: " + std::to_string(currentPlaySessionId_.load()) + ")");
+	std::string currentFileForLog = currentFile_;
+	LOG_INFO("GStreamerVideo", "Stop called for " + currentFileForLog);
 
-	// --- 1. Signal No Longer Playing ---
-	// This should be done early to prevent other threads (e.g., draw, bus callback)
-	// from attempting operations on a pipeline that's being torn down.
+	// --- Part 1: Immediate Actions (on the Main Thread) ---
+	// Make the video disappear from the UI instantly.
+
 	pipeLineReady_ = false;
 	targetState_ = IVideo::VideoState::None;
 
-	// --- 2. GStreamer Pipeline Teardown ---
-	// This lock protects GStreamer element operations and GStreamer-related shared state.
-	std::lock_guard<std::mutex> lock(pipelineMutex_);
+	// Clear the sample queue to stop the draw thread from processing old frames.
+	stagedSample_.clear();
 
-	if (playbin_) {
-		// Remove active pad probe if one was registered for the current session
-		if (padProbeId_ != 0 && videoSink_) {
-			GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink");
-			if (sinkPad) {
-				LOG_DEBUG("GStreamerVideo::stop", "Removing active pad probe ID " + std::to_string(padProbeId_));
-				gst_pad_remove_probe(sinkPad, padProbeId_);
-				gst_object_unref(sinkPad);
-			}
-			else {
-				LOG_WARNING("GStreamerVideo::stop", "Could not get sink pad to remove probe during stop.");
-			}
-			// padProbeId_ will be reset with other members later.
-		}
-
-		// Remove bus watch
-		if (busWatchId_ != 0) {
-			g_source_remove(busWatchId_);
-			// busWatchId_ will be reset with other members later.
-			LOG_DEBUG("GStreamerVideo::stop", "Removed bus watch.");
-		}
-
-		// Disconnect signal handlers (like element-setup)
-		if (elementSetupHandlerId_ != 0) {
-			// Check if connected before disconnecting, to avoid warnings if already disconnected
-			if (g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
-				g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
-			}
-			// elementSetupHandlerId_ will be reset with other members later.
-			LOG_DEBUG("GStreamerVideo::stop", "Disconnected element-setup signal handler.");
-		}
-
-		stagedSample_.clear();
-
-		// Set the pipeline state to NULL to release all GStreamer resources.
-		LOG_DEBUG("GStreamerVideo::stop", "Setting playbin state to NULL.");
-		GstStateChangeReturn setStateRet = gst_element_set_state(playbin_, GST_STATE_NULL);
-
-		if (setStateRet == GST_STATE_CHANGE_FAILURE) {
-			LOG_ERROR("GStreamerVideo::stop", "Failed to set playbin state to NULL. Resources may not be fully released by GStreamer.");
-		}
-		else {
-			// Optionally wait for NULL state to ensure proper cleanup.
-			GstState currentStateRead = GST_STATE_VOID_PENDING; // Default to something other than NULL
-			GstStateChangeReturn getStateRet = gst_element_get_state(playbin_, &currentStateRead, nullptr, 2 * GST_SECOND); // 2-second timeout
-			if (getStateRet == GST_STATE_CHANGE_SUCCESS && currentStateRead == GST_STATE_NULL) {
-				LOG_DEBUG("GStreamerVideo::stop", "Playbin successfully transitioned to NULL.");
-			}
-			else {
-				LOG_WARNING("GStreamerVideo::stop", "Playbin did not confirm NULL state (or timed out). GetStateReturn: " +
-					std::string(gst_element_state_change_return_get_name(getStateRet)) +
-					", Current Actual State: " + std::string(gst_element_state_get_name(currentStateRead)));
-			}
-		}
-
-		// Unreference the playbin. This will destroy all elements it contains.
-		LOG_DEBUG("GStreamerVideo::stop", "Unreffing playbin_.");
-		gst_object_unref(playbin_);
-		playbin_ = nullptr;
-		videoSink_ = nullptr;   // Was part of playbin_
-		perspective_ = nullptr; // Was part of playbin_
-
-	}
-	else {
-		LOG_DEBUG("GStreamerVideo", "stop(): No playbin_ was active to stop and unref.");
-	}
-
-	// --- 3. SDL Texture Cleanup
-	// This lock protects all SDL texture objects and their associated state.
+	// Clear the texture so nothing is drawn on the next frame.
+	// This part still needs to be thread-safe with the draw thread.
 	SDL_LockMutex(SDL::getMutex());
-
 	if (videoTexture_) {
 		SDL_DestroyTexture(videoTexture_);
 		videoTexture_ = nullptr;
-		LOG_DEBUG("GStreamerVideo", "stop (): Destroyed videoTexture_.");
 	}
-
-	texture_ = nullptr; // Since both potential source textures are gone, texture_ must be null.
-	// The renderer must be able to handle a null texture from getTexture().
+	texture_ = nullptr;
 	SDL_UnlockMutex(SDL::getMutex());
 
+	// --- Part 2: Asynchronous GStreamer Teardown ---
+	// This part is slow and blocking, so we send it to the thread pool.
+
+	// We must capture the GStreamer objects we need to clean up BY VALUE
+	// because the main GStreamerVideo object might be destroyed before this lambda runs.
+	GstElement* pipelineToStop = nullptr;
+	guint busWatchIdToStop = 0;
+	gulong elementSetupHandlerIdToStop = 0;
+	gulong padProbeIdToStop = 0;
+	GstElement* sinkToClearProbe = nullptr;
+
+	{ // Use a scope for the pipelineMutex_
+		std::lock_guard<std::mutex> lock(pipelineMutex_);
+		if (!playbin_) {
+			LOG_DEBUG("GStreamerVideo", "stop(): No playbin_ was active. Nothing to do.");
+			// Reset non-GStreamer members here if needed and return
+			pipeLineReady_ = false;
+			targetState_ = IVideo::VideoState::None;
+			actualState_ = IVideo::VideoState::None; // Also reset the last known actual state
+			hasError_.store(false, std::memory_order_release);
+
+			// --- Media Info ---
+			width_ = -1;
+			height_ = -1;
+			currentFile_.clear();
+
+			// --- Loop and Play Count ---
+			playCount_ = 0;
+			numLoops_ = 0; // Assuming loops are reset on full stop
+
+			// --- Volume State ---
+			currentVolume_ = 0.0f;
+			lastSetVolume_ = -1.0f; // Force re-application if volume is set again
+			lastSetMuteState_ = true; // Sensible default to start muted
+			volume_ = 0.0f;         // Desired volume reset
+
+			// --- GStreamer IDs ---
+			// These should have already been set to 0 in stop() before scheduling
+			// the async task, but resetting them here ensures consistency.
+			padProbeId_ = 0;
+			busWatchId_ = 0;
+			elementSetupHandlerId_ = 0;
+			// currentPlaySessionId_ should be updated by a generator on the next play() call,
+			// so no need to reset it here.
+
+			// --- GStreamer Perspective Matrix ---
+			if (perspective_gva_) {
+				// This is tricky. If the lambda needs it, it should have been captured.
+				// If the lambda doesn't need it, it's safe to free here.
+				// Given its name, it's likely tied to the pipeline, so freeing it here
+				// after the pipeline has been scheduled for deletion is probably correct.
+				g_value_array_free(perspective_gva_);
+				perspective_gva_ = nullptr;
+			}			return true;
+		}
+
+		// Steal the pointers from the class members. The class no longer owns them.
+		// The lambda we are about to create now has sole ownership.
+		pipelineToStop = playbin_;
+		playbin_ = nullptr; // Set to null so we don't try to stop it twice.
+
+		busWatchIdToStop = busWatchId_;
+		busWatchId_ = 0;
+
+		elementSetupHandlerIdToStop = elementSetupHandlerId_;
+		elementSetupHandlerId_ = 0;
+
+		padProbeIdToStop = padProbeId_;
+		padProbeId_ = 0;
+
+		sinkToClearProbe = videoSink_;
+		videoSink_ = nullptr;
+	}
+
+	// Now enqueue the cleanup task.
+	ThreadPool::getInstance().enqueue([
+		pipelineToStop,
+		busWatchIdToStop,
+		elementSetupHandlerIdToStop,
+		padProbeIdToStop,
+		sinkToClearProbe
+	]() {
+			// --- This all runs on a background worker thread ---
+			LOG_DEBUG("GStreamerVideo::stop_async", "Starting background teardown.");
+
+			if (padProbeIdToStop != 0 && sinkToClearProbe) {
+				GstPad* sinkPad = gst_element_get_static_pad(sinkToClearProbe, "sink");
+				if (sinkPad) {
+					gst_pad_remove_probe(sinkPad, padProbeIdToStop);
+					gst_object_unref(sinkPad);
+				}
+			}
+			if (busWatchIdToStop != 0) g_source_remove(busWatchIdToStop);
+			if (elementSetupHandlerIdToStop != 0 && g_signal_handler_is_connected(pipelineToStop, elementSetupHandlerIdToStop)) {
+				g_signal_handler_disconnect(pipelineToStop, elementSetupHandlerIdToStop);
+			}
+
+			LOG_DEBUG("GStreamerVideo::stop_async", "Setting playbin state to NULL.");
+			gst_element_set_state(pipelineToStop, GST_STATE_NULL);
+
+			// No need to wait with get_state. The unref will handle cleanup.
+			// The blocking wait was part of the problem.
+
+			LOG_DEBUG("GStreamerVideo::stop_async", "Unreffing playbin.");
+			gst_object_unref(pipelineToStop);
+
+			LOG_INFO("GStreamerVideo::stop_async", "Background GStreamer teardown complete.");
+		});
+
+	// --- Part 3: Reset non-GStreamer member variables ---
+	// This happens immediately on the main thread.
+	pipeLineReady_ = false;
+	targetState_ = IVideo::VideoState::None;
+	actualState_ = IVideo::VideoState::None; // Also reset the last known actual state
 	hasError_.store(false, std::memory_order_release);
 
-
+	// --- Media Info ---
 	width_ = -1;
 	height_ = -1;
-
 	currentFile_.clear();
+
+	// --- Loop and Play Count ---
 	playCount_ = 0;
 	numLoops_ = 0; // Assuming loops are reset on full stop
 
-	// Reset volume state
+	// --- Volume State ---
 	currentVolume_ = 0.0f;
 	lastSetVolume_ = -1.0f; // Force re-application if volume is set again
 	lastSetMuteState_ = true; // Sensible default to start muted
 	volume_ = 0.0f;         // Desired volume reset
 
-	// Reset GStreamer IDs
+	// --- GStreamer IDs ---
+	// These should have already been set to 0 in stop() before scheduling
+	// the async task, but resetting them here ensures consistency.
 	padProbeId_ = 0;
 	busWatchId_ = 0;
 	elementSetupHandlerId_ = 0;
-	// currentPlaySessionId_ will be updated by the static generator on the next play() call.
+	// currentPlaySessionId_ should be updated by a generator on the next play() call,
+	// so no need to reset it here.
 
-	// Free GStreamer GValueArray for perspective matrix
+	// --- GStreamer Perspective Matrix ---
 	if (perspective_gva_) {
+		// This is tricky. If the lambda needs it, it should have been captured.
+		// If the lambda doesn't need it, it's safe to free here.
+		// Given its name, it's likely tied to the pipeline, so freeing it here
+		// after the pipeline has been scheduled for deletion is probably correct.
 		g_value_array_free(perspective_gva_);
 		perspective_gva_ = nullptr;
 	}
-
-	// Any other custom member variables specific to a playback session should be reset.
-
-	LOG_INFO("GStreamerVideo", "stop (): Instance for " + (!currentFileForLog.empty() ? currentFileForLog : "previous video") +
-		" fully stopped, all GStreamer and SDL resources released.");
+	LOG_INFO("GStreamerVideo", "stop(): UI stopped instantly, GStreamer cleanup scheduled.");
 	return true;
 }
 
@@ -815,128 +854,107 @@ void GStreamerVideo::initializeUpdateFunction() {
 }
 
 bool GStreamerVideo::play(const std::string& file) {
+	// This top-level lock ensures that no other thread (e.g., a stop() call)
+	// can interfere while we are setting up a new playback session.
 	std::lock_guard<std::mutex> lock(pipelineMutex_);
 
 	if (!initialized_) {
 		LOG_ERROR("GStreamerVideo", "Play called but GStreamer not initialized for file: " + file);
-		hasError_.store(true, std::memory_order_release);
-		return false;
-	}
-
-	// Atomically increment and assign a new unique session ID for this play attempt.
-	// This ID is unique across all GStreamerVideo instances and all play attempts.
-	currentPlaySessionId_.store(nextUniquePlaySessionId_++, std::memory_order_release);
-
-	currentFile_ = file;
-
-	// 1. Create the pipeline if we haven’t already
-	if (!createPipelineIfNeeded()) {
-		LOG_ERROR("Video", "Failed to create GStreamer pipeline");
-		hasError_.store(true, std::memory_order_release);
-		return false;
-	}
-
-	// Reconnect the pad probe if it's not connected.
-	// This should be done for each new 'play' call to ensure the probe is fresh for this stream.
-	GstPad* sinkPad = gst_element_get_static_pad(videoSink_, "sink");
-	if (sinkPad) {
-		if (padProbeId_ != 0) { // Remove any existing probe on this pad from this instance
-			gst_pad_remove_probe(sinkPad, padProbeId_);
-			padProbeId_ = 0;
-		}
-
-		// --- Create Userdata for the Probe ---
-		auto* userdataForProbe = static_cast<PadProbeUserdata*>(g_malloc(sizeof(PadProbeUserdata)));
-		if (!userdataForProbe) {
-			LOG_ERROR("GStreamerVideo", "Failed to allocate memory for PadProbeUserdata for file: " + file);
-			gst_object_unref(sinkPad);
-			hasError_.store(true);
-			return false;
-		}
-		userdataForProbe->videoInstance = this;
-		userdataForProbe->playSessionId = currentPlaySessionId_.load(std::memory_order_acquire);
-
-		padProbeId_ = gst_pad_add_probe(sinkPad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
-			GStreamerVideo::padProbeCallback,
-			userdataForProbe,
-			g_free);
-
-		gst_object_unref(sinkPad);
-	}
-	else {
-		LOG_ERROR("GStreamerVideo", "Failed to get sink pad from videoSink_ for file: " + file);
 		hasError_.store(true);
 		return false;
 	}
 
+	// --- 1. Teardown Previous Instance (if any) ---
+	// It's crucial to fully stop and clear the old pipeline before creating a new one.
+	if (playbin_) {
+		LOG_DEBUG("GStreamerVideo::play", "An existing pipeline was found. Stopping it before playing new file.");
+		// This is a synchronous, blocking call inside our locked mutex.
+		// It's "safe" here because we know we are the only thread manipulating the pipeline.
+		gst_element_set_state(playbin_, GST_STATE_NULL);
+		gst_object_unref(playbin_);
+		playbin_ = nullptr;
+	}
+	// Now reset all state to defaults before we begin.
+	//resetMemberVariables();
+
+	// --- 2. Setup New Playback Session ---
+	currentPlaySessionId_.store(nextUniquePlaySessionId_++, std::memory_order_release);
+	currentFile_ = file;
+	LOG_INFO("GStreamerVideo::play", "Starting new play session " + std::to_string(currentPlaySessionId_.load()) + " for file: " + file);
+
+	if (!createPipelineIfNeeded()) {
+		LOG_ERROR("GStreamerVideo", "Failed to create GStreamer pipeline for: " + file);
+		hasError_.store(true);
+		return false;
+	}
+
+	// --- 3. Configure the New Pipeline ---
+	// (Probes, bus watch, URI, etc.)
+
+	// Add Pad Probe for EOS detection
+	GstPad* sinkPad = gst_element_get_static_pad(videoSink_, "sink");
+	if (sinkPad) {
+		auto* userdataForProbe = static_cast<PadProbeUserdata*>(g_malloc(sizeof(PadProbeUserdata)));
+		userdataForProbe->videoInstance = this;
+		userdataForProbe->playSessionId = currentPlaySessionId_.load();
+		padProbeId_ = gst_pad_add_probe(sinkPad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM, GStreamerVideo::padProbeCallback, userdataForProbe, g_free);
+		gst_object_unref(sinkPad);
+	}
+	else {
+		LOG_ERROR("GStreamerVideo", "Failed to get sink pad to add probe for: " + file);
+		hasError_.store(true);
+		return false;
+	}
+
+	// Add Bus Watch to listen for messages
 	GstBus* bus = gst_element_get_bus(playbin_);
 	if (bus) {
-		gst_bus_set_flushing(bus, FALSE); // Ensure bus is not in flushing state before adding watch
 		busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
 		gst_object_unref(bus);
 	}
-	// Convert file path to URI
+
+	// Set the file path (URI)
 	gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
 	if (!uriFile) {
-		LOG_DEBUG("Video", "Failed to convert filename to URI");
-		hasError_.store(true, std::memory_order_release);
+		LOG_ERROR("GStreamerVideo", "Failed to convert filename to URI: " + file);
+		hasError_.store(true);
 		return false;
 	}
-
-	g_object_set(videoSink_, "sync", FALSE, nullptr);
-
-	// Update URI - no need to set to READY first
 	g_object_set(playbin_, "uri", uriFile, nullptr);
 	g_free(uriFile);
 
-	targetState_ = IVideo::VideoState::Paused;  // accurately reflect that we're starting preloaded
-
-	GstStateChangeReturn stateRet = gst_element_set_state(GST_ELEMENT(playbin_), GST_STATE_PAUSED);
-
-	if (stateRet == GST_STATE_CHANGE_FAILURE) {
-		LOG_ERROR("GStreamerVideo", "Pipeline failed to set PAUSED for " + file);
-		pipeLineReady_ = false;
-		hasError_.store(true, std::memory_order_release);
-		return false;
-	}
-
-	// If it's ASYNC, that's expected — the bus callback will confirm when PAUSED is reached.
-	if (stateRet == GST_STATE_CHANGE_ASYNC) {
-		LOG_DEBUG("GStreamerVideo", "Pipeline state change to PAUSED is async for " + file);
-	}
-	else {
-		LOG_DEBUG("GStreamerVideo", "Pipeline set to PAUSED immediately for " + file);
-	}
-
-	pipeLineReady_ = true;
-
-	// Mute and volume to 0 by default
+	// Initial mute/volume state
+	g_object_set(videoSink_, "sync", FALSE, nullptr);
 	gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
 	gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), true);
 	lastSetMuteState_ = true;
 
-	if (Configuration::debugDotEnabled)
-	{
-		// Environment variable is set, proceed with dot file generation
-		GstState dotDebugState;
-		GstState dotDebugPending;
-		// Wait up to 5 seconds for the state change to complete
-		GstClockTime timeout = 5 * GST_SECOND; // Define your timeout
-		GstStateChangeReturn ret = gst_element_get_state(GST_ELEMENT(playbin_), &dotDebugState, &dotDebugPending, timeout);
-		if (ret == GST_STATE_CHANGE_SUCCESS && dotDebugState == GST_STATE_PLAYING)
-		{
-			// The pipeline is in the playing state, proceed with dot file generation
-			// Generate dot file for playbin_
-			std::string playbinDotFileName = generateDotFileName("playbin", currentFile_);
-			GST_DEBUG_BIN_TO_DOT_FILE(GST_BIN(playbin_), GST_DEBUG_GRAPH_SHOW_ALL, playbinDotFileName.c_str());
+	// --- 4. Asynchronously Start the Pipeline ---
+	// Set our desired state. The actual state will be updated via bus messages.
+	targetState_ = IVideo::VideoState::Paused;
+
+	// Capture variables needed by the lambda.
+	GstElement* pipeline_for_thread = playbin_;
+	std::atomic<bool>* error_flag_for_thread = &hasError_;
+	std::string file_for_thread = file;
+
+	ThreadPool::getInstance().enqueue([pipeline_for_thread, error_flag_for_thread, file_for_thread]() {
+		LOG_DEBUG("GStreamerVideo", "Worker thread: Setting state to PAUSED for " + file_for_thread);
+		GstStateChangeReturn stateRet = gst_element_set_state(pipeline_for_thread, GST_STATE_PAUSED);
+
+		if (stateRet == GST_STATE_CHANGE_FAILURE) {
+			LOG_ERROR("GStreamerVideo", "Worker thread: Pipeline failed to set PAUSED for " + file_for_thread);
+			error_flag_for_thread->store(true);
 		}
-	}
+		// No need to do anything for SUCCESS or ASYNC.
+		// The bus message is now the single source of truth.
+		});
 
-	LOG_DEBUG("GStreamerVideo", "Loaded " + file);
-
+	// We return 'true' to indicate the 'play' command was successfully *submitted*.
+	// The application is now in a "loading" state.
+	LOG_INFO("GStreamerVideo", "Play command for " + file + " successfully submitted to worker thread.");
 	return true;
 }
-
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, GstElement* element, [[maybe_unused]] gpointer data) {
 	// Check if the element is a video decoder
 	if (!Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element))
@@ -1188,7 +1206,7 @@ void GStreamerVideo::draw() {
 	if (!sample) return;
 
 	GstVideoFrame frame{};
-	
+
 	bool frameMapped = false;
 
 	SDL_LockMutex(SDL::getMutex());
@@ -1360,10 +1378,14 @@ void GStreamerVideo::pause() {
 		g_object_set(videoSink_, "sync", FALSE, nullptr);
 
 	LOG_DEBUG("GStreamerVideo", "Requesting PAUSED for " + currentFile_);
-	if (gst_element_set_state(playbin_, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
-		LOG_ERROR("GStreamerVideo", "Failed to set PAUSED for " + currentFile_);
-		hasError_.store(true);
-	}
+	ThreadPool::getInstance().enqueue([this]() {
+
+
+		if (gst_element_set_state(playbin_, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
+			LOG_ERROR("GStreamerVideo", "Failed to set PAUSED for " + currentFile_);
+			hasError_.store(true);
+		}
+		});
 }
 
 void GStreamerVideo::resume() {
@@ -1376,26 +1398,32 @@ void GStreamerVideo::resume() {
 		return;
 
 	targetState_ = IVideo::VideoState::Playing;
-	
+
 	if (videoSink_)
 		g_object_set(videoSink_, "sync", TRUE, nullptr);
 
 	LOG_DEBUG("GStreamerVideo", "Requesting PLAYING for " + currentFile_);
-	if (gst_element_set_state(playbin_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
-		LOG_ERROR("GStreamerVideo", "Failed to set PLAYING for " + currentFile_);
-		hasError_.store(true);
-	}
+	ThreadPool::getInstance().enqueue([this]() {
+
+		if (gst_element_set_state(playbin_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+			LOG_ERROR("GStreamerVideo", "Failed to set PLAYING for " + currentFile_);
+			hasError_.store(true);
+		}
+		});
 }
 
 void GStreamerVideo::restart() {
 	if (!pipeLineReady_)
 		return;
-	if (!gst_element_seek(playbin_, 1.0, GST_FORMAT_TIME,
+	GstElement* pipeline = playbin_; // Capture for the lambda
+	ThreadPool::getInstance().enqueue([pipeline] {
+	if (!gst_element_seek(pipeline, 1.0, GST_FORMAT_TIME,
 		GST_SEEK_FLAG_FLUSH,
 		GST_SEEK_TYPE_SET, 0,
 		GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE)) {
 		LOG_ERROR("GStreamerVideo", "Failed to seek to start");
 	}
+		});
 }
 
 unsigned long long GStreamerVideo::getCurrent() {

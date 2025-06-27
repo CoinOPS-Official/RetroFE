@@ -55,6 +55,8 @@ public:
     GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo() override;
 
+    static IVideo::VideoState toVideoState(GstState state);
+
     // --- Interface methods ---
     bool initialize() override;
     bool deInitialize() override;
