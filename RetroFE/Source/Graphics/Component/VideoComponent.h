@@ -53,7 +53,6 @@ public:
 private:
     std::string videoFile_;
     std::unique_ptr<IVideo> videoInst_;
-    std::atomic<bool> instanceReady_{false};
     bool hasBeenOnScreen_{ false };
 	bool wasVisible_{ false };
     bool softOverlay_;

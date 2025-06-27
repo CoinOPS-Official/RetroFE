@@ -55,19 +55,18 @@ VideoComponent::~VideoComponent() {
 }
 
 bool VideoComponent::update(float dt) {
-	if (!instanceReady_ || !videoInst_ || !currentPage_)
+	if (!videoInst_ || !currentPage_)
 		return Component::update(dt);
 
 	if (videoInst_->hasError()) { // New check
 		LOG_WARNING("VideoComponent", "Update: GStreamerVideo instance for " + videoFile_ +
 			" has an error. Halting further video operations for this component.");
-		instanceReady_ = false; // Stop trying to interact with a faulty instance
 		// The pool will handle the faulty instance upon its release.
 		return Component::update(dt);
 	}
 
 	if (!dimensionsUpdated_) {
-		if (videoInst_->getWidth() >= 0 && videoInst_->getHeight() >= 0) {
+		if (videoInst_->getWidth() > 0 && videoInst_->getHeight() > 0) {
 			baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
 			baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
 			dimensionsUpdated_ = true;
@@ -154,42 +153,28 @@ bool VideoComponent::update(float dt) {
 
 void VideoComponent::allocateGraphicsMemory() {
 	Component::allocateGraphicsMemory();
-
-	if (instanceReady_) return; // Already ready
-
-	if (!videoInst_ && !videoFile_.empty()) {
+	if (videoInst_) {
+		return;
+	}
+	if (!videoFile_.empty()) {
 		videoInst_ = VideoFactory::createVideo(
 			monitor_, numLoops_, softOverlay_, listId_,
 			hasPerspective_ ? perspectiveCorners_ : nullptr
 		);
-		if (videoInst_) {
-			LOG_DEBUG("VideoComponent", "ThreadPool: play() starting for: " + videoFile_);
-			bool result = videoInst_->play(videoFile_);
-			instanceReady_ = result;
-			if (result) {
-				LOG_DEBUG("VideoComponent", "ThreadPool: play() finished SUCCESS for: " + videoFile_);
-			}
-			else {
-				LOG_WARNING("VideoComponent", "ThreadPool: play() finished FAIL for: " + videoFile_);
-				if (videoInst_->hasError()) {
-					LOG_ERROR("VideoComponent", "GStreamerVideo instance for " + videoFile_ +
-						" is marked with hasError_ after play() attempt. Video will not display.");
-					// The videoInst_ is now "tainted". Pool will handle on freeGraphicsMemory.
-				}
-				else {
-					LOG_WARNING("VideoComponent", "play() returned false for " + videoFile_ +
-						" but not marked as error (could be file not found or URI error).");
-				}
-			}
+
+		if (!videoInst_) {
+			LOG_ERROR("VideoComponent", "Failed to create a video instance from the factory.");
+		}
+		else {
+			LOG_DEBUG("VideoComponent", "Issuing play command for: " + videoFile_);
+			videoInst_->play(videoFile_);
 		}
 	}
 }
 
-
 void VideoComponent::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
 	if (videoInst_) {
-		instanceReady_ = false;
 
 		// Return to pool if pooled (listId_ != -1), else delete
 		if (listId_ != -1) {
@@ -205,7 +190,7 @@ void VideoComponent::freeGraphicsMemory() {
 }
 
 void VideoComponent::draw() {
-	if (!videoInst_ || !instanceReady_) return;
+	if (!videoInst_) return;
 
 	videoInst_->draw();
 
@@ -225,42 +210,42 @@ std::string_view VideoComponent::filePath() const {
 }
 
 void VideoComponent::skipForward() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return;
 	}
 	videoInst_->skipForward();
 }
 
 void VideoComponent::skipBackward() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return;
 	}
 	videoInst_->skipBackward();
 }
 
 void VideoComponent::skipForwardp() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return;
 	}
 	videoInst_->skipForwardp();
 }
 
 void VideoComponent::skipBackwardp() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return;
 	}
 	videoInst_->skipBackwardp();
 }
 
 void VideoComponent::pause() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return;
 	}
 	videoInst_->pause();
 }
 
 void VideoComponent::resume() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return;
 	}
 	videoInst_->resume();
@@ -268,35 +253,35 @@ void VideoComponent::resume() {
 
 
 void VideoComponent::restart() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return;
 	}
 	videoInst_->restart();
 }
 
 unsigned long long VideoComponent::getCurrent() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return 0;
 	}
 	return videoInst_->getCurrent();
 }
 
 unsigned long long VideoComponent::getDuration() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return 0;
 	}
 	return videoInst_->getDuration();
 }
 
 bool VideoComponent::isPaused() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return false;
 	}
 	return videoInst_->isPaused();
 }
 
 bool VideoComponent::isPlaying() {
-	if (!videoInst_ || !instanceReady_) {
+	if (!videoInst_) {
 		return false;
 	}
 	return videoInst_->isPlaying();
