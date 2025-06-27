@@ -1181,52 +1181,44 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-	std::lock_guard<std::mutex> pipelineLock(pipelineMutex_); // Protects pipeline state
+	std::lock_guard<std::mutex> pipelineLock(pipelineMutex_);
 	if (!pipeLineReady_) return;
 
 	GstSample* sample = stagedSample_.try_dequeue();
 	if (!sample) return;
 
-	// Now, lock the SDL mutex before touching any SDL textures
+	GstVideoFrame frame = GST_VIDEO_FRAME_INIT;
+	bool frameMapped = false;
+
 	SDL_LockMutex(SDL::getMutex());
 
-	if (!videoTexture_) {
-		// If the texture doesn't exist, we can't draw.
-		// Clean up the sample and release the mutex.
-		gst_sample_unref(sample);
-		SDL_UnlockMutex(SDL::getMutex());
-		return;
-	}
+	if (videoTexture_) {
+		GstBuffer* buf = gst_sample_get_buffer(sample);
+		const GstCaps* caps = gst_sample_get_caps(sample);
+		GstVideoInfo info;
+		gst_video_info_init(&info);
 
-	GstBuffer* buf = gst_sample_get_buffer(sample);
-	if (!buf) { gst_sample_unref(sample); return; }
-
-	const GstCaps* caps = gst_sample_get_caps(sample);
-	if (!caps) { gst_sample_unref(sample); return; }
-
-	GstVideoInfo info;
-	if (!gst_video_info_from_caps(&info, caps)) { gst_sample_unref(sample); return; }
-
-	GstVideoFrame frame;
-	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
-		gst_sample_unref(sample);
-		SDL_UnlockMutex(SDL::getMutex());
-		return;
-	}
-
-	bool success = updateTextureFunc_(videoTexture_, &frame);
-	if (success && !texture_)
-		texture_ = videoTexture_;
-
-	if (!success) {
-		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_);
-		texture_ = nullptr;
+		if (buf && caps && gst_video_info_from_caps(&info, caps)) {
+			frameMapped = gst_video_frame_map(&frame, &info, buf, GST_MAP_READ);
+			if (frameMapped) {
+				bool success = updateTextureFunc_(videoTexture_, &frame);
+				if (success) {
+					if (!texture_) texture_ = videoTexture_;
+				}
+				else {
+					LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_);
+					texture_ = nullptr;
+				}
+			}
+		}
 	}
 
 	SDL_UnlockMutex(SDL::getMutex());
 
-	gst_video_frame_unmap(&frame);
-	gst_sample_unref(sample); // We're done with this frame.
+	if (frameMapped) {
+		gst_video_frame_unmap(&frame);
+	}
+	gst_sample_unref(sample);
 }
 
 bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) const {
