@@ -1187,7 +1187,8 @@ void GStreamerVideo::draw() {
 	GstSample* sample = stagedSample_.try_dequeue();
 	if (!sample) return;
 
-	GstVideoFrame frame = GST_VIDEO_FRAME_INIT;
+	GstVideoFrame frame{};
+	
 	bool frameMapped = false;
 
 	SDL_LockMutex(SDL::getMutex());
