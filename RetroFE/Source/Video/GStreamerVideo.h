@@ -90,6 +90,9 @@ public:
     }
     IVideo::VideoState getTargetState() const override { return targetState_; }
     IVideo::VideoState getActualState() const override { return actualState_; }
+    bool isPipelineReady() const override {
+        return pipeLineReady_.load(std::memory_order_acquire);
+	}
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
 

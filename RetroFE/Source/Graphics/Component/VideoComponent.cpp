@@ -58,6 +58,9 @@ bool VideoComponent::update(float dt) {
 	if (!videoInst_ || !currentPage_)
 		return Component::update(dt);
 
+	if (!videoInst_->isPipelineReady())
+		return Component::update(dt);
+
 	if (videoInst_->hasError()) { // New check
 		LOG_WARNING("VideoComponent", "Update: GStreamerVideo instance for " + videoFile_ +
 			" has an error. Halting further video operations for this component.");
