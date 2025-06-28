@@ -530,7 +530,6 @@ bool GStreamerVideo::unload() {
 	if (!playbin_) { // If no pipeline, nothing to unload from GStreamer's perspective
 		LOG_WARNING("GStreamerVideo", "unload(): No playbin_ to unload for " + currentFile_);
 		// Ensure local state is reset even if playbin_ was already gone
-		pipeLineReady_ = false;
 		hasError_.store(false, std::memory_order_release); // Clear any previous error
 		width_ = 0;
 		height_ = 0;
@@ -547,8 +546,8 @@ bool GStreamerVideo::unload() {
 	std::lock_guard<std::mutex> lock(pipelineMutex_);
 
 	// Reset instance state for new playback
-	width_ = 0;
-	height_ = 0;
+	width_ = -1;
+	height_ = -1;
 
 	SDL_LockMutex(SDL::getMutex());
 	texture_ = nullptr;
@@ -567,7 +566,6 @@ bool GStreamerVideo::unload() {
 	playCount_ = 0;
 
 	// --- 2. Signal that we are no longer "playing" this specific stream ---
-	pipeLineReady_ = false;
 	targetState_ = IVideo::VideoState::None; // Reflect that it's not actively playing or paused
 
 	// --- 3. GStreamer Pipeline Management ---
@@ -596,19 +594,11 @@ bool GStreamerVideo::unload() {
 
 	// Set pipeline to GST_STATE_READY to release resources but keep pipeline structure for reuse
 	LOG_DEBUG("GStreamerVideo", "unload(): Setting playbin state to READY for " + currentFile_);
-	GstStateChangeReturn setStateRet = gst_element_set_state(playbin_, GST_STATE_READY);
-
-	GstState currentStateRead = GST_STATE_VOID_PENDING;
-	GstStateChangeReturn getStateRet = gst_element_get_state(
-		playbin_, &currentStateRead, nullptr, 2 * GST_SECOND); // Wait up to 2 seconds
-
-	if (getStateRet == GST_STATE_CHANGE_SUCCESS && currentStateRead == GST_STATE_READY) {
-		LOG_DEBUG("GStreamerVideo", "playbin_ confirmed in READY state for " + currentFile_);
-	}
-	else {
-		LOG_WARNING("GStreamerVideo", "playbin_ did not confirm READY state (or timed out). GetStateReturn: " +
-			std::string(gst_element_state_change_return_get_name(getStateRet)) +
-			", Actual State: " + std::string(gst_element_state_get_name(currentStateRead)));
+	
+	if (gst_element_set_state(playbin_, GST_STATE_READY) == GST_STATE_CHANGE_FAILURE) {
+		LOG_ERROR("GStreamerVideo", "unload(): Failed to set playbin state to READY for " + currentFile_);
+		hasError_.store(true, std::memory_order_release);
+		return false; // Indicate failure to unload
 	}
 
 	// Flush the bus to discard any pending messages from the previous playback
@@ -1291,7 +1281,7 @@ bool GStreamerVideo::updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFr
 }
 
 bool GStreamerVideo::isPlaying() {
-	return actualState_ == IVideo::VideoState::Playing;
+	return pipeLineReady_ && actualState_ == IVideo::VideoState::Playing;
 }
 
 void GStreamerVideo::setVolume(float volume) {
@@ -1389,7 +1379,8 @@ void GStreamerVideo::pause() {
 }
 
 void GStreamerVideo::resume() {
-	if (!playbin_) return;
+	if (!playbin_ || !pipeLineReady_) return; // <--- Added check
+
 	// Only return early if actual state is already playing
 	if (actualState_ == IVideo::VideoState::Playing)
 		return;
@@ -1441,7 +1432,7 @@ unsigned long long GStreamerVideo::getDuration() {
 }
 
 bool GStreamerVideo::isPaused() {
-	return getActualState() == IVideo::VideoState::Paused;
+	return pipeLineReady_ && actualState_ == IVideo::VideoState::Paused;
 }
 
 std::string GStreamerVideo::generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const {
