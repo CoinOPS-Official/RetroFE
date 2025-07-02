@@ -158,10 +158,9 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 					break;
 					case GST_STATE_READY:
 					case GST_STATE_NULL:
+					default:
 					video->actualState_ = IVideo::VideoState::None;
 					video->pipeLineReady_ = false;
-					break;
-					default:
 					break;
 				}
 
@@ -534,13 +533,6 @@ bool GStreamerVideo::unload() {
 		padProbeId_ = 0; // Mark as no active probe from our side
 	}
 
-	// Remove bus watch
-	if (busWatchId_ != 0) {
-		g_source_remove(busWatchId_);
-		busWatchId_ = 0;
-		LOG_DEBUG("GStreamerVideo", "unload(): Removed bus watch for " + currentFile_);
-	}
-
 	stagedSample_.clear();
 
 	// Set pipeline to GST_STATE_READY to release resources but keep pipeline structure for reuse
@@ -549,15 +541,15 @@ bool GStreamerVideo::unload() {
 	if (gst_element_set_state(playbin_, GST_STATE_READY) == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "unload(): Failed to set playbin state to READY for " + currentFile_);
 		hasError_.store(true, std::memory_order_release);
-		return false; // Indicate failure to unload
+		return false;
 	}
 
-	// Flush the bus to discard any pending messages from the previous playback
-	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
-	if (bus) {
-		gst_bus_set_flushing(bus, TRUE); // Start flushing
-		gst_object_unref(bus);
-		LOG_DEBUG("GStreamerVideo", "unload(): Flushed bus for " + currentFile_);
+	// Wait until the state change completes (timeout in nanoseconds; GST_CLOCK_TIME_NONE = infinite)
+	GstStateChangeReturn stateReturn = gst_element_get_state(playbin_, nullptr, nullptr, GST_CLOCK_TIME_NONE);
+	if (stateReturn != GST_STATE_CHANGE_SUCCESS) {
+		LOG_ERROR("GStreamerVideo", "unload(): Timed out or failed waiting for READY state for " + currentFile_);
+		hasError_.store(true, std::memory_order_release);
+		return false;
 	}
 
 	// --- 4. Reset Instance State for Reuse ---
@@ -763,6 +755,13 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		this,     // user_data, e.g., your GStreamerVideo instance
 		nullptr   // GDestroyNotify
 	);
+	
+	if (!busWatchId_) {
+		GstBus* bus = gst_element_get_bus(playbin_);
+		busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
+		gst_object_unref(bus);
+	}
+	
 	initializeUpdateFunction();
 
 	return true;
@@ -847,13 +846,6 @@ bool GStreamerVideo::play(const std::string& file) {
 		LOG_ERROR("GStreamerVideo", "Failed to get sink pad from videoSink_ for file: " + file);
 		hasError_.store(true);
 		return false;
-	}
-
-	GstBus* bus = gst_element_get_bus(playbin_);
-	if (bus) {
-		gst_bus_set_flushing(bus, FALSE); // Ensure bus is not in flushing state before adding watch
-		busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
-		gst_object_unref(bus);
 	}
 
 	// Convert file path to URI

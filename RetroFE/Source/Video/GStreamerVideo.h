@@ -47,15 +47,11 @@ extern "C" {
 
 class GStreamerVideo final : public IVideo {
 
-    std::function<void(int width, int height)> dimensionsReadyCallback_;
-
 public:
     explicit GStreamerVideo(int monitor);
     GStreamerVideo(const GStreamerVideo&) = delete;
     GStreamerVideo& operator=(const GStreamerVideo&) = delete;
     ~GStreamerVideo() override;
-
-    static IVideo::VideoState toVideoState(GstState state);
 
     // --- Interface methods ---
     bool initialize() override;
@@ -91,7 +87,7 @@ public:
     IVideo::VideoState getTargetState() const override { return targetState_; }
     IVideo::VideoState getActualState() const override { return actualState_; }
     bool isPipelineReady() const override {
-        return pipeLineReady_.load(std::memory_order_acquire);
+        return pipeLineReady_;
 	}
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
@@ -126,8 +122,6 @@ private:
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
     std::atomic<bool> hasError_{ false };              // Set by pad probe, read main
-    std::atomic<bool> pipeLineReady_{ false };
-
 
     // === Main-thread only ===
     IVideo::VideoState targetState_{ IVideo::VideoState::None };
@@ -148,6 +142,7 @@ private:
     bool softOverlay_;
     int perspectiveCorners_[8]{ 0 };
     bool hasPerspective_{ false };
+    bool pipeLineReady_{ false };
 
     // === GStreamer and SDL resource pointers ===
     GstElement* playbin_{ nullptr };
