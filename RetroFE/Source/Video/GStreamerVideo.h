@@ -22,7 +22,6 @@
 #include "IVideo.h"
 #include <atomic>
 #include <string>
-#include <functional>
 #include <mutex>
 #include <vector>
 
