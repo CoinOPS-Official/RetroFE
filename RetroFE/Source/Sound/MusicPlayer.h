@@ -84,7 +84,7 @@ public:
     bool loadMusicFolder(const std::string& folderPath);
 
     // Playback Control
-    bool playMusic(int index = -1, int customFadeMs = -1);  // -1 means use current or random track
+    bool playMusic(int index = -1, int customFadeMs = -1, double position = -1);  // -1 means use current or random track
     bool pauseMusic(int customFadeMs = -1);
     bool resumeMusic(int customFadeMs = -1);
     bool stopMusic(int customFadeMs = -1);

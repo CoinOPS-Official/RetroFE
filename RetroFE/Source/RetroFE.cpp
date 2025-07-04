@@ -2175,7 +2175,15 @@ bool RetroFE::run() {
 			case RETROFE_LAUNCH_REQUEST:
 			if (currentPage_ && currentPage_->isIdle())
 			{
+				bool unloadSDL = false;
+				config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
+				int currentTrack;
+				double currentPosition;
 				nextPageItem_ = currentPage_->getSelectedItem();
+				if (musicPlayer_ && unloadSDL){
+					currentTrack = musicPlayer_->getCurrentTrackIndex();
+					currentPosition = musicPlayer_->saveCurrentMusicPosition();
+				}
 				launchEnter();
 				CollectionInfoBuilder cib(config_, *metadb_);
 				std::string lastPlayedSkipCollection = "";
@@ -2203,7 +2211,8 @@ bool RetroFE::run() {
 					if (updateLastPlayed)
 					{
 						cib.updateLastPlayedPlaylist(currentPage_->getCollection(), nextPageItem_, size);
-						currentPage_->updateReloadables(0);
+						if (!unloadSDL)
+							currentPage_->updateReloadables(0);
 					}
 				}
 
@@ -2212,8 +2221,6 @@ bool RetroFE::run() {
 				if (l.run(nextPageItem_->collectionInfo->name, nextPageItem_, currentPage_))
 				{
 					attract_.reset();
-					bool unloadSDL = false;
-					config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
 					if (unloadSDL)
 					{
 						launchExit();
@@ -2231,7 +2238,12 @@ bool RetroFE::run() {
 						currentPage_->setScrollOffsetIndex(0);
 						currentPage_->reallocateMenuSpritePoints();
 					}
+
 					launchExit();
+					if (unloadSDL && musicPlayer_)
+					{
+						musicPlayer_->playMusic(currentTrack, -1, currentPosition);
+					}
 					setState(RETROFE_LAUNCH_EXIT);
 				}
 			}

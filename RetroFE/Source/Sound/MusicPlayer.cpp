@@ -802,30 +802,23 @@ std::string MusicPlayer::getTrackAlbum(int index) const {
 	return trackMetadata_[index].album;
 }
 
-bool MusicPlayer::playMusic(int index, int customFadeMs) {
+bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
 	// Use default fade if -1 is passed
 	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
 	// Validate index
 	if (index == -1)
 	{
-		// Use current or choose default as in your original code
 		if (currentIndex_ >= 0)
-		{
 			index = currentIndex_;
-		}
 		else if (shuffleMode_ && !musicFiles_.empty())
 		{
 			if (shuffledIndices_.empty())
-			{
 				setShuffle(true);
-			}
 			index = shuffledIndices_[currentShufflePos_];
 		}
 		else if (!musicFiles_.empty())
-		{
 			index = 0;
-		}
 		else
 		{
 			LOG_WARNING("MusicPlayer", "No music tracks available to play");
@@ -833,7 +826,7 @@ bool MusicPlayer::playMusic(int index, int customFadeMs) {
 		}
 	}
 
-	// Check that the index is valid.
+	// Check that the index is valid
 	if (index < 0 || index >= static_cast<int>(musicFiles_.size()))
 	{
 		LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
@@ -861,12 +854,11 @@ bool MusicPlayer::playMusic(int index, int customFadeMs) {
 			else
 			{
 				LOG_INFO("MusicPlayer", "Fading out current track before changing to new track");
-				return true; // Return true, the actual track change will happen in the callback
+				return true; // The actual track change will happen in the callback
 			}
 		}
 		else
 		{
-			// No fade, stop immediately
 			Mix_HaltMusic();
 		}
 	}
@@ -890,13 +882,45 @@ bool MusicPlayer::playMusic(int index, int customFadeMs) {
 		}
 		else
 		{
-			// If for some reason the track isn't in the current shuffle order, regenerate it.
 			setShuffle(true);
 		}
 	}
 
-	// Play the music with fade-in if specified
-	int result;
+	int result = 0;
+	bool usePosition = (position >= 0.0);
+
+#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
+	if (useFadeMs > 0)
+	{
+		if (usePosition)
+		{
+			result = Mix_FadeInMusicPos(currentMusic_, loopMode_ ? -1 : 1, useFadeMs, position);
+			LOG_INFO("MusicPlayer", "Fading in track: " + musicNames_[index] + " at position: " + std::to_string(position) + "s over " + std::to_string(useFadeMs) + "ms");
+		}
+		else
+		{
+			result = Mix_FadeInMusic(currentMusic_, loopMode_ ? -1 : 1, useFadeMs);
+			LOG_INFO("MusicPlayer", "Fading in track: " + musicNames_[index] + " over " + std::to_string(useFadeMs) + "ms");
+		}
+	}
+	else
+	{
+		result = Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
+		LOG_INFO("MusicPlayer", (usePosition ? "Playing track with seek: " : "Playing track: ") + musicNames_[index]);
+		if (result != -1 && usePosition)
+		{
+			if (Mix_SetMusicPosition(position) == -1)
+			{
+				LOG_WARNING("MusicPlayer", "Seeking not supported for this format or in this mode: " + std::to_string(position));
+			}
+			else
+			{
+				LOG_INFO("MusicPlayer", "Seeked to position: " + std::to_string(position) + "s after starting playback");
+			}
+		}
+	}
+#else
+	// SDL_mixer < 2.6.0 does NOT support position on fade-in
 	if (useFadeMs > 0)
 	{
 		result = Mix_FadeInMusic(currentMusic_, loopMode_ ? -1 : 1, useFadeMs);
@@ -905,8 +929,20 @@ bool MusicPlayer::playMusic(int index, int customFadeMs) {
 	else
 	{
 		result = Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
-		LOG_INFO("MusicPlayer", "Playing track: " + musicNames_[index]);
+		LOG_INFO("MusicPlayer", (usePosition ? "Playing track with seek: " : "Playing track: ") + musicNames_[index]);
+		if (result != -1 && usePosition)
+		{
+			if (Mix_SetMusicPosition(position) == -1)
+			{
+				LOG_WARNING("MusicPlayer", "Seeking not supported for this format or in this mode: " + std::to_string(position));
+			}
+			else
+			{
+				LOG_INFO("MusicPlayer", "Seeked to position: " + std::to_string(position) + "s after starting playback");
+			}
+		}
 	}
+#endif
 
 	if (result == -1)
 	{

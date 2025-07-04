@@ -80,6 +80,7 @@ using ExtraCheckFn = std::function<bool()>;
 WaitResult runFrontendWaitLoop(
 	Launcher* self,
 	Page* currentPage,
+	Configuration config,
 	HANDLE processHandle,             // NULL if not applicable
 	double maxSeconds,                // 0 or negative = infinite
 	InputCheckFn inputCheck,          // returns true on user action
@@ -88,11 +89,14 @@ WaitResult runFrontendWaitLoop(
 	int startScreen,                  // typically 1 for secondary screens
 	int frameMs                       // frame duration in ms (16=~60Hz, 33=~30Hz)
 ) {
+	bool unloadSDL = false;
+	config.getProperty(OPTION_UNLOADSDL, unloadSDL);
 	Uint64 frequency = SDL_GetPerformanceFrequency();
 	Uint64 lastFrameTimeMs = SDL_GetPerformanceCounter() * (Uint64)1000.0 / frequency;
 	auto startTime = std::chrono::high_resolution_clock::now();
 	int screenCount = SDL::getScreenCount();
-	self->initDirectInput();
+
+
 
 	while (true) {
 		// Message pump
@@ -109,7 +113,8 @@ WaitResult runFrontendWaitLoop(
 		while (g_main_context_pending(nullptr)) {
 			g_main_context_iteration(nullptr, false);
 		}
-		currentPage->update(deltaTime);
+		if (!unloadSDL)
+			currentPage->update(deltaTime);
 
 		// Animate and draw secondary screens
 		if (shouldAnimate && currentPage) {
@@ -192,6 +197,8 @@ BOOL CALLBACK Launcher::enumCallback(const DIDEVICEINSTANCE* instance, VOID* ref
 
 void Launcher::initDirectInput() {
 	SDL_Window* sdlWindow = SDL::getWindow(0);
+	if (sdlWindow == nullptr)
+		return;
 
 	SDL_SysWMinfo wmInfo;
 	SDL_VERSION(&wmInfo.version);
@@ -1270,6 +1277,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			runFrontendWaitLoop(
 				this,
 				currentPage,
+				config_,
 				nullptr,
 				0.5,            // 500ms warmup
 				nullptr, nullptr,
@@ -1400,6 +1408,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			WaitResult attractResult = runFrontendWaitLoop(
 				this,
 				currentPage,
+				config_,
 				hLaunchedProcess,
 				attractModeLaunchRunTime,
 				checkInputs,
@@ -1427,6 +1436,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 						WaitResult waitResult = runFrontendWaitLoop(
 							this,
 							currentPage,
+							config_,
 							hLaunchedProcess,
 							0, // infinite wait
 							[]() { return false; }, // inputCheck: never triggers
@@ -1503,6 +1513,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			runFrontendWaitLoop(
 				this,
 				currentPage,
+				config_,
 				hLaunchedProcess,
 				0, // infinite wait
 				[&]() -> bool {
