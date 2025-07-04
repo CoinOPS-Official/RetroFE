@@ -585,9 +585,15 @@ void Launcher::LEDBlinky(int command, std::string collection, Item* collectionIt
 	}
 	std::string args = std::to_string(command);
 	bool wait = false;
-	if (command == 2)
-		wait = true;
-	if (command == 8) {
+	if ( command == 2 ) {
+        bool LEDBlinkyCloseOnExit;
+        config_.getProperty(OPTION_LEDBLINKYCLOSEONEXIT, LEDBlinkyCloseOnExit);
+        if (LEDBlinkyCloseOnExit == true) {
+            wait = true;
+        }
+        else wait = false;
+    }
+	if ( command == 8 ) {
 		std::string launcherName = collectionItem->collectionInfo->launcher;
 		std::string launcherFile = Utils::combinePath(Configuration::absolutePath, "collections", collectionItem->collectionInfo->name, "launchers", collectionItem->name + ".conf");
 		if (std::ifstream launcherStream(launcherFile.c_str()); launcherStream.good()) // Launcher file found
