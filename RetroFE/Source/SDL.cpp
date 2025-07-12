@@ -51,6 +51,8 @@ bool SDL::initialize(Configuration& config) {
 	int audioBuffers = 4096;
 	bool hideMouse;
 
+	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+
 #ifdef WIN32
 	if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE))
 	{

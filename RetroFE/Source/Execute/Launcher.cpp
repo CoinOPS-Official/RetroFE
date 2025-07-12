@@ -40,9 +40,6 @@
 #include <Windows.h>
 #include <functional>
 #include <chrono>
-#pragma comment(lib, "Xinput.lib")
-#include <Xinput.h>
-#include <dinput.h>
 #include <cstring>
 #include "StdAfx.h"
 #include <tlhelp32.h>
@@ -96,8 +93,6 @@ WaitResult runFrontendWaitLoop(
 	auto startTime = std::chrono::high_resolution_clock::now();
 	int screenCount = SDL::getScreenCount();
 
-
-
 	while (true) {
 		// Message pump
 		MSG msg;
@@ -146,13 +141,11 @@ WaitResult runFrontendWaitLoop(
 
 		// Input check (user interruption)
 		if (inputCheck && inputCheck()) {
-			self->shutdownDirectInput();
 			return WaitResult::UserInput;
 		}
 
 		// Window/process closed/other exit (optional)
 		if (extraCheck && extraCheck()) {
-			self->shutdownDirectInput();
 			return WaitResult::ProcessExit;
 		}
 
@@ -160,7 +153,6 @@ WaitResult runFrontendWaitLoop(
 		if (processHandle) {
 			DWORD exitCode = STILL_ACTIVE;
 			if (!GetExitCodeProcess(processHandle, &exitCode) || exitCode != STILL_ACTIVE) {
-				self->shutdownDirectInput();
 				return WaitResult::ProcessExit;
 			}
 		}
@@ -169,7 +161,6 @@ WaitResult runFrontendWaitLoop(
 		if (maxSeconds > 0) {
 			auto now = std::chrono::high_resolution_clock::now();
 			if (std::chrono::duration_cast<std::chrono::milliseconds>(now - startTime).count() >= maxSeconds * 1000) {
-				self->shutdownDirectInput();
 				return WaitResult::Timeout;
 			}
 		}
@@ -182,56 +173,8 @@ WaitResult runFrontendWaitLoop(
 			MsgWaitForMultipleObjects(0, nullptr, FALSE, frameMs, QS_ALLINPUT);
 		}
 	}
-	self->shutdownDirectInput();
 	return WaitResult::None;
 }
-
-BOOL CALLBACK Launcher::enumCallback(const DIDEVICEINSTANCE* instance, VOID* ref) {
-	auto self = static_cast<Launcher*>(ref);
-	if (SUCCEEDED(self->dinput_->CreateDevice(instance->guidInstance, &self->dinputDevice_, nullptr))) {
-		return DIENUM_STOP;
-	}
-	return DIENUM_CONTINUE;
-}
-
-
-void Launcher::initDirectInput() {
-	SDL_Window* sdlWindow = SDL::getWindow(0);
-	if (sdlWindow == nullptr)
-		return;
-
-	SDL_SysWMinfo wmInfo;
-	SDL_VERSION(&wmInfo.version);
-	SDL_GetWindowWMInfo(sdlWindow, &wmInfo);
-	HWND hwnd = wmInfo.info.win.window;
-
-	if (FAILED(DirectInput8Create(GetModuleHandle(nullptr), DIRECTINPUT_VERSION,
-		IID_IDirectInput8, (void**)&dinput_, nullptr)))
-		return;
-
-	dinput_->EnumDevices(DI8DEVCLASS_GAMECTRL, enumCallback, this, DIEDFL_ATTACHEDONLY);
-
-	if (dinputDevice_) {
-		dinputDevice_->SetDataFormat(&c_dfDIJoystick2);
-		dinputDevice_->SetCooperativeLevel(hwnd, DISCL_BACKGROUND | DISCL_NONEXCLUSIVE);
-		dinputDevice_->Acquire();
-	}
-}
-
-void Launcher::shutdownDirectInput() {
-	if (dinputDevice_) {
-		dinputDevice_->Unacquire();     // Unhook the device from DirectInput
-		dinputDevice_->Release();       // Release the COM interface
-		dinputDevice_ = nullptr;
-	}
-
-	if (dinput_) {
-		dinput_->Release();             // Release the DirectInput interface
-		dinput_ = nullptr;
-	}
-}
-
-
 
 #endif
 
@@ -902,6 +845,7 @@ bool Launcher::simpleExecute(std::string executable, std::string args, std::stri
 
 bool Launcher::execute(std::string executable, std::string args, std::string currentDirectory, bool wait, Page* currentPage, bool isAttractMode, Item* collectionItem) {
 	bool retVal = false;
+	bool restrictorEnabled = false;
 	bool is4waySet = false;
 	bool firstInputWasExitCommand = false; // True if quitcombo was first input
 	std::string executionString = "\"" + executable + "\""; // Start with quoted executable
@@ -912,6 +856,17 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		quitCombo.clear(); // Clear default
 		Utils::listToVector(quitComboStr, quitCombo, ',');
 	}
+
+	std::vector<int> quitComboIndices;
+	for (const auto& btn : quitCombo) {
+		if (btn.rfind("joyButton", 0) == 0) {
+			int idx = std::stoi(btn.substr(9));
+			quitComboIndices.push_back(idx);
+		}
+	}
+
+	std::map<SDL_JoystickID, std::map<int, bool>> joystickButtonState;
+	std::map<SDL_JoystickID, std::map<int, std::chrono::high_resolution_clock::time_point>> joystickButtonTimeState;
 
 	if (!args.empty()) {
 		executionString += " " + args; // Append arguments if they exist
@@ -1161,67 +1116,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		}
 	}
 
-	std::map<std::string, WORD> sdlToXInput = {
-		{ "joyButton0", XINPUT_GAMEPAD_A },
-		{ "joyButton1", XINPUT_GAMEPAD_B },
-		{ "joyButton2", XINPUT_GAMEPAD_X },
-		{ "joyButton3", XINPUT_GAMEPAD_Y },
-		{ "joyButton4", XINPUT_GAMEPAD_LEFT_SHOULDER },
-		{ "joyButton5", XINPUT_GAMEPAD_RIGHT_SHOULDER },
-		{ "joyButton6", XINPUT_GAMEPAD_BACK },
-		{ "joyButton7", XINPUT_GAMEPAD_START },
-		{ "joyButton8", XINPUT_GAMEPAD_LEFT_THUMB },
-		{ "joyButton9", XINPUT_GAMEPAD_RIGHT_THUMB },
-	};
-
-	std::map<std::string, int> sdlToDInput_ = {
-	{ "joyButton0", 0 }, { "joyButton1", 1 },
-	{ "joyButton2", 2 }, { "joyButton3", 3 },
-	{ "joyButton4", 4 }, { "joyButton5", 5 },
-	{ "joyButton6", 6 }, { "joyButton7", 7 },
-	{ "joyButton8", 8 }, { "joyButton9", 9 }
-	};
-
-	auto isQuitComboPressed = [&]() -> bool {
-		// First try XInput
-		for (DWORD userIndex = 0; userIndex < XUSER_MAX_COUNT; ++userIndex) {
-			XINPUT_STATE state = {};
-			if (XInputGetState(userIndex, &state) == ERROR_SUCCESS) {
-				bool allPressed = true;
-				for (const auto& btn : quitCombo) {
-					auto it = sdlToXInput.find(btn);
-					if (it == sdlToXInput.end() || (state.Gamepad.wButtons & it->second) == 0) {
-						allPressed = false;
-						break;
-					}
-				}
-				if (allPressed)
-					return true;
-			}
-		}
-
-		// Fallback to DirectInput
-		if (dinputDevice_) {
-			DIJOYSTATE2 js = {};
-			if (SUCCEEDED(dinputDevice_->Poll()) &&
-				SUCCEEDED(dinputDevice_->GetDeviceState(sizeof(js), &js))) {
-				bool allPressed = true;
-				for (const auto& btn : quitCombo) {
-					auto it = sdlToDInput_.find(btn);
-					if (it == sdlToDInput_.end() || js.rgbButtons[it->second] == 0) {
-						allPressed = false;
-						break;
-					}
-				}
-				if (allPressed)
-					return true;
-			}
-		}
-
-		return false;
-		};
-
-
 	if (!handleObtained) {
 		LOG_WARNING("Launcher", "No handle was obtained; process monitoring and stats updates will not occur.");
 		// Optional: you may want to log more detail about what was attempted here.
@@ -1230,7 +1124,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 	// Monitoring the process
 	if (handleObtained) {
-		bool restrictorEnabled = false;
 		config_.getProperty("restrictorEnabled", restrictorEnabled);
 		// Condition to check if not in attract mode
 		if (!isAttractMode && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
@@ -1245,6 +1138,107 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				}
 				}).detach();
 		}
+
+		// Flags for "Last Played" logic
+		bool anyInputRegistered = false;     // True once *any* input is detected
+		auto checkInputs = [&]() -> bool {
+			// --- Phase 1: Check for "Quit" actions. These are always active. ---
+
+			// Check for ESC key quit.
+			if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+				if (!anyInputRegistered) {
+					firstInputWasExitCommand = true;
+					LOG_INFO("Launcher", "Quit via ESC key pressed.");
+				}
+				anyInputRegistered = true;
+				return true; // Always exit on ESC.
+			}
+
+			// --- Main SDL Event Loop for Controllers ---
+			SDL_Event e;
+			while (SDL_PollEvent(&e)) {
+				if (e.type == SDL_JOYBUTTONDOWN) {
+					// Update state first.
+					joystickButtonState[e.jbutton.which][e.jbutton.button] = true;
+					joystickButtonTimeState[e.jbutton.which][e.jbutton.button] = std::chrono::high_resolution_clock::now();
+
+					// --- Check for the timed quit combo ---
+					bool isQuitCombo = true;
+					if (quitComboIndices.empty()) {
+						isQuitCombo = false;
+					}
+					else {
+						for (int idx : quitComboIndices) {
+							if (joystickButtonState[e.jbutton.which].count(idx) == 0 || !joystickButtonState[e.jbutton.which][idx]) {
+								isQuitCombo = false;
+								break;
+							}
+						}
+					}
+
+					if (isQuitCombo) {
+						// Potential combo found, now check the timing.
+						std::chrono::high_resolution_clock::time_point earliest, latest;
+						bool firstBtn = true;
+						for (int idx : quitComboIndices) {
+							auto t = joystickButtonTimeState[e.jbutton.which][idx];
+							if (firstBtn) { earliest = latest = t; firstBtn = false; }
+							else {
+								if (t < earliest) earliest = t;
+								if (t > latest) latest = t;
+							}
+						}
+
+						if (std::chrono::duration_cast<std::chrono::milliseconds>(latest - earliest).count() <= 200) {
+							// It's a valid, timed combo! This is a "Quit" action.
+							if (!anyInputRegistered) {
+								firstInputWasExitCommand = true;
+								LOG_INFO("Launcher", "Quit combo detected.");
+							}
+							anyInputRegistered = true;
+							return true; // Always exit on a valid quit combo.
+						}
+					}
+
+					// --- Phase 2: Check for "Play" actions. These are ONLY active in attract mode. ---
+					// If we've reached this point, it means the button press was NOT a quit combo.
+
+					// NEW: Only treat this as input if we're in attract mode.
+					if (isAttractMode) {
+						// This was just a regular button press.
+						if (!anyInputRegistered) {
+							LOG_INFO("Launcher", "Controller input detected in attract mode - will be added to last played.");
+						}
+						anyInputRegistered = true;
+						return true; // Exit the wait loop because of user interaction.
+					}
+
+					// NEW: If not in attract mode, we do nothing and let the event loop continue.
+					// This button press is ignored for the normal "wait" mode.
+				}
+				else if (e.type == SDL_JOYBUTTONUP) {
+					// This is just state management, it doesn't trigger an exit.
+					joystickButtonState[e.jbutton.which][e.jbutton.button] = false;
+				}
+			}
+
+			// --- Phase 3: Check for other keyboard "Play" actions. ONLY active in attract mode. ---
+
+			if (isAttractMode) {
+				for (int virtualKey : {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, //A-Z
+					0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, //0-9
+					VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_SPACE, VK_TAB, VK_BACK, VK_SHIFT, VK_CONTROL, VK_MENU}) {
+					if (GetAsyncKeyState(virtualKey) & 0x8000) {
+						if (!anyInputRegistered) { LOG_INFO("Launcher", "Keyboard input detected in attract mode - will be added to last played"); }
+						anyInputRegistered = true;
+						return true; // Exit the wait loop because of user interaction.
+					}
+				}
+			}
+
+			// If we've gotten all the way here, no input that we care about for the current mode was detected.
+			return false;
+			};
 		if (isAttractMode) {
 			// --- Attract Mode Initialization ---
 
@@ -1259,9 +1253,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 			// Flags to track state during the loop
 			bool processTerminated = false;   // Becomes true if the process exits on its own
-
-			// Flags for "Last Played" logic
-			bool anyInputRegistered = false;     // True once *any* input is detected
 
 			// Variables for START+BACK combo detection
 			const int simultaneousThresholdMs = 200; // Max time diff for combo
@@ -1309,91 +1300,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				LOG_DEBUG("Launcher", "Game window not found immediately.");
 			}
 
-			// Lambda function to check for various user inputs (Keyboard, XInput Controller)
-			auto checkInputs = [&]() -> bool {
-				bool inputDetected = false;
-				auto currentTime = std::chrono::high_resolution_clock::now();
-
-				// (existing flag variables above: firstInputWasExitCommand, anyInputRegistered, etc.)
-
-				// Check ESC key first (immediate exit command)
-				if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
-					if (!anyInputRegistered) { firstInputWasExitCommand = true; LOG_INFO("Launcher", "ESC key pressed - game will not be added to last played"); }
-					else { LOG_DEBUG("Launcher", "ESC key pressed"); }
-					anyInputRegistered = true; inputDetected = true;
-				}
-
-				// --- Custom controller quitCombo support ---
-				static std::map<std::string, bool> btnDownState;
-				static std::map<std::string, std::chrono::high_resolution_clock::time_point> btnDownTime;
-
-				XINPUT_STATE state; ZeroMemory(&state, sizeof(XINPUT_STATE));
-				if (!inputDetected && XInputGetState(0, &state) == ERROR_SUCCESS) {
-					bool allComboPressed = true;
-					std::chrono::high_resolution_clock::time_point earliest, latest;
-					bool firstBtn = true;
-					// For each button in quitCombo, track timing
-					for (const auto& btn : quitCombo) {
-						auto it = sdlToXInput.find(btn);
-						if (it == sdlToXInput.end()) {
-							allComboPressed = false;
-							break; // Unknown button name
-						}
-						bool btnIsDown = (state.Gamepad.wButtons & it->second) != 0;
-
-						// Record the time the button was pressed down (only on edge)
-						if (btnIsDown && (!btnDownState[btn])) {
-							btnDownTime[btn] = currentTime;
-							btnDownState[btn] = true;
-							LOG_DEBUG("Launcher", btn + " pressed");
-						}
-						if (!btnIsDown && btnDownState[btn]) {
-							btnDownState[btn] = false;
-						}
-						if (btnIsDown) {
-							if (firstBtn) {
-								earliest = latest = btnDownTime[btn];
-								firstBtn = false;
-							}
-							else {
-								if (btnDownTime[btn] < earliest) earliest = btnDownTime[btn];
-								if (btnDownTime[btn] > latest)  latest = btnDownTime[btn];
-							}
-						}
-						else {
-							allComboPressed = false;
-						}
-					}
-					// All buttons must be down, and pressed within the threshold
-					if (allComboPressed && quitCombo.size() > 0 &&
-						std::chrono::duration_cast<std::chrono::milliseconds>(latest - earliest).count() <= simultaneousThresholdMs) {
-						if (!anyInputRegistered) {
-							firstInputWasExitCommand = true;
-						}
-						inputDetected = true;
-					}
-					// Any other controller buttons
-					if (!inputDetected && state.Gamepad.wButtons != 0) {
-						if (!anyInputRegistered) { LOG_INFO("Launcher", "Controller input - game will be added to last played"); }
-						else { LOG_DEBUG("Launcher", "Controller input detected"); }
-						anyInputRegistered = true; inputDetected = true;
-					}
-				}
-				// Other keyboard keys if no input detected yet
-				if (!inputDetected) {
-					for (int virtualKey : {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, //A-Z
-						0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, //0-9
-						VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_SPACE, VK_TAB, VK_BACK, VK_SHIFT, VK_CONTROL, VK_MENU}) {
-						if (GetAsyncKeyState(virtualKey) & 0x8000) {
-							if (!anyInputRegistered) { LOG_INFO("Launcher", "Keyboard input - game will be added to last played"); }
-							else { LOG_DEBUG("Launcher", "Keyboard input detected"); }
-							anyInputRegistered = true; inputDetected = true; break;
-						}
-					}
-				}
-				return inputDetected;
-				};
-
 			auto windowClosedCheck = [&]() -> bool {
 				if (gameWindow && !IsWindow(gameWindow)) {
 					processTerminated = true;
@@ -1421,41 +1327,80 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 			switch (attractResult) {
 				case WaitResult::UserInput: {
-					interruptionTime = std::chrono::high_resolution_clock::now();
-					userInputDetected = true;
-					if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled && !firstInputWasExitCommand) {
-						is4waySet = true;
-						std::thread([]() {
-							bool result = gRestrictor->setWay(4);
-							if (!result) LOG_ERROR("Launcher", "Failed to set restrictor to 4-way mode (async)");
-							else LOG_INFO("Launcher", "Restrictor set to 4-way mode (async)");
-							}).detach();
+					// This is the key: we immediately check the flag to decide which path to take.
+					if (firstInputWasExitCommand) {
+						//
+						// --- PATH 1: The user pressed a QUIT command (ESC or combo) ---
+						//
+						LOG_INFO("Launcher", "User interrupted attract mode with a quit command. Terminating process immediately.");
+
+						// Terminate the process. This logic is copied from your Timeout case.
+						if (jobAssigned && hJob != NULL) {
+							TerminateJobObject(hJob, 1);
+						}
+						else if (hLaunchedProcess != NULL) {
+							DWORD processId = GetProcessId(hLaunchedProcess);
+							if (processId != 0) {
+								std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
+								std::set<DWORD> processedIds;
+								TerminateProcessAndChildren(processId, exeName, processedIds);
+							}
+						}
+
+						// In this path, we do NOT wait for the process to exit naturally, and we do NOT add to "Last Played".
+						// The `break;` will simply exit the switch and proceed to the end of the `execute` function.
+
 					}
-					// Wait for process exit (as before)
-					if (hLaunchedProcess != NULL) {
-						WaitResult waitResult = runFrontendWaitLoop(
-							this,
-							currentPage,
-							config_,
-							hLaunchedProcess,
-							0, // infinite wait
-							[]() { return false; }, // inputCheck: never triggers
-							[&]() -> bool {
+					else {
+						//
+						// --- PATH 2: The user pressed a "PLAY" command (any other key/button) ---
+						//
+						LOG_INFO("Launcher", "User interrupted attract mode with a play command. Waiting for game to exit naturally.");
+
+						// This is all of your original logic from the UserInput case.
+						interruptionTime = std::chrono::high_resolution_clock::now();
+						userInputDetected = true;
+
+						// Handle the 4-way restrictor if needed.
+						if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
+							is4waySet = true;
+							std::thread([]() {
+								bool result = gRestrictor->setWay(4);
+								if (!result) LOG_ERROR("Launcher", "Failed to set restrictor to 4-way mode (async)");
+								else LOG_INFO("Launcher", "Restrictor set to 4-way mode (async)");
+								}).detach();
+						}
+
+						// Now, wait for the game to finish on its own.
+						if (hLaunchedProcess != NULL) {
+							// We create a new, minimal check for the window closing, just as you did.
+							auto gameWindowClosedCheck = [&]() -> bool {
 								if (gameWindow && !IsWindow(gameWindow)) {
 									LOG_INFO("Launcher", "Game window handle became invalid (closed).");
 									return true;
 								}
 								return false;
-							},
-							shouldAnimate,
-							1,
-							33
-						);
-						LOG_INFO("Launcher", "Process finished exiting after user interruption.");
-					}
-					else LOG_WARNING("Launcher", "User interrupted, but no process handle to wait on.");
-					// Add to last played as before (only if !firstInputWasExitCommand)
-					if (!firstInputWasExitCommand) {
+								};
+
+							runFrontendWaitLoop(
+								this,
+								currentPage,
+								config_,
+								hLaunchedProcess,
+								0, // infinite wait
+								[]() { return false; }, // No user input check needed here, we just wait for the process.
+								gameWindowClosedCheck,
+								shouldAnimate,
+								1,
+								33
+							);
+							LOG_INFO("Launcher", "Process finished exiting after user interruption.");
+						}
+						else {
+							LOG_WARNING("Launcher", "User interrupted, but no process handle to wait on.");
+						}
+
+						// Since it was a "Play" command, we now add it to the "Last Played" playlist.
 						LOG_INFO("Launcher", "Adding game to last played playlist.");
 						CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
 						std::string lastPlayedSkipCollection = ""; int size = 0;
@@ -1467,10 +1412,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 							if (updateLastPlayed) { cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, size); }
 						}
 					}
-					else {
-						LOG_INFO("Launcher", "Game will not be added to last played (exit command used).");
-					}
-					break;
+					break; // End of the UserInput case
 				}
 				case WaitResult::ProcessExit: {
 					LOG_INFO("Launcher", "Process terminated naturally before attract mode timeout or user input.");
@@ -1516,36 +1458,11 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				config_,
 				hLaunchedProcess,
 				0, // infinite wait
-				[&]() -> bool {
-					// Input check: force quit combo
-					if (isQuitComboPressed()) {
-						if (!comboLatch) {
-							comboLatch = true;
-							killed = true;
-							LOG_INFO("Launcher", "Quit combo (joyButton6+joyButton7) pressed, terminating launched process/job.");
-							if (jobAssigned && hJob != NULL) {
-								TerminateJobObject(hJob, 1);
-							}
-							else if (hLaunchedProcess) {
-								TerminateProcess(hLaunchedProcess, 1);
-							}
-							// --- ADD THIS ---
-							if (!userInputDetected) {
-								firstInputWasExitCommand = true; // Only mark if *first* input
-							}
-							userInputDetected = true;
-						}
-						return true; // Trigger exit from wait loop
-					}
-					else {
-						comboLatch = false;
-					}
-					return false;
-				},
-				nullptr, // No extra check needed; processHandle covers exit
+				checkInputs,
+				nullptr, // No extra check needed
 				shouldAnimate,
 				1,
-				33 // or 16 if you want 60Hz
+				33
 			);
 
 			LOG_INFO("Launcher", "Process completed.");
