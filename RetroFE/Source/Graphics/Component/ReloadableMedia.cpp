@@ -50,11 +50,7 @@ ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool la
 
 ReloadableMedia::~ReloadableMedia()
 {
-    Component::freeGraphicsMemory();
-    if (loadedComponent_ != nullptr) {
-        delete loadedComponent_;
-        loadedComponent_ = nullptr;
-    }
+    ReloadableMedia::freeGraphicsMemory();
 }
 
 void ReloadableMedia::enableTextureCache_(bool value) {
@@ -114,9 +110,9 @@ void ReloadableMedia::allocateGraphicsMemory()
 void ReloadableMedia::freeGraphicsMemory()
 {
     Component::freeGraphicsMemory();
-
-    if(loadedComponent_) {
-        loadedComponent_->freeGraphicsMemory();
+    if (loadedComponent_ != nullptr) {
+        delete loadedComponent_;
+        loadedComponent_ = nullptr;
     }
 }
 

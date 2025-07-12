@@ -482,7 +482,7 @@ void ReloadableText::ReloadTexture()
         }
 
         // Type changed or reallocation needed
-        imageInst_->freeGraphicsMemory();
+        //imageInst_->freeGraphicsMemory();
         delete imageInst_;
         imageInst_ = nullptr;
     }

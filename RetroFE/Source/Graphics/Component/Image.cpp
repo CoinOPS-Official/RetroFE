@@ -81,7 +81,7 @@ Image::Image(const std::string& file, const std::string& altFile, Page& p, int m
 }
 
 Image::~Image() {
-    freeGraphicsMemory();
+    Image::freeGraphicsMemory();
 }
 
 void Image::allocateGraphicsMemory() {

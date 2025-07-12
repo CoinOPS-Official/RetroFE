@@ -62,6 +62,7 @@ ReloadableScrollingText::ReloadableScrollingText(Configuration& config, bool sys
 
 ReloadableScrollingText::~ReloadableScrollingText( )
 {
+	ReloadableScrollingText::freeGraphicsMemory();
 }
 
 bool ReloadableScrollingText::loadFileText(const std::string& filePath) {

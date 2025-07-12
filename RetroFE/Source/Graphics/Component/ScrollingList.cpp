@@ -219,11 +219,13 @@ void ScrollingList::reallocateSpritePoints() {
     size_t scrollPointsSize = scrollPoints_->size();
     size_t itemsSize = items_->size();
 
+    // First, deallocate all
     for (size_t i = 0; i < scrollPointsSize; ++i) {
-        // Deallocate first, before re-allocating!
         deallocateTexture(i);
+    }
 
-        // Figure out which item this slot now represents
+    // Then, allocate all
+    for (size_t i = 0; i < scrollPointsSize; ++i) {
         size_t index = loopIncrement(itemIndex_, i, itemsSize);
         Item const* item = (*items_)[index];
 
@@ -235,7 +237,6 @@ void ScrollingList::reallocateSpritePoints() {
 
             ViewInfo* view = (*scrollPoints_)[i];
             resetTweens(c, (*tweenPoints_)[i], view, view, 0);
-            // No need to copy baseViewInfo here; old is gone.
         }
     }
 }
@@ -256,7 +257,7 @@ void ScrollingList::destroyItems()
     // Delete all components
     for (unsigned int i = 0; i < componentSize; ++i) {
         if (Component* component = data[i]) {
-            component->freeGraphicsMemory();
+            //component->freeGraphicsMemory();
             delete component;
             data[i] = nullptr;
         }
@@ -363,49 +364,112 @@ void ScrollingList::letterDown( )
     letterChange( false );
 }
 
-void ScrollingList::letterChange(bool increment)
-{
-    // First, check if items_ is nullptr or empty
-    if (!items_ || items_->empty()) return;
-    size_t itemSize = items_->size();
+void ScrollingList::letterChange(bool increment) {
+    if (!items_ || items_->empty()) {
+        return;
+    }
+    const size_t itemSize = items_->size();
 
-    Item const* startItem = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize];
-    std::string startname = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize]->lowercaseFullTitle();
+    // 2. Get the starting character for comparison (case-insensitively)
+    const size_t startItemOriginalIndex = getSelectedIndex();
+    std::string_view startTitle = (*items_)[startItemOriginalIndex]->fullTitle;
 
-    for (size_t i = 0; i < itemSize; ++i) {
-        size_t index = increment ? loopIncrement(itemIndex_, i, itemSize) : loopDecrement(itemIndex_, i, itemSize);
+    // If the current item's title is empty, we can't do a letter jump.
+    if (startTitle.empty()) {
+        return;
+    }
+    const char startChar = startTitle[0];
 
-        std::string endname = (*items_)[(index + selectedOffsetIndex_) % itemSize]->lowercaseFullTitle();
+    // Helper lambda to check if two characters represent a "letter change"
+    auto isLetterBoundary = [](char charA, char charB) -> bool {
+        // Cast to unsigned char is crucial for correctness with tolower/isalpha
+        const unsigned char ucA = static_cast<unsigned char>(charA);
+        const unsigned char ucB = static_cast<unsigned char>(charB);
 
-        if ((isalpha(startname[0]) ^ isalpha(endname[0])) ||
-            (isalpha(startname[0]) && isalpha(endname[0]) && startname[0] != endname[0])) {
-            itemIndex_ = index;
+        const bool isAlphaA = isalpha(ucA);
+        const bool isAlphaB = isalpha(ucB);
+
+        // Boundary is crossed if one is a letter and the other isn't...
+        if (isAlphaA != isAlphaB) {
+            return true;
+        }
+
+        // ...or if both are letters but they are different (case-insensitive).
+        if (isAlphaA && (tolower(ucA) != tolower(ucB))) {
+            return true;
+        }
+
+        return false;
+        };
+
+
+    // 3. Main loop: Find the first boundary in the specified direction.
+    size_t newIndex = itemIndex_; // Start with current index
+    for (size_t i = 1; i < itemSize; ++i) {
+        // Get the next index to check, wrapping around the list
+        const size_t loopIndex = increment ? loopIncrement(itemIndex_, i, itemSize)
+            : loopDecrement(itemIndex_, i, itemSize);
+
+        const size_t itemLookupIndex = loopIncrement(loopIndex, selectedOffsetIndex_, itemSize);
+        std::string_view endTitle = (*items_)[itemLookupIndex]->fullTitle;
+
+        if (endTitle.empty()) {
+            continue; // Skip items with no title
+        }
+
+        if (isLetterBoundary(startChar, endTitle[0])) {
+            newIndex = loopIndex; // We found the start of the next group
             break;
         }
     }
 
+    // 4. Handle the special case for decrementing ("Previous Letter")
+    // This logic aims to jump to the *start* of the previous letter group.
     if (!increment) {
         bool prevLetterSubToCurrent = false;
         config_.getProperty(OPTION_PREVLETTERSUBTOCURRENT, prevLetterSubToCurrent);
-        if (!prevLetterSubToCurrent || (*items_)[(itemIndex_ + 1 + selectedOffsetIndex_) % itemSize] == startItem) {
-            startname = (*items_)[(itemIndex_ + selectedOffsetIndex_) % itemSize]->lowercaseFullTitle();
 
-            for (size_t i = 0; i < itemSize; ++i) {
-                size_t index = loopDecrement(itemIndex_, i, itemSize);
+        // If the found item is the one right before our original start, the logic might need adjustment.
+        const size_t foundItemOriginalIndex = loopIncrement(newIndex, selectedOffsetIndex_, itemSize);
+        if ((*items_)[foundItemOriginalIndex] == (*items_)[startItemOriginalIndex]) {
+            // This can happen if the list is very small or has only one letter group.
+            // We didn't actually move, so no need to adjust.
+        }
+        // This complex condition checks if we need to do the "find the start of the previous group" logic.
+        else if (!prevLetterSubToCurrent || loopIncrement(itemIndex_, 1, itemSize) == newIndex) {
 
-                std::string endname = (*items_)[(index + selectedOffsetIndex_) % itemSize]->lowercaseFullTitle();
+            // We've jumped into a new group. Now, find the beginning of that group by searching backwards again.
+            // The character we are looking for is the one at the `newIndex` we just found.
+            std::string_view newGroupTitle = (*items_)[foundItemOriginalIndex]->fullTitle;
+            if (!newGroupTitle.empty())
+            {
+                const char newGroupChar = newGroupTitle[0];
 
-                if ((isalpha(startname[0]) ^ isalpha(endname[0])) ||
-                    (isalpha(startname[0]) && isalpha(endname[0]) && startname[0] != endname[0])) {
-                    itemIndex_ = loopIncrement(index, 1, itemSize);
-                    break;
+                // Scan backwards from our new position to find where this group started.
+                for (size_t i = 1; i < itemSize; ++i) {
+                    size_t prevIndexInGroup = loopDecrement(newIndex, i, itemSize);
+                    size_t prevItemLookupIndex = loopIncrement(prevIndexInGroup, selectedOffsetIndex_, itemSize);
+                    std::string_view prevTitle = (*items_)[prevItemLookupIndex]->fullTitle;
+
+                    if (prevTitle.empty()) continue;
+
+                    // If we find a *different* letter, it means the item *after* it was the true start.
+                    if (isLetterBoundary(newGroupChar, prevTitle[0])) {
+                        newIndex = loopIncrement(prevIndexInGroup, 1, itemSize); // The one after the boundary
+                        break;
+                    }
                 }
             }
         }
         else {
-            itemIndex_ = loopIncrement(itemIndex_, 1, itemSize);
+            // The config is set to "jump to previous item" and we are not at the boundary,
+            // so just move one step forward from the found boundary.
+            newIndex = loopIncrement(newIndex, 1, itemSize);
         }
     }
+
+    // 5. Update the list's index
+    itemIndex_ = newIndex;
 }
 
 size_t ScrollingList::loopIncrement(size_t currentIndex, size_t incrementAmount, size_t listSize) const {
@@ -754,68 +818,43 @@ void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> s
     scrollTween->Push(std::move(set));
 }
 
-bool ScrollingList::allocateTexture( size_t index, const Item *item )
-{
+bool ScrollingList::allocateTexture(size_t index, const Item* item) {
+    if (index >= components_.size()) return false;
 
-    if ( index >= components_.size( ) ) return false;
-
-    std::string imagePath;
-    std::string videoPath;
-
-    Component *t = nullptr;
-
-    ImageBuilder imageBuild;
-    VideoBuilder videoBuild{};
-
+    Component* t = nullptr;
     std::string layoutName;
-    config_.getProperty( OPTION_LAYOUT, layoutName );
+    config_.getProperty(OPTION_LAYOUT, layoutName);
+    std::string typeLC = Utils::toLower(imageType_);
+    std::string selectedItemName = getSelectedItemName();
 
-    std::string typeLC = Utils::toLower( imageType_ );
-
-    std::vector<std::string> names;
-    names.push_back( item->name );
-    names.push_back( item->fullTitle );
-    if ( item->cloneof != "" )
-        names.push_back( item->cloneof );
-    if ( typeLC == "numberbuttons" )
-        names.push_back( item->numberButtons );
-    if ( typeLC == "numberplayers" )
-        names.push_back( item->numberPlayers );
-    if ( typeLC == "year" )
-        names.push_back( item->year );
-    if ( typeLC == "title" )
-        names.push_back( item->title );
-    if ( typeLC == "developer" ) {
-        if ( item->developer == "" ) {
-            names.push_back( item->manufacturer );
-        }
-        else {
-            names.push_back( item->developer );
-        }
-    }
-    if ( typeLC == "manufacturer" )
-        names.push_back( item->manufacturer );
-    if ( typeLC == "genre" )
-        names.push_back( item->genre );
-    if ( typeLC == "ctrltype" )
-        names.push_back( item->ctrlType );
-    if ( typeLC == "joyways" )
-        names.push_back( item->joyWays );
-    if ( typeLC == "rating" )
-        names.push_back( item->rating );
-    if ( typeLC == "score" )
-        names.push_back( item->score );
+    // Compose name candidates once
+    std::vector<std::string> names = {
+        item->name, item->fullTitle
+    };
+    if (!item->cloneof.empty())        names.push_back(item->cloneof);
+    if (typeLC == "numberbuttons")     names.push_back(item->numberButtons);
+    if (typeLC == "numberplayers")     names.push_back(item->numberPlayers);
+    if (typeLC == "year")              names.push_back(item->year);
+    if (typeLC == "title")             names.push_back(item->title);
+    if (typeLC == "developer")         names.push_back(item->developer.empty() ? item->manufacturer : item->developer);
+    if (typeLC == "manufacturer")      names.push_back(item->manufacturer);
+    if (typeLC == "genre")             names.push_back(item->genre);
+    if (typeLC == "ctrltype")          names.push_back(item->ctrlType);
+    if (typeLC == "joyways")           names.push_back(item->joyWays);
+    if (typeLC == "rating")            names.push_back(item->rating);
+    if (typeLC == "score")             names.push_back(item->score);
     if (typeLC.rfind("playlist", 0) == 0)
         names.push_back(item->name);
     names.emplace_back("default");
 
-    std::string name;
-    std::string selectedItemName = getSelectedItemName();
-    for (const auto& name : names) {
-        std::string imagePath;
-        std::string videoPath;
+    ImageBuilder imageBuild;
+    VideoBuilder videoBuild;
 
-        // Determine paths based on modes
+    // -------- Main media search loop --------
+    for (const auto& name : names) {
+        std::string imagePath, videoPath;
+
+        // Precompute base/subPath for this iteration
         if (layoutMode_) {
             std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections");
             std::string subPath = commonMode_ ? "_common" : collectionName;
@@ -831,21 +870,18 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
             }
         }
 
-        // Create video or image
         if (!t) {
             if (videoType_ != "null") {
                 t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
             }
             else {
-                std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                std::string imageName = (selectedImage_ && item->name == selectedItemName) ? name + "-selected" : name;
                 t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
-
-        // Check for early exit
         if (t) break;
 
-        // Check sub-collection path for art
+        // --------- Sub-collection fallback ---------
         if (!commonMode_) {
             if (layoutMode_) {
                 std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name);
@@ -858,76 +894,72 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
 
             if (!t) {
                 if (videoType_ != "null") {
-                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1,  false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
+                    t = videoBuild.createVideo(videoPath, page, name, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
                 }
                 else {
-                    std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                    std::string imageName = (selectedImage_ && item->name == selectedItemName) ? name + "-selected" : name;
                     t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
                 }
             }
         }
-
-        // Check for early exit again
         if (t) break;
     }
 
-    // check collection path for art based on system name
-    if ( !t ) {
-        if ( layoutMode_ ) {
-            if ( commonMode_ )
-                imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
-            else
-                imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", item->name );
-            imagePath = Utils::combinePath( imagePath, "system_artwork" );
+    // -------- System collection fallback --------
+    if (!t) {
+        std::string imagePath, videoPath;
+        if (layoutMode_) {
+            imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", commonMode_ ? "_common" : item->name);
+            imagePath = Utils::combinePath(imagePath, "system_artwork");
             videoPath = imagePath;
         }
         else {
-            if ( commonMode_ ) {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common" );
-                imagePath = Utils::combinePath( imagePath, "system_artwork" );
+            if (commonMode_) {
+                imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common");
+                imagePath = Utils::combinePath(imagePath, "system_artwork");
                 videoPath = imagePath;
             }
             else {
-                config_.getMediaPropertyAbsolutePath( item->name, imageType_, true, imagePath );
-                config_.getMediaPropertyAbsolutePath( item->name, videoType_, true, videoPath );
+                config_.getMediaPropertyAbsolutePath(item->name, imageType_, true, imagePath);
+                config_.getMediaPropertyAbsolutePath(item->name, videoType_, true, videoPath);
             }
         }
-        if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( videoPath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
+        if (videoType_ != "null") {
+            t = videoBuild.createVideo(videoPath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
         }
         else {
-            name = imageType_;
+            std::string fallbackName = imageType_;
             if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+                t = imageBuild.CreateImage(imagePath, page, fallbackName + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
             if (!t) {
-                t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+                t = imageBuild.CreateImage(imagePath, page, fallbackName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
     }
 
-    // check rom directory path for art
-    if ( !t ) {
-        if ( videoType_ != "null" ) {
-            t = videoBuild.createVideo( item->filepath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
+    // -------- ROM directory fallback --------
+    if (!t) {
+        if (videoType_ != "null") {
+            t = videoBuild.createVideo(item->filepath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
         }
         else {
-            name = imageType_;
+            std::string fallbackName = imageType_;
             if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(item->filepath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+                t = imageBuild.CreateImage(item->filepath, page, fallbackName + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
             if (!t) {
-                t = imageBuild.CreateImage(item->filepath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+                t = imageBuild.CreateImage(item->filepath, page, fallbackName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
     }
 
-    // Check for fallback art in case no video could be found
-    if ( videoType_ != "null" && !t) {
+    // -------- Video fallback: fallback to image for each name --------
+    if (videoType_ != "null" && !t) {
         for (const auto& name : names) {
-            if (t) break; // Early exit if media is already created
+            if (t) break;
+            std::string imagePath, videoPath;
 
-            // Build paths for medium artwork
             if (layoutMode_) {
                 std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections");
                 std::string subPath = commonMode_ ? "_common" : collectionName;
@@ -942,12 +974,9 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
                     config_.getMediaPropertyAbsolutePath(collectionName, videoType_, false, videoPath);
                 }
             }
-
-            // Try to create image
-            std::string imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+            std::string imageName = (selectedImage_ && item->name == selectedItemName) ? name + "-selected" : name;
             t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
 
-            // Check sub-collection path for art if needed
             if (!t && !commonMode_) {
                 if (layoutMode_) {
                     std::string base = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", item->collectionInfo->name);
@@ -957,79 +986,83 @@ bool ScrollingList::allocateTexture( size_t index, const Item *item )
                     config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, imageType_, false, imagePath);
                     config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, videoType_, false, videoPath);
                 }
-
-                // Try to create image again
-                imageName = selectedImage_ && item->name == selectedItemName ? name + "-selected" : name;
+                imageName = (selectedImage_ && item->name == selectedItemName) ? name + "-selected" : name;
                 t = imageBuild.CreateImage(imagePath, page, imageName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
             }
         }
-
-        // check collection path for art based on system name
-        if ( !t ) {
-            if ( layoutMode_ ) {
-                if ( commonMode_ )
-                    imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
-                else
-                    imagePath = Utils::combinePath( Configuration::absolutePath, "layouts", layoutName, "collections", item->name );
-                imagePath = Utils::combinePath( imagePath, "system_artwork" );
+        // -------- System collection fallback --------
+        if (!t) {
+            std::string imagePath, videoPath;
+            if (layoutMode_) {
+                imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", commonMode_ ? "_common" : item->name);
+                imagePath = Utils::combinePath(imagePath, "system_artwork");
+                videoPath = imagePath;
             }
             else {
-                if ( commonMode_ ) {
-                    imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common" );
-                    imagePath = Utils::combinePath( imagePath, "system_artwork" );
+                if (commonMode_) {
+                    imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common");
+                    imagePath = Utils::combinePath(imagePath, "system_artwork");
+                    videoPath = imagePath;
                 }
                 else {
-                    config_.getMediaPropertyAbsolutePath( item->name, imageType_, true, imagePath );
+                    config_.getMediaPropertyAbsolutePath(item->name, imageType_, true, imagePath);
+                    config_.getMediaPropertyAbsolutePath(item->name, videoType_, true, videoPath);
                 }
             }
-            if ( !t ) {
-                name = imageType_;
+            if (videoType_ != "null") {
+                t = videoBuild.createVideo(videoPath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
+            }
+            else {
+                std::string fallbackName = imageType_;
                 if (selectedImage_ && item->name == selectedItemName) {
-                    t = imageBuild.CreateImage(imagePath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+                    t = imageBuild.CreateImage(imagePath, page, fallbackName + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
                 }
                 if (!t) {
-                    t = imageBuild.CreateImage(imagePath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+                    t = imageBuild.CreateImage(imagePath, page, fallbackName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
                 }
             }
         }
-        // check rom directory path for art
-        if ( !t ) {
-            name = imageType_;
-            if (selectedImage_ && item->name == selectedItemName) {
-                t = imageBuild.CreateImage(item->filepath, page, name + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+
+        // -------- ROM directory fallback --------
+        if (!t) {
+            if (videoType_ != "null") {
+                t = videoBuild.createVideo(item->filepath, page, videoType_, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr);
             }
-            if (!t) {
-                t = imageBuild.CreateImage(item->filepath, page, name, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+            else {
+                std::string fallbackName = imageType_;
+                if (selectedImage_ && item->name == selectedItemName) {
+                    t = imageBuild.CreateImage(item->filepath, page, fallbackName + "-selected", baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+                }
+                if (!t) {
+                    t = imageBuild.CreateImage(item->filepath, page, fallbackName, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_);
+                }
             }
         }
-
     }
 
-    if (!t) {
-        if (textFallback_) {  // Check if fallback text should be used
-            t = new Text(item->title, page, fontInst_, baseViewInfo.Monitor);  // Use item's title
-        }
+    if (!t && textFallback_) {
+        t = new Text(item->title, page, fontInst_, baseViewInfo.Monitor);
     }
 
-    if ( t ) {
+    if (t) {
         components_[index] = t;
     }
 
     return true;
 }
+
 void ScrollingList::buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) {
     imagePath = Utils::combinePath(base, subPath, "medium_artwork", mediaType);
-    videoPath = Utils::combinePath(imagePath, "medium_artwork", videoType);
+    videoPath = Utils::combinePath(base, subPath, "medium_artwork", videoType);
 }
 
-void ScrollingList::deallocateTexture( size_t index )
-{
-    if ( components_.size(  ) <= index ) return;
+void ScrollingList::deallocateTexture(size_t index) {
+    if (components_.size() <= index) return;
 
-    Component *s = components_[index];
+    Component* s = components_[index];
 
     if (s) {
-        s->freeGraphicsMemory();
+        //s->freeGraphicsMemory();
         delete s;
         components_[index] = nullptr;
     }

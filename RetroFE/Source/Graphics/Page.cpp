@@ -83,7 +83,7 @@ void Page::deInitialize() {
 	// Deinitialize and clear LayerComponents_
 	for (auto& layer : LayerComponents_) {
 		for (Component* component : layer) {
-			component->freeGraphicsMemory();
+			//component->freeGraphicsMemory();
 			delete component;
 		}
 		layer.clear();
@@ -901,6 +901,7 @@ bool Page::pushCollection(CollectionInfo* collection) {
 
 	return true;
 }
+
 bool Page::popCollection() {
 	if (!getAnActiveMenu()) return false;
 	if (menuDepth_ <= 1) return false;
@@ -1110,6 +1111,7 @@ void Page::selectPlaylist(const std::string& playlist) {
 
 	// Trigger playlist change
 	playlistChange();
+	setSelectedItem();
 }
 
 
@@ -1232,7 +1234,7 @@ void Page::update(float dt) {
 					(*it)->playlistName = lastPlaylistName_;
 				}
 				if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
-					(*it)->freeGraphicsMemory();
+					//(*it)->freeGraphicsMemory();
 					delete* it;
 					it = layer.erase(it);
 				}

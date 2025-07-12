@@ -139,7 +139,15 @@ namespace ImageProcessorConstants {
 	const int MIN_SEGMENT_WIDTH = 2;
 }
 
-MusicPlayerComponent::~MusicPlayerComponent() = default;
+MusicPlayerComponent::~MusicPlayerComponent(){
+	freeGraphicsMemory();
+	if (loadedComponent_ != nullptr) {
+		//loadedComponent_->freeGraphicsMemory();
+		delete loadedComponent_;
+		loadedComponent_ = nullptr;
+	}
+}
+
 
 void MusicPlayerComponent::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
@@ -196,7 +204,7 @@ void MusicPlayerComponent::freeGraphicsMemory() {
 	}
 
 	if (loadedComponent_ != nullptr) {
-		loadedComponent_->freeGraphicsMemory();
+		//loadedComponent_->freeGraphicsMemory();
 		delete loadedComponent_;
 		loadedComponent_ = nullptr;
 	}
@@ -778,7 +786,7 @@ bool MusicPlayerComponent::update(float dt) {
 		Component* newComponent = reloadComponent();
 		if (newComponent != nullptr && newComponent != loadedComponent_) {
 			if (loadedComponent_ != nullptr) {
-				loadedComponent_->freeGraphicsMemory();
+				//loadedComponent_->freeGraphicsMemory();
 				delete loadedComponent_;
 			}
 			loadedComponent_ = newComponent;
@@ -1771,7 +1779,7 @@ Component* MusicPlayerComponent::reloadComponent() {
 		else {
 			// loadedComponent_ is not a Text component or is nullptr, create a new one
 			if (loadedComponent_) { // It was something else, delete old one
-				loadedComponent_->freeGraphicsMemory();
+				//loadedComponent_->freeGraphicsMemory();
 				delete loadedComponent_;
 			}
 			loadedComponent_ = new Text(newTextValue, page, font_, baseViewInfo.Monitor);
@@ -1832,7 +1840,7 @@ Component* MusicPlayerComponent::reloadComponent() {
 
 			if (pathChanged) {
 				if (loadedComponent_) {
-					loadedComponent_->freeGraphicsMemory();
+					//loadedComponent_->freeGraphicsMemory();
 					delete loadedComponent_;
 				}
 				loadedComponent_ = newImageComponent;
@@ -1840,7 +1848,7 @@ Component* MusicPlayerComponent::reloadComponent() {
 			}
 			else {
 				// Paths are the same, no need to replace. Delete the newly created one.
-				newImageComponent->freeGraphicsMemory(); // Or just delete if it cleans up
+				//newImageComponent->freeGraphicsMemory(); // Or just delete if it cleans up
 				delete newImageComponent;
 			}
 		}
@@ -1853,7 +1861,7 @@ Component* MusicPlayerComponent::reloadComponent() {
 	else {
 		// Failed to create image, potentially clear old one or log error
 		if (loadedComponent_) {
-			loadedComponent_->freeGraphicsMemory();
+			//loadedComponent_->freeGraphicsMemory();
 			delete loadedComponent_;
 			loadedComponent_ = nullptr;
 		}

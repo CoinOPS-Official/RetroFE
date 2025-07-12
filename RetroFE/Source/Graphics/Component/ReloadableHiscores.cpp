@@ -85,7 +85,11 @@ ReloadableHiscores::ReloadableHiscores(Configuration& config, std::string textFo
 
 
 
-ReloadableHiscores::~ReloadableHiscores() = default;
+ReloadableHiscores::~ReloadableHiscores(){
+	freeGraphicsMemory();
+	//deInitializeFonts();
+}
+
 
 
 bool ReloadableHiscores::update(float dt) {
