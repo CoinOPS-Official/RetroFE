@@ -328,6 +328,7 @@ void RetroFE::launchEnter() {
 	{
 		freeGraphicsMemory();
 		VideoPool::shutdown();
+		Image::cleanupTextureCache();
 	}
 #ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_FALSE);
@@ -389,19 +390,20 @@ void RetroFE::launchExit(bool userInitiated) {
 		}
 	}
 	input_.resetStates();
-	currentPage_->updateReloadables(0);
-	currentPage_->onNewItemSelected();
+
 	if (userInitiated) {
 		attract_.reset(false); // Only reset if user-driven
 	}
 	currentTime_ = static_cast<float>((SDL_GetPerformanceCounter() * 1.0 / freq_)); // currentTime_ in seconds
 	keyLastTime_ = currentTime_;
 	lastLaunchReturnTime_ = currentTime_;
+	currentPage_->reallocateMenuSpritePoints(true); // Update playlist menu
+	currentPage_->updateReloadables(0);
+	currentPage_->onNewItemSelected();
 
 #ifndef __APPLE__
 	SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0), 0);
 #endif
-
 	bool musicPlayerPlayInGame = false;
 	config_.getProperty("musicPlayer.playInGame", musicPlayerPlayInGame);
 	if (musicPlayer_ && musicPlayerPlayInGame)
