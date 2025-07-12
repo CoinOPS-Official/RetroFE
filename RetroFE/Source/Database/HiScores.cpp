@@ -175,6 +175,11 @@ bool HiScores::runHi2Txt(const std::string& gameName) {
     std::string hi2txtPath;
     std::string hiFilePath = Utils::combinePath(hiFilesDirectory_, gameName + ".hi");
 
+    if (!hasHiFile(gameName)) {
+        LOG_INFO("HiScores", ".hi file does not exist for " + gameName + ", skipping async hi2txt.");
+        return;
+    }
+
     // Create the command string
     std::string command;
 
@@ -299,6 +304,10 @@ bool HiScores::runHi2Txt(const std::string& gameName) {
 
 // Wrapper function to run hi2txt asynchronously
 void HiScores::runHi2TxtAsync(const std::string& gameName) {
+    if (!hasHiFile(gameName)) {
+        LOG_INFO("HiScores", ".hi file does not exist for " + gameName + ", skipping async hi2txt.");
+        return;
+    }
     std::thread([this, gameName]() {
         try {
             if (runHi2Txt(gameName)) {
