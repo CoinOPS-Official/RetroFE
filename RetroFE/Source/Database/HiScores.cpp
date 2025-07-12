@@ -228,7 +228,14 @@ bool HiScores::runHi2Txt(const std::string& gameName) {
     CloseHandle(hRead);
 
     // Wait for the process to complete
-    WaitForSingleObject(processInfo.hProcess, INFINITE);
+    DWORD waitResult = WaitForSingleObject(processInfo.hProcess, 5000); // 5 seconds
+    if (waitResult == WAIT_TIMEOUT) {
+        LOG_ERROR("HiScores", "hi2txt hung for game " + gameName + ", terminating process.");
+        TerminateProcess(processInfo.hProcess, 1);
+        CloseHandle(processInfo.hProcess);
+        CloseHandle(processInfo.hThread);
+        return false;
+    }
     CloseHandle(processInfo.hProcess);
     CloseHandle(processInfo.hThread);
 

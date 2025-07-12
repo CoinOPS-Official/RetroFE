@@ -36,6 +36,7 @@
 #include <atomic>
 #include <filesystem>
 #include <set>
+#include <optional>
 #ifdef WIN32
 #include <Windows.h>
 #include <functional>
@@ -72,6 +73,49 @@ enum class WaitResult { None, UserInput, ProcessExit, Timeout };
 
 using InputCheckFn = std::function<bool()>;
 using ExtraCheckFn = std::function<bool()>;
+
+struct SDLJoystickScopeGuard {
+	bool initialized = false;
+	std::vector<SDL_Joystick*> joysticks;
+
+	SDLJoystickScopeGuard() {
+		if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) == 0) {
+			initialized = true;
+			SDL_JoystickEventState(SDL_ENABLE);
+
+			// Enumerate and open all joysticks
+			int numJoysticks = SDL_NumJoysticks();
+			for (int i = 0; i < numJoysticks; ++i) {
+				SDL_Joystick* joy = SDL_JoystickOpen(i);
+				if (joy) {
+					joysticks.push_back(joy);
+					LOG_INFO("Launcher", "Opened joystick: " + std::string(SDL_JoystickName(joy) ? SDL_JoystickName(joy) : "Unknown"));
+				}
+				else {
+					LOG_WARNING("Launcher", "Failed to open joystick index: " + std::to_string(i));
+				}
+			}
+
+			LOG_INFO("Launcher", "SDL joystick subsystem initialized and joysticks opened for launcher input monitoring.");
+		}
+		else {
+			LOG_ERROR("Launcher", "Failed to init SDL joystick subsystem for launcher.");
+		}
+	}
+
+	~SDLJoystickScopeGuard() {
+		// Close all opened joysticks
+		for (auto joy : joysticks) {
+			if (joy) SDL_JoystickClose(joy);
+		}
+		joysticks.clear();
+
+		if (initialized) {
+			SDL_QuitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
+			LOG_INFO("Launcher", "SDL joystick subsystem deinitialized for launcher.");
+		}
+	}
+};
 
 // Wait and animate loop (for attract/wait/warmup)
 WaitResult runFrontendWaitLoop(
@@ -1239,7 +1283,13 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			// If we've gotten all the way here, no input that we care about for the current mode was detected.
 			return false;
 			};
-		if (isAttractMode) {
+		{
+			std::optional<SDLJoystickScopeGuard> sdlGuard;
+			bool unloadSDL = false;
+			config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
+			if (unloadSDL)
+				sdlGuard.emplace();
+			if (isAttractMode) {
 			// --- Attract Mode Initialization ---
 
 			Uint64 frequency = SDL_GetPerformanceFrequency();
@@ -1467,6 +1517,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 			LOG_INFO("Launcher", "Process completed.");
 		}
+		}
 		endTime = std::chrono::steady_clock::now();
 		LOG_DEBUG("Launcher", "Recording end time.");
 
@@ -1684,46 +1735,50 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			}).detach();
 	}
 
-
 	double gameplayDuration = 0.0;
 	bool trackTime = false;
+	bool shouldRunHi2Txt = false;
 
 	if (!isAttractMode) {
-		// Only record time spent if user did not immediately quit with quitcombo
+		// Only record time if not immediately quitting with the exit combo
 		if (!firstInputWasExitCommand) {
-			gameplayDuration = static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime).count());
+			gameplayDuration = static_cast<double>(
+				std::chrono::duration_cast<std::chrono::seconds>(endTime - startTime).count());
 			trackTime = true;
-			LOG_DEBUG("Launcher", "Calculating timeSpent for normal mode.");
+			shouldRunHi2Txt = true;
+			LOG_DEBUG("Launcher", "Calculating timeSpent and running hi2txt for normal mode.");
 		}
 		else {
-			LOG_DEBUG("Launcher", "Immediate quitcombo: skipping timespent update for normal launch.");
+			LOG_DEBUG("Launcher", "Immediate quitcombo: skipping timespent/hi2txt update for normal launch.");
 		}
 	}
-	else if (userInputDetected) { // isAttractMode was true AND user interrupted
-		// Interrupted attract mode: duration is endTime - interruptionTime
-		gameplayDuration = static_cast<double>(std::chrono::duration_cast<std::chrono::seconds>(endTime - interruptionTime).count());
-		trackTime = true; // Track time because user played
-		LOG_DEBUG("Launcher", "Calculating timeSpent for interrupted attract mode.");
+	else if (userInputDetected) {
+		// Attract mode interrupted by user
+		gameplayDuration = static_cast<double>(
+			std::chrono::duration_cast<std::chrono::seconds>(endTime - interruptionTime).count());
+		trackTime = true;
+		shouldRunHi2Txt = true;
+		LOG_DEBUG("Launcher", "Calculating timeSpent and running hi2txt for interrupted attract mode.");
 	}
 	else {
-		// Attract mode ran to completion or timed out without interruption
-		LOG_DEBUG("Launcher", "Not calculating timeSpent (attract mode completed/timed out).");
+		LOG_DEBUG("Launcher", "Not calculating timeSpent or running hi2txt (attract mode completed/timed out).");
 	}
 
+	// Only record time if valid
 	if (trackTime) {
-		// Ensure duration isn't negative due to clock weirdness (highly unlikely but safe)
 		if (gameplayDuration < 0) gameplayDuration = 0;
-
 		LOG_INFO("Launcher", "Gameplay time recorded: " + std::to_string(gameplayDuration) + " seconds.");
-
 		if (collectionItem != nullptr) {
 			CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
 			cib.updateTimeSpent(collectionItem, gameplayDuration);
 		}
 	}
 
-	if (executable.find("mame") != std::string::npos && collectionItem != nullptr) {
-		HiScores::getInstance().runHi2TxtAsync(collectionItem->name);
+	// Only run hi2txt if we should, and all other criteria are met
+	if (shouldRunHi2Txt &&
+		executable.find("mame") != std::string::npos &&
+		collectionItem != nullptr) {
+		HiScores::getInstance().runHi2Txt(collectionItem->name);
 	}
 
 	LOG_INFO("Launcher", "Completed execution for: " + executionString);
