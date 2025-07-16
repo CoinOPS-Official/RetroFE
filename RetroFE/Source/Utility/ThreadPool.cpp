@@ -4,12 +4,13 @@
 #include <algorithm> // for std::clamp
 
 // Constructor
-ThreadPool::ThreadPool(size_t threads) : stop(false) {
+ThreadPool::ThreadPool(size_t threads) : stop(false), activeWorkers(0) {
     for (size_t i = 0; i < threads; ++i)
         workers.emplace_back(
             [this] {
                 for (;;) {
-                    std::function<void()> task; {
+                    std::function<void()> task;
+                    {
                         std::unique_lock<std::mutex> lock(this->queueMutex);
                         this->condition.wait(lock,
                             [this] { return this->stop || !this->tasks.empty(); });
@@ -19,12 +20,22 @@ ThreadPool::ThreadPool(size_t threads) : stop(false) {
 
                         task = std::move(this->tasks.front());
                         this->tasks.pop();
+
+                        // Add this:
+                        ++activeWorkers;
                     }
 
                     task();
+
+                    {
+                        std::unique_lock<std::mutex> lock(this->queueMutex);
+                        --activeWorkers;
+                        if (tasks.empty() && activeWorkers == 0)
+                            waitCondition.notify_all();
+                    }
                 }
             }
-    );
+        );
 }
 
 // Destructor joins all threads
@@ -53,6 +64,12 @@ ThreadPool& ThreadPool::getInstance() {
         }());
     return instance;
 }
+
+void ThreadPool::wait() {
+    std::unique_lock<std::mutex> lock(queueMutex);
+    waitCondition.wait(lock, [this] { return tasks.empty() && activeWorkers == 0; });
+}
+
 
 void ThreadPool::shutdown() {
     {

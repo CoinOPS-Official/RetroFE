@@ -26,6 +26,8 @@ public:
     // Singleton accessor
     static ThreadPool& getInstance();
 
+    void wait();
+
     // Enqueue tasks to the thread pool
     template<class F, class... Args>
     auto enqueue(F&& f, Args&&... args)
@@ -41,6 +43,8 @@ private:
     std::mutex queueMutex;
     std::condition_variable condition;
     bool stop;
+    std::condition_variable waitCondition;
+    size_t activeWorkers = 0;
 };
 
 // Implementation of the enqueue method needs to be visible to all translation units that use it, hence defined in the header

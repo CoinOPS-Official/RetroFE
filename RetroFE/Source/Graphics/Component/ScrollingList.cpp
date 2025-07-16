@@ -32,6 +32,7 @@
 #include "../../Database/GlobalOpts.h"
 #include "../../Collection/Item.h"
 #include "../../Utility/Utils.h"
+#include "../../Utility/ThreadPool.h"
 #include "../../Utility/Log.h"
 #include "../../SDL.h"
 #include "../ViewInfo.h"
@@ -79,6 +80,7 @@ ScrollingList::ScrollingList( Configuration &c,
 
 
 ScrollingList::~ScrollingList() {
+    ScrollingList::freeGraphicsMemory();
     clearPoints();
     destroyItems();
 }
@@ -253,6 +255,7 @@ void ScrollingList::destroyItems()
 	}
     LOG_DEBUG("ScrollingList", "Cleaning up video pool for list: " + std::to_string(listId_));
     VideoPool::cleanup(baseViewInfo.Monitor, listId_);
+    ThreadPool::getInstance().wait();
 
     // Delete all components
     for (unsigned int i = 0; i < componentSize; ++i) {
@@ -262,7 +265,6 @@ void ScrollingList::destroyItems()
             data[i] = nullptr;
         }
     }
-    data.clear();
 }
 
 
