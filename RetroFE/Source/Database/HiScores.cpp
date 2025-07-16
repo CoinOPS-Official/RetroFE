@@ -29,7 +29,7 @@ HiScores& HiScores::getInstance() {
 // Load all high scores, first from ZIP, then overriding with external XMLs
 void HiScores::loadHighScores(const std::string& zipPath, const std::string& overridePath) {
         
-    hiFilesDirectory_ = Utils::combinePath(Configuration::absolutePath, "emulators", "mame", "hi");
+    hiFilesDirectory_ = Utils::combinePath(Configuration::absolutePath, "emulators", "mame", "hiscore");
     scoresDirectory_ = Utils::combinePath(Configuration::absolutePath, "hi2txt", "scores");
     
     // Load defaults from the ZIP file
@@ -177,7 +177,7 @@ bool HiScores::runHi2Txt(const std::string& gameName) {
 
     if (!hasHiFile(gameName)) {
         LOG_INFO("HiScores", ".hi file does not exist for " + gameName + ", skipping async hi2txt.");
-        return;
+        return false;
     }
 
     // Create the command string
