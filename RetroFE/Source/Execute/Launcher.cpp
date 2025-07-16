@@ -1162,7 +1162,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 	if (!handleObtained) {
 		LOG_WARNING("Launcher", "No handle was obtained; process monitoring and stats updates will not occur.");
-		// Optional: you may want to log more detail about what was attempted here.
 		return false;
 	}
 
@@ -1186,27 +1185,29 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		// Flags for "Last Played" logic
 		bool anyInputRegistered = false;     // True once *any* input is detected
 		auto checkInputs = [&]() -> bool {
-			// --- Phase 1: Check for "Quit" actions. These are always active. ---
-
-			// Check for ESC key quit.
+			// Check for ESC key quit (global)
 			if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
 				if (!anyInputRegistered) {
 					firstInputWasExitCommand = true;
-					LOG_INFO("Launcher", "Quit via ESC key pressed.");
 				}
 				anyInputRegistered = true;
-				return true; // Always exit on ESC.
+				LOG_INFO("Launcher", "Quit via ESC key pressed.");
+				return true;
 			}
 
-			// --- Main SDL Event Loop for Controllers ---
 			SDL_Event e;
 			while (SDL_PollEvent(&e)) {
 				if (e.type == SDL_JOYBUTTONDOWN) {
-					// Update state first.
 					joystickButtonState[e.jbutton.which][e.jbutton.button] = true;
 					joystickButtonTimeState[e.jbutton.which][e.jbutton.button] = std::chrono::high_resolution_clock::now();
 
-					// --- Check for the timed quit combo ---
+					// Any button press sets anyInputRegistered
+					if (!anyInputRegistered) {
+						LOG_INFO("Launcher", "Joystick input detected (any button, normal/attract mode)");
+					}
+					anyInputRegistered = true;
+
+					// Check for quit combo
 					bool isQuitCombo = true;
 					if (quitComboIndices.empty()) {
 						isQuitCombo = false;
@@ -1219,9 +1220,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 							}
 						}
 					}
-
 					if (isQuitCombo) {
-						// Potential combo found, now check the timing.
 						std::chrono::high_resolution_clock::time_point earliest, latest;
 						bool firstBtn = true;
 						for (int idx : quitComboIndices) {
@@ -1232,55 +1231,29 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 								if (t > latest) latest = t;
 							}
 						}
-
 						if (std::chrono::duration_cast<std::chrono::milliseconds>(latest - earliest).count() <= 200) {
-							// It's a valid, timed combo! This is a "Quit" action.
+							if (!firstInputWasExitCommand && anyInputRegistered == true) {
+								LOG_INFO("Launcher", "Quit combo detected, but it was not first input.");
+							}
 							if (!anyInputRegistered) {
 								firstInputWasExitCommand = true;
-								LOG_INFO("Launcher", "Quit combo detected.");
+								LOG_INFO("Launcher", "Quit combo detected (first input).");
 							}
-							anyInputRegistered = true;
-							return true; // Always exit on a valid quit combo.
+							// anyInputRegistered is already set above
+							return true;
 						}
 					}
 
-					// --- Phase 2: Check for "Play" actions. These are ONLY active in attract mode. ---
-					// If we've reached this point, it means the button press was NOT a quit combo.
-
-					// NEW: Only treat this as input if we're in attract mode.
+					// In attract mode, any button ends attract
 					if (isAttractMode) {
-						// This was just a regular button press.
-						if (!anyInputRegistered) {
-							LOG_INFO("Launcher", "Controller input detected in attract mode - will be added to last played.");
-						}
-						anyInputRegistered = true;
-						return true; // Exit the wait loop because of user interaction.
+						return true;
 					}
-
-					// NEW: If not in attract mode, we do nothing and let the event loop continue.
-					// This button press is ignored for the normal "wait" mode.
+					// In normal mode, only quit combo or ESC returns true (rest is ignored except for setting the flag)
 				}
 				else if (e.type == SDL_JOYBUTTONUP) {
-					// This is just state management, it doesn't trigger an exit.
 					joystickButtonState[e.jbutton.which][e.jbutton.button] = false;
 				}
 			}
-
-			// --- Phase 3: Check for other keyboard "Play" actions. ONLY active in attract mode. ---
-
-			if (isAttractMode) {
-				for (int virtualKey : {0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B, 0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56, 0x57, 0x58, 0x59, //A-Z
-					0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, //0-9
-					VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT, VK_RETURN, VK_SPACE, VK_TAB, VK_BACK, VK_SHIFT, VK_CONTROL, VK_MENU}) {
-					if (GetAsyncKeyState(virtualKey) & 0x8000) {
-						if (!anyInputRegistered) { LOG_INFO("Launcher", "Keyboard input detected in attract mode - will be added to last played"); }
-						anyInputRegistered = true;
-						return true; // Exit the wait loop because of user interaction.
-					}
-				}
-			}
-
-			// If we've gotten all the way here, no input that we care about for the current mode was detected.
 			return false;
 			};
 		{
@@ -1303,9 +1276,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 			// Flags to track state during the loop
 			bool processTerminated = false;   // Becomes true if the process exits on its own
-
-			// Variables for START+BACK combo detection
-			const int simultaneousThresholdMs = 200; // Max time diff for combo
 
 			// Variables for checking process/window state
 			DWORD launchedProcessId = (hLaunchedProcess != NULL) ? GetProcessId(hLaunchedProcess) : 0;
@@ -1384,7 +1354,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 						//
 						LOG_INFO("Launcher", "User interrupted attract mode with a quit command. Terminating process immediately.");
 
-						// Terminate the process. This logic is copied from your Timeout case.
 						if (jobAssigned && hJob != NULL) {
 							TerminateJobObject(hJob, 1);
 						}
@@ -1407,7 +1376,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 						//
 						LOG_INFO("Launcher", "User interrupted attract mode with a play command. Waiting for game to exit naturally.");
 
-						// This is all of your original logic from the UserInput case.
 						interruptionTime = std::chrono::high_resolution_clock::now();
 						userInputDetected = true;
 
@@ -1423,7 +1391,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 
 						// Now, wait for the game to finish on its own.
 						if (hLaunchedProcess != NULL) {
-							// We create a new, minimal check for the window closing, just as you did.
+							// We create a new, minimal check for the window closing
 							auto gameWindowClosedCheck = [&]() -> bool {
 								if (gameWindow && !IsWindow(gameWindow)) {
 									LOG_INFO("Launcher", "Game window handle became invalid (closed).");
@@ -1470,7 +1438,7 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 				}
 				case WaitResult::Timeout: {
 					LOG_INFO("Launcher", "Attract mode timeout reached - attempting termination.");
-					// Termination logic as before:
+					// Termination logic
 					if (jobAssigned && hJob != NULL) {
 						LOG_INFO("Launcher", "Terminating process and children via Job Object.");
 						if (!TerminateJobObject(hJob, 1)) LOG_ERROR("Launcher", "TerminateJobObject failed. Error: " + std::to_string(GetLastError()));

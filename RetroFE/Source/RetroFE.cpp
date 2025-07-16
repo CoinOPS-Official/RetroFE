@@ -326,6 +326,7 @@ void RetroFE::launchEnter() {
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
 	if (unloadSDL)
 	{
+		VideoPool::shuttingDown_ = true;
 		freeGraphicsMemory();
 		VideoPool::shutdown();
 		Image::cleanupTextureCache();
@@ -397,9 +398,9 @@ void RetroFE::launchExit(bool userInitiated) {
 	currentTime_ = static_cast<float>((SDL_GetPerformanceCounter() * 1.0 / freq_)); // currentTime_ in seconds
 	keyLastTime_ = currentTime_;
 	lastLaunchReturnTime_ = currentTime_;
-	currentPage_->reallocateMenuSpritePoints(true); // Update playlist menu
 	currentPage_->updateReloadables(0);
 	currentPage_->onNewItemSelected();
+	currentPage_->reallocateMenuSpritePoints(false);
 
 #ifndef __APPLE__
 	SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0), 0);
@@ -486,6 +487,8 @@ bool RetroFE::deInitialize() {
 
 	bool retVal = true;
 
+	VideoPool::shuttingDown_ = true;
+
 	// Free textures
 	freeGraphicsMemory();
 
@@ -522,6 +525,9 @@ bool RetroFE::deInitialize() {
 	}
 
 	initialized = false;
+	Image::cleanupTextureCache();
+	VideoPool::shutdown();
+	ThreadPool::getInstance().wait();
 
 	if (reboot_)
 	{
@@ -535,7 +541,6 @@ bool RetroFE::deInitialize() {
 			musicPlayer_->shutdown();
 		}
 		ThreadPool::getInstance().shutdown();
-		VideoPool::shutdown();
 		gst_deinit();
 		SDL::deInitialize();
 	}
@@ -1072,9 +1077,6 @@ bool RetroFE::run() {
 			if ((quickListCollection == "" || currentPage_->getCollectionName() == quickListCollection) &&
 				(quickListPlaylist == "" || currentPage_->getPlaylistName() == quickListPlaylist))
 			{
-				if (nextPageItem_) {
-					delete nextPageItem_;
-				}
 				nextPageItem_ = new Item();
 				config_.getProperty("lastCollection", nextPageItem_->name);
 				if (currentPage_->getCollectionName() != nextPageItem_->name)
@@ -1144,9 +1146,6 @@ bool RetroFE::run() {
 			if ((settingsCollection == "" || currentPage_->getCollectionName() == settingsCollection) &&
 				(settingsPlaylist == "" || currentPage_->getPlaylistName() == settingsPlaylist))
 			{
-				if (nextPageItem_) {
-					delete nextPageItem_;
-				}
 				nextPageItem_ = new Item();
 				config_.getProperty("lastCollection", nextPageItem_->name);
 				if (currentPage_->getCollectionName() != nextPageItem_->name)
@@ -1441,7 +1440,7 @@ bool RetroFE::run() {
 					{
 						LOG_ERROR("RetroFE", "Could not create page");
 					}
-					// currentPage_->reallocateMenuSpritePoints(); // update menu
+					//currentPage_->reallocateMenuSpritePoints(); // update menu
 				}
 				std::string selectPlaylist = quickListPlaylist;
 				if (quickListPlaylist == "")
@@ -1528,7 +1527,7 @@ bool RetroFE::run() {
 					{
 						LOG_ERROR("RetroFE", "Could not create page");
 					}
-					// currentPage_->reallocateMenuSpritePoints(); // update menu
+					currentPage_->reallocateMenuSpritePoints(); // update menu
 				}
 				std::string selectPlaylist = settingsPlaylist;
 				if (settingsPlaylist == "")
@@ -2146,7 +2145,7 @@ bool RetroFE::run() {
 						launchExit(false); // <-- not user-initiated
 					}
 					reboot_ = true;
-					setState(RETROFE_QUIT_REQUEST);
+					setState(RETROFE_LAUNCH_EXIT);
 				}
 				else
 				{
@@ -3177,9 +3176,6 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				if (!pages_.empty() && pages_.size() > 1)
 					pages_.pop();
 
-				if (nextPageItem_) {
-					delete nextPageItem_;
-				}
 				nextPageItem_ = new Item();
 				nextPageItem_->name = *collectionCycleIt_;
 				menuMode_ = false;
@@ -3210,9 +3206,6 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				if (!pages_.empty() && pages_.size() > 1)
 					pages_.pop();
 
-				if (nextPageItem_) {
-					delete nextPageItem_;
-				}
 				nextPageItem_ = new Item();
 				nextPageItem_->name = *collectionCycleIt_;
 				menuMode_ = false;
