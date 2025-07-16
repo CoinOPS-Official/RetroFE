@@ -82,7 +82,9 @@ bool VideoComponent::update(float dt) {
 		}
 	}
 
-	if ((currentPage_->getIsLaunched() && monitor_ == 0)) {
+	videoInst_->draw();
+
+	if (currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0) {
 		if (videoInst_->getTargetState() != IVideo::VideoState::Paused &&
 			videoInst_->getActualState() != IVideo::VideoState::Paused) {
 			videoInst_->pause();
@@ -193,10 +195,6 @@ void VideoComponent::freeGraphicsMemory() {
 }
 
 void VideoComponent::draw() {
-	if (!videoInst_) return;
-
-	videoInst_->draw();
-
 	if (SDL_Texture* texture = videoInst_->getTexture()) {
 		SDL_FRect rect = {
 			baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
