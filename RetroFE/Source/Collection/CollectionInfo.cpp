@@ -65,10 +65,6 @@ CollectionInfo::~CollectionInfo() {
     }
     playlists.clear();
 
-    // Delete all items
-    for (Item* item : items) {
-        delete item;
-    }
     items.clear();
 }
 
