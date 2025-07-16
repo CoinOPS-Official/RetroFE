@@ -48,6 +48,7 @@ public:
 	virtual void pause() = 0;
 	virtual void resume() = 0;
 	virtual void restart() = 0;
+	virtual void loop() = 0;
 	virtual unsigned long long getCurrent() = 0;
 	virtual unsigned long long getDuration() = 0;
 	virtual bool isPaused() = 0;

@@ -74,6 +74,7 @@ public:
     void pause() override;
     void resume() override;
     void restart() override;
+    void loop();
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
@@ -91,32 +92,7 @@ public:
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
 
-private:
-    // Inline atomic slot for thread-safe sample exchange
-    struct AtomicSampleSlot {
-        std::atomic<GstSample*> slot_{ nullptr };
-
-        // Called from GStreamer thread (producer)
-        bool try_enqueue(GstSample* newSample) {
-            GstSample* expected = nullptr;
-            return slot_.compare_exchange_strong(expected, newSample,
-                std::memory_order_release, std::memory_order_relaxed);
-        }
-
-        // Called from draw thread (consumer)
-        GstSample* try_dequeue() {
-            GstSample* sample = slot_.load(std::memory_order_acquire);
-            if (!sample) return nullptr;
-            return slot_.exchange(nullptr, std::memory_order_acquire);
-        }
-
-        // Cleanup on shutdown
-        void clear() {
-            GstSample* sample = slot_.exchange(nullptr, std::memory_order_acquire);
-            if (sample) gst_sample_unref(sample);
-        }
-    };
-    
+private:   
     // === Thread-shared atomics ===
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
@@ -128,8 +104,6 @@ private:
 
     int width_{ -1 };
     int height_{ -1 };
-	int textureWidth_{ -1 };
-	int textureHeight_{ -1 };
     int playCount_{ 0 };
     std::string currentFile_{};
     int numLoops_{ 0 };
@@ -157,7 +131,7 @@ private:
     GValueArray* perspective_gva_{ nullptr };
     std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
 
-    AtomicSampleSlot stagedSample_;
+    std::atomic<GstSample*> stagedSample_{ nullptr };
 
     // === Static/shared ===
     static bool initialized_;
