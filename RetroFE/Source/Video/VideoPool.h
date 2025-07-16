@@ -32,6 +32,7 @@ public:
 	static void releaseVideo(VideoPtr vid, int monitor, int listId);
 	static void cleanup(int monitor, int listId);
 	static void shutdown();
+	static std::atomic<bool> shuttingDown_;
 
 private:
 
@@ -56,4 +57,6 @@ private:
 
 	static PoolInfo& getPoolInfo(int monitor, int listId);
 	static bool checkPoolHealth(int monitor, int listId);
+	static void cleanup_nolock(int monitor, int listId);
+
 };
