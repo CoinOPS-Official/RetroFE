@@ -1513,8 +1513,6 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 #else
 	// Unix/Linux-specific execution logic
 
-	bool restrictorEnabled = false;
-
 	config_.getProperty("restrictorEnabled", restrictorEnabled);
 
 	pid_t pid = fork();
