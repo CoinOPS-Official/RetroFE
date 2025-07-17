@@ -226,6 +226,9 @@ void ScrollingList::reallocateSpritePoints() {
         deallocateTexture(i);
     }
 
+    // Wait for all releases to fully process before starting new allocations
+    ThreadPool::getInstance().wait();
+
     // Then, allocate all
     for (size_t i = 0; i < scrollPointsSize; ++i) {
         size_t index = loopIncrement(itemIndex_, i, itemsSize);
