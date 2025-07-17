@@ -525,7 +525,6 @@ bool RetroFE::deInitialize() {
 	}
 
 	initialized = false;
-	HiScores::getInstance().deinitialize();
 	Image::cleanupTextureCache();
 	VideoPool::shutdown();
 	ThreadPool::getInstance().wait();
@@ -2224,6 +2223,9 @@ bool RetroFE::run() {
 				{
 					attract_.reset();
 					if (unloadSDL)
+					{
+						launchExit();
+					}
 					reboot_ = true;
 					setState(RETROFE_QUIT_REQUEST);
 				}
