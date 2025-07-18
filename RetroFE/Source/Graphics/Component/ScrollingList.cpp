@@ -171,13 +171,33 @@ void ScrollingList::enableTextFallback(bool value)
     textFallback_ = value;
 }
 
-void ScrollingList::deallocateSpritePoints( )
-{
-    size_t componentSize = components_.size();
-  
-    for ( unsigned int i = 0; i < componentSize; ++i )
-    {
-        deallocateTexture( i );
+void ScrollingList::deallocateSpritePoints() {
+    if (components_.empty())
+        return;
+
+    int monitor = baseViewInfo.Monitor;
+    std::vector<std::unique_ptr<IVideo>> pooledVideos;
+
+    // Extract videos first, before deleting components
+    for (Component* comp : components_.raw()) {
+        if (comp) {
+            if (auto* videoComp = dynamic_cast<VideoComponent*>(comp)) {
+                auto video = videoComp->extractVideo();
+                if (video)
+                    pooledVideos.push_back(std::move(video));
+            }
+        }
+    }
+
+    // Delete components
+    for (size_t i = 0; i < components_.size(); ++i) {
+        deallocateTexture(i);  // This sets components_[i] = nullptr internally
+    }
+
+    // Batch release videos
+    if (!pooledVideos.empty()) {
+        VideoPool::releaseVideoBatch(std::move(pooledVideos), monitor, listId_);
+        ThreadPool::getInstance().wait();  // Ensure they're cleaned up now
     }
 }
 
@@ -220,13 +240,16 @@ void ScrollingList::reallocateSpritePoints() {
 
     size_t scrollPointsSize = scrollPoints_->size();
     size_t itemsSize = items_->size();
-	int monitor = baseViewInfo.Monitor;
+    int monitor = baseViewInfo.Monitor;
 
     // --- Step 1: Extract video instances for batch release ---
     std::vector<std::unique_ptr<IVideo>> pooledVideos;
 
     for (size_t i = 0; i < scrollPointsSize; ++i) {
-        if (auto* videoComp = dynamic_cast<VideoComponent*>(components_[i])) {
+        Component* comp = components_[i];
+        if (!comp) continue;
+
+        if (auto* videoComp = dynamic_cast<VideoComponent*>(comp)) {
             auto video = videoComp->extractVideo();  // move videoInst_ out
             if (video)
                 pooledVideos.push_back(std::move(video));
@@ -238,20 +261,20 @@ void ScrollingList::reallocateSpritePoints() {
         VideoPool::releaseVideoBatch(std::move(pooledVideos), monitor, listId_);
     }
 
-    // --- Step 3: Destroy all components (safe now that videos are handled) ---
+    // --- Step 3: Destroy all components ---
     for (size_t i = 0; i < scrollPointsSize; ++i) {
-        deallocateTexture(i);  // deletes VideoComponent and others
+        deallocateTexture(i);  // deletes VideoComponent or others
     }
 
-    // --- Step 4 (optional): Wait for all releases to complete ---
-    ThreadPool::getInstance().wait();  // Ensures videos are in ready state
+    // --- Step 4: Wait for releases to complete ---
+    ThreadPool::getInstance().wait();
 
-    // --- Step 5: Allocate new components and videos ---
+    // --- Step 5: Reallocate components and assign tweens ---
     for (size_t i = 0; i < scrollPointsSize; ++i) {
         size_t index = loopIncrement(itemIndex_, i, itemsSize);
         Item const* item = (*items_)[index];
 
-        allocateTexture(i, item);  // creates VideoComponent and others
+        allocateTexture(i, item);  // creates VideoComponent or others
 
         Component* c = components_[i];
         if (c) {
@@ -802,6 +825,7 @@ size_t ScrollingList::getSize() const
 void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const {
     if (!c || !sets || !currentViewInfo || !nextViewInfo) return;
 
+    // These adjustments are still necessary outside of tweening logic
     currentViewInfo->ImageHeight = c->baseViewInfo.ImageHeight;
     currentViewInfo->ImageWidth = c->baseViewInfo.ImageWidth;
     nextViewInfo->ImageHeight = c->baseViewInfo.ImageHeight;
@@ -812,32 +836,76 @@ void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> s
 
     std::shared_ptr<Animation> scrollTween = sets->getAnimation("menuScroll");
     scrollTween->Clear();
+
+    // Start with a fresh baseViewInfo
     c->baseViewInfo = *currentViewInfo;
 
     auto set = std::make_unique<TweenSet>();
-    if (currentViewInfo->Restart && scrollPeriod_ > minScrollTime_) {
+
+    // Define a small epsilon for floating-point comparisons
+    const float EPSILON_FLOAT = 0.0001f;
+    const double EPSILON_DOUBLE = 0.000001;
+
+    // Apply conditional push for each Tween property
+    if (currentViewInfo->Restart != nextViewInfo->Restart && scrollPeriod_ > minScrollTime_) {
         set->push(std::make_unique<Tween>(TWEEN_PROPERTY_RESTART, LINEAR, currentViewInfo->Restart, nextViewInfo->Restart, 0));
     }
+    if (std::abs(currentViewInfo->Height - nextViewInfo->Height) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_HEIGHT, LINEAR, currentViewInfo->Height, nextViewInfo->Height, scrollTime));
+    }
+    if (std::abs(currentViewInfo->Width - nextViewInfo->Width) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_WIDTH, LINEAR, currentViewInfo->Width, nextViewInfo->Width, scrollTime));
+    }
+    if (std::abs(currentViewInfo->Angle - nextViewInfo->Angle) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ANGLE, LINEAR, currentViewInfo->Angle, nextViewInfo->Angle, scrollTime));
+    }
+    if (std::abs(currentViewInfo->Alpha - nextViewInfo->Alpha) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ALPHA, LINEAR, currentViewInfo->Alpha, nextViewInfo->Alpha, scrollTime));
+    }
+    if (std::abs(currentViewInfo->X - nextViewInfo->X) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X, LINEAR, currentViewInfo->X, nextViewInfo->X, scrollTime));
+    }
+    if (std::abs(currentViewInfo->Y - nextViewInfo->Y) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y, LINEAR, currentViewInfo->Y, nextViewInfo->Y, scrollTime));
+    }
+    if (std::abs(currentViewInfo->XOrigin - nextViewInfo->XOrigin) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_ORIGIN, LINEAR, currentViewInfo->XOrigin, nextViewInfo->XOrigin, scrollTime));
+    }
+    if (std::abs(currentViewInfo->YOrigin - nextViewInfo->YOrigin) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, currentViewInfo->YOrigin, nextViewInfo->YOrigin, scrollTime));
+    }
+    if (std::abs(currentViewInfo->XOffset - nextViewInfo->XOffset) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_OFFSET, LINEAR, currentViewInfo->XOffset, nextViewInfo->XOffset, scrollTime));
+    }
+    if (std::abs(currentViewInfo->YOffset - nextViewInfo->YOffset) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_OFFSET, LINEAR, currentViewInfo->YOffset, nextViewInfo->YOffset, scrollTime));
+    }
+    if (std::abs(currentViewInfo->FontSize - nextViewInfo->FontSize) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_FONT_SIZE, LINEAR, currentViewInfo->FontSize, nextViewInfo->FontSize, scrollTime));
+    }
+    if (std::abs(currentViewInfo->BackgroundAlpha - nextViewInfo->BackgroundAlpha) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, currentViewInfo->BackgroundAlpha, nextViewInfo->BackgroundAlpha, scrollTime));
+    }
+    if (std::abs(currentViewInfo->MaxWidth - nextViewInfo->MaxWidth) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, currentViewInfo->MaxWidth, nextViewInfo->MaxWidth, scrollTime));
+    }
+    if (std::abs(currentViewInfo->MaxHeight - nextViewInfo->MaxHeight) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, currentViewInfo->MaxHeight, nextViewInfo->MaxHeight, scrollTime));
+    }
+    if (currentViewInfo->Layer != nextViewInfo->Layer) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_LAYER, LINEAR, currentViewInfo->Layer, nextViewInfo->Layer, scrollTime));
+    }
+    if (std::abs(currentViewInfo->Volume - nextViewInfo->Volume) > EPSILON_FLOAT) { // Assuming Volume is float/double
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_VOLUME, LINEAR, currentViewInfo->Volume, nextViewInfo->Volume, scrollTime));
+    }
+    if (currentViewInfo->Monitor != nextViewInfo->Monitor) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MONITOR, LINEAR, currentViewInfo->Monitor, nextViewInfo->Monitor, scrollTime));
+    }
 
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_HEIGHT, LINEAR, currentViewInfo->Height, nextViewInfo->Height, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_WIDTH, LINEAR, currentViewInfo->Width, nextViewInfo->Width, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ANGLE, LINEAR, currentViewInfo->Angle, nextViewInfo->Angle, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ALPHA, LINEAR, currentViewInfo->Alpha, nextViewInfo->Alpha, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X, LINEAR, currentViewInfo->X, nextViewInfo->X, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y, LINEAR, currentViewInfo->Y, nextViewInfo->Y, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_ORIGIN, LINEAR, currentViewInfo->XOrigin, nextViewInfo->XOrigin, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, currentViewInfo->YOrigin, nextViewInfo->YOrigin, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_OFFSET, LINEAR, currentViewInfo->XOffset, nextViewInfo->XOffset, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_OFFSET, LINEAR, currentViewInfo->YOffset, nextViewInfo->YOffset, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_FONT_SIZE, LINEAR, currentViewInfo->FontSize, nextViewInfo->FontSize, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, currentViewInfo->BackgroundAlpha, nextViewInfo->BackgroundAlpha, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, currentViewInfo->MaxWidth, nextViewInfo->MaxWidth, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, currentViewInfo->MaxHeight, nextViewInfo->MaxHeight, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_LAYER, LINEAR, currentViewInfo->Layer, nextViewInfo->Layer, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_VOLUME, LINEAR, currentViewInfo->Volume, nextViewInfo->Volume, scrollTime));
-    set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MONITOR, LINEAR, currentViewInfo->Monitor, nextViewInfo->Monitor, scrollTime));
-
-    scrollTween->Push(std::move(set));
+    // Only push the set if there are any tweens in it
+    if (set->size() > 0) { // Corrected: using size() instead of empty()
+        scrollTween->Push(std::move(set));
+    }
 }
 
 bool ScrollingList::allocateTexture(size_t index, const Item* item) {
