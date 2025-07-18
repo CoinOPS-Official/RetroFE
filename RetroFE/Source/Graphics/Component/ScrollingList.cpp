@@ -844,7 +844,6 @@ void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> s
 
     // Define a small epsilon for floating-point comparisons
     const float EPSILON_FLOAT = 0.0001f;
-    const double EPSILON_DOUBLE = 0.000001;
 
     // Apply conditional push for each Tween property
     if (currentViewInfo->Restart != nextViewInfo->Restart && scrollPeriod_ > minScrollTime_) {
