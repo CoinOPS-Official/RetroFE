@@ -21,6 +21,7 @@
 #include "Collection/CollectionInfoBuilder.h"
 #include "Execute/Launcher.h"
 #include "Utility/Log.h"
+#include "Utility/ThreadPool.h"
 #include "Utility/Utils.h"
 #include "RetroFE.h"
 #include "SDL.h"
@@ -350,6 +351,9 @@ int main(int argc, char** argv)
         LOG_ERROR("EXCEPTION", e.what());
     }
 
+    ThreadPool::getInstance().shutdown();
+    gst_deinit();
+    SDL::deInitialize();
     Logger::deInitialize();
 
     return 0;

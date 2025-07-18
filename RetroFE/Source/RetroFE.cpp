@@ -400,7 +400,7 @@ void RetroFE::launchExit(bool userInitiated) {
 	lastLaunchReturnTime_ = currentTime_;
 	currentPage_->updateReloadables(0);
 	currentPage_->onNewItemSelected();
-	currentPage_->reallocateMenuSpritePoints(false);
+	//currentPage_->reallocateMenuSpritePoints(false);
 
 #ifndef __APPLE__
 	SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0), 0);
@@ -486,63 +486,40 @@ void RetroFE::allocateGraphicsMemory() {
 bool RetroFE::deInitialize() {
 
 	bool retVal = true;
-
 	VideoPool::shuttingDown_ = true;
 
 	// Free textures
 	freeGraphicsMemory();
 
 	// Delete page
-	if (currentPage_)
-	{
+	if (currentPage_) {
 		currentPage_->deInitialize();
 		delete currentPage_;
 		currentPage_ = nullptr;
 	}
 
-	// Delete databases
-	if (metadb_)
-	{
-		delete metadb_;
-		metadb_ = nullptr;
-	}
-
-	if (db_)
-	{
-		delete db_;
-		db_ = nullptr;
-	}
-
-	if (debugFont_) {
-		TTF_CloseFont(debugFont_);
-		debugFont_ = nullptr;
-	}
-
-	if (fpsOverlayTexture_)
-	{
-		SDL_DestroyTexture(fpsOverlayTexture_);
-		fpsOverlayTexture_ = nullptr;
-	}
+	// Delete databases and other instance resources...
+	if (metadb_) { delete metadb_; metadb_ = nullptr; }
+	if (db_) { delete db_; db_ = nullptr; }
+	if (debugFont_) { TTF_CloseFont(debugFont_); debugFont_ = nullptr; }
+	if (fpsOverlayTexture_) { SDL_DestroyTexture(fpsOverlayTexture_); fpsOverlayTexture_ = nullptr; }
 
 	initialized = false;
 	Image::cleanupTextureCache();
 	VideoPool::shutdown();
 	ThreadPool::getInstance().wait();
 
-	if (reboot_)
-	{
+	// This must be called on EVERY exit to prevent a zombie singleton.
+
+	if (musicPlayer_) {
+		musicPlayer_->shutdown();
+	}
+
+	if (reboot_) {
 		LOG_INFO("RetroFE", "Rebooting");
 	}
-	else
-	{
+	else {
 		LOG_INFO("RetroFE", "Exiting");
-		if (musicPlayer_)
-		{
-			musicPlayer_->shutdown();
-		}
-		ThreadPool::getInstance().shutdown();
-		gst_deinit();
-		SDL::deInitialize();
 	}
 
 	return retVal;
