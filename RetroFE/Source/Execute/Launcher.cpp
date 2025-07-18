@@ -75,45 +75,50 @@ using InputCheckFn = std::function<bool()>;
 using ExtraCheckFn = std::function<bool()>;
 
 struct SDLJoystickScopeGuard {
-	bool initialized = false;
+	bool initialized_by_me = false;
 	std::vector<SDL_Joystick*> joysticks;
 
 	SDLJoystickScopeGuard() {
-		if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) == 0) {
-			initialized = true;
-			SDL_JoystickEventState(SDL_ENABLE);
-
-			// Enumerate and open all joysticks
-			int numJoysticks = SDL_NumJoysticks();
-			for (int i = 0; i < numJoysticks; ++i) {
-				SDL_Joystick* joy = SDL_JoystickOpen(i);
-				if (joy) {
-					joysticks.push_back(joy);
-					LOG_INFO("Launcher", "Opened joystick: " + std::string(SDL_JoystickName(joy) ? SDL_JoystickName(joy) : "Unknown"));
-				}
-				else {
-					LOG_WARNING("Launcher", "Failed to open joystick index: " + std::to_string(i));
-				}
-			}
-
-			LOG_INFO("Launcher", "SDL joystick subsystem initialized and joysticks opened for launcher input monitoring.");
+		// Check if the joystick subsystem is already running.
+		if (SDL_WasInit(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) != 0) {
+			LOG_INFO("Launcher", "Using existing SDL joystick session for input monitoring.");
+			// We don't need to do anything else. The main RetroFE instance is handling it.
+			// Joysticks are assumed to be open already.
 		}
 		else {
-			LOG_ERROR("Launcher", "Failed to init SDL joystick subsystem for launcher.");
+			// SDL is not initialized, so we must do it.
+			LOG_INFO("Launcher", "SDL joystick session not found. Initializing a temporary one.");
+			if (SDL_InitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER) == 0) {
+				initialized_by_me = true; // We are responsible for cleanup.
+				SDL_JoystickEventState(SDL_ENABLE);
+
+				// Enumerate and open all joysticks
+				int numJoysticks = SDL_NumJoysticks();
+				for (int i = 0; i < numJoysticks; ++i) {
+					SDL_Joystick* joy = SDL_JoystickOpen(i);
+					if (joy) {
+						joysticks.push_back(joy);
+					}
+				}
+				LOG_INFO("Launcher", "Temporary SDL joystick subsystem initialized successfully.");
+			}
+			else {
+				LOG_ERROR("Launcher", "Failed to init temporary SDL joystick subsystem for launcher.");
+			}
 		}
 	}
 
 	~SDLJoystickScopeGuard() {
-		// Close all opened joysticks
-		for (auto joy : joysticks) {
-			if (joy) SDL_JoystickClose(joy);
-		}
-		joysticks.clear();
-
-		if (initialized) {
+		// Only shut down the subsystem if we were the one who started it.
+		if (initialized_by_me) {
+			for (auto joy : joysticks) {
+				if (joy) SDL_JoystickClose(joy);
+			}
+			joysticks.clear();
 			SDL_QuitSubSystem(SDL_INIT_JOYSTICK | SDL_INIT_GAMECONTROLLER);
-			LOG_INFO("Launcher", "SDL joystick subsystem deinitialized for launcher.");
+			LOG_INFO("Launcher", "Temporary SDL joystick subsystem deinitialized.");
 		}
+		// If initialized_by_me is false, we do nothing and leave the main session alone.
 	}
 };
 
@@ -152,37 +157,37 @@ WaitResult runFrontendWaitLoop(
 		while (g_main_context_pending(nullptr)) {
 			g_main_context_iteration(nullptr, false);
 		}
-		if (!unloadSDL)
+		if (!unloadSDL) {
 			currentPage->update(deltaTime);
 
-		// Animate and draw secondary screens
-		if (shouldAnimate && currentPage) {
+			// Animate and draw secondary screens
+			if (shouldAnimate && currentPage) {
 
-			for (int i = startScreen; i < screenCount; ++i) {
-				SDL_Renderer* currentRenderer = SDL::getRenderer(i);
-				SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
-				if (!currentRenderer || !currentRenderTarget) continue;
-				SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
-				SDL_SetRenderDrawColor(currentRenderer, 0, 0, 0, 255);
-				SDL_RenderClear(currentRenderer);
-			}
-			for (int i = startScreen; i < screenCount; ++i) {
-				SDL_Renderer* currentRenderer = SDL::getRenderer(i);
-				SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
-				if (!currentRenderer || !currentRenderTarget) continue;
-				SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
-				currentPage->draw(i);
-			}
-			for (int i = startScreen; i < screenCount; ++i) {
-				SDL_Renderer* currentRenderer = SDL::getRenderer(i);
-				SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
-				if (!currentRenderer || !currentRenderTarget) continue;
-				SDL_SetRenderTarget(currentRenderer, nullptr);
-				SDL_RenderCopy(currentRenderer, currentRenderTarget, nullptr, nullptr);
-				SDL_RenderPresent(currentRenderer);
+				for (int i = startScreen; i < screenCount; ++i) {
+					SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+					SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+					if (!currentRenderer || !currentRenderTarget) continue;
+					SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
+					SDL_SetRenderDrawColor(currentRenderer, 0, 0, 0, 255);
+					SDL_RenderClear(currentRenderer);
+				}
+				for (int i = startScreen; i < screenCount; ++i) {
+					SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+					SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+					if (!currentRenderer || !currentRenderTarget) continue;
+					SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
+					currentPage->draw(i);
+				}
+				for (int i = startScreen; i < screenCount; ++i) {
+					SDL_Renderer* currentRenderer = SDL::getRenderer(i);
+					SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
+					if (!currentRenderer || !currentRenderTarget) continue;
+					SDL_SetRenderTarget(currentRenderer, nullptr);
+					SDL_RenderCopy(currentRenderer, currentRenderTarget, nullptr, nullptr);
+					SDL_RenderPresent(currentRenderer);
+				}
 			}
 		}
-
 		// Input check (user interruption)
 		if (inputCheck && inputCheck()) {
 			return WaitResult::UserInput;
@@ -1257,234 +1262,288 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			return false;
 			};
 		{
-			std::optional<SDLJoystickScopeGuard> sdlGuard;
-			bool unloadSDL = false;
-			config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
-			if (unloadSDL)
-				sdlGuard.emplace();
+			SDLJoystickScopeGuard sdlGuard;
 			if (isAttractMode) {
-			// --- Attract Mode Initialization ---
+				// --- Attract Mode Initialization ---
 
-			Uint64 frequency = SDL_GetPerformanceFrequency();
-			bool multiple_display = SDL::getScreenCount() > 1;
-			bool animateDuringGame = true;
-			config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
-			bool shouldAnimate = animateDuringGame && multiple_display;
+				Uint64 frequency = SDL_GetPerformanceFrequency();
+				bool multiple_display = SDL::getScreenCount() > 1;
+				bool animateDuringGame = true;
+				config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
+				bool shouldAnimate = animateDuringGame && multiple_display;
 
-			int attractModeLaunchRunTime = 30; // Default timeout in seconds
-			config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, attractModeLaunchRunTime); // Read timeout from config
+				int attractModeLaunchRunTime = 30; // Default timeout in seconds
+				config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, attractModeLaunchRunTime); // Read timeout from config
 
-			// Flags to track state during the loop
-			bool processTerminated = false;   // Becomes true if the process exits on its own
+				// Flags to track state during the loop
+				bool processTerminated = false;   // Becomes true if the process exits on its own
 
-			// Variables for checking process/window state
-			DWORD launchedProcessId = (hLaunchedProcess != NULL) ? GetProcessId(hLaunchedProcess) : 0;
-			HWND gameWindow = nullptr;
-			if (!launchedProcessId) {
-				LOG_WARNING("Launcher", "Attract mode entered but no valid process handle exists!");
-			}
-
-			// Give the launched process a moment to initialize and potentially create its window
-			runFrontendWaitLoop(
-				this,
-				currentPage,
-				config_,
-				nullptr,
-				0.5,            // 500ms warmup
-				nullptr, nullptr,
-				shouldAnimate, 1, 33
-			);
-
-			auto findGameWindow = [launchedProcessId]() -> HWND {
-				if (launchedProcessId == 0) return nullptr;
-				struct EnumData { DWORD processId; HWND result; };
-				EnumData data = { launchedProcessId, nullptr };
-
-				EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
-					EnumData* data = reinterpret_cast<EnumData*>(lParam);
-					DWORD windowProcessId = 0;
-					GetWindowThreadProcessId(hwnd, &windowProcessId);
-					if (windowProcessId == data->processId && IsWindowVisible(hwnd)) {
-						data->result = hwnd;
-						return FALSE;
-					}
-					return TRUE;
-					}, reinterpret_cast<LPARAM>(&data));
-				return data.result;
-				};
-			gameWindow = findGameWindow();
-			if (gameWindow) {
-				LOG_DEBUG("Launcher", "Found initial game window handle: 0x" + std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
-			}
-			else {
-				LOG_DEBUG("Launcher", "Game window not found immediately.");
-			}
-
-			auto windowClosedCheck = [&]() -> bool {
-				if (gameWindow && !IsWindow(gameWindow)) {
-					processTerminated = true;
-					LOG_INFO("Launcher", "Game window handle became invalid (closed).");
-					return true;
+				// Variables for checking process/window state
+				DWORD launchedProcessId = (hLaunchedProcess != NULL) ? GetProcessId(hLaunchedProcess) : 0;
+				HWND gameWindow = nullptr;
+				if (!launchedProcessId) {
+					LOG_WARNING("Launcher", "Attract mode entered but no valid process handle exists!");
 				}
-				return false;
-				};
 
-			// --- Attract Mode Main Monitoring Loop ---
-			LOG_INFO("Launcher", "Entering Attract Mode monitoring loop (Timeout: " + std::to_string(attractModeLaunchRunTime) + "s)");
-			WaitResult attractResult = runFrontendWaitLoop(
-				this,
-				currentPage,
-				config_,
-				hLaunchedProcess,
-				attractModeLaunchRunTime,
-				checkInputs,
-				windowClosedCheck,
-				shouldAnimate, 1, 33
-			);			// --- End Attract Mode Main Monitoring Loop ---
+				// Give the launched process a moment to initialize and potentially create its window
+				runFrontendWaitLoop(
+					this,
+					currentPage,
+					config_,
+					nullptr,
+					0.5,            // 500ms warmup
+					nullptr, nullptr,
+					shouldAnimate, 1, 33
+				);
+
+				auto findGameWindow = [launchedProcessId]() -> HWND {
+					if (launchedProcessId == 0) return nullptr;
+					struct EnumData { DWORD processId; HWND result; };
+					EnumData data = { launchedProcessId, nullptr };
+
+					EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+						EnumData* data = reinterpret_cast<EnumData*>(lParam);
+						DWORD windowProcessId = 0;
+						GetWindowThreadProcessId(hwnd, &windowProcessId);
+						if (windowProcessId == data->processId && IsWindowVisible(hwnd)) {
+							data->result = hwnd;
+							return FALSE;
+						}
+						return TRUE;
+						}, reinterpret_cast<LPARAM>(&data));
+					return data.result;
+					};
+				gameWindow = findGameWindow();
+				if (gameWindow) {
+					LOG_DEBUG("Launcher", "Found initial game window handle: 0x" + std::to_string(reinterpret_cast<uintptr_t>(gameWindow)));
+				}
+				else {
+					LOG_DEBUG("Launcher", "Game window not found immediately.");
+				}
+
+				auto windowClosedCheck = [&]() -> bool {
+					if (gameWindow && !IsWindow(gameWindow)) {
+						processTerminated = true;
+						LOG_INFO("Launcher", "Game window handle became invalid (closed).");
+						return true;
+					}
+					return false;
+					};
+
+				// --- Attract Mode Main Monitoring Loop ---
+				LOG_INFO("Launcher", "Entering Attract Mode monitoring loop (Timeout: " + std::to_string(attractModeLaunchRunTime) + "s)");
+				WaitResult attractResult = runFrontendWaitLoop(
+					this,
+					currentPage,
+					config_,
+					hLaunchedProcess,
+					attractModeLaunchRunTime,
+					checkInputs,
+					windowClosedCheck,
+					shouldAnimate, 1, 33
+				);			// --- End Attract Mode Main Monitoring Loop ---
 
 
-			// --- Post-Loop Actions based on Exit Condition ---
+				// --- Post-Loop Actions based on Exit Condition ---
 
-			switch (attractResult) {
-				case WaitResult::UserInput: {
-					// This is the key: we immediately check the flag to decide which path to take.
-					if (firstInputWasExitCommand) {
-						//
-						// --- PATH 1: The user pressed a QUIT command (ESC or combo) ---
-						//
-						LOG_INFO("Launcher", "User interrupted attract mode with a quit command. Terminating process immediately.");
+				switch (attractResult) {
+					case WaitResult::UserInput: {
+						// This is the key: we immediately check the flag to decide which path to take.
+						if (firstInputWasExitCommand) {
+							//
+							// --- PATH 1: The user pressed a QUIT command (ESC or combo) ---
+							//
+							LOG_INFO("Launcher", "User interrupted attract mode with a quit command. Terminating process immediately.");
 
+							if (jobAssigned && hJob != NULL) {
+								TerminateJobObject(hJob, 1);
+							}
+							else if (hLaunchedProcess != NULL) {
+								DWORD processId = GetProcessId(hLaunchedProcess);
+								if (processId != 0) {
+									std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
+									std::set<DWORD> processedIds;
+									TerminateProcessAndChildren(processId, exeName, processedIds);
+								}
+							}
+
+							// In this path, we do NOT wait for the process to exit naturally, and we do NOT add to "Last Played".
+							// The `break;` will simply exit the switch and proceed to the end of the `execute` function.
+
+						}
+						else {
+							//
+							// --- PATH 2: The user pressed a "PLAY" command (any other key/button) ---
+							//
+							LOG_INFO("Launcher", "User interrupted attract mode with a play command. Waiting for game to exit naturally.");
+
+							interruptionTime = std::chrono::high_resolution_clock::now();
+							userInputDetected = true;
+
+							// Handle the 4-way restrictor if needed.
+							if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
+								is4waySet = true;
+								std::thread([]() {
+									bool result = gRestrictor->setWay(4);
+									if (!result) LOG_ERROR("Launcher", "Failed to set restrictor to 4-way mode (async)");
+									else LOG_INFO("Launcher", "Restrictor set to 4-way mode (async)");
+									}).detach();
+							}
+
+							// Now, wait for the game to finish on its own.
+							if (hLaunchedProcess != NULL) {
+								// We create a new, minimal check for the window closing
+								auto gameWindowClosedCheck = [&]() -> bool {
+									if (gameWindow && !IsWindow(gameWindow)) {
+										LOG_INFO("Launcher", "Game window handle became invalid (closed).");
+										return true;
+									}
+									return false;
+									};
+								auto quitComboOnlyCheck = [&]() -> bool {
+									SDL_Event e;
+									while (SDL_PollEvent(&e)) {
+										if (e.type == SDL_JOYBUTTONDOWN) {
+											joystickButtonState[e.jbutton.which][e.jbutton.button] = true;
+											joystickButtonTimeState[e.jbutton.which][e.jbutton.button] = std::chrono::high_resolution_clock::now();
+
+											// Check for quit combo only
+											bool isQuitCombo = true;
+											for (int idx : quitComboIndices) {
+												if (joystickButtonState[e.jbutton.which].count(idx) == 0 ||
+													!joystickButtonState[e.jbutton.which][idx]) {
+													isQuitCombo = false;
+													break;
+												}
+											}
+											if (isQuitCombo) {
+												std::chrono::high_resolution_clock::time_point earliest, latest;
+												bool firstBtn = true;
+												for (int idx : quitComboIndices) {
+													auto t = joystickButtonTimeState[e.jbutton.which][idx];
+													if (firstBtn) { earliest = latest = t; firstBtn = false; }
+													else {
+														if (t < earliest) earliest = t;
+														if (t > latest) latest = t;
+													}
+												}
+												if (std::chrono::duration_cast<std::chrono::milliseconds>(latest - earliest).count() <= 200) {
+													LOG_INFO("Launcher", "Quit combo detected after attract interruption.");
+													return true;
+												}
+											}
+										}
+										else if (e.type == SDL_JOYBUTTONUP) {
+											joystickButtonState[e.jbutton.which][e.jbutton.button] = false;
+										}
+									}
+									// Also allow ESC to quit
+									if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
+										LOG_INFO("Launcher", "ESC key pressed after attract interruption.");
+										return true;
+									}
+									return false;
+									};
+
+								WaitResult result = runFrontendWaitLoop(
+									this,
+									currentPage,
+									config_,
+									hLaunchedProcess,
+									0,
+									quitComboOnlyCheck,
+									gameWindowClosedCheck,
+									shouldAnimate,
+									1,
+									33
+								);
+								if (result == WaitResult::UserInput) {
+									LOG_INFO("Launcher", "Quit combo or ESC detected after attract interruption. Terminating process.");
+
+									if (jobAssigned && hJob != NULL) {
+										TerminateJobObject(hJob, 1);
+									}
+									else if (hLaunchedProcess != NULL) {
+										DWORD processId = GetProcessId(hLaunchedProcess);
+										if (processId != 0) {
+											std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
+											std::set<DWORD> processedIds;
+											TerminateProcessAndChildren(processId, exeName, processedIds);
+										}
+									}
+								}
+							}
+							else {
+								LOG_WARNING("Launcher", "User interrupted, but no process handle to wait on.");
+							}
+
+							// Since it was a "Play" command, we now add it to the "Last Played" playlist.
+							LOG_INFO("Launcher", "Adding game to last played playlist.");
+							CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
+							std::string lastPlayedSkipCollection = ""; int size = 0;
+							config_.getProperty(OPTION_LASTPLAYEDSKIPCOLLECTION, lastPlayedSkipCollection);
+							config_.getProperty(OPTION_LASTPLAYEDSIZE, size);
+							if (!lastPlayedSkipCollection.empty()) {
+								std::stringstream ss(lastPlayedSkipCollection); std::string collection = ""; bool updateLastPlayed = true;
+								while (ss.good()) { getline(ss, collection, ','); if (collectionItem->collectionInfo->name == collection) { updateLastPlayed = false; break; } }
+								if (updateLastPlayed) { cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, size); }
+							}
+						}
+						break; // End of the UserInput case
+					}
+					case WaitResult::ProcessExit: {
+						LOG_INFO("Launcher", "Process terminated naturally before attract mode timeout or user input.");
+						break;
+					}
+					case WaitResult::Timeout: {
+						LOG_INFO("Launcher", "Attract mode timeout reached - attempting termination.");
+						// Termination logic
 						if (jobAssigned && hJob != NULL) {
-							TerminateJobObject(hJob, 1);
+							LOG_INFO("Launcher", "Terminating process and children via Job Object.");
+							if (!TerminateJobObject(hJob, 1)) LOG_ERROR("Launcher", "TerminateJobObject failed. Error: " + std::to_string(GetLastError()));
+							else LOG_INFO("Launcher", "TerminateJobObject called successfully.");
 						}
 						else if (hLaunchedProcess != NULL) {
+							LOG_WARNING("Launcher", "Job Object not assigned or unavailable; falling back to TerminateProcessAndChildren.");
 							DWORD processId = GetProcessId(hLaunchedProcess);
 							if (processId != 0) {
 								std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
 								std::set<DWORD> processedIds;
 								TerminateProcessAndChildren(processId, exeName, processedIds);
 							}
+							else LOG_WARNING("Launcher", "Could not get process ID for fallback termination.");
 						}
-
-						// In this path, we do NOT wait for the process to exit naturally, and we do NOT add to "Last Played".
-						// The `break;` will simply exit the switch and proceed to the end of the `execute` function.
-
+						else LOG_ERROR("Launcher", "Attract mode timeout but no valid process handle or job object to terminate!");
+						break;
 					}
-					else {
-						//
-						// --- PATH 2: The user pressed a "PLAY" command (any other key/button) ---
-						//
-						LOG_INFO("Launcher", "User interrupted attract mode with a play command. Waiting for game to exit naturally.");
-
-						interruptionTime = std::chrono::high_resolution_clock::now();
-						userInputDetected = true;
-
-						// Handle the 4-way restrictor if needed.
-						if (currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos && restrictorEnabled) {
-							is4waySet = true;
-							std::thread([]() {
-								bool result = gRestrictor->setWay(4);
-								if (!result) LOG_ERROR("Launcher", "Failed to set restrictor to 4-way mode (async)");
-								else LOG_INFO("Launcher", "Restrictor set to 4-way mode (async)");
-								}).detach();
-						}
-
-						// Now, wait for the game to finish on its own.
-						if (hLaunchedProcess != NULL) {
-							// We create a new, minimal check for the window closing
-							auto gameWindowClosedCheck = [&]() -> bool {
-								if (gameWindow && !IsWindow(gameWindow)) {
-									LOG_INFO("Launcher", "Game window handle became invalid (closed).");
-									return true;
-								}
-								return false;
-								};
-
-							runFrontendWaitLoop(
-								this,
-								currentPage,
-								config_,
-								hLaunchedProcess,
-								0, // infinite wait
-								[]() { return false; }, // No user input check needed here, we just wait for the process.
-								gameWindowClosedCheck,
-								shouldAnimate,
-								1,
-								33
-							);
-							LOG_INFO("Launcher", "Process finished exiting after user interruption.");
-						}
-						else {
-							LOG_WARNING("Launcher", "User interrupted, but no process handle to wait on.");
-						}
-
-						// Since it was a "Play" command, we now add it to the "Last Played" playlist.
-						LOG_INFO("Launcher", "Adding game to last played playlist.");
-						CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
-						std::string lastPlayedSkipCollection = ""; int size = 0;
-						config_.getProperty(OPTION_LASTPLAYEDSKIPCOLLECTION, lastPlayedSkipCollection);
-						config_.getProperty(OPTION_LASTPLAYEDSIZE, size);
-						if (!lastPlayedSkipCollection.empty()) {
-							std::stringstream ss(lastPlayedSkipCollection); std::string collection = ""; bool updateLastPlayed = true;
-							while (ss.good()) { getline(ss, collection, ','); if (collectionItem->collectionInfo->name == collection) { updateLastPlayed = false; break; } }
-							if (updateLastPlayed) { cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, size); }
-						}
-					}
-					break; // End of the UserInput case
+					default: break;
 				}
-				case WaitResult::ProcessExit: {
-					LOG_INFO("Launcher", "Process terminated naturally before attract mode timeout or user input.");
-					break;
-				}
-				case WaitResult::Timeout: {
-					LOG_INFO("Launcher", "Attract mode timeout reached - attempting termination.");
-					// Termination logic
-					if (jobAssigned && hJob != NULL) {
-						LOG_INFO("Launcher", "Terminating process and children via Job Object.");
-						if (!TerminateJobObject(hJob, 1)) LOG_ERROR("Launcher", "TerminateJobObject failed. Error: " + std::to_string(GetLastError()));
-						else LOG_INFO("Launcher", "TerminateJobObject called successfully.");
-					}
-					else if (hLaunchedProcess != NULL) {
-						LOG_WARNING("Launcher", "Job Object not assigned or unavailable; falling back to TerminateProcessAndChildren.");
-						DWORD processId = GetProcessId(hLaunchedProcess);
-						if (processId != 0) {
-							std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
-							std::set<DWORD> processedIds;
-							TerminateProcessAndChildren(processId, exeName, processedIds);
-						}
-						else LOG_WARNING("Launcher", "Could not get process ID for fallback termination.");
-					}
-					else LOG_ERROR("Launcher", "Attract mode timeout but no valid process handle or job object to terminate!");
-					break;
-				}
-				default: break;
+
+			} // End of if(isAttractMode)
+			else if (wait) {
+				LOG_INFO("Launcher", "Waiting for launched process to complete. Press quitCombo to force quit.");
+				bool comboLatch = false;
+				bool killed = false;
+				bool multiple_display = SDL::getScreenCount() > 1;
+				bool animateDuringGame = true;
+				config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
+				bool shouldAnimate = animateDuringGame && multiple_display;
+
+				runFrontendWaitLoop(
+					this,
+					currentPage,
+					config_,
+					hLaunchedProcess,
+					0, // infinite wait
+					checkInputs,
+					nullptr, // No extra check needed
+					shouldAnimate,
+					1,
+					33
+				);
+
+				LOG_INFO("Launcher", "Process completed.");
 			}
-
-		} // End of if(isAttractMode)
-		else if (wait) {
-			LOG_INFO("Launcher", "Waiting for launched process to complete. Press quitCombo to force quit.");
-			bool comboLatch = false;
-			bool killed = false;
-			bool multiple_display = SDL::getScreenCount() > 1;
-			bool animateDuringGame = true;
-			config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
-			bool shouldAnimate = animateDuringGame && multiple_display;
-
-			runFrontendWaitLoop(
-				this,
-				currentPage,
-				config_,
-				hLaunchedProcess,
-				0, // infinite wait
-				checkInputs,
-				nullptr, // No extra check needed
-				shouldAnimate,
-				1,
-				33
-			);
-
-			LOG_INFO("Launcher", "Process completed.");
-		}
 		}
 		endTime = std::chrono::steady_clock::now();
 		LOG_DEBUG("Launcher", "Recording end time.");
