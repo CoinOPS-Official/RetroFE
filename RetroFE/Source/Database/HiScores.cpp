@@ -26,6 +26,18 @@ HiScores& HiScores::getInstance() {
     return instance;
 }
 
+void HiScores::deinitialize() {
+    {
+        std::unique_lock<std::shared_mutex> lock(scoresCacheMutex_);
+        scoresCache_.clear();  // Clear all loaded high score data
+    }
+
+    hiFilesDirectory_.clear();
+    scoresDirectory_.clear();
+
+    LOG_INFO("HiScores", "HiScores deinitialized and cache cleared.");
+}
+
 // Load all high scores, first from ZIP, then overriding with external XMLs
 void HiScores::loadHighScores(const std::string& zipPath, const std::string& overridePath) {
         

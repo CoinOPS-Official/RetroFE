@@ -37,6 +37,8 @@ class HiScores {
 public:
     static HiScores& getInstance();
 
+    void deinitialize();
+
     // Initialize by loading all high scores
     void loadHighScores(const std::string& zipPath, const std::string& overridePath);
 
