@@ -508,17 +508,6 @@ bool GStreamerVideo::unload() {
 	// DO NOT destroy videoTexture_ here, so reuse is possible.
 	SDL_UnlockMutex(SDL::getMutex());
 
-	currentFile_.clear();
-	playCount_ = 0;
-	numLoops_ = 0;
-
-	currentVolume_ = 0.0f;
-	lastSetVolume_ = -1.0f;
-	lastSetMuteState_ = false; // or true if you want muted as default
-	volume_ = 0.0f;
-
-	playCount_ = 0;
-
 	// --- 2. Signal that we are no longer "playing" this specific stream ---
 	pipeLineReady_ = false; // Reset pipeline ready state
 	targetState_ = IVideo::VideoState::None; // Reflect that it's not actively playing or paused
@@ -576,6 +565,17 @@ bool GStreamerVideo::unload() {
 		perspective_gva_ = nullptr;
 		LOG_DEBUG("GStreamerVideo", "unload(): Freed perspective_gva_ for " + currentFile_);
 	}
+
+	currentFile_.clear();
+	playCount_ = 0;
+	numLoops_ = 0;
+
+	currentVolume_ = 0.0f;
+	lastSetVolume_ = -1.0f;
+	lastSetMuteState_ = false; // or true if you want muted as default
+	volume_ = 0.0f;
+
+	playCount_ = 0;
 
 	return true;
 }
