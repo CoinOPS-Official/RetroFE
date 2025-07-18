@@ -266,6 +266,117 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
 		});
 }
 
+void VideoPool::releaseVideoBatch(std::vector<VideoPtr> videos, int monitor, int listId) {
+	if (videos.empty() || listId == -1 || shuttingDown_) return;
+
+	size_t releaseCount = videos.size();
+	PoolInfo* poolPtr = nullptr;
+
+	{
+		std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+		auto monitorIt = pools_.find(monitor);
+		if (monitorIt == pools_.end()) {
+			LOG_WARNING("VideoPool", "releaseVideoBatch: No pool found for monitor=" + std::to_string(monitor));
+			return;
+		}
+		auto listIt = monitorIt->second.find(listId);
+		if (listIt == monitorIt->second.end()) {
+			LOG_WARNING("VideoPool", "releaseVideoBatch: No pool found for listId=" + std::to_string(listId));
+			return;
+		}
+		poolPtr = &listIt->second;
+	}
+
+	bool latchedOnThisRelease = false;
+	size_t latchedPoolSize = 0;
+
+	{
+		std::lock_guard<std::mutex> lock(poolPtr->poolMutex);
+
+		poolPtr->currentActive = (poolPtr->currentActive > releaseCount)
+			? poolPtr->currentActive - releaseCount
+			: 0;
+
+		for (auto& vid : videos)
+			poolPtr->pending.push_back(std::move(vid));
+
+		if (!poolPtr->initialCountLatched) {
+			poolPtr->requiredInstanceCount = poolPtr->observedMaxActive + POOL_BUFFER_INSTANCES;
+			poolPtr->initialCountLatched = true;
+			latchedOnThisRelease = true;
+			latchedPoolSize = poolPtr->requiredInstanceCount;
+		}
+	}
+
+	LOG_DEBUG("VideoPool", "Batch release: " + std::to_string(releaseCount) +
+		" videos queued. Active now: " + std::to_string(poolPtr->currentActive) +
+		", Pending: " + std::to_string(poolPtr->pending.size()) +
+		(latchedOnThisRelease ? (" [Latched pool size: " + std::to_string(latchedPoolSize) + "]") : ""));
+
+	for (size_t i = 0; i < releaseCount; ++i) {
+		ThreadPool::getInstance().enqueue([monitor, listId]() {
+			VideoPtr videoToProcess;
+
+			{
+				std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+				auto monitorIt = pools_.find(monitor);
+				if (monitorIt == pools_.end()) return;
+				auto listIt = monitorIt->second.find(listId);
+				if (listIt == monitorIt->second.end()) return;
+
+				PoolInfo& pool = listIt->second;
+				std::lock_guard<std::mutex> localLock(pool.poolMutex);
+				if (pool.pending.empty()) return;
+				videoToProcess = std::move(pool.pending.front());
+				pool.pending.pop_front();
+			}
+
+			bool isFaulty = false;
+			try {
+				if (videoToProcess) {
+					videoToProcess->unload();
+					isFaulty = videoToProcess->hasError();
+				}
+			}
+			catch (...) {
+				LOG_ERROR("VideoPool_Worker", "Exception during video unload.");
+				isFaulty = true;
+			}
+
+			{
+				std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+				auto monitorIt = pools_.find(monitor);
+				if (monitorIt == pools_.end()) return;
+				auto listIt = monitorIt->second.find(listId);
+				if (listIt == monitorIt->second.end()) return;
+
+				PoolInfo& pool = listIt->second;
+				std::lock_guard<std::mutex> localLock(pool.poolMutex);
+
+				if (pool.markedForCleanup && pool.currentActive == 0 &&
+					pool.pending.empty() && pool.ready.empty()) {
+					LOG_INFO("VideoPool_Worker", "Final cleanup after batch release.");
+					monitorIt->second.erase(listIt);
+					if (monitorIt->second.empty()) {
+						pools_.erase(monitorIt);
+					}
+					return;
+				}
+
+				if (!isFaulty && videoToProcess && !pool.markedForCleanup) {
+					pool.ready.push_back(std::move(videoToProcess));
+					pool.poolCond.notify_one();
+				}
+				else {
+					LOG_DEBUG("VideoPool_Worker", "Discarding faulty or cleanup video.");
+					pool.poolCond.notify_one();  // ensure no one waits forever
+				}
+			}
+			});
+	}
+}
+
+
 void VideoPool::cleanup_nolock(int monitor, int listId) {
 	auto monitorIt = pools_.find(monitor);
 	if (monitorIt == pools_.end()) return;
@@ -299,25 +410,29 @@ void VideoPool::cleanup(int monitor, int listId) {
 
 void VideoPool::shutdown() {
 	LOG_INFO("VideoPool", "Starting VideoPool shutdown...");
-	shuttingDown_ = true; // Signal that shutdown is in progress
+	shuttingDown_ = true;
 
-	std::lock_guard<std::mutex> globalLock(s_poolsMutex);
-	for (auto& [monitor, listMap] : pools_) {
-		for (auto& [listId, pool] : listMap) {
-			LOG_DEBUG("VideoPool", "Clearing pool for Monitor: " + std::to_string(monitor) +
-				", List ID: " + std::to_string(listId));
-			std::lock_guard<std::mutex> localLock(pool.poolMutex); // Acquire local lock for clearing deques
-			pool.ready.clear();
-			pool.pending.clear();
-			pool.currentActive = 0;
-			pool.observedMaxActive = 0;
-			pool.initialCountLatched = false;
-			pool.requiredInstanceCount = 0;
-			pool.poolCond.notify_all(); // Notify any waiting acquire calls
+	{
+		std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+		for (auto& [monitor, listMap] : pools_) {
+			for (auto& [listId, pool] : listMap) {
+				std::lock_guard<std::mutex> localLock(pool.poolMutex);
+				pool.markedForCleanup = true;
+				pool.poolCond.notify_all(); // Unblock any waiting threads
+			}
 		}
 	}
-	pools_.clear();
-	shuttingDown_ = false; // Reset after all pools are cleared
+
+	// Wait for all workers to complete
+	ThreadPool::getInstance().wait();
+
+	// Now safely clear all pools
+	{
+		std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+		pools_.clear();
+	}
+
+	shuttingDown_ = false;
 	LOG_INFO("VideoPool", "VideoPool shutdown complete.");
 }
 

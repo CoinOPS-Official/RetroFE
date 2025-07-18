@@ -220,21 +220,38 @@ void ScrollingList::reallocateSpritePoints() {
 
     size_t scrollPointsSize = scrollPoints_->size();
     size_t itemsSize = items_->size();
+	int monitor = baseViewInfo.Monitor;
 
-    // First, deallocate all
+    // --- Step 1: Extract video instances for batch release ---
+    std::vector<std::unique_ptr<IVideo>> pooledVideos;
+
     for (size_t i = 0; i < scrollPointsSize; ++i) {
-        deallocateTexture(i);
+        if (auto* videoComp = dynamic_cast<VideoComponent*>(components_[i])) {
+            auto video = videoComp->extractVideo();  // move videoInst_ out
+            if (video)
+                pooledVideos.push_back(std::move(video));
+        }
     }
 
-    // Wait for all releases to fully process before starting new allocations
-    ThreadPool::getInstance().wait();
+    // --- Step 2: Batch release to pool ---
+    if (!pooledVideos.empty()) {
+        VideoPool::releaseVideoBatch(std::move(pooledVideos), monitor, listId_);
+    }
 
-    // Then, allocate all
+    // --- Step 3: Destroy all components (safe now that videos are handled) ---
+    for (size_t i = 0; i < scrollPointsSize; ++i) {
+        deallocateTexture(i);  // deletes VideoComponent and others
+    }
+
+    // --- Step 4 (optional): Wait for all releases to complete ---
+    ThreadPool::getInstance().wait();  // Ensures videos are in ready state
+
+    // --- Step 5: Allocate new components and videos ---
     for (size_t i = 0; i < scrollPointsSize; ++i) {
         size_t index = loopIncrement(itemIndex_, i, itemsSize);
         Item const* item = (*items_)[index];
 
-        allocateTexture(i, item);
+        allocateTexture(i, item);  // creates VideoComponent and others
 
         Component* c = components_[i];
         if (c) {

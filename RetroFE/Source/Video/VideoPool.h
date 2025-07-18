@@ -30,6 +30,7 @@ public:
 
 	static VideoPtr acquireVideo(int monitor, int listId, bool softOverlay);
 	static void releaseVideo(VideoPtr vid, int monitor, int listId);
+	static void releaseVideoBatch(std::vector<VideoPtr> videos, int monitor, int listId);
 	static void cleanup(int monitor, int listId);
 	static void shutdown();
 	static std::atomic<bool> shuttingDown_;

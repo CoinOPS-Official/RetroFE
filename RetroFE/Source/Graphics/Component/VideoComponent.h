@@ -37,6 +37,7 @@ public:
     void draw() override;
     void freeGraphicsMemory() override;
     void allocateGraphicsMemory() override;
+    std::unique_ptr<IVideo> extractVideo();
     bool isPlaying() override;
     void skipForward( ) override;
     void skipBackward( ) override;
@@ -63,4 +64,5 @@ private:
     int perspectiveCorners_[8]{ 0 }; // Initialize to zeros
     bool hasPerspective_{ false };
     bool dimensionsUpdated_ = false; // Track if dimensions have been updated for the current video
+	bool instanceReady_{ false }; // Track if the video instance is ready to play
 };

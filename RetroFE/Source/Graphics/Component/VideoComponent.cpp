@@ -55,7 +55,7 @@ VideoComponent::~VideoComponent() {
 }
 
 bool VideoComponent::update(float dt) {
-	if (!videoInst_ || !currentPage_)
+	if (!videoInst_ || !currentPage_ || !instanceReady_)
 		return Component::update(dt);
 
 	if (!videoInst_->isPipelineReady())
@@ -81,8 +81,6 @@ bool VideoComponent::update(float dt) {
 			return Component::update(dt);
 		}
 	}
-
-	videoInst_->draw();
 
 	if (currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0) {
 		if (videoInst_->getTargetState() != IVideo::VideoState::Paused &&
@@ -172,29 +170,40 @@ void VideoComponent::allocateGraphicsMemory() {
 		}
 		else {
 			LOG_DEBUG("VideoComponent", "Issuing play command for: " + videoFile_);
-			videoInst_->play(videoFile_);
+			instanceReady_ = videoInst_->play(videoFile_);
 		}
 	}
+}
+
+std::unique_ptr<IVideo> VideoComponent::extractVideo() {
+	instanceReady_ = false;
+	return std::move(videoInst_);
 }
 
 void VideoComponent::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
-	if (videoInst_) {
 
-		// Return to pool if pooled (listId_ != -1), else delete
-		if (listId_ != -1) {
-			LOG_DEBUG("VideoComponent", "Releasing video to pool: " + videoFile_);
-			// Pass ownership as std::unique_ptr<IVideo>
-			VideoPool::releaseVideo(std::move(videoInst_), monitor_, listId_);
-			// videoInst_ now nullptr
-			return;
-		}
-		LOG_DEBUG("VideoComponent", "Stopping and resetting video: " + videoFile_);
-		videoInst_.reset();
+	if (!videoInst_) return;  // Already extracted
+
+	if (listId_ != -1) {
+		LOG_DEBUG("VideoComponent", "Releasing video to pool: " + videoFile_);
+		auto video = std::move(videoInst_);
+		VideoPool::releaseVideo(std::move(video), monitor_, listId_);
+		return;
 	}
+
+	LOG_DEBUG("VideoComponent", "Stopping and resetting video: " + videoFile_);
+	videoInst_.reset();
 }
 
+
 void VideoComponent::draw() {
+	if (!videoInst_ || !currentPage_ || !instanceReady_) {
+		return;
+	}
+
+	videoInst_->draw();
+	
 	if (SDL_Texture* texture = videoInst_->getTexture()) {
 		SDL_FRect rect = {
 			baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
