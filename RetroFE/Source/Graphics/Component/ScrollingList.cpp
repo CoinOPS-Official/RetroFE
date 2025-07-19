@@ -822,7 +822,8 @@ size_t ScrollingList::getSize() const
     return items_->size();
 }
 
-void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, double scrollTime) const {
+// Change the type of scrollTime here to float, as it's only used to create tweens that need floats.
+void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, float scrollTime) const {
     if (!c || !sets || !currentViewInfo || !nextViewInfo) return;
 
     // These adjustments are still necessary outside of tweening logic
@@ -845,64 +846,67 @@ void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> s
     // Define a small epsilon for floating-point comparisons
     const float EPSILON_FLOAT = 0.0001f;
 
+    // NOTE: Using static_cast<float> on all numeric start/end values to explicitly
+    // convert them to the type expected by the Tween constructor. This resolves all C4244 warnings.
+
     // Apply conditional push for each Tween property
     if (currentViewInfo->Restart != nextViewInfo->Restart && scrollPeriod_ > minScrollTime_) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_RESTART, LINEAR, currentViewInfo->Restart, nextViewInfo->Restart, 0));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_RESTART, LINEAR, static_cast<float>(currentViewInfo->Restart), static_cast<float>(nextViewInfo->Restart), 0.0f));
     }
     if (std::abs(currentViewInfo->Height - nextViewInfo->Height) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_HEIGHT, LINEAR, currentViewInfo->Height, nextViewInfo->Height, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_HEIGHT, LINEAR, static_cast<float>(currentViewInfo->Height), static_cast<float>(nextViewInfo->Height), scrollTime));
     }
     if (std::abs(currentViewInfo->Width - nextViewInfo->Width) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_WIDTH, LINEAR, currentViewInfo->Width, nextViewInfo->Width, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_WIDTH, LINEAR, static_cast<float>(currentViewInfo->Width), static_cast<float>(nextViewInfo->Width), scrollTime));
     }
     if (std::abs(currentViewInfo->Angle - nextViewInfo->Angle) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ANGLE, LINEAR, currentViewInfo->Angle, nextViewInfo->Angle, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ANGLE, LINEAR, static_cast<float>(currentViewInfo->Angle), static_cast<float>(nextViewInfo->Angle), scrollTime));
     }
     if (std::abs(currentViewInfo->Alpha - nextViewInfo->Alpha) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ALPHA, LINEAR, currentViewInfo->Alpha, nextViewInfo->Alpha, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ALPHA, LINEAR, static_cast<float>(currentViewInfo->Alpha), static_cast<float>(nextViewInfo->Alpha), scrollTime));
     }
     if (std::abs(currentViewInfo->X - nextViewInfo->X) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X, LINEAR, currentViewInfo->X, nextViewInfo->X, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X, LINEAR, static_cast<float>(currentViewInfo->X), static_cast<float>(nextViewInfo->X), scrollTime));
     }
     if (std::abs(currentViewInfo->Y - nextViewInfo->Y) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y, LINEAR, currentViewInfo->Y, nextViewInfo->Y, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y, LINEAR, static_cast<float>(currentViewInfo->Y), static_cast<float>(nextViewInfo->Y), scrollTime));
     }
     if (std::abs(currentViewInfo->XOrigin - nextViewInfo->XOrigin) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_ORIGIN, LINEAR, currentViewInfo->XOrigin, nextViewInfo->XOrigin, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_ORIGIN, LINEAR, static_cast<float>(currentViewInfo->XOrigin), static_cast<float>(nextViewInfo->XOrigin), scrollTime));
     }
     if (std::abs(currentViewInfo->YOrigin - nextViewInfo->YOrigin) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, currentViewInfo->YOrigin, nextViewInfo->YOrigin, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, static_cast<float>(currentViewInfo->YOrigin), static_cast<float>(nextViewInfo->YOrigin), scrollTime));
     }
     if (std::abs(currentViewInfo->XOffset - nextViewInfo->XOffset) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_OFFSET, LINEAR, currentViewInfo->XOffset, nextViewInfo->XOffset, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_OFFSET, LINEAR, static_cast<float>(currentViewInfo->XOffset), static_cast<float>(nextViewInfo->XOffset), scrollTime));
     }
     if (std::abs(currentViewInfo->YOffset - nextViewInfo->YOffset) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_OFFSET, LINEAR, currentViewInfo->YOffset, nextViewInfo->YOffset, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_OFFSET, LINEAR, static_cast<float>(currentViewInfo->YOffset), static_cast<float>(nextViewInfo->YOffset), scrollTime));
     }
     if (std::abs(currentViewInfo->FontSize - nextViewInfo->FontSize) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_FONT_SIZE, LINEAR, currentViewInfo->FontSize, nextViewInfo->FontSize, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_FONT_SIZE, LINEAR, static_cast<float>(currentViewInfo->FontSize), static_cast<float>(nextViewInfo->FontSize), scrollTime));
     }
     if (std::abs(currentViewInfo->BackgroundAlpha - nextViewInfo->BackgroundAlpha) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, currentViewInfo->BackgroundAlpha, nextViewInfo->BackgroundAlpha, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, static_cast<float>(currentViewInfo->BackgroundAlpha), static_cast<float>(nextViewInfo->BackgroundAlpha), scrollTime));
     }
     if (std::abs(currentViewInfo->MaxWidth - nextViewInfo->MaxWidth) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, currentViewInfo->MaxWidth, nextViewInfo->MaxWidth, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, static_cast<float>(currentViewInfo->MaxWidth), static_cast<float>(nextViewInfo->MaxWidth), scrollTime));
     }
     if (std::abs(currentViewInfo->MaxHeight - nextViewInfo->MaxHeight) > EPSILON_FLOAT) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, currentViewInfo->MaxHeight, nextViewInfo->MaxHeight, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, static_cast<float>(currentViewInfo->MaxHeight), static_cast<float>(nextViewInfo->MaxHeight), scrollTime));
     }
     if (currentViewInfo->Layer != nextViewInfo->Layer) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_LAYER, LINEAR, currentViewInfo->Layer, nextViewInfo->Layer, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_LAYER, LINEAR, static_cast<float>(currentViewInfo->Layer), static_cast<float>(nextViewInfo->Layer), scrollTime));
     }
-    if (std::abs(currentViewInfo->Volume - nextViewInfo->Volume) > EPSILON_FLOAT) { // Assuming Volume is float/double
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_VOLUME, LINEAR, currentViewInfo->Volume, nextViewInfo->Volume, scrollTime));
+    if (std::abs(currentViewInfo->Volume - nextViewInfo->Volume) > EPSILON_FLOAT) {
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_VOLUME, LINEAR, static_cast<float>(currentViewInfo->Volume), static_cast<float>(nextViewInfo->Volume), scrollTime));
     }
     if (currentViewInfo->Monitor != nextViewInfo->Monitor) {
-        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MONITOR, LINEAR, currentViewInfo->Monitor, nextViewInfo->Monitor, scrollTime));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MONITOR, LINEAR, static_cast<float>(currentViewInfo->Monitor), static_cast<float>(nextViewInfo->Monitor), scrollTime));
     }
 
     // Only push the set if there are any tweens in it
-    if (set->size() > 0) { // Corrected: using size() instead of empty()
+    if (set->size() > 0) {
         scrollTween->Push(std::move(set));
     }
 }

@@ -269,157 +269,158 @@ bool Component::animate() {
                 elapsedTime = tween->duration;
 
             switch (tween->property) {
-            case TWEEN_PROPERTY_X:
+                case TWEEN_PROPERTY_X:
                 if (tween->startDefined)
                     baseViewInfo.X = tween->animate(elapsedTime);
                 else
                     baseViewInfo.X = tween->animate(elapsedTime, storeViewInfo_.X);
                 break;
 
-            case TWEEN_PROPERTY_Y:
+                case TWEEN_PROPERTY_Y:
                 if (tween->startDefined)
                     baseViewInfo.Y = tween->animate(elapsedTime);
                 else
                     baseViewInfo.Y = tween->animate(elapsedTime, storeViewInfo_.Y);
                 break;
 
-            case TWEEN_PROPERTY_HEIGHT:
+                case TWEEN_PROPERTY_HEIGHT:
                 if (tween->startDefined)
                     baseViewInfo.Height = tween->animate(elapsedTime);
                 else
                     baseViewInfo.Height = tween->animate(elapsedTime, storeViewInfo_.Height);
                 break;
 
-            case TWEEN_PROPERTY_WIDTH:
+                case TWEEN_PROPERTY_WIDTH:
                 if (tween->startDefined)
                     baseViewInfo.Width = tween->animate(elapsedTime);
                 else
                     baseViewInfo.Width = tween->animate(elapsedTime, storeViewInfo_.Width);
                 break;
 
-            case TWEEN_PROPERTY_ANGLE:
+                case TWEEN_PROPERTY_ANGLE:
                 if (tween->startDefined)
                     baseViewInfo.Angle = tween->animate(elapsedTime);
                 else
                     baseViewInfo.Angle = tween->animate(elapsedTime, storeViewInfo_.Angle);
                 break;
 
-            case TWEEN_PROPERTY_ALPHA:
+                case TWEEN_PROPERTY_ALPHA:
                 if (tween->startDefined)
                     baseViewInfo.Alpha = tween->animate(elapsedTime);
                 else
                     baseViewInfo.Alpha = tween->animate(elapsedTime, storeViewInfo_.Alpha);
                 break;
 
-            case TWEEN_PROPERTY_X_ORIGIN:
+                case TWEEN_PROPERTY_X_ORIGIN:
                 if (tween->startDefined)
                     baseViewInfo.XOrigin = tween->animate(elapsedTime);
                 else
                     baseViewInfo.XOrigin = tween->animate(elapsedTime, storeViewInfo_.XOrigin);
                 break;
 
-            case TWEEN_PROPERTY_Y_ORIGIN:
+                case TWEEN_PROPERTY_Y_ORIGIN:
                 if (tween->startDefined)
                     baseViewInfo.YOrigin = tween->animate(elapsedTime);
                 else
                     baseViewInfo.YOrigin = tween->animate(elapsedTime, storeViewInfo_.YOrigin);
                 break;
 
-            case TWEEN_PROPERTY_X_OFFSET:
+                case TWEEN_PROPERTY_X_OFFSET:
                 if (tween->startDefined)
                     baseViewInfo.XOffset = tween->animate(elapsedTime);
                 else
                     baseViewInfo.XOffset = tween->animate(elapsedTime, storeViewInfo_.XOffset);
                 break;
 
-            case TWEEN_PROPERTY_Y_OFFSET:
+                case TWEEN_PROPERTY_Y_OFFSET:
                 if (tween->startDefined)
                     baseViewInfo.YOffset = tween->animate(elapsedTime);
                 else
                     baseViewInfo.YOffset = tween->animate(elapsedTime, storeViewInfo_.YOffset);
                 break;
 
-            case TWEEN_PROPERTY_FONT_SIZE:
+                case TWEEN_PROPERTY_FONT_SIZE:
                 if (tween->startDefined)
                     baseViewInfo.FontSize = tween->animate(elapsedTime);
                 else
                     baseViewInfo.FontSize = tween->animate(elapsedTime, storeViewInfo_.FontSize);
                 break;
 
-            case TWEEN_PROPERTY_BACKGROUND_ALPHA:
+                case TWEEN_PROPERTY_BACKGROUND_ALPHA:
                 if (tween->startDefined)
                     baseViewInfo.BackgroundAlpha = tween->animate(elapsedTime);
                 else
                     baseViewInfo.BackgroundAlpha = tween->animate(elapsedTime, storeViewInfo_.BackgroundAlpha);
                 break;
 
-            case TWEEN_PROPERTY_MAX_WIDTH:
+                case TWEEN_PROPERTY_MAX_WIDTH:
                 if (tween->startDefined)
                     baseViewInfo.MaxWidth = tween->animate(elapsedTime);
                 else
                     baseViewInfo.MaxWidth = tween->animate(elapsedTime, storeViewInfo_.MaxWidth);
                 break;
 
-            case TWEEN_PROPERTY_MAX_HEIGHT:
+                case TWEEN_PROPERTY_MAX_HEIGHT:
                 if (tween->startDefined)
                     baseViewInfo.MaxHeight = tween->animate(elapsedTime);
                 else
                     baseViewInfo.MaxHeight = tween->animate(elapsedTime, storeViewInfo_.MaxHeight);
                 break;
 
-            case TWEEN_PROPERTY_LAYER:
+                case TWEEN_PROPERTY_LAYER:
                 if (tween->startDefined)
                     baseViewInfo.Layer = static_cast<unsigned int>(tween->animate(elapsedTime));
                 else
-                    baseViewInfo.Layer = static_cast<unsigned int>(tween->animate(elapsedTime, storeViewInfo_.Layer));
+                    baseViewInfo.Layer = static_cast<unsigned int>(tween->animate(elapsedTime, static_cast<float>(storeViewInfo_.Layer)));
                 break;
 
-            case TWEEN_PROPERTY_CONTAINER_X:
+                case TWEEN_PROPERTY_CONTAINER_X:
                 if (tween->startDefined)
                     baseViewInfo.ContainerX = tween->animate(elapsedTime);
                 else
                     baseViewInfo.ContainerX = tween->animate(elapsedTime, storeViewInfo_.ContainerX);
                 break;
 
-            case TWEEN_PROPERTY_CONTAINER_Y:
+                case TWEEN_PROPERTY_CONTAINER_Y:
                 if (tween->startDefined)
                     baseViewInfo.ContainerY = tween->animate(elapsedTime);
                 else
                     baseViewInfo.ContainerY = tween->animate(elapsedTime, storeViewInfo_.ContainerY);
                 break;
 
-            case TWEEN_PROPERTY_CONTAINER_WIDTH:
+                case TWEEN_PROPERTY_CONTAINER_WIDTH:
                 if (tween->startDefined)
                     baseViewInfo.ContainerWidth = tween->animate(elapsedTime);
                 else
                     baseViewInfo.ContainerWidth = tween->animate(elapsedTime, storeViewInfo_.ContainerWidth);
                 break;
 
-            case TWEEN_PROPERTY_CONTAINER_HEIGHT:
+                case TWEEN_PROPERTY_CONTAINER_HEIGHT:
                 if (tween->startDefined)
                     baseViewInfo.ContainerHeight = tween->animate(elapsedTime);
                 else
                     baseViewInfo.ContainerHeight = tween->animate(elapsedTime, storeViewInfo_.ContainerHeight);
                 break;
 
-            case TWEEN_PROPERTY_VOLUME:
+                case TWEEN_PROPERTY_VOLUME:
                 if (tween->startDefined)
                     baseViewInfo.Volume = tween->animate(elapsedTime);
                 else
                     baseViewInfo.Volume = tween->animate(elapsedTime, storeViewInfo_.Volume);
                 break;
 
-            case TWEEN_PROPERTY_MONITOR:
+                case TWEEN_PROPERTY_MONITOR:
                 if (tween->startDefined)
                     baseViewInfo.Monitor = static_cast<unsigned int>(tween->animate(elapsedTime));
                 else
-                    baseViewInfo.Monitor = static_cast<unsigned int>(tween->animate(elapsedTime, storeViewInfo_.Monitor));
+                    baseViewInfo.Monitor = static_cast<unsigned int>(tween->animate(elapsedTime, static_cast<float>(storeViewInfo_.Monitor)));
                 break;
 
-            case TWEEN_PROPERTY_NOP:
+                case TWEEN_PROPERTY_NOP:
                 break;
-            case TWEEN_PROPERTY_RESTART:
-                baseViewInfo.Restart = (tween->duration != 0.0) && (elapsedTime == 0.0);
+                case TWEEN_PROPERTY_RESTART:
+                // Compare tween's float duration to a float literal.
+                baseViewInfo.Restart = (tween->duration != 0.0f) && (elapsedTime == 0.0);
                 break;
             }
         }
@@ -437,7 +438,6 @@ bool Component::animate() {
 
     return completeDone;
 }
-
 
 bool Component::isPlaying()
 {
