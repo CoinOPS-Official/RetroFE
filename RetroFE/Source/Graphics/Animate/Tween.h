@@ -37,6 +37,8 @@ public:
     static TweenAlgorithm getTweenType(const std::string& name);
     static std::optional<TweenProperty> getTweenProperty(const std::string& name);
 
+    void reinit(TweenProperty prop, TweenAlgorithm alg, float newStart, float newEnd, float newDuration, const std::string& playlist);
+
     TweenProperty property;
     float  duration;
     bool   startDefined{ true };
