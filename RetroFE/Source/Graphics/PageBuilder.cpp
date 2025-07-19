@@ -1559,8 +1559,7 @@ void PageBuilder::getTweenSet(const xml_node<>* node, Animation* animation) {
 	}
 }
 
-void PageBuilder::getAnimationEvents(const xml_node<>* node, TweenSet& tweens)
-{
+void PageBuilder::getAnimationEvents(const xml_node<>* node, TweenSet& tweens) {
 	xml_attribute<> const* durationXml = node->first_attribute("duration");
 	std::string actionSetting;
 	config_.getProperty(OPTION_ACTION, actionSetting);
@@ -1671,51 +1670,52 @@ void PageBuilder::getAnimationEvents(const xml_node<>* node, TweenSet& tweens)
 				float durationValue = Utils::convertFloat(durationXml->value());
 
 				TweenAlgorithm algorithm = LINEAR;
-				TweenProperty property;
 
 				if (algorithmXml) {
 					algorithm = Tween::getTweenType(algorithmXml->value());
 				}
 
-				if (Tween::getTweenProperty(animateType, property)) {
+				if (auto optProperty = Tween::getTweenProperty(animateType)) {
+					const TweenProperty property = *optProperty; // <-- Get the value and make it const.
+
 					switch (property) {
-					case TWEEN_PROPERTY_WIDTH:
-					case TWEEN_PROPERTY_X:
-					case TWEEN_PROPERTY_X_OFFSET:
-					case TWEEN_PROPERTY_CONTAINER_X:
-					case TWEEN_PROPERTY_CONTAINER_WIDTH:
+						case TWEEN_PROPERTY_WIDTH:
+						case TWEEN_PROPERTY_X:
+						case TWEEN_PROPERTY_X_OFFSET:
+						case TWEEN_PROPERTY_CONTAINER_X:
+						case TWEEN_PROPERTY_CONTAINER_WIDTH:
 						fromValue = getHorizontalAlignment(from, 0);
 						toValue = getHorizontalAlignment(to, 0);
 						break;
 
 						// x origin gets translated to a percent
-					case TWEEN_PROPERTY_X_ORIGIN:
+						case TWEEN_PROPERTY_X_ORIGIN:
 						fromValue = getHorizontalAlignment(from, 0) / layoutWidth_;
 						toValue = getHorizontalAlignment(to, 0) / layoutWidth_;
 						break;
 
-					case TWEEN_PROPERTY_HEIGHT:
-					case TWEEN_PROPERTY_Y:
-					case TWEEN_PROPERTY_Y_OFFSET:
-					case TWEEN_PROPERTY_FONT_SIZE:
-					case TWEEN_PROPERTY_CONTAINER_Y:
-					case TWEEN_PROPERTY_CONTAINER_HEIGHT:
+						case TWEEN_PROPERTY_HEIGHT:
+						case TWEEN_PROPERTY_Y:
+						case TWEEN_PROPERTY_Y_OFFSET:
+						case TWEEN_PROPERTY_FONT_SIZE:
+						case TWEEN_PROPERTY_CONTAINER_Y:
+						case TWEEN_PROPERTY_CONTAINER_HEIGHT:
 						fromValue = getVerticalAlignment(from, 0);
 						toValue = getVerticalAlignment(to, 0);
 						break;
 
 						// y origin gets translated to a percent
-					case TWEEN_PROPERTY_Y_ORIGIN:
+						case TWEEN_PROPERTY_Y_ORIGIN:
 						fromValue = getVerticalAlignment(from, 0) / layoutHeight_;
 						toValue = getVerticalAlignment(to, 0) / layoutHeight_;
 						break;
 
-					case TWEEN_PROPERTY_MAX_WIDTH:
-					case TWEEN_PROPERTY_MAX_HEIGHT:
+						case TWEEN_PROPERTY_MAX_WIDTH:
+						case TWEEN_PROPERTY_MAX_HEIGHT:
 						fromValue = getVerticalAlignment(from, FLT_MAX);
 						toValue = getVerticalAlignment(to, FLT_MAX);
 						break;
-					default:
+						default:
 						break;
 					}
 

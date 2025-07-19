@@ -18,6 +18,7 @@
 #include "TweenTypes.h"
 #include <string>
 #include <unordered_map>
+#include <optional>
 
 class ViewInfo;
 
@@ -34,7 +35,7 @@ public:
     static float animateSingle(TweenAlgorithm type, float start, float end, float duration, float elapsedTime);
 
     static TweenAlgorithm getTweenType(const std::string& name);
-    static bool getTweenProperty(const std::string& name, TweenProperty& property);
+    static std::optional<TweenProperty> getTweenProperty(const std::string& name);
 
     TweenProperty property;
     float  duration;
@@ -42,28 +43,30 @@ public:
     std::string playlistFilter;
 
 private:
-    static float easeInQuadratic(float elapsedTime, float duration, float b, float c);
-    static float easeOutQuadratic(float elapsedTime, float duration, float b, float c);
-    static float easeInOutQuadratic(float elapsedTime, float duration, float b, float c);
-    static float easeInCubic(float elapsedTime, float duration, float b, float c);
-    static float easeOutCubic(float elapsedTime, float duration, float b, float c);
-    static float easeInOutCubic(float elapsedTime, float duration, float b, float c);
-    static float easeInQuartic(float elapsedTime, float duration, float b, float c);
-    static float easeOutQuartic(float elapsedTime, float duration, float b, float c);
-    static float easeInOutQuartic(float elapsedTime, float duration, float b, float c);
-    static float easeInQuintic(float elapsedTime, float duration, float b, float c);
-    static float easeOutQuintic(float elapsedTime, float duration, float b, float c);
-    static float easeInOutQuintic(float elapsedTime, float duration, float b, float c);
-    static float easeInSine(float elapsedTime, float duration, float b, float c);
-    static float easeOutSine(float elapsedTime, float duration, float b, float c);
-    static float easeInOutSine(float elapsedTime, float duration, float b, float c);
-    static float easeInExponential(float elapsedTime, float duration, float b, float c);
-    static float easeOutExponential(float elapsedTime, float duration, float b, float c);
-    static float easeInOutExponential(float elapsedTime, float duration, float b, float c);
-    static float easeInCircular(float elapsedTime, float duration, float b, float c);
-    static float easeOutCircular(float elapsedTime, float duration, float b, float c);
-    static float easeInOutCircular(float elapsedTime, float duration, float b, float c);
-    static float linear(float elapsedTime, float duration, float b, float c);
+    // Easing functions use a normalized progress value for calculation.
+    // p: progress (0.0 to 1.0), b: beginning value, c: change in value (end - start).
+    static float linear(float p, float b, float c);
+    static float easeInQuadratic(float p, float b, float c);
+    static float easeOutQuadratic(float p, float b, float c);
+    static float easeInOutQuadratic(float p, float b, float c);
+    static float easeInCubic(float p, float b, float c);
+    static float easeOutCubic(float p, float b, float c);
+    static float easeInOutCubic(float p, float b, float c);
+    static float easeInQuartic(float p, float b, float c);
+    static float easeOutQuartic(float p, float b, float c);
+    static float easeInOutQuartic(float p, float b, float c);
+    static float easeInQuintic(float p, float b, float c);
+    static float easeOutQuintic(float p, float b, float c);
+    static float easeInOutQuintic(float p, float b, float c);
+    static float easeInSine(float p, float b, float c);
+    static float easeOutSine(float p, float b, float c);
+    static float easeInOutSine(float p, float b, float c);
+    static float easeInExponential(float p, float b, float c);
+    static float easeOutExponential(float p, float b, float c);
+    static float easeInOutExponential(float p, float b, float c);
+    static float easeInCircular(float p, float b, float c);
+    static float easeOutCircular(float p, float b, float c);
+    static float easeInOutCircular(float p, float b, float c);
 
     static std::unordered_map<std::string, TweenAlgorithm> tweenTypeMap_;
     static std::unordered_map<std::string, TweenProperty> tweenPropertyMap_;

@@ -19,6 +19,7 @@
 #define _USE_MATH_DEFINES
 #include <math.h>
 #include <string>
+#include <optional>
 
 std::unordered_map<std::string, TweenAlgorithm> Tween::tweenTypeMap_ = {
     {"easeinquadratic", EASE_IN_QUADRATIC},
@@ -32,7 +33,7 @@ std::unordered_map<std::string, TweenAlgorithm> Tween::tweenTypeMap_ = {
     {"easeinoutquartic", EASE_INOUT_QUARTIC},
     {"easeinquintic", EASE_IN_QUINTIC},
     {"easeoutquintic", EASE_OUT_QUINTIC},
-    {"easeonoutquintic", EASE_INOUT_QUINTIC}, // Note: Typo in original, likely meant "easeinoutquintic"
+    {"easeinoutquintic", EASE_INOUT_QUINTIC}, // <-- Corrected "easeonoutquintic" typo
     {"easeinsine", EASE_IN_SINE},
     {"easeoutsine", EASE_OUT_SINE},
     {"easeinoutsine", EASE_INOUT_SINE},
@@ -44,7 +45,6 @@ std::unordered_map<std::string, TweenAlgorithm> Tween::tweenTypeMap_ = {
     {"easeinoutcircular", EASE_INOUT_CIRCULAR},
     {"linear", LINEAR}
 };
-
 
 std::unordered_map<std::string, TweenProperty> Tween::tweenPropertyMap_ = {
     {"x", TWEEN_PROPERTY_X},
@@ -71,7 +71,6 @@ std::unordered_map<std::string, TweenProperty> Tween::tweenPropertyMap_ = {
     {"restart", TWEEN_PROPERTY_RESTART}
 };
 
-// Assuming Tween members start, end, and duration were changed from double to float in Tween.h
 Tween::Tween(TweenProperty property, TweenAlgorithm type, float start, float end, float duration, const std::string& playlistFilter)
     : property(property)
     , duration(duration)
@@ -81,20 +80,17 @@ Tween::Tween(TweenProperty property, TweenAlgorithm type, float start, float end
     , end(end) {
 }
 
-
-bool Tween::getTweenProperty(const std::string& name, TweenProperty& property) {
+std::optional<TweenProperty> Tween::getTweenProperty(const std::string& name) {
     std::string key = name;
     std::transform(key.begin(), key.end(), key.begin(), ::tolower);
 
     auto it = tweenPropertyMap_.find(key);
     if (it != tweenPropertyMap_.end()) {
-        property = it->second;
-        return true;
+        return it->second;
     }
 
-    return false;
+    return std::nullopt;
 }
-
 
 TweenAlgorithm Tween::getTweenType(const std::string& name) {
     std::string key = name;
@@ -107,8 +103,6 @@ TweenAlgorithm Tween::getTweenType(const std::string& name) {
     return LINEAR;
 }
 
-
-
 float Tween::animate(double elapsedTime) const {
     return animateSingle(type, start, end, duration, static_cast<float>(elapsedTime));
 }
@@ -117,238 +111,156 @@ float Tween::animate(double elapsedTime, float startValue) const {
     return animateSingle(type, startValue, end, duration, static_cast<float>(elapsedTime));
 }
 
-// All animation calculations are now done using floats for performance and consistency.
 float Tween::animateSingle(TweenAlgorithm type, float start, float end, float duration, float elapsedTime) {
-    float a = start;
-    float b = end - start;
-    float result = 0.0f;
-
-    switch (type) {
-        case EASE_IN_QUADRATIC:
-        result = easeInQuadratic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_OUT_QUADRATIC:
-        result = easeOutQuadratic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_INOUT_QUADRATIC:
-        result = easeInOutQuadratic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_IN_CUBIC:
-        result = easeInCubic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_OUT_CUBIC:
-        result = easeOutCubic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_INOUT_CUBIC:
-        result = easeInOutCubic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_IN_QUARTIC:
-        result = easeInQuartic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_OUT_QUARTIC:
-        result = easeOutQuartic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_INOUT_QUARTIC:
-        result = easeInOutQuartic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_IN_QUINTIC:
-        result = easeInQuintic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_OUT_QUINTIC:
-        result = easeOutQuintic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_INOUT_QUINTIC:
-        result = easeInOutQuintic(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_IN_SINE:
-        result = easeInSine(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_OUT_SINE:
-        result = easeOutSine(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_INOUT_SINE:
-        result = easeInOutSine(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_IN_EXPONENTIAL:
-        result = easeInExponential(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_OUT_EXPONENTIAL:
-        result = easeOutExponential(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_INOUT_EXPONENTIAL:
-        result = easeInOutExponential(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_IN_CIRCULAR:
-        result = easeInCircular(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_OUT_CIRCULAR:
-        result = easeOutCircular(elapsedTime, duration, a, b);
-        break;
-
-        case EASE_INOUT_CIRCULAR:
-        result = easeInOutCircular(elapsedTime, duration, a, b);
-        break;
-
-        case LINEAR:
-        default:
-        result = linear(elapsedTime, duration, a, b);
-        break;
+    // If duration is zero or negative, animation is instant. Return the end state.
+    if (duration <= 0.0f) {
+        return end;
     }
 
-    return result;
+    // Clamp time to prevent overshooting the animation.
+    elapsedTime = std::min(elapsedTime, duration);
 
+    // OPTIMIZATION: Calculate normalized progress (0.0 to 1.0) once.
+    const float progress = elapsedTime / duration;
+    const float change = end - start;
+
+    switch (type) {
+        case EASE_IN_QUADRATIC:     return easeInQuadratic(progress, start, change);
+        case EASE_OUT_QUADRATIC:    return easeOutQuadratic(progress, start, change);
+        case EASE_INOUT_QUADRATIC:  return easeInOutQuadratic(progress, start, change);
+        case EASE_IN_CUBIC:         return easeInCubic(progress, start, change);
+        case EASE_OUT_CUBIC:        return easeOutCubic(progress, start, change);
+        case EASE_INOUT_CUBIC:      return easeInOutCubic(progress, start, change);
+        case EASE_IN_QUARTIC:       return easeInQuartic(progress, start, change);
+        case EASE_OUT_QUARTIC:      return easeOutQuartic(progress, start, change);
+        case EASE_INOUT_QUARTIC:    return easeInOutQuartic(progress, start, change);
+        case EASE_IN_QUINTIC:       return easeInQuintic(progress, start, change);
+        case EASE_OUT_QUINTIC:      return easeOutQuintic(progress, start, change);
+        case EASE_INOUT_QUINTIC:    return easeInOutQuintic(progress, start, change);
+        case EASE_IN_SINE:          return easeInSine(progress, start, change);
+        case EASE_OUT_SINE:         return easeOutSine(progress, start, change);
+        case EASE_INOUT_SINE:       return easeInOutSine(progress, start, change);
+        case EASE_IN_EXPONENTIAL:   return easeInExponential(progress, start, change);
+        case EASE_OUT_EXPONENTIAL:  return easeOutExponential(progress, start, change);
+        case EASE_INOUT_EXPONENTIAL:return easeInOutExponential(progress, start, change);
+        case EASE_IN_CIRCULAR:      return easeInCircular(progress, start, change);
+        case EASE_OUT_CIRCULAR:     return easeOutCircular(progress, start, change);
+        case EASE_INOUT_CIRCULAR:   return easeInOutCircular(progress, start, change);
+        case LINEAR:
+        default:                    return linear(progress, start, change);
+    }
 }
 
-float Tween::linear(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    return c * t / d + b;
-};
+// NOTE: All easing functions now use the new signature:
+// (float progress, float start_value, float change_in_value)
+// 'p' is progress (0.0 to 1.0), 'b' is the beginning value, 'c' is the total change.
 
-float Tween::easeInQuadratic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d;
-    return c * t * t + b;
-};
+float Tween::linear(float p, float b, float c) {
+    return c * p + b;
+}
 
-float Tween::easeOutQuadratic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d;
-    return -c * t * (t - 2.0f) + b;
-};
+float Tween::easeInQuadratic(float p, float b, float c) {
+    return c * p * p + b;
+}
 
-float Tween::easeInOutQuadratic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d / 2.0f;
-    if (t < 1.0f) return c / 2.0f * t * t + b;
-    t--;
-    return -c / 2.0f * (t * (t - 2.0f) - 1.0f) + b;
-};
+float Tween::easeOutQuadratic(float p, float b, float c) {
+    return -c * p * (p - 2.0f) + b;
+}
 
-float Tween::easeInCubic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d;
-    return c * t * t * t + b;
-};
+float Tween::easeInOutQuadratic(float p, float b, float c) {
+    p *= 2.0f;
+    if (p < 1.0f) return c / 2.0f * p * p + b;
+    p--;
+    return -c / 2.0f * (p * (p - 2.0f) - 1.0f) + b;
+}
 
-float Tween::easeOutCubic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d;
-    t--;
-    return c * (t * t * t + 1.0f) + b;
-};
+float Tween::easeInCubic(float p, float b, float c) {
+    return c * p * p * p + b;
+}
 
-float Tween::easeInOutCubic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d / 2.0f;
-    if (t < 1.0f) return c / 2.0f * t * t * t + b;
-    t -= 2.0f;
-    return c / 2.0f * (t * t * t + 2.0f) + b;
-};
+float Tween::easeOutCubic(float p, float b, float c) {
+    p--;
+    return c * (p * p * p + 1.0f) + b;
+}
 
-float Tween::easeInQuartic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d;
-    return c * t * t * t * t + b;
-};
+float Tween::easeInOutCubic(float p, float b, float c) {
+    p *= 2.0f;
+    if (p < 1.0f) return c / 2.0f * p * p * p + b;
+    p -= 2.0f;
+    return c / 2.0f * (p * p * p + 2.0f) + b;
+}
 
-float Tween::easeOutQuartic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d;
-    t--;
-    return -c * (t * t * t * t - 1.0f) + b;
-};
+float Tween::easeInQuartic(float p, float b, float c) {
+    return c * p * p * p * p + b;
+}
 
-float Tween::easeInOutQuartic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d / 2.0f;
-    if (t < 1.0f) return c / 2.0f * t * t * t * t + b;
-    t -= 2.0f;
-    return -c / 2.0f * (t * t * t * t - 2.0f) + b;
-};
+float Tween::easeOutQuartic(float p, float b, float c) {
+    p--;
+    return -c * (p * p * p * p - 1.0f) + b;
+}
 
-float Tween::easeInQuintic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d;
-    return c * t * t * t * t * t + b;
-};
+float Tween::easeInOutQuartic(float p, float b, float c) {
+    p *= 2.0f;
+    if (p < 1.0f) return c / 2.0f * p * p * p * p + b;
+    p -= 2.0f;
+    return -c / 2.0f * (p * p * p * p - 2.0f) + b;
+}
 
+float Tween::easeInQuintic(float p, float b, float c) {
+    return c * p * p * p * p * p + b;
+}
 
-float Tween::easeOutQuintic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d;
-    t--;
-    return c * (t * t * t * t * t + 1.0f) + b;
-};
+float Tween::easeOutQuintic(float p, float b, float c) {
+    p--;
+    return c * (p * p * p * p * p + 1.0f) + b;
+}
 
-float Tween::easeInOutQuintic(float t, float d, float b, float c) {
-    if (d == 0.0f) return b;
-    t /= d / 2.0f;
-    if (t < 1.0f) return c / 2.0f * t * t * t * t * t + b;
-    t -= 2.0f;
-    return c / 2.0f * (t * t * t * t * t + 2.0f) + b;
-};
+float Tween::easeInOutQuintic(float p, float b, float c) {
+    p *= 2.0f;
+    if (p < 1.0f) return c / 2.0f * p * p * p * p * p + b;
+    p -= 2.0f;
+    return c / 2.0f * (p * p * p * p * p + 2.0f) + b;
+}
 
-float Tween::easeInSine(float t, float d, float b, float c) {
-    return -c * cosf(t / d * ((float)M_PI / 2.0f)) + c + b;
-};
+float Tween::easeInSine(float p, float b, float c) {
+    return -c * cosf(p * ((float)M_PI / 2.0f)) + c + b;
+}
 
-float Tween::easeOutSine(float t, float d, float b, float c) {
-    return c * sinf(t / d * ((float)M_PI / 2.0f)) + b;
-};
+float Tween::easeOutSine(float p, float b, float c) {
+    return c * sinf(p * ((float)M_PI / 2.0f)) + b;
+}
 
-float Tween::easeInOutSine(float t, float d, float b, float c) {
-    return -c / 2.0f * (cosf((float)M_PI * t / d) - 1.0f) + b;
-};
+float Tween::easeInOutSine(float p, float b, float c) {
+    return -c / 2.0f * (cosf((float)M_PI * p) - 1.0f) + b;
+}
 
-float Tween::easeInExponential(float t, float d, float b, float c) {
-    return c * powf(2.0f, 10.0f * (t / d - 1.0f)) + b;
-};
+float Tween::easeInExponential(float p, float b, float c) {
+    return c * powf(2.0f, 10.0f * (p - 1.0f)) + b;
+}
 
-float Tween::easeOutExponential(float t, float d, float b, float c) {
-    return c * (-powf(2.0f, -10.0f * t / d) + 1.0f) + b;
-};
+float Tween::easeOutExponential(float p, float b, float c) {
+    return c * (-powf(2.0f, -10.0f * p) + 1.0f) + b;
+}
 
-float Tween::easeInOutExponential(float t, float d, float b, float c) {
-    t /= d / 2.0f;
-    if (t < 1.0f) return c / 2.0f * powf(2.0f, 10.0f * (t - 1.0f)) + b;
-    t--;
-    return c / 2.0f * (-1.0f * powf(2.0f, -10.0f * t) + 2.0f) + b;
-};
+float Tween::easeInOutExponential(float p, float b, float c) {
+    p *= 2.0f;
+    if (p < 1.0f) return c / 2.0f * powf(2.0f, 10.0f * (p - 1.0f)) + b;
+    p--;
+    return c / 2.0f * (-powf(2.0f, -10.0f * p) + 2.0f) + b;
+}
 
-float Tween::easeInCircular(float t, float d, float b, float c) {
-    t /= d;
-    return -c * (sqrtf(1.0f - t * t) - 1.0f) + b;
-};
+float Tween::easeInCircular(float p, float b, float c) {
+    return -c * (sqrtf(1.0f - p * p) - 1.0f) + b;
+}
 
+float Tween::easeOutCircular(float p, float b, float c) {
+    p--;
+    return c * sqrtf(1.0f - p * p) + b;
+}
 
-float Tween::easeOutCircular(float t, float d, float b, float c) {
-    t /= d;
-    t--;
-    return c * sqrtf(1.0f - t * t) + b;
-};
-
-float Tween::easeInOutCircular(float t, float d, float b, float c) {
-    t /= d / 2.0f;
-    if (t < 1.0f) return -c / 2.0f * (sqrtf(1.0f - t * t) - 1.0f) + b;
-    t -= 2.0f;
-    return c / 2.0f * (sqrtf(1.0f - t * t) + 1.0f) + b;
+float Tween::easeInOutCircular(float p, float b, float c) {
+    p *= 2.0f;
+    if (p < 1.0f) return -c / 2.0f * (sqrtf(1.0f - p * p) - 1.0f) + b;
+    p -= 2.0f;
+    return c / 2.0f * (sqrtf(1.0f - p * p) + 1.0f);
 }
