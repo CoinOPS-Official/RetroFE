@@ -957,6 +957,29 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	LOG_INFO("Launcher", "Final absolute executable path: " + exePathStr);
 	LOG_INFO("Launcher", "Final absolute current directory: " + currDirStr);
 
+
+	auto isSteamLaunchingWindow = [](HWND hwnd) -> bool {
+		if (!hwnd) return false;
+		DWORD pid = 0;
+		GetWindowThreadProcessId(hwnd, &pid);
+		if (!pid) return false;
+
+		HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, pid);
+		if (!hProc) return false;
+
+		char exePath[MAX_PATH] = { 0 };
+		bool result = false;
+		if (GetModuleFileNameExA(hProc, NULL, exePath, MAX_PATH)) {
+			std::string exeName = exePath;
+			auto pos = exeName.find_last_of("\\/");
+			if (pos != std::string::npos) exeName = exeName.substr(pos + 1);
+			if (_stricmp(exeName.c_str(), "steamwebhelper.exe") == 0)
+				result = true;
+		}
+		CloseHandle(hProc);
+		return result;
+		};
+
 	// Lambda to check if a window is in fullscreen mode
 	auto isFullscreenWindow = [](HWND hwnd) {
 		RECT appBounds;
@@ -1121,28 +1144,89 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 	// Fullscreen detection if process handle was not obtained
 	if (!handleObtained) {
 		auto start = std::chrono::high_resolution_clock::now();
+		auto effectiveStart = start;
 		HWND hwndFullscreen = nullptr;
+		bool paused = false;
 
 		LOG_INFO("Launcher", "Entering fullscreen detection phase.");
 
 		while (true) {
 			HWND hwnd = GetForegroundWindow();
 			if (hwnd != nullptr) {
+				if (isSteamLaunchingWindow(hwnd)) {
+					if (!paused) {
+						LOG_INFO("Launcher", "Steam launching dialog detected; pausing fullscreen timeout timer.");
+						paused = true;
+					}
+					Sleep(250);
+					continue; // Do not update effectiveStart or elapsed time
+				}
+				else if (paused) {
+					LOG_INFO("Launcher", "Steam launching dialog gone; resuming fullscreen timeout timer.");
+					effectiveStart = std::chrono::high_resolution_clock::now(); // Restart timer
+					paused = false;
+				}
+
 				DWORD windowProcessId;
 				GetWindowThreadProcessId(hwnd, &windowProcessId);
-				if (windowProcessId != GetCurrentProcessId() && isFullscreenWindow(hwnd)) {
-					hwndFullscreen = hwnd;
-					break;
+
+				if (windowProcessId == GetCurrentProcessId()) {
+					Sleep(250);
+					continue; // Skip our own windows
+				}
+
+				if (isFullscreenWindow(hwnd)) {
+					// Try to get a process handle for this window
+					HANDLE hProc = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION, FALSE, windowProcessId);
+
+					if (hProc) {
+						// For logging: get window title and exe name
+						char windowTitle[256] = { 0 };
+						GetWindowTextA(hwnd, windowTitle, sizeof(windowTitle));
+
+						char exePath[MAX_PATH] = { 0 };
+						std::string exeNameStr;
+						if (GetModuleFileNameExA(hProc, NULL, exePath, MAX_PATH)) {
+							std::string exePathStr(exePath);
+							auto pos = exePathStr.find_last_of("\\/");
+							exeNameStr = (pos != std::string::npos) ? exePathStr.substr(pos + 1) : exePathStr;
+						}
+
+						hwndFullscreen = hwnd;
+						hLaunchedProcess = hProc; // Save the process handle for termination
+						handleObtained = true;
+						LOG_INFO("Launcher",
+							"Fullscreen process detected and handle obtained (PID: " + std::to_string(windowProcessId) +
+							", Title: \"" + std::string(windowTitle) + "\"" +
+							(exeNameStr.empty() ? "" : ", Executable: \"" + exeNameStr + "\"") +
+							").");
+						LOG_WARNING("Launcher", "Handle obtained via fullscreen detection. Job Object will *not* be used for termination in this case.");
+						jobAssigned = false; // Explicitly mark job as not assigned/usable for this handle
+						break;
+					}
+					else {
+						LOG_DEBUG("Launcher",
+							"Skipping fullscreen window (PID: " + std::to_string(windowProcessId) +
+							") due to OpenProcess error: " + std::to_string(GetLastError()) + ". Will keep searching.");
+						// Continue searching for another fullscreen window we have access to
+					}
+				}
+				else {
+					// Optionally, log skipped non-fullscreen windows
+					char windowTitle[256] = { 0 };
+					GetWindowTextA(hwnd, windowTitle, sizeof(windowTitle));
+					LOG_DEBUG("Launcher", "Skipping non-fullscreen window (Title: \"" +
+						std::string(windowTitle) + "\", PID: " + std::to_string(windowProcessId) + ")");
 				}
 			}
 
 			auto now = std::chrono::high_resolution_clock::now();
-			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start).count();
+			auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - effectiveStart).count();
 			if (elapsed > 40000) {
 				LOG_WARNING("Launcher", "Timeout while waiting for fullscreen window detection.");
 				break;
 			}
-			Sleep(500);
+			Sleep(250);
 		}
 
 		if (hwndFullscreen) {
@@ -1152,12 +1236,31 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			hLaunchedProcess = OpenProcess(SYNCHRONIZE | PROCESS_TERMINATE | PROCESS_QUERY_INFORMATION, FALSE, gameProcessId);
 			if (hLaunchedProcess) {
 				handleObtained = true;
-				LOG_INFO("Launcher", "Fullscreen process detected and handle obtained (PID: " + std::to_string(gameProcessId) + ").");
+
+				// --- Get window title ---
+				char windowTitle[256] = { 0 };
+				GetWindowTextA(hwndFullscreen, windowTitle, sizeof(windowTitle));
+
+				// --- Get process executable path/name ---
+				char exePath[MAX_PATH] = { 0 };
+				HANDLE hProc = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, gameProcessId);
+				std::string exeNameStr;
+				if (hProc) {
+					if (GetModuleFileNameExA(hProc, NULL, exePath, MAX_PATH)) {
+						std::string exePathStr(exePath);
+						auto pos = exePathStr.find_last_of("\\/");
+						exeNameStr = (pos != std::string::npos) ? exePathStr.substr(pos + 1) : exePathStr;
+					}
+					CloseHandle(hProc);
+				}
+
+				LOG_INFO("Launcher",
+					"Fullscreen process detected and handle obtained (PID: " + std::to_string(gameProcessId) +
+					", Title: \"" + std::string(windowTitle) + "\"" +
+					(exeNameStr.empty() ? "" : ", Executable: \"" + exeNameStr + "\"") +
+					").");
 				LOG_WARNING("Launcher", "Handle obtained via fullscreen detection. Job Object will *not* be used for termination in this case.");
-				jobAssigned = false; // Explicitly mark job as not assigned/usable for this handle
-			}
-			else {
-				LOG_ERROR("Launcher", "Failed to open detected fullscreen process (PID: " + std::to_string(gameProcessId) + "). Error: " + std::to_string(GetLastError()));
+				jobAssigned = false;
 			}
 		}
 		else {
@@ -1190,29 +1293,14 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 		// Flags for "Last Played" logic
 		bool anyInputRegistered = false;     // True once *any* input is detected
 		auto checkInputs = [&]() -> bool {
-			// Check for ESC key quit (global)
-			if (GetAsyncKeyState(VK_ESCAPE) & 0x8000) {
-				if (!anyInputRegistered) {
-					firstInputWasExitCommand = true;
-				}
-				anyInputRegistered = true;
-				LOG_INFO("Launcher", "Quit via ESC key pressed.");
-				return true;
-			}
-
 			SDL_Event e;
 			while (SDL_PollEvent(&e)) {
 				if (e.type == SDL_JOYBUTTONDOWN) {
+					// --- STEP 1: Always update state ---
 					joystickButtonState[e.jbutton.which][e.jbutton.button] = true;
 					joystickButtonTimeState[e.jbutton.which][e.jbutton.button] = std::chrono::high_resolution_clock::now();
 
-					// Any button press sets anyInputRegistered
-					if (!anyInputRegistered) {
-						LOG_INFO("Launcher", "Joystick input detected (any button, normal/attract mode)");
-					}
-					anyInputRegistered = true;
-
-					// Check for quit combo
+					// --- STEP 2: Check if a full quit combo is now active ---
 					bool isQuitCombo = true;
 					if (quitComboIndices.empty()) {
 						isQuitCombo = false;
@@ -1225,35 +1313,62 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 							}
 						}
 					}
+
+					// If the combo is complete, process it and we're done with this event.
 					if (isQuitCombo) {
+						// Check timestamp to ensure it was a deliberate combo press
 						std::chrono::high_resolution_clock::time_point earliest, latest;
 						bool firstBtn = true;
 						for (int idx : quitComboIndices) {
 							auto t = joystickButtonTimeState[e.jbutton.which][idx];
 							if (firstBtn) { earliest = latest = t; firstBtn = false; }
-							else {
-								if (t < earliest) earliest = t;
-								if (t > latest) latest = t;
-							}
+							else { if (t < earliest) earliest = t; if (t > latest) latest = t; }
 						}
+
 						if (std::chrono::duration_cast<std::chrono::milliseconds>(latest - earliest).count() <= 200) {
-							if (!firstInputWasExitCommand && anyInputRegistered == true) {
-								LOG_INFO("Launcher", "Quit combo detected, but it was not first input.");
-							}
 							if (!anyInputRegistered) {
 								firstInputWasExitCommand = true;
 								LOG_INFO("Launcher", "Quit combo detected (first input).");
 							}
-							// anyInputRegistered is already set above
-							return true;
+							else {
+								LOG_INFO("Launcher", "Quit combo detected, but it was not the first input.");
+							}
+							anyInputRegistered = true;
+							return true; // A valid quit combo always returns true
 						}
 					}
 
-					// In attract mode, any button ends attract
+					// --- STEP 3: If it wasn't a full combo, decide if it's a "generic" input ---
+					// A generic input is any button press that is NOT part of the quit combo.
+
+					bool isComboButton = false;
+					for (int idx : quitComboIndices) {
+						if (e.jbutton.button == idx) {
+							isComboButton = true;
+							break;
+						}
+					}
+
+					// If the button pressed was NOT one of the quit combo buttons,
+					// then it is a true generic input and should be registered.
+					if (!isComboButton) {
+						if (!anyInputRegistered) {
+							LOG_INFO("Launcher", "Generic joystick input detected (non-combo button).");
+						}
+						anyInputRegistered = true;
+					}
+					else {
+						// Optional: For debugging, to see partial combo presses.
+						// LOG_DEBUG("Launcher", "Partial quit combo button pressed. Waiting for combo completion...");
+					}
+
+
+					// --- STEP 4: Handle attract mode exit ---
+					// Any button press (even a partial combo) should end attract mode.
 					if (isAttractMode) {
 						return true;
 					}
-					// In normal mode, only quit combo or ESC returns true (rest is ignored except for setting the flag)
+
 				}
 				else if (e.type == SDL_JOYBUTTONUP) {
 					joystickButtonState[e.jbutton.which][e.jbutton.button] = false;
@@ -1522,14 +1637,12 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 			} // End of if(isAttractMode)
 			else if (wait) {
 				LOG_INFO("Launcher", "Waiting for launched process to complete. Press quitCombo to force quit.");
-				bool comboLatch = false;
-				bool killed = false;
 				bool multiple_display = SDL::getScreenCount() > 1;
 				bool animateDuringGame = true;
 				config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
 				bool shouldAnimate = animateDuringGame && multiple_display;
 
-				runFrontendWaitLoop(
+				WaitResult waitResult = runFrontendWaitLoop(
 					this,
 					currentPage,
 					config_,
@@ -1541,8 +1654,24 @@ bool Launcher::execute(std::string executable, std::string args, std::string cur
 					1,
 					33
 				);
+				if (waitResult == WaitResult::UserInput) {
+					LOG_INFO("Launcher", "User pressed quit combo during game. Attempting forced termination.");
 
-				LOG_INFO("Launcher", "Process completed.");
+					if (jobAssigned && hJob != NULL) {
+						TerminateJobObject(hJob, 1);
+					}
+					else if (hLaunchedProcess != NULL) {
+						DWORD processId = GetProcessId(hLaunchedProcess);
+						if (processId != 0) {
+							std::string exeName = exePathStr.substr(exePathStr.find_last_of("\\/") + 1);
+							std::set<DWORD> processedIds;
+							TerminateProcessAndChildren(processId, exeName, processedIds);
+						}
+					}
+				}
+				else {
+					LOG_INFO("Launcher", "Process completed.");
+				}
 			}
 		}
 		endTime = std::chrono::steady_clock::now();
