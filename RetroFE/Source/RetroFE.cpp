@@ -378,17 +378,28 @@ void RetroFE::launchExit(bool userInitiated) {
 		allocateGraphicsMemory();
 	}
 
+#ifdef WIN32
+	// On Windows, SDL_RaiseWindow is not always enough to steal focus back from
+	// another application like Steam. We need to be more assertive using the native API.
+	SDL_SysWMinfo wminfo;
+	SDL_VERSION(&wminfo.version);
+	if (SDL_GetWindowWMInfo(SDL::getWindow(0), &wminfo)) {
+		HWND retroFeHWND = wminfo.info.win.window;
+		// This is a more forceful way to bring the window to the front.
+		SetForegroundWindow(retroFeHWND);
+		// It's also good practice to make sure it's not minimized.
+		ShowWindow(hwnd, SW_RESTORE);
+	}
+#else
+	// For other platforms, the SDL way is usually sufficient.
 	SDL_RestoreWindow(SDL::getWindow(0));
 	SDL_RaiseWindow(SDL::getWindow(0));
-	SDL_SetWindowGrab(SDL::getWindow(0), SDL_TRUE);
+#endif
 
 	SDL_Event e;
 	while (SDL_PollEvent(&e))
 	{
-		if (e.type == SDL_JOYDEVICEADDED || e.type == SDL_JOYDEVICEREMOVED)
-		{
-			input_.update(e);
-		}
+		input_.update(e);
 	}
 	input_.resetStates();
 
@@ -2158,7 +2169,7 @@ bool RetroFE::run() {
 				int currentTrack;
 				double currentPosition;
 				nextPageItem_ = currentPage_->getSelectedItem();
-				if (musicPlayer_ && unloadSDL){
+				if (musicPlayer_ && unloadSDL) {
 					currentTrack = musicPlayer_->getCurrentTrackIndex();
 					currentPosition = musicPlayer_->saveCurrentMusicPosition();
 				}
@@ -2237,7 +2248,7 @@ bool RetroFE::run() {
 			}
 
 
-									// Go back a page; start onMenuExit animation
+			// Go back a page; start onMenuExit animation
 			case RETROFE_BACK_REQUEST:
 			if (currentPage_ && currentPage_->getMenuDepth() == 1)
 			{
