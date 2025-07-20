@@ -220,6 +220,7 @@ set(RETROFE_HEADERS
     "${RETROFE_DIR}/Source/Database/HiScores.h"
     "${RETROFE_DIR}/Source/Execute/AttractMode.h"
     "${RETROFE_DIR}/Source/Execute/Input/InputMonitor.h"
+    "${RETROFE_DIR}/Source/Execute/Input/SDLJoyStickScopeGuard.h"
     "${RETROFE_DIR}/Source/Execute/Launcher.h"
     "${RETROFE_DIR}/Source/Execute/PatchExecutor.h"
     "${RETROFE_DIR}/Source/Execute/Platform/IProcessManager.h"
