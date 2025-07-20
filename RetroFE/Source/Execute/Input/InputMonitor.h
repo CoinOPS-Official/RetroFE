@@ -23,7 +23,7 @@
 
 #include <SDL2/SDL.h>
 
-#include "SDLJoystickScopeGuard.h"
+#include "./SDLJoystickScopeGuard.h"
 #include "../../Database/Configuration.h" // For reading config values
 #include "../../Utility/Utils.h"         // For listToVector
 #include "../../Utility/Log.h"
