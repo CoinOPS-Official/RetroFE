@@ -206,6 +206,9 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         bool animateDuringGame = true;
         config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
         if (animateDuringGame && multiple_display && currentPage) {
+            while (g_main_context_pending(nullptr)) {
+                g_main_context_iteration(nullptr, false);
+            }
             currentPage->update(delta); // Now using real delta from SDL
             for (int i = 1; i < SDL::getScreenCount(); ++i) {
                 SDL_Renderer* renderer = SDL::getRenderer(i);
