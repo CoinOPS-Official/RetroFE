@@ -407,6 +407,7 @@ void RetroFE::launchExit(bool userInitiated) {
 		attract_.reset(false); // Only reset if user-driven
 	}
 	currentTime_ = static_cast<float>((SDL_GetPerformanceCounter() * 1.0 / freq_)); // currentTime_ in seconds
+	lastFrameTimePointMs_ = SDL_GetPerformanceCounter() * 1000.0 / freq_;
 	keyLastTime_ = currentTime_;
 	lastLaunchReturnTime_ = currentTime_;
 	currentPage_->updateReloadables(0);
