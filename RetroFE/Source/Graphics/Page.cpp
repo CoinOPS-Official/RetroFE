@@ -1208,14 +1208,34 @@ bool Page::playlistExists(const std::string& playlist) {
 
 
 void Page::update(float dt) {
-	// First, always update all general components for visual animations.
-	// This loop handles things like text fades, image effects, etc. on secondary screens.
+	std::string playlistName = getPlaylistName();
+
+	// Check if the playlist name has changed since the last update
+	bool playlistNameChanged = false;
+	if (playlistName != lastPlaylistName_) {
+		lastPlaylistName_ = playlistName;
+		playlistNameChanged = true;
+	}
+
+	// Synchronous (non-threaded) version for OpenGL backend
+
+	for (auto& menuList : menus_) {
+		for (auto* menu : menuList) {
+			if (playlistNameChanged) {
+				menu->playlistName = lastPlaylistName_;
+			}
+			menu->update(dt);
+		}
+	}
+
 	for (auto& layer : LayerComponents_) {
 		for (auto it = layer.begin(); it != layer.end();) {
 			if (*it) {
-				// We don't need to update playlistName here as it won't change
-				// while a game is launched.
+				if (playlistNameChanged) {
+					(*it)->playlistName = lastPlaylistName_;
+				}
 				if ((*it)->update(dt) && (*it)->getAnimationDoneRemove()) {
+					(*it)->freeGraphicsMemory();
 					delete* it;
 					it = layer.erase(it);
 				}
@@ -1229,34 +1249,8 @@ void Page::update(float dt) {
 		}
 	}
 
-	// If a game is launched, we must not update any core menu logic.
-	// Exit early to prevent state corruption.
-	if (isLaunched_) {
-		return;
-	}
 
-	// --- FULL LOGICAL UPDATE (only runs from main loop) ---
-
-	// Check for playlist name changes (this is logic, not visuals)
-	std::string playlistName = getPlaylistName();
-	bool playlistNameChanged = false;
-	if (playlistName != lastPlaylistName_) {
-		lastPlaylistName_ = playlistName;
-		playlistNameChanged = true;
-	}
-
-	// Now, update the menus (ScrollingLists). This is the critical part
-	// that must be skipped during the wait loop.
-	for (auto& menuList : menus_) {
-		for (auto* menu : menuList) {
-			if (playlistNameChanged) {
-				menu->playlistName = lastPlaylistName_;
-			}
-			menu->update(dt);
-		}
-	}
-
-	// This is also logic and should be skipped.
+	// Common update code for textStatusComponent_
 	if (textStatusComponent_) {
 		std::string status; // Populate 'status' as needed
 		config_.setProperty("status", status);
