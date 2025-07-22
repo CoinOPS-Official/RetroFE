@@ -56,7 +56,7 @@ Launcher::Launcher(Configuration& c, RetroFE& retroFe)
 	retroFeInstance_(retroFe) {
 }
 
-std::string replaceVariables(std::string str,
+static std::string replaceVariables(std::string str,
 	const std::string& itemFilePath,
 	const std::string& itemName,
 	const std::string& itemFilename,
@@ -135,10 +135,6 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         findFile(selectedItemsPath, matchedExtension, selectedItemsDirectory, collectionItem->file, extensionstr);
     }
 
-    //
-    // --- LOGICAL REORDERING - THE FIX IS HERE ---
-    //
-
     // 1. First, replace all variables. This is where %ITEM_FILEPATH% gets resolved.
     LOG_DEBUG("Launcher", "Path before replacement: " + executablePath);
     args = replaceVariables(args, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
@@ -195,11 +191,11 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
 
     Uint64 lastTick = SDL_GetPerformanceCounter();
 
-    auto onFrameTick = [&]() {
+    auto onFrameTick = [this, currentPage, &lastTick]() {
         // Delta time calculation using SDL's high-resolution timer
         Uint64 now = SDL_GetPerformanceCounter();
-        double freq = static_cast<double>(SDL_GetPerformanceFrequency());
-        float delta = static_cast<float>((now - lastTick) / freq);
+        auto freq = static_cast<double>(SDL_GetPerformanceFrequency());
+        auto delta = static_cast<float>((now - lastTick) / freq);
         lastTick = now;
 
         bool multiple_display = SDL::getScreenCount() > 1;
@@ -231,8 +227,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     if (isAttractMode) {
         int timeout = 30;
         config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, timeout);
-        auto attractModeInputCheck = [&]() { return inputMonitor.checkSdlEvents() != InputDetectionResult::NoInput; };
-
+        auto attractModeInputCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() != InputDetectionResult::NoInput; };
         WaitResult result = processManager->wait(timeout, attractModeInputCheck, onFrameTick);
 
         if (result == WaitResult::UserInput) {
@@ -245,12 +240,19 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             }
             else {
                 LOG_INFO("Launcher", "User interrupted attract mode with PLAY command. Waiting for game to exit naturally.");
+                // The restrictor is not engaged during attract mode demos. If the user
+                // interrupts to play a 4-way game, we must engage the restrictor now.
+                // The RAII guard will handle resetting it to 8-way upon function exit.
+                if (restrictorEnabled && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
+                    LOG_INFO("Launcher", "User taking over 4-way game in attract mode. Engaging restrictor.");
+                    restrictorGuard.emplace(4);
+                }
                 CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
                 int lastPlayedSize = 10;
                 config_.getProperty(OPTION_LASTPLAYEDSIZE, lastPlayedSize);
                 cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, lastPlayedSize);
 
-                auto quitCheck = [&]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
+                auto quitCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
                 processManager->wait(0, quitCheck, onFrameTick);
                 processManager->terminate();
             }
@@ -262,7 +264,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     }
     else { // Normal mode
         LOG_INFO("Launcher", "Waiting for launched process to complete. Press quit combo to force quit.");
-        auto quitCheck = [&]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
+        auto quitCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
         WaitResult result = processManager->wait(0, quitCheck, onFrameTick);
 
         if (result == WaitResult::UserInput) {
