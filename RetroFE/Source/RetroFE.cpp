@@ -592,7 +592,8 @@ bool RetroFE::run() {
 	SDL_RaiseWindow(SDL::getWindow(0));
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_TRUE);
 
-	gRestrictor = IRestrictor::create();
+	restrictor_ = IRestrictor::create();
+	gRestrictor = restrictor_.get();
 	config_.setProperty("restrictorEnabled", gRestrictor != nullptr);
 
 	// Define control configuration

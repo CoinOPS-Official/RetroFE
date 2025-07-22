@@ -35,13 +35,13 @@ public:
     explicit RestrictorGuard(int way) {
         // gRestrictor is assumed to be a globally accessible pointer/instance
         if (gRestrictor && gRestrictor->setWay(way)) {
-            LOG_INFO("RestrictorGuard", "Restrictor set to " + std::to_string(way) + "-way mode.");
-            wasSet_ = true;
+                LOG_INFO("RestrictorGuard", "Restrictor set to " + std::to_string(way) + "-way mode.");
+                wasSet_ = true;
+            }
+            else {
+                LOG_ERROR("RestrictorGuard", "Failed to set restrictor to " + std::to_string(way) + "-way mode.");
+            }
         }
-        else {
-            LOG_ERROR("RestrictorGuard", "Failed to set restrictor to " + std::to_string(way) + "-way mode.");
-        }
-    }
 
     /**
      * @brief Destructs the guard and restores the restrictor to its default 8-way mode.

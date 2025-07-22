@@ -27,6 +27,7 @@
 #include "Video/GStreamerVideo.h"
 #include "Sound/MusicPlayer.h"
 #include <SDL2/SDL.h>
+#include "Control/Restrictor/Restrictor.h"
 #if __has_include(<SDL2/SDL_ttf.h>)
 #include <SDL2/SDL_ttf.h>
 #elif __has_include(<SDL2_ttf/SDL_ttf.h>)
@@ -38,6 +39,7 @@
 #include <stack>
 #include <map>
 #include <string>
+#include <memory>
 #include "Graphics/Page.h"
 #ifdef WIN32
     #include <Windows.h>
@@ -199,6 +201,7 @@ private:
     UserInput          input_;
     Page              *currentPage_;
     MusicPlayer* musicPlayer_;
+    std::unique_ptr<IRestrictor> restrictor_;
     
     std::stack<Page *> pages_;
     float              keyInputDisable_;
