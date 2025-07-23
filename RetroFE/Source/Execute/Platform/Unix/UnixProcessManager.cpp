@@ -24,8 +24,16 @@
 #include <iomanip>      // For std::quoted
 #include <thread>       // For std::this_thread::sleep_for
 #include <vector>
+#include <wordexp.h> // For robust shell-like word expansion
 
 #include "../../../Utility/Log.h"
+
+ // --- Helper for wordexp RAII ---
+struct WordExpWrapper {
+    wordexp_t p;
+    WordExpWrapper() { p.we_wordc = 0; }
+    ~WordExpWrapper() { if (p.we_wordc > 0) wordfree(&p); }
+};
 
 UnixProcessManager::UnixProcessManager() {
     LOG_INFO("ProcessManager", "UnixProcessManager created.");
@@ -42,31 +50,27 @@ UnixProcessManager::~UnixProcessManager() {
 // --- Public Interface Implementation ---
 
 bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::string& args, const std::string& currentDirectory) {
-    // Use the main launch function but immediately detach from the child.
-    // This is done by not storing the PID and letting the child run independently.
-    // The OS will re-parent it to `init` when we exit.
     pid_t pid = fork();
     if (pid == 0) { // Child process
-        // Same logic as launch()
+        // Detach from the parent's session completely.
+        if (setsid() == -1) {
+            perror("simpleLaunch: setsid failed");
+            _exit(EXIT_FAILURE);
+        }
+
         if (!currentDirectory.empty()) {
             if (chdir(currentDirectory.c_str()) != 0) {
                 perror("simpleLaunch: chdir failed");
                 _exit(EXIT_FAILURE);
             }
         }
-        std::vector<std::string> argVector;
-        std::istringstream argsStream(args);
-        std::string arg;
-        while (argsStream >> std::quoted(arg)) {
-            argVector.push_back(arg);
+
+        std::string commandLine = executable + " " + args;
+        WordExpWrapper we;
+        if (wordexp(commandLine.c_str(), &we.p, WRDE_NOCMD) != 0) {
+            _exit(EXIT_FAILURE);
         }
-        std::vector<char*> execArgs;
-        execArgs.push_back(const_cast<char*>(executable.c_str()));
-        for (const auto& a : argVector) {
-            execArgs.push_back(const_cast<char*>(a.c_str()));
-        }
-        execArgs.push_back(nullptr);
-        execvp(executable.c_str(), execArgs.data());
+        execvp(we.p.we_wordv[0], we.p.we_wordv);
         perror("simpleLaunch: execvp failed");
         _exit(EXIT_FAILURE);
     }
@@ -79,46 +83,44 @@ bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::
 }
 
 bool UnixProcessManager::launch(const std::string& executable, const std::string& args, const std::string& currentDirectory) {
+    std::string commandLine = executable + " " + args;
+    WordExpWrapper we;
+    // WRDE_NOCMD prevents command substitution for security.
+    if (wordexp(commandLine.c_str(), &we.p, WRDE_NOCMD) != 0) {
+        LOG_ERROR("ProcessManager", "Failed to parse command line: " + commandLine);
+        return false;
+    }
+
     pid_ = fork();
 
     if (pid_ == 0) {
         // === CHILD PROCESS ===
-        // Change working directory if specified
+
+        // *** The Process Group Trick for Robust Termination ***
+        // Create a new session and process group, making this process the leader.
+        // Now, signals sent to -pid_ will go to the entire group of descendants.
+        if (setsid() == -1) {
+            perror("launch: setsid failed");
+            _exit(EXIT_FAILURE);
+        }
+
         if (!currentDirectory.empty()) {
             if (chdir(currentDirectory.c_str()) != 0) {
-                // Cannot use LOG_* here as it's not async-signal-safe.
-                // Write directly to stderr.
                 perror("launch: chdir failed");
                 _exit(EXIT_FAILURE);
             }
         }
 
-        // Parse arguments string into a vector
-        std::vector<std::string> argVector;
-        std::istringstream argsStream(args);
-        std::string arg;
-        while (argsStream >> std::quoted(arg)) {
-            argVector.push_back(arg);
-        }
-
-        // Build the C-style argv array for execvp
-        std::vector<char*> execArgs;
-        execArgs.push_back(const_cast<char*>(executable.c_str()));
-        for (const auto& a : argVector) {
-            execArgs.push_back(const_cast<char*>(a.c_str()));
-        }
-        execArgs.push_back(nullptr);
-
-        // Replace the child process with the target program
-        execvp(executable.c_str(), execArgs.data());
+        // execvp requires a null-terminated array of char*
+        execvp(we.p.we_wordv[0], we.p.we_wordv);
 
         // If execvp returns, it's an error.
         perror("launch: execvp failed");
-        _exit(EXIT_FAILURE); // Exit child immediately
+        _exit(EXIT_FAILURE);
     }
     else if (pid_ > 0) {
         // === PARENT PROCESS ===
-        LOG_INFO("ProcessManager", "Successfully forked process with PID: " + std::to_string(pid_));
+        LOG_INFO("ProcessManager", "Successfully forked process with group PID: " + std::to_string(pid_));
         return true;
     }
     else {
@@ -129,55 +131,17 @@ bool UnixProcessManager::launch(const std::string& executable, const std::string
     }
 }
 
-WaitResult UnixProcessManager::wait(double timeoutSeconds, const std::function<bool()>& userInputCheck, const FrameTickCallback& onFrameTick) {
-    if (!isRunning()) {
-        LOG_ERROR("ProcessManager", "Wait called but no process is running.");
-        return WaitResult::Error;
-    }
-
-    auto startTime = std::chrono::steady_clock::now();
-
-    while (true) {
-        // --- 1. Let the frontend do its thing ---
-        if (onFrameTick) {
-            onFrameTick();
-        }
-
-        // --- 2. Check for user input ---
-        if (userInputCheck && userInputCheck()) {
-            return WaitResult::UserInput;
-        }
-
-        // --- 3. Check for process exit (non-blocking) ---
-        int status;
-        pid_t result = waitpid(pid_, &status, WNOHANG);
-        if (result == pid_) {
-            LOG_INFO("ProcessManager", "Process " + std::to_string(pid_) + " has exited.");
-            pid_ = -1; // Mark as not running
-            return WaitResult::ProcessExit;
-        }
-
-        // --- 4. Check for timeout ---
-        if (timeoutSeconds > 0) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsedSec = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
-            if (elapsedSec >= timeoutSeconds) {
-                return WaitResult::Timeout;
-            }
-        }
-
-        // --- 5. Yield to prevent busy-waiting ---
-        std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30 FPS
-    }
-}
-
 void UnixProcessManager::terminate() {
     if (isRunning()) {
-        LOG_INFO("ProcessManager", "Terminating process " + std::to_string(pid_) + " with SIGKILL.");
-        kill(pid_, SIGKILL);
-        // After killing, we must wait for it to be reaped by the system.
+        LOG_INFO("ProcessManager", "Terminating process group " + std::to_string(pid_) + " with SIGKILL.");
+
+        // *** The Process Group Trick in Action ***
+        // By sending the signal to the negative PID, we signal the entire process group
+        // that was created with setsid(). This is the Unix equivalent of TerminateJobObject.
+        kill(-pid_, SIGKILL);
+
         waitpid(pid_, nullptr, 0);
-        pid_ = -1; // Mark as not running
+        pid_ = -1;
     }
     else {
         LOG_WARNING("ProcessManager", "Terminate called but no process was running.");
