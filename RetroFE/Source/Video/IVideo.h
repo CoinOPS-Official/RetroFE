@@ -18,7 +18,6 @@
 #include <SDL2/SDL.h>
 #include <string>
 #include <gst/video/video.h>
-#include <functional>
 
 class IVideo {
 public:
