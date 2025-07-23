@@ -44,7 +44,7 @@ InputDetectionResult InputMonitor::checkSdlEvents() {
 				std::chrono::high_resolution_clock::time_point earliest, latest;
 				bool firstBtn = true;
 				for (int idx : quitComboIndices_) {
-					auto t = joystickButtonTimeState_[e.jbutton.which][idx];
+					const auto& t = joystickButtonTimeState_[e.jbutton.which][idx];
 					if (firstBtn) {
 						earliest = latest = t;
 						firstBtn = false;
