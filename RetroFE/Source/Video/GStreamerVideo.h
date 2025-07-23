@@ -24,6 +24,7 @@
 #include <string>
 #include <mutex>
 #include <vector>
+#include <functional>
 
 extern "C" {
 #if (__APPLE__)
