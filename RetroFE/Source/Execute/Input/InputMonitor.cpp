@@ -16,87 +16,124 @@
 
 #include "InputMonitor.h"
 
+InputMonitor::InputMonitor(Configuration& config) {
+    // Read the "quit" binding for single joystick buttons.
+    std::string quitBtnsStr;
+    if (config.getProperty("quit", quitBtnsStr)) {
+        std::vector<std::string> signals;
+        Utils::listToVector(quitBtnsStr, signals, ',');
+        for (const auto& signal : signals) {
+            // We only care about joystick buttons for background monitoring.
+            if (signal.rfind("joyButton", 0) == 0) {
+                try {
+                    int idx = std::stoi(signal.substr(9));
+                    singleQuitButtonIndices_.insert(idx);
+                    LOG_DEBUG("InputMonitor", "Registered single quit button index: " + std::to_string(idx));
+                }
+                catch (const std::exception& e) {
+                    LOG_ERROR("InputMonitor", "Failed to parse single quit button: " + signal + " (" + e.what() + ")");
+                }
+            }
+        }
+    }
+
+    // Read the "quitCombo" binding for multi-button joystick combos.
+    std::string quitComboStr;
+    if (config.getProperty("controls.quitCombo", quitComboStr)) {
+        std::vector<std::string> signals;
+        Utils::listToVector(quitComboStr, signals, ',');
+        for (const auto& signal : signals) {
+            if (signal.rfind("joyButton", 0) == 0) {
+                try {
+                    int idx = std::stoi(signal.substr(9));
+                    quitComboIndices_.push_back(idx);
+                    LOG_DEBUG("InputMonitor", "Registered combo quit button index: " + std::to_string(idx));
+                }
+                catch (const std::exception& e) {
+                    LOG_ERROR("InputMonitor", "Failed to parse combo quit button: " + signal + " (" + e.what() + ")");
+                }
+            }
+        }
+    }
+}
+
 InputDetectionResult InputMonitor::checkSdlEvents() {
-	SDL_Event e;
-	while (SDL_PollEvent(&e)) {
-		if (e.type == SDL_JOYBUTTONDOWN) {
-			// --- STEP 1: Always update button state ---
-			joystickButtonState_[e.jbutton.which][e.jbutton.button] = true;
-			joystickButtonTimeState_[e.jbutton.which][e.jbutton.button] = std::chrono::high_resolution_clock::now();
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) {
+        if (e.type == SDL_JOYBUTTONDOWN) {
+            int buttonIdx = e.jbutton.button;
 
-			// --- STEP 2: Check if a full quit combo is now active ---
-			bool isQuitCombo = true;
-			if (quitComboIndices_.empty()) {
-				isQuitCombo = false;
-			}
-			else {
-				for (int idx : quitComboIndices_) {
-					// If a button isn't in the map or is not pressed, the combo is incomplete.
-					if (joystickButtonState_[e.jbutton.which].count(idx) == 0 || !joystickButtonState_[e.jbutton.which][idx]) {
-						isQuitCombo = false;
-						break;
-					}
-				}
-			}
+            if (singleQuitButtonIndices_.count(buttonIdx) > 0) {
+                // This is a dedicated single-button quit.
+                if (!anyInputRegistered_) {
+                    firstInputWasQuit_ = true;
+                    LOG_INFO("InputMonitor", "Single quit button " + std::to_string(buttonIdx) + " detected (first input).");
+                }
+                else {
+                    LOG_INFO("InputMonitor", "Single quit button " + std::to_string(buttonIdx) + " detected.");
+                }
+                anyInputRegistered_ = true;
+                return InputDetectionResult::QuitInput;
+            }
 
-			// If the combo is complete, validate its timing.
-			if (isQuitCombo) {
-				std::chrono::high_resolution_clock::time_point earliest, latest;
-				bool firstBtn = true;
-				for (int idx : quitComboIndices_) {
-					const auto& t = joystickButtonTimeState_[e.jbutton.which][idx];
-					if (firstBtn) {
-						earliest = latest = t;
-						firstBtn = false;
-					}
-					else {
-						if (t < earliest) earliest = t;
-						if (t > latest) latest = t;
-					}
-				}
+            joystickButtonState_[e.jbutton.which][buttonIdx] = true;
+            joystickButtonTimeState_[e.jbutton.which][buttonIdx] = std::chrono::high_resolution_clock::now();
 
-				// Check if buttons were pressed close enough together to be considered a deliberate combo.
-				if (std::chrono::duration_cast<std::chrono::milliseconds>(latest - earliest).count() <= 200) {
-					if (!anyInputRegistered_) {
-						firstInputWasQuit_ = true; // This was the very first registered input.
-						LOG_INFO("InputMonitor", "Quit combo detected (first input).");
-					}
-					else {
-						LOG_INFO("InputMonitor", "Quit combo detected, but it was not the first input.");
-					}
-					anyInputRegistered_ = true;
-					return InputDetectionResult::QuitInput; // A valid quit combo was detected.
-				}
-			}
+            bool isQuitCombo = true;
+            if (quitComboIndices_.empty()) {
+                isQuitCombo = false;
+            }
+            else {
+                for (int idx : quitComboIndices_) {
+                    if (joystickButtonState_[e.jbutton.which].count(idx) == 0 || !joystickButtonState_[e.jbutton.which][idx]) {
+                        isQuitCombo = false;
+                        break;
+                    }
+                }
+            }
 
-			// --- STEP 3: If it wasn't a quit combo, check for "Play" input ---
-			// A "Play" input is any button press that is NOT part of the quit combo.
-			// This prevents a single press of a combo button (e.g., BACK) from being treated as "Play".
+            if (isQuitCombo) {
+                std::chrono::high_resolution_clock::time_point earliest, latest;
+                bool firstBtn = true;
+                for (int idx : quitComboIndices_) {
+                    const auto& t = joystickButtonTimeState_[e.jbutton.which][idx];
+                    if (firstBtn) { earliest = latest = t; firstBtn = false; }
+                    else { if (t < earliest) earliest = t; if (t > latest) latest = t; }
+                }
 
-			bool isComboButton = false;
-			for (int idx : quitComboIndices_) {
-				if (e.jbutton.button == idx) {
-					isComboButton = true;
-					break;
-				}
-			}
+                if (std::chrono::duration_cast<std::chrono::milliseconds>(latest - earliest).count() <= 200) {
+                    if (!anyInputRegistered_) {
+                        firstInputWasQuit_ = true;
+                        LOG_INFO("InputMonitor", "Quit combo detected (first input).");
+                    }
+                    else {
+                        LOG_INFO("InputMonitor", "Quit combo detected, but it was not the first input.");
+                    }
+                    anyInputRegistered_ = true;
+                    return InputDetectionResult::QuitInput;
+                }
+            }
 
-			if (!isComboButton) {
-				if (!anyInputRegistered_) {
-					LOG_INFO("InputMonitor", "Generic joystick input detected (non-combo button). This is a 'Play' action.");
-					// NOTE: firstInputWasQuit_ remains false, which is correct.
-				}
-				anyInputRegistered_ = true;
-				return InputDetectionResult::PlayInput; // A generic "play" input was detected.
-			}
-			// If it WAS a combo button but didn't complete a valid combo, we do nothing and keep polling.
-			// This allows the user time to press the other button(s) in the combo.
-		}
-		else if (e.type == SDL_JOYBUTTONUP) {
-			joystickButtonState_[e.jbutton.which][e.jbutton.button] = false;
-		}
-	}
+            bool isComboButton = false;
+            for (int idx : quitComboIndices_) {
+                if (buttonIdx == idx) {
+                    isComboButton = true;
+                    break;
+                }
+            }
 
-	// If the event loop completes without returning, no significant input was detected.
-	return InputDetectionResult::NoInput;
+            if (!isComboButton) {
+                if (!anyInputRegistered_) {
+                    LOG_INFO("InputMonitor", "Generic joystick input detected (non-combo button). This is a 'Play' action.");
+                }
+                anyInputRegistered_ = true;
+                return InputDetectionResult::PlayInput;
+            }
+        }
+        else if (e.type == SDL_JOYBUTTONUP) {
+            joystickButtonState_[e.jbutton.which][e.jbutton.button] = false;
+        }
+    }
+
+    return InputDetectionResult::NoInput;
 }

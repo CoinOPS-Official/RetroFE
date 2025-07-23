@@ -19,6 +19,7 @@
 #include <vector>
 #include <string>
 #include <map>
+#include <set> 
 #include <chrono>
 
 #include <SDL2/SDL.h>
@@ -47,55 +48,15 @@ enum class InputDetectionResult {
  */
 class InputMonitor {
 public:
-    /**
-     * @brief Constructs an InputMonitor and configures it from settings.
-     * @param config The global configuration object to read settings from.
-     */
-    explicit InputMonitor(Configuration& config) {
-        // Load the quit combo configuration
-        std::vector<std::string> quitCombo = { "joyButton6", "joyButton7" }; // Default: BACK+START
-        std::string quitComboStr;
-        if (config.getProperty("controls.quitCombo", quitComboStr)) {
-            quitCombo.clear(); // Clear default
-            Utils::listToVector(quitComboStr, quitCombo, ',');
-        }
+    // Constructor is now just a declaration. Its implementation will move to the .cpp file.
+    explicit InputMonitor(Configuration& config);
 
-        // Parse the string representation into integer indices for faster checking
-        for (const auto& btn : quitCombo) {
-            if (btn.rfind("joyButton", 0) == 0) {
-                try {
-                    int idx = std::stoi(btn.substr(9));
-                    quitComboIndices_.push_back(idx);
-                }
-                catch (const std::exception&) {
-                    LOG_ERROR("InputMonitor", "Failed to parse quit combo button: " + btn);
-                }
-            }
-        }
-    }
-
-    /**
-     * @brief Polls SDL for events and determines if a significant input occurred.
-     * @return An InputDetectionResult indicating what was found.
-     */
     InputDetectionResult checkSdlEvents();
 
-    /**
-     * @brief Checks if the very first input detected was the quit combo.
-     *
-     * This is useful for attract mode logic to differentiate between a user
-     * wanting to quit immediately vs. wanting to play the game.
-     * @return True if the first input was the quit combo, false otherwise.
-     */
     bool wasQuitFirstInput() const {
         return firstInputWasQuit_;
     }
 
-    /**
-     * @brief Resets the internal state of the monitor.
-     *
-     * Should be called before starting to monitor a new process launch.
-     */
     void reset() {
         joystickButtonState_.clear();
         joystickButtonTimeState_.clear();
@@ -103,23 +64,21 @@ public:
         firstInputWasQuit_ = false;
     }
 
-    // This class manages state and an RAII resource, so it should not be copied.
     InputMonitor(const InputMonitor&) = delete;
     InputMonitor& operator=(const InputMonitor&) = delete;
 
 private:
-    // The RAII guard that ensures the SDL joystick subsystem is running.
-    // This is the FIRST member initialized and the LAST one destroyed.
     SDLJoystickScopeGuard sdlGuard_;
 
-    // --- Configuration State ---
-    std::vector<int> quitComboIndices_;
+    // --- UPDATED Configuration State ---
+    std::set<int> singleQuitButtonIndices_; // <-- NEW: For `quit = joyButton0`
+    std::vector<int> quitComboIndices_;     // <-- EXISTING: For `controls.quitCombo = ...`
 
-    // --- Dynamic Input State ---
+    // --- Dynamic Input State (Unchanged) ---
     std::map<SDL_JoystickID, std::map<int, bool>> joystickButtonState_;
     std::map<SDL_JoystickID, std::map<int, std::chrono::high_resolution_clock::time_point>> joystickButtonTimeState_;
 
-    // --- High-Level Logic State ---
+    // --- High-Level Logic State (Unchanged) ---
     bool anyInputRegistered_ = false;
     bool firstInputWasQuit_ = false;
 };
