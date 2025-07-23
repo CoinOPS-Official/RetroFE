@@ -43,10 +43,20 @@ WindowsProcessManager::WindowsProcessManager() {
     LOG_INFO("ProcessManager", "WindowsProcessManager created.");
 
     // Get and store RetroFE's main window handle for focus checks.
-    SDL_SysWMinfo wminfo;
-    SDL_VERSION(&wminfo.version);
-    if (SDL_GetWindowWMInfo(SDL::getWindow(0), &wminfo)) {
-        hRetroFEWindow_ = wminfo.info.win.window;
+    SDL_SysWMinfo winfo; // Renamed to avoid shadowing version macro
+    SDL_VERSION(&winfo.version);
+
+    // --- THIS IS THE CORRECTED AND ROBUST CHECK ---
+    SDL_Window* mainWindow = SDL::getWindow(0);
+    if (mainWindow != nullptr && SDL_GetWindowWMInfo(mainWindow, &winfo) == SDL_TRUE) {
+        // This code is only executed if SDL is loaded, the window exists,
+        // and the WM info was successfully retrieved.
+        hRetroFEWindow_ = winfo.info.win.window;
+    }
+    else {
+        // This code is now correctly executed if SDL is unloaded OR
+        // if the WM info call fails for any other reason.
+        hRetroFEWindow_ = nullptr;
     }
 }
 
