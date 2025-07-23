@@ -539,6 +539,9 @@ bool SDL::deInitialize() {
 // Get the renderer
 SDL_Renderer* SDL::getRenderer(int index)
 {
+	if (renderer_.empty()) {
+		return nullptr;
+	}
 	return (index < screenCount_ ? renderer_[index] : renderer_[0]);
 }
 
@@ -564,13 +567,18 @@ SDL_mutex* SDL::getMutex()
 
 
 // Get the window
-SDL_Window* SDL::getWindow(int index)
-{
+SDL_Window* SDL::getWindow(int index) {
+	if (window_.empty()) {
+		return nullptr;
+	}
 	return (index < screenCount_ ? window_[index] : window_[0]);
 }
 
 SDL_Texture* SDL::getRenderTarget(int index)
 {
+	if (renderTargets_.empty()) {
+		return nullptr;
+	}
 	return (index < screenCount_ ? renderTargets_[index] : renderTargets_[0]);
 }
 
