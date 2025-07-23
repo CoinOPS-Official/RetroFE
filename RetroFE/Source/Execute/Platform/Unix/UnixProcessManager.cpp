@@ -131,6 +131,48 @@ bool UnixProcessManager::launch(const std::string& executable, const std::string
     }
 }
 
+WaitResult UnixProcessManager::wait(double timeoutSeconds, const std::function<bool()>& userInputCheck, const FrameTickCallback& onFrameTick) {
+    if (!isRunning()) {
+        LOG_ERROR("ProcessManager", "Wait called but no process is running.");
+        return WaitResult::Error;
+    }
+
+    auto startTime = std::chrono::steady_clock::now();
+
+    while (true) {
+        // --- 1. Let the frontend do its thing ---
+        if (onFrameTick) {
+            onFrameTick();
+        }
+
+        // --- 2. Check for user input ---
+        if (userInputCheck && userInputCheck()) {
+            return WaitResult::UserInput;
+        }
+
+        // --- 3. Check for process exit (non-blocking) ---
+        int status;
+        pid_t result = waitpid(pid_, &status, WNOHANG);
+        if (result == pid_) {
+            LOG_INFO("ProcessManager", "Process " + std::to_string(pid_) + " has exited.");
+            pid_ = -1; // Mark as not running
+            return WaitResult::ProcessExit;
+        }
+
+        // --- 4. Check for timeout ---
+        if (timeoutSeconds > 0) {
+            auto now = std::chrono::steady_clock::now();
+            auto elapsedSec = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
+            if (elapsedSec >= timeoutSeconds) {
+                return WaitResult::Timeout;
+            }
+        }
+
+        // --- 5. Yield to prevent busy-waiting ---
+        std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30 FPS
+    }
+}
+
 void UnixProcessManager::terminate() {
     if (isRunning()) {
         LOG_INFO("ProcessManager", "Terminating process group " + std::to_string(pid_) + " with SIGKILL.");
