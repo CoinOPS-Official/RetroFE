@@ -135,7 +135,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         findFile(selectedItemsPath, matchedExtension, selectedItemsDirectory, collectionItem->file, extensionstr);
     }
 
-    // 1. First, replace all variables. This is where %ITEM_FILEPATH% gets resolved.
+    // 1. First, replace all variables.
     LOG_DEBUG("Launcher", "Path before replacement: " + executablePath);
     args = replaceVariables(args, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
     executablePath = replaceVariables(executablePath, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
@@ -155,6 +155,10 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     config_.getProperty(currentDirectoryKey, currentDirectory);
     currentDirectory = replaceVariables(currentDirectory, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
 
+    // --- Check for the reboot flag early ---
+    bool reboot = false;
+    config_.getProperty("launchers." + launcherName + ".reboot", reboot);
+
     //
     // --- STEP 6: EXECUTION ---
     //
@@ -167,160 +171,165 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     processManager = std::make_unique<UnixProcessManager>();
 #endif
 
-    // 6b. Create helper components
-    InputMonitor inputMonitor(config_);
-    std::optional<RestrictorGuard> restrictorGuard;
-
-    bool restrictorEnabled = false;
-    config_.getProperty("restrictorEnabled", restrictorEnabled);
-    if (!isAttractMode && restrictorEnabled && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
-        restrictorGuard.emplace(4);
-    }
-
     // 6c. Launch the process
     if (!processManager->launch(executablePath, args, currentDirectory)) {
         LOG_ERROR("Launcher", "Execution failed for: " + executablePath);
         return false;
     }
 
-    // 6d. Monitor the process
-    auto startTime = std::chrono::steady_clock::now();
-    auto endTime = startTime;
-    auto interruptionTime = startTime;
-    bool userInputDetected = false;
+    // --- NEW: Branched wait logic ---
+    if (reboot) {
+        // This is the efficient path for scripts and theme-swappers.
+        // It performs a minimal, blocking wait with no extra processing.
+        LOG_INFO("Launcher", "Reboot mode enabled. Entering simple wait until process terminates.");
+        processManager->wait(0, nullptr, nullptr);
+    }
+    else {
+        // This is the original, full-featured path for launching interactive games.
+        // It remains completely unchanged.
+        LOG_INFO("Launcher", "Normal mode. Entering full monitoring state.");
 
-    Uint64 lastTick = SDL_GetPerformanceCounter();
+        // 6b. Create helper components
+        InputMonitor inputMonitor(config_);
+        std::optional<RestrictorGuard> restrictorGuard;
 
-    auto onFrameTick = [this, currentPage, &lastTick]() {
-        // Delta time calculation using SDL's high-resolution timer
-        Uint64 now = SDL_GetPerformanceCounter();
-        auto freq = static_cast<double>(SDL_GetPerformanceFrequency());
-        auto delta = static_cast<float>((now - lastTick) / freq);
-        lastTick = now;
+        bool restrictorEnabled = false;
+        config_.getProperty("restrictorEnabled", restrictorEnabled);
+        if (!isAttractMode && restrictorEnabled && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
+            restrictorGuard.emplace(4);
+        }
 
-        bool multiple_display = SDL::getScreenCount() > 1;
-        bool animateDuringGame = true;
-        config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
-        if (animateDuringGame && multiple_display && currentPage) {
-            while (g_main_context_pending(nullptr)) {
-                g_main_context_iteration(nullptr, false);
-            }
-            currentPage->update(delta); // Now using real delta from SDL
-            for (int i = 1; i < SDL::getScreenCount(); ++i) {
-                SDL_Renderer* renderer = SDL::getRenderer(i);
-                SDL_Texture* target = SDL::getRenderTarget(i);
-                if (renderer && target) {
-                    SDL_SetRenderTarget(renderer, target);
-                    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-                    SDL_RenderClear(renderer);
-                    currentPage->draw(i);
-                    SDL_SetRenderTarget(renderer, nullptr);
-                    SDL_RenderCopy(renderer, target, nullptr, nullptr);
-                    SDL_RenderPresent(renderer);
+        // 6d. Monitor the process
+        auto startTime = std::chrono::steady_clock::now();
+        auto endTime = startTime;
+        auto interruptionTime = startTime;
+        bool userInputDetected = false;
+
+        Uint64 lastTick = SDL_GetPerformanceCounter();
+
+        auto onFrameTick = [this, currentPage, &lastTick]() {
+            // Delta time calculation using SDL's high-resolution timer
+            Uint64 now = SDL_GetPerformanceCounter();
+            auto freq = static_cast<double>(SDL_GetPerformanceFrequency());
+            auto delta = static_cast<float>((now - lastTick) / freq);
+            lastTick = now;
+
+            bool multiple_display = SDL::getScreenCount() > 1;
+            bool animateDuringGame = true;
+            config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
+            if (animateDuringGame && multiple_display && currentPage) {
+                while (g_main_context_pending(nullptr)) {
+                    g_main_context_iteration(nullptr, false);
+                }
+                currentPage->update(delta); // Now using real delta from SDL
+                for (int i = 1; i < SDL::getScreenCount(); ++i) {
+                    SDL_Renderer* renderer = SDL::getRenderer(i);
+                    SDL_Texture* target = SDL::getRenderTarget(i);
+                    if (renderer && target) {
+                        SDL_SetRenderTarget(renderer, target);
+                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                        SDL_RenderClear(renderer);
+                        currentPage->draw(i);
+                        SDL_SetRenderTarget(renderer, nullptr);
+                        SDL_RenderCopy(renderer, target, nullptr, nullptr);
+                        SDL_RenderPresent(renderer);
+                    }
                 }
             }
+            };
+
+        if (isAttractMode) {
+            int timeout = 30;
+            config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, timeout);
+            auto attractModeInputCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() != InputDetectionResult::NoInput; };
+            WaitResult result = processManager->wait(timeout, attractModeInputCheck, onFrameTick);
+
+            if (result == WaitResult::UserInput) {
+                userInputDetected = true;
+                interruptionTime = std::chrono::steady_clock::now();
+
+                if (inputMonitor.wasQuitFirstInput()) {
+                    LOG_INFO("Launcher", "User interrupted attract mode with QUIT command. Terminating.");
+                    processManager->terminate();
+                }
+                else {
+                    LOG_INFO("Launcher", "User interrupted attract mode with PLAY command. Waiting for game to exit naturally.");
+                    if (restrictorEnabled && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
+                        LOG_INFO("Launcher", "User taking over 4-way game in attract mode. Engaging restrictor.");
+                        restrictorGuard.emplace(4);
+                    }
+                    CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
+                    int lastPlayedSize = 10;
+                    config_.getProperty(OPTION_LASTPLAYEDSIZE, lastPlayedSize);
+                    cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, lastPlayedSize);
+
+                    auto quitCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
+                    processManager->wait(0, quitCheck, onFrameTick);
+                    processManager->terminate();
+                }
+            }
+            else if (result == WaitResult::Timeout) {
+                LOG_INFO("Launcher", "Attract mode timeout reached. Terminating process.");
+                processManager->terminate();
+            }
         }
-        };
+        else { // Normal mode
+            LOG_INFO("Launcher", "Waiting for launched process to complete. Press quit combo to force quit.");
+            auto quitCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
+            WaitResult result = processManager->wait(0, quitCheck, onFrameTick);
 
-
-
-    if (isAttractMode) {
-        int timeout = 30;
-        config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, timeout);
-        auto attractModeInputCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() != InputDetectionResult::NoInput; };
-        WaitResult result = processManager->wait(timeout, attractModeInputCheck, onFrameTick);
-
-        if (result == WaitResult::UserInput) {
-            userInputDetected = true;
-            interruptionTime = std::chrono::steady_clock::now();
-
-            if (inputMonitor.wasQuitFirstInput()) {
-                LOG_INFO("Launcher", "User interrupted attract mode with QUIT command. Terminating.");
+            if (result == WaitResult::UserInput) {
+                LOG_INFO("Launcher", "User pressed quit combo during game. Terminating process.");
                 processManager->terminate();
             }
             else {
-                LOG_INFO("Launcher", "User interrupted attract mode with PLAY command. Waiting for game to exit naturally.");
-                // The restrictor is not engaged during attract mode demos. If the user
-                // interrupts to play a 4-way game, we must engage the restrictor now.
-                // The RAII guard will handle resetting it to 8-way upon function exit.
-                if (restrictorEnabled && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
-                    LOG_INFO("Launcher", "User taking over 4-way game in attract mode. Engaging restrictor.");
-                    restrictorGuard.emplace(4);
-                }
-                CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
-                int lastPlayedSize = 10;
-                config_.getProperty(OPTION_LASTPLAYEDSIZE, lastPlayedSize);
-                cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, lastPlayedSize);
-
-                auto quitCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
-                processManager->wait(0, quitCheck, onFrameTick);
-                processManager->terminate();
+                LOG_INFO("Launcher", "Process completed naturally.");
             }
         }
-        else if (result == WaitResult::Timeout) {
-            LOG_INFO("Launcher", "Attract mode timeout reached. Terminating process.");
-            processManager->terminate();
-        }
-    }
-    else { // Normal mode
-        LOG_INFO("Launcher", "Waiting for launched process to complete. Press quit combo to force quit.");
-        auto quitCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
-        WaitResult result = processManager->wait(0, quitCheck, onFrameTick);
 
-        if (result == WaitResult::UserInput) {
-            LOG_INFO("Launcher", "User pressed quit combo during game. Terminating process.");
-            processManager->terminate();
-        }
-        else {
-            LOG_INFO("Launcher", "Process completed naturally.");
-        }
-    }
+        endTime = std::chrono::steady_clock::now();
 
-    endTime = std::chrono::steady_clock::now();
+        // 6e. Update stats
+        double gameplayDuration = 0.0;
+        bool trackTime = false;
+        bool shouldRunHi2Txt = false;
 
-    // 6e. Update stats
-    double gameplayDuration = 0.0;
-    bool trackTime = false;
-    bool shouldRunHi2Txt = false;
+        if (!isAttractMode) {
+            if (!inputMonitor.wasQuitFirstInput()) {
+                trackTime = true;
+                gameplayDuration = std::chrono::duration<double>(endTime - startTime).count();
+                shouldRunHi2Txt = true;
+            }
+            else {
+                LOG_INFO("Launcher", "Immediate quit combo detected; not tracking gameplay time.");
+            }
+        }
+        else if (userInputDetected) {
+            if (!inputMonitor.wasQuitFirstInput()) {
+                trackTime = true;
+                gameplayDuration = std::chrono::duration<double>(endTime - interruptionTime).count();
+                shouldRunHi2Txt = true;
+                LOG_INFO("Launcher", "Attract mode interrupted to play; tracking gameplay time.");
+            }
+            else {
+                LOG_INFO("Launcher", "Attract mode interrupted with immediate quit; not tracking time.");
+            }
+        }
 
-    if (!isAttractMode) {
-        if (!inputMonitor.wasQuitFirstInput()) {
-            trackTime = true;
-            gameplayDuration = std::chrono::duration<double>(endTime - startTime).count();
-            shouldRunHi2Txt = true;
+        if (trackTime && gameplayDuration > 0) {
+            LOG_INFO("Launcher", "Gameplay time recorded: " + std::to_string(gameplayDuration) + " seconds.");
+            CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
+            cib.updateTimeSpent(collectionItem, gameplayDuration);
         }
-        else {
-            LOG_INFO("Launcher", "Immediate quit combo detected; not tracking gameplay time.");
-        }
-    }
-    else if (userInputDetected) {
-        if (!inputMonitor.wasQuitFirstInput()) {
-            trackTime = true;
-            gameplayDuration = std::chrono::duration<double>(endTime - interruptionTime).count();
-            shouldRunHi2Txt = true;
-            LOG_INFO("Launcher", "Attract mode interrupted to play; tracking gameplay time.");
-        }
-        else {
-            LOG_INFO("Launcher", "Attract mode interrupted with immediate quit; not tracking time.");
-        }
-    }
 
-    if (trackTime && gameplayDuration > 0) {
-        LOG_INFO("Launcher", "Gameplay time recorded: " + std::to_string(gameplayDuration) + " seconds.");
-        CollectionInfoBuilder cib(config_, *retroFeInstance_.getMetaDb());
-        cib.updateTimeSpent(collectionItem, gameplayDuration);
-    }
-
-    if (shouldRunHi2Txt && executablePath.find("mame") != std::string::npos && collectionItem != nullptr) {
-        HiScores::getInstance().runHi2Txt(collectionItem->name);
+        if (shouldRunHi2Txt && executablePath.find("mame") != std::string::npos && collectionItem != nullptr) {
+            HiScores::getInstance().runHi2Txt(collectionItem->name);
+        }
     }
 
     //
     // --- STEP 7: REBOOT CHECK ---
     //
-    bool reboot = false;
-    config_.getProperty("launchers." + launcherName + ".reboot", reboot);
-
     LOG_INFO("Launcher", "Execution completed for: " + executablePath + " with reboot flag: " + std::to_string(reboot));
     return reboot;
 }
