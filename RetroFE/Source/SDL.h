@@ -29,7 +29,7 @@ class SDL
 {
 public:
     static bool initialize( Configuration &config );
-    static bool deInitialize( );
+    static bool deInitialize(bool fullShutdown = false );
     static SDL_Renderer *getRenderer( int index );
     static std::string getRendererBackend(int index);
     static SDL_mutex *getMutex( );

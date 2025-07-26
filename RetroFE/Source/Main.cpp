@@ -353,7 +353,7 @@ int main(int argc, char** argv)
 
     ThreadPool::getInstance().shutdown();
     gst_deinit();
-    SDL::deInitialize();
+    SDL::deInitialize(true);
     Logger::deInitialize();
 
     return 0;

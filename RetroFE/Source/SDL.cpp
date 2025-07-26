@@ -60,12 +60,23 @@ bool SDL::initialize(Configuration& config) {
 	}
 #endif
 
-	LOG_INFO("SDL", "Initializing");
-	if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
-	{
-		std::string error = SDL_GetError();
-		LOG_ERROR("SDL", "Initialize failed: " + error);
-		return false;
+	if (SDL_WasInit(0) == 0) {
+		// First-time startup: Initialize everything.
+		LOG_INFO("SDL", "Performing first-time full initialization of all SDL subsystems.");
+		if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
+		{
+			std::string error = SDL_GetError();
+			LOG_ERROR("SDL", "Initial SDL_Init failed: " + error);
+			return false;
+		}
+	}
+	else {
+		// Re-initialization: Audio and input are already running. Only initialize video.
+		LOG_INFO("SDL", "Re-initializing video subsystem only.");
+		if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
+			LOG_ERROR("SDL", "Failed to re-initialize video subsystem: " + std::string(SDL_GetError()));
+			return false;
+		}
 	}
 
 #ifdef WIN32
@@ -474,10 +485,10 @@ bool SDL::initialize(Configuration& config) {
 }
 
 // Deinitialize SDL
-bool SDL::deInitialize() {
-	std::string error = SDL_GetError();
+bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is key
 	LOG_INFO("SDL", "DeInitializing");
 
+	// Step 1: Always destroy windows and renderers, as they are part of the video subsystem.
 	if (!window_.empty() && window_[0])
 	{
 #ifdef __APPLE__
@@ -488,15 +499,6 @@ bool SDL::deInitialize() {
 	else
 	{
 		LOG_WARNING("SDL", "Window 0 is NULL, cannot center mouse within it");
-	}
-
-	Mix_CloseAudio();
-	Mix_Quit();
-
-	if (mutex_)
-	{
-		SDL_DestroyMutex(mutex_);
-		mutex_ = nullptr;
 	}
 
 	// Destroy render target textures
@@ -519,6 +521,29 @@ bool SDL::deInitialize() {
 	}
 	window_.clear();
 
+	// Step 2: Decide which subsystems to shut down.
+	if (fullShutdown)
+	{
+		// This is the final application exit. Shut down everything.
+		LOG_INFO("SDL", "Performing full de-initialization of all SDL subsystems.");
+		Mix_CloseAudio();
+		Mix_Quit();
+		SDL_Quit();
+	}
+	else
+	{
+		// This is the unloadSDL case. Shut down ONLY the video subsystem.
+		LOG_INFO("SDL", "De-initializing video subsystem only.");
+		SDL_QuitSubSystem(SDL_INIT_VIDEO);
+	}
+
+	// Step 3: Clean up remaining resources.
+	if (mutex_)
+	{
+		SDL_DestroyMutex(mutex_);
+		mutex_ = nullptr;
+	}
+
 	displayWidth_.clear();
 	displayHeight_.clear();
 	windowWidth_.clear();
@@ -529,11 +554,8 @@ bool SDL::deInitialize() {
 
 	SDL_ShowCursor(SDL_TRUE);
 
-	SDL_Quit();
-
 	return true;
 }
-
 
 
 // Get the renderer

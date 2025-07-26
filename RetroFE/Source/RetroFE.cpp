@@ -353,11 +353,11 @@ void RetroFE::launchEnter() {
 }
 
 // Return from the launch of a game/program
-void RetroFE::launchExit(bool userInitiated, bool isRebooting) {
+void RetroFE::launchExit(bool userInitiated) {
 	currentPage_->setIsLaunched(false);
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
-	if (unloadSDL && !isRebooting)
+	if (unloadSDL)
 	{
 		allocateGraphicsMemory();
 	}
@@ -402,10 +402,8 @@ void RetroFE::launchExit(bool userInitiated, bool isRebooting) {
 	SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0), 0);
 #endif
 	if (musicPlayer_) {
-		bool wasSdlUnloaded = false;
-		config_.getProperty(OPTION_UNLOADSDL, wasSdlUnloaded);
 		// Pass the final, correct state to the music player.
-		musicPlayer_->onGameLaunchEnd(wasSdlUnloaded && !isRebooting);
+		musicPlayer_->onGameLaunchEnd(unloadSDL);
 	}
 
 #ifdef WIN32
@@ -415,6 +413,7 @@ void RetroFE::launchExit(bool userInitiated, bool isRebooting) {
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 #endif
 }
+
 // Free the textures, and optionall take down SDL
 void RetroFE::freeGraphicsMemory() {
 	// Free textures
@@ -2183,7 +2182,7 @@ bool RetroFE::run() {
 
 					// Call launchExit and tell it a reboot IS happening.
 					// This will perform cleanup but skip SDL re-initialization.
-					launchExit(true, true);
+					//launchExit(true, true);
 
 					reboot_ = true;
 					setState(RETROFE_QUIT_REQUEST);
@@ -2203,7 +2202,7 @@ bool RetroFE::run() {
 
 					// Call launchExit and tell it a reboot IS NOT happening.
 					// This will perform all cleanup, including SDL re-initialization if needed.
-					launchExit(true, false);
+					launchExit(true);
 
 					setState(RETROFE_LAUNCH_EXIT);
 				}
