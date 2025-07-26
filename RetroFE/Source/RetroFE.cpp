@@ -2139,10 +2139,6 @@ bool RetroFE::run() {
 				int currentTrack = -1;
 				double currentPosition = 0.0;
 				nextPageItem_ = currentPage_->getSelectedItem();
-				if (musicPlayer_ && unloadSDL) {
-					currentTrack = musicPlayer_->getCurrentTrackIndex();
-					currentPosition = musicPlayer_->saveCurrentMusicPosition();
-				}
 				launchEnter();
 				CollectionInfoBuilder cib(config_, *metadb_);
 				std::string lastPlayedSkipCollection = "";
@@ -2217,9 +2213,9 @@ bool RetroFE::run() {
 			// Wait for onGameExit animation to finish
 			case RETROFE_LAUNCH_EXIT: {
 				// Only update `state` if `currentPage_` is idle
-				if (currentPage_ && currentPage_->isIdle()) {
+				//if (currentPage_ && currentPage_->isIdle()) {
 					setState(RETROFE_IDLE);
-				}
+				//}
 				break;
 			}
 
