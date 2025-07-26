@@ -344,34 +344,8 @@ void RetroFE::launchEnter() {
 #ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_FALSE);
 #endif
-
 	if (musicPlayer_) {
-		bool musicPlayerPlayInGame = false;
-		config_.getProperty("musicPlayer.playInGame", musicPlayerPlayInGame);
-		if (musicPlayerPlayInGame)
-		{
-			int musicPlayerPlayInGameVol = -1;
-			if (config_.getProperty("musicPlayer.playInGameVol", musicPlayerPlayInGameVol))
-			{
-				// Only proceed if the value is in the valid range (0�100).
-				if (musicPlayerPlayInGameVol >= 0 && musicPlayerPlayInGameVol <= 100)
-				{
-					// Get current volume (0�128) and convert to percentage (0�100)
-					int currentVolume = musicPlayer_->getVolume();
-					int currentVolumePercent = static_cast<int>((currentVolume / static_cast<float>(MIX_MAX_VOLUME)) * 100.0f + 0.5f);
-
-					// Only perform the fade if the current volume is greater than or equal to the target.
-					if (currentVolumePercent >= musicPlayerPlayInGameVol) {
-						musicPlayer_->fadeToVolume(musicPlayerPlayInGameVol);
-					}
-					// Otherwise, no fade is performed.
-				}
-			}
-		}
-		else
-		{
-			musicPlayer_->pauseMusic();
-		}
+		musicPlayer_->onGameLaunchStart();
 	}
 #ifdef WIN32
 	Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 75, 0);
@@ -427,30 +401,11 @@ void RetroFE::launchExit(bool userInitiated, bool isRebooting) {
 #ifndef __APPLE__
 	SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0), 0);
 #endif
-	bool musicPlayerPlayInGame = false;
-	config_.getProperty("musicPlayer.playInGame", musicPlayerPlayInGame);
-	if (musicPlayer_ && musicPlayerPlayInGame)
-	{
-		int musicPlayerPlayInGameVol = -1;
-		if (config_.getProperty("musicPlayer.playInGameVol", musicPlayerPlayInGameVol))
-		{
-			if (musicPlayerPlayInGameVol >= 0 && musicPlayerPlayInGameVol <= 100)
-			{
-				// Convert the target volume from percentage to MIX's range (0�128)
-				int targetMixVolume = static_cast<int>((musicPlayerPlayInGameVol / 100.0f) * MIX_MAX_VOLUME + 0.5f);
-				// Allow for a small rounding tolerance
-				if (std::abs(musicPlayer_->getVolume() - targetMixVolume) <= 1)
-				{
-					// Restore the previous volume that was stored when fadeToVolume was called.
-					musicPlayer_->fadeBackToPreviousVolume();
-				}
-				// Otherwise, do nothing (i.e. no fade-back is needed).
-			}
-		}
-	}
-	else if (musicPlayer_ && !musicPlayerPlayInGame)
-	{
-		musicPlayer_->resumeMusic();
+	if (musicPlayer_) {
+		bool wasSdlUnloaded = false;
+		config_.getProperty(OPTION_UNLOADSDL, wasSdlUnloaded);
+		// Pass the final, correct state to the music player.
+		musicPlayer_->onGameLaunchEnd(wasSdlUnloaded && !isRebooting);
 	}
 
 #ifdef WIN32
@@ -493,6 +448,9 @@ void RetroFE::allocateGraphicsMemory() {
 	if (unloadSDL)
 	{
 		SDL::initialize(config_);
+		if (musicPlayer_) {
+			musicPlayer_->reinitialize();
+		}
 		currentPage_->initializeFonts();
 	}
 
@@ -2250,11 +2208,6 @@ bool RetroFE::run() {
 					// Call launchExit and tell it a reboot IS NOT happening.
 					// This will perform all cleanup, including SDL re-initialization if needed.
 					launchExit(true, false);
-
-					if (unloadSDL && musicPlayer_ && currentTrack != -1)
-					{
-						musicPlayer_->playMusic(currentTrack, -1, currentPosition);
-					}
 
 					setState(RETROFE_LAUNCH_EXIT);
 				}

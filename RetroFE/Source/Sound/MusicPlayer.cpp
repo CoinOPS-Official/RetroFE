@@ -176,7 +176,80 @@ bool MusicPlayer::initialize(Configuration& config) {
 	return true;
 }
 
+// Add these three new methods' implementations to MusicPlayer.cpp
 
+void MusicPlayer::reinitialize() {
+	LOG_INFO("MusicPlayer", "Re-initializing hooks after SDL cycle.");
+	// Re-register the callback that allows for automatic track changes.
+	Mix_HookMusicFinished(MusicPlayer::musicFinishedCallback);
+
+	// Re-apply the current volume, as this can be reset by Mix_OpenAudio.
+	Mix_VolumeMusic(volume_);
+
+	// Re-register the visualizer if it was active.
+	if (hasActiveVisualizers_) {
+		Mix_SetPostMix(MusicPlayer::postMixCallback, this);
+	}
+}
+
+void MusicPlayer::onGameLaunchStart() {
+	if (!config_) return;
+
+	// Always save the current state in case we need to restore it (for unloadSDL).
+	savedTrackIndex_ = getCurrentTrackIndex();
+	savedPosition_ = saveCurrentMusicPosition();
+
+	// Now, decide how to handle the music based on configuration.
+	bool playInGame = false;
+	config_->getProperty("musicPlayer.playInGame", playInGame);
+
+	if (playInGame) {
+		int playInGameVol = -1;
+		// Check for a specific volume to fade down to.
+		if (config_->getProperty("musicPlayer.playInGameVol", playInGameVol) &&
+			playInGameVol >= 0 && playInGameVol <= 100) {
+
+			// Convert percentage (0-100) to SDL_mixer's range (0-128).
+			int targetMixVolume = static_cast<int>((playInGameVol / 100.0f) * MIX_MAX_VOLUME + 0.5f);
+
+			// Only fade if the current volume is higher than the target.
+			if (getVolume() > targetMixVolume) {
+				fadeToVolume(targetMixVolume);
+			}
+		}
+	}
+	else {
+		// If not playing in-game, the requirement is to pause.
+		pauseMusic();
+	}
+}
+
+void MusicPlayer::onGameLaunchEnd(bool wasSdlUnloaded) {
+	if (!config_) return;
+
+	bool playInGame = false;
+	config_->getProperty("musicPlayer.playInGame", playInGame);
+
+	if (playInGame) {
+		// If music was faded down for the game, the requirement is to fade it back up.
+		// fadeBackToPreviousVolume() correctly handles this.
+		fadeBackToPreviousVolume();
+	}
+	else {
+		// Music was paused. How we resume depends on whether SDL was unloaded.
+		if (wasSdlUnloaded) {
+			// SDL was torn down. We cannot simply "resume". We must reload the track
+			// and seek to the saved position.
+			if (savedTrackIndex_ != -1) {
+				playMusic(savedTrackIndex_, -1, savedPosition_);
+			}
+		}
+		else {
+			// SDL was running the whole time. A simple resume is correct.
+			resumeMusic();
+		}
+	}
+}
 
 void MusicPlayer::addVisualizerListener(MusicPlayerComponent* listener) {
 	std::lock_guard<std::mutex> lock(visualizerMutex_);

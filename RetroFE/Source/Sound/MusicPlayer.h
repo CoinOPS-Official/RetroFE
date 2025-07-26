@@ -76,6 +76,9 @@ public:
 
     // Initialization & Shutdown
     bool initialize(Configuration& config);
+    void reinitialize();
+    void onGameLaunchStart();
+    void onGameLaunchEnd(bool wasSdlUnloaded);
     void shutdown();
 
     // Playlist & Folder Loading
@@ -217,6 +220,8 @@ private:
     bool hasStartedPlaying_;
     Uint64 lastVolumeChangeTime_;
     Uint64 volumeChangeIntervalMs_;
+	int savedTrackIndex_;
+	double savedPosition_;
 
 
     // Audio Visualization Members
