@@ -155,9 +155,12 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     config_.getProperty(currentDirectoryKey, currentDirectory);
     currentDirectory = replaceVariables(currentDirectory, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
 
-    // --- Check for the reboot flag early ---
+    // --- Check for flags that determine the launch/wait behavior ---
     bool reboot = false;
     config_.getProperty("launchers." + launcherName + ".reboot", reboot);
+
+    bool unloadSDL = false;
+    config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
 
     //
     // --- STEP 6: EXECUTION ---
@@ -185,9 +188,65 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         processManager->wait(0, nullptr, nullptr);
     }
     else {
-        // This is the original, full-featured path for launching interactive games.
-        // It remains completely unchanged.
-        LOG_INFO("Launcher", "Normal mode. Entering full monitoring state.");
+        LOG_INFO("Launcher", "Normal mode. Entering monitoring state.");
+
+        FrameTickCallback onFrameTick;
+
+        if (unloadSDL) {
+            // Define an "SDL-less" onFrameTick that uses std::chrono for timing.
+            // This is safe to run when SDL is de-initialized.
+            LOG_INFO("Launcher", "unloadSDL is true. Using SDL-less frame tick for background processing.");
+
+            auto lastTickChrono = std::chrono::steady_clock::now();
+
+            onFrameTick = [this, currentPage, &lastTickChrono]() {
+                auto now = std::chrono::steady_clock::now();
+                float delta = std::chrono::duration<float>(now - lastTickChrono).count();
+                lastTickChrono = now;
+
+                if (currentPage) {
+                    while (g_main_context_pending(nullptr)) {
+                        g_main_context_iteration(nullptr, false);
+                    }
+                    currentPage->update(delta);
+                }
+                };
+        }
+        else {
+            LOG_INFO("Launcher", "unloadSDL is false. Using standard frame tick for multi-monitor rendering.");
+
+            auto lastTick = SDL_GetPerformanceCounter();
+
+            onFrameTick = [this, currentPage, &lastTick]() {
+                Uint64 now = SDL_GetPerformanceCounter();
+                auto freq = static_cast<double>(SDL_GetPerformanceFrequency());
+                auto delta = static_cast<float>((now - lastTick) / freq);
+                lastTick = now;
+
+                bool multiple_display = SDL::getScreenCount() > 1;
+                bool animateDuringGame = true;
+                config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
+                if (animateDuringGame && multiple_display && currentPage) {
+                    while (g_main_context_pending(nullptr)) {
+                        g_main_context_iteration(nullptr, false);
+                    }
+                    currentPage->update(delta);
+                    for (int i = 1; i < SDL::getScreenCount(); ++i) {
+                        SDL_Renderer* renderer = SDL::getRenderer(i);
+                        SDL_Texture* target = SDL::getRenderTarget(i);
+                        if (renderer && target) {
+                            SDL_SetRenderTarget(renderer, target);
+                            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                            SDL_RenderClear(renderer);
+                            currentPage->draw(i);
+                            SDL_SetRenderTarget(renderer, nullptr);
+                            SDL_RenderCopy(renderer, target, nullptr, nullptr);
+                            SDL_RenderPresent(renderer);
+                        }
+                    }
+                }
+                };
+        }
 
         // 6b. Create helper components
         InputMonitor inputMonitor(config_);
@@ -204,39 +263,6 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         auto endTime = startTime;
         auto interruptionTime = startTime;
         bool userInputDetected = false;
-
-        Uint64 lastTick = SDL_GetPerformanceCounter();
-
-        auto onFrameTick = [this, currentPage, &lastTick]() {
-            // Delta time calculation using SDL's high-resolution timer
-            Uint64 now = SDL_GetPerformanceCounter();
-            auto freq = static_cast<double>(SDL_GetPerformanceFrequency());
-            auto delta = static_cast<float>((now - lastTick) / freq);
-            lastTick = now;
-
-            bool multiple_display = SDL::getScreenCount() > 1;
-            bool animateDuringGame = true;
-            config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
-            if (animateDuringGame && multiple_display && currentPage) {
-                while (g_main_context_pending(nullptr)) {
-                    g_main_context_iteration(nullptr, false);
-                }
-                currentPage->update(delta); // Now using real delta from SDL
-                for (int i = 1; i < SDL::getScreenCount(); ++i) {
-                    SDL_Renderer* renderer = SDL::getRenderer(i);
-                    SDL_Texture* target = SDL::getRenderTarget(i);
-                    if (renderer && target) {
-                        SDL_SetRenderTarget(renderer, target);
-                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-                        SDL_RenderClear(renderer);
-                        currentPage->draw(i);
-                        SDL_SetRenderTarget(renderer, nullptr);
-                        SDL_RenderCopy(renderer, target, nullptr, nullptr);
-                        SDL_RenderPresent(renderer);
-                    }
-                }
-            }
-            };
 
         if (isAttractMode) {
             int timeout = 30;
