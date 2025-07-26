@@ -204,6 +204,9 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                 float delta = std::chrono::duration<float>(now - lastTickChrono).count();
                 lastTickChrono = now;
 
+                if (delta > 0.1f)
+                    delta = 0.0167f;
+
                 if (currentPage) {
                     while (g_main_context_pending(nullptr)) {
                         g_main_context_iteration(nullptr, false);
@@ -220,17 +223,20 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             onFrameTick = [this, currentPage, &lastTick]() {
                 Uint64 now = SDL_GetPerformanceCounter();
                 auto freq = static_cast<double>(SDL_GetPerformanceFrequency());
-                auto delta = static_cast<float>((now - lastTick) / freq);
+                auto delta = static_cast<float>((static_cast<double>(now - lastTick)) / freq);
                 lastTick = now;
 
+                if (delta > 0.1f)
+                    delta = 0.0167f;
+
+                while (g_main_context_pending(nullptr)) {
+                    g_main_context_iteration(nullptr, false);
+                }
+                currentPage->update(delta);
                 bool multiple_display = SDL::getScreenCount() > 1;
                 bool animateDuringGame = true;
                 config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
                 if (animateDuringGame && multiple_display && currentPage) {
-                    while (g_main_context_pending(nullptr)) {
-                        g_main_context_iteration(nullptr, false);
-                    }
-                    currentPage->update(delta);
                     for (int i = 1; i < SDL::getScreenCount(); ++i) {
                         SDL_Renderer* renderer = SDL::getRenderer(i);
                         SDL_Texture* target = SDL::getRenderTarget(i);
