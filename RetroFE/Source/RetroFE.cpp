@@ -319,17 +319,27 @@ void RetroFE::initializeMusicPlayer() {
 void RetroFE::launchEnter() {
 	currentPage_->setIsLaunched(true);
 	currentPage_->restartAllByMonitor(0);
-	// Disable window focus
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_FALSE);
-	// Free textures and shut down SDL if unloadSDL flag is set
+
+	// --- NEW: Check if a reboot is already happening ---
+	std::string launcherName = currentPage_->getSelectedItem()->collectionInfo->launcher;
+	bool reboot = false;
+	config_.getProperty("launchers." + launcherName + ".reboot", reboot);
+
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
-	if (unloadSDL)
+
+	// Only perform the unloadSDL cycle if we are NOT rebooting.
+	if (unloadSDL && !reboot)
 	{
+		LOG_INFO("RetroFE", "Unloading SDL for launch (no reboot).");
 		VideoPool::shuttingDown_ = true;
 		freeGraphicsMemory();
 		VideoPool::shutdown();
 		Image::cleanupTextureCache();
+	}
+	else if (unloadSDL && reboot) {
+		LOG_INFO("RetroFE", "Skipping unloadSDL cycle; a full application reboot is scheduled.");
 	}
 #ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_FALSE);
@@ -369,11 +379,11 @@ void RetroFE::launchEnter() {
 }
 
 // Return from the launch of a game/program
-void RetroFE::launchExit(bool userInitiated) {
+void RetroFE::launchExit(bool userInitiated, bool isRebooting) {
 	currentPage_->setIsLaunched(false);
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
-	if (unloadSDL)
+	if (unloadSDL && !isRebooting)
 	{
 		allocateGraphicsMemory();
 	}
@@ -2168,8 +2178,8 @@ bool RetroFE::run() {
 			{
 				bool unloadSDL = false;
 				config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
-				int currentTrack;
-				double currentPosition;
+				int currentTrack = -1;
+				double currentPosition = 0.0;
 				nextPageItem_ = currentPage_->getSelectedItem();
 				if (musicPlayer_ && unloadSDL) {
 					currentTrack = musicPlayer_->getCurrentTrackIndex();
@@ -2209,32 +2219,43 @@ bool RetroFE::run() {
 
 				l.LEDBlinky(3, nextPageItem_->collectionInfo->name, nextPageItem_);
 				// Run and check if we need to reboot
-				if (l.run(nextPageItem_->collectionInfo->name, nextPageItem_, currentPage_))
+					// Run the launcher and get the reboot status directly.
+				bool needsReboot = l.run(nextPageItem_->collectionInfo->name, nextPageItem_, currentPage_);
+
+				if (needsReboot)
 				{
+					// --- Reboot Path ---
 					attract_.reset();
-					if (unloadSDL)
-					{
-						launchExit();
-					}
+
+					// Call launchExit and tell it a reboot IS happening.
+					// This will perform cleanup but skip SDL re-initialization.
+					launchExit(true, true);
+
 					reboot_ = true;
 					setState(RETROFE_QUIT_REQUEST);
 				}
 				else
 				{
+					// --- Normal Exit Path ---
 					attract_.reset();
 					l.LEDBlinky(4);
 					currentPage_->exitGame();
+
 					if (currentPage_->getPlaylistName() == "lastplayed")
 					{
 						currentPage_->setScrollOffsetIndex(0);
 						currentPage_->reallocateMenuSpritePoints();
 					}
 
-					launchExit();
-					if (unloadSDL && musicPlayer_)
+					// Call launchExit and tell it a reboot IS NOT happening.
+					// This will perform all cleanup, including SDL re-initialization if needed.
+					launchExit(true, false);
+
+					if (unloadSDL && musicPlayer_ && currentTrack != -1)
 					{
 						musicPlayer_->playMusic(currentTrack, -1, currentPosition);
 					}
+
 					setState(RETROFE_LAUNCH_EXIT);
 				}
 			}
