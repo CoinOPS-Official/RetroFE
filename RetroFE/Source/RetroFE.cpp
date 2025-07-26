@@ -2213,9 +2213,9 @@ bool RetroFE::run() {
 			// Wait for onGameExit animation to finish
 			case RETROFE_LAUNCH_EXIT: {
 				// Only update `state` if `currentPage_` is idle
-				//if (currentPage_ && currentPage_->isIdle()) {
+				if (currentPage_ && currentPage_->isIdle()) {
 					setState(RETROFE_IDLE);
-				//}
+				}
 				break;
 			}
 
