@@ -59,7 +59,6 @@ bool SDL::initialize(Configuration& config) {
 		LOG_ERROR("SDL", "Unable to set DPI awareness hint");
 	}
 #endif
-
 	if (SDL_WasInit(0) == 0) {
 		// First-time startup: Initialize everything.
 		LOG_INFO("SDL", "Performing first-time full initialization of all SDL subsystems.");
@@ -72,9 +71,27 @@ bool SDL::initialize(Configuration& config) {
 	}
 	else {
 		// Re-initialization: Audio and input are already running. Only initialize video.
-		LOG_INFO("SDL", "Re-initializing video subsystem only.");
-		if (SDL_InitSubSystem(SDL_INIT_VIDEO) != 0) {
-			LOG_ERROR("SDL", "Failed to re-initialize video subsystem: " + std::string(SDL_GetError()));
+		// We use a retry loop to handle race conditions on platforms like the Pi (KMS/DRM).
+		LOG_INFO("SDL", "Attempting to re-initialize video subsystem...");
+
+		const int MAX_RETRIES = 10;        // Try up to 10 times (total of 2 second).
+		const int RETRY_DELAY_MS = 200;    // Wait 200ms between each try.
+
+		bool success = false;
+		for (int i = 0; i < MAX_RETRIES; ++i) {
+			if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+				success = true; // Success!
+				LOG_INFO("SDL", "Video subsystem re-initialized successfully on attempt " + std::to_string(i + 1) + ".");
+				break; // Exit the loop immediately.
+			}
+
+			// If we are here, initialization failed. Log it, wait, and try again.
+			LOG_WARNING("SDL", "Failed to re-initialize video subsystem (attempt " + std::to_string(i + 1) + "/" + std::to_string(MAX_RETRIES) + "): " + std::string(SDL_GetError()) + ". Retrying...");
+			SDL_Delay(RETRY_DELAY_MS);
+		}
+
+		if (!success) {
+			LOG_ERROR("SDL", "Failed to re-initialize video subsystem after " + std::to_string(MAX_RETRIES) + " attempts. Giving up.");
 			return false;
 		}
 	}
@@ -475,10 +492,12 @@ bool SDL::initialize(Configuration& config) {
 		return false;
 	}
 
-	if (Mix_OpenAudio(audioRate, audioFormat, audioChannels, audioBuffers) == -1)
-	{
-		std::string error = Mix_GetError();
-		LOG_WARNING("SDL", "Audio initialize failed: " + error);
+	if (SDL_WasInit(SDL_INIT_AUDIO) == 0) { // Check if audio is NOT initialized
+		if (Mix_OpenAudio(audioRate, audioFormat, audioChannels, audioBuffers) == -1)
+		{
+			std::string error = Mix_GetError();
+			LOG_WARNING("SDL", "Audio initialize failed: " + error);
+		}
 	}
 
 	return true;
