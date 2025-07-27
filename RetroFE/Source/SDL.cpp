@@ -71,25 +71,20 @@ bool SDL::initialize(Configuration& config) {
 	}
 	else {
 		// Re-initialization: Audio and input are already running. Only initialize video.
-		// We use a retry loop to handle race conditions on platforms like the Pi (KMS/DRM).
+		// --- THIS IS THE ROBUST RETRY LOGIC FOR THE PI5 RACE CONDITION ---
 		LOG_INFO("SDL", "Attempting to re-initialize video subsystem...");
-
-		const int MAX_RETRIES = 10;        // Try up to 10 times (total of 2 second).
-		const int RETRY_DELAY_MS = 200;    // Wait 200ms between each try.
-
+		const int MAX_RETRIES = 10;
+		const int RETRY_DELAY_MS = 100;
 		bool success = false;
 		for (int i = 0; i < MAX_RETRIES; ++i) {
 			if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
-				success = true; // Success!
+				success = true;
 				LOG_INFO("SDL", "Video subsystem re-initialized successfully on attempt " + std::to_string(i + 1) + ".");
-				break; // Exit the loop immediately.
+				break;
 			}
-
-			// If we are here, initialization failed. Log it, wait, and try again.
 			LOG_WARNING("SDL", "Failed to re-initialize video subsystem (attempt " + std::to_string(i + 1) + "/" + std::to_string(MAX_RETRIES) + "): " + std::string(SDL_GetError()) + ". Retrying...");
 			SDL_Delay(RETRY_DELAY_MS);
 		}
-
 		if (!success) {
 			LOG_ERROR("SDL", "Failed to re-initialize video subsystem after " + std::to_string(MAX_RETRIES) + " attempts. Giving up.");
 			return false;
@@ -492,11 +487,26 @@ bool SDL::initialize(Configuration& config) {
 		return false;
 	}
 
-	if (SDL_WasInit(SDL_INIT_AUDIO) == 0) { // Check if audio is NOT initialized
+	int num_audio_devices_open = Mix_QuerySpec(nullptr, nullptr, nullptr);
+
+	if (num_audio_devices_open == 0) {
+		// No audio device is open, so initialize it and the decoders.
 		if (Mix_OpenAudio(audioRate, audioFormat, audioChannels, audioBuffers) == -1)
 		{
 			std::string error = Mix_GetError();
 			LOG_WARNING("SDL", "Audio initialize failed: " + error);
+		}
+		else
+		{
+			// If we successfully opened the audio device, IMMEDIATELY initialize the decoders.
+			int flags = MIX_INIT_MP3 | MIX_INIT_OGG;
+			int initialized_flags = Mix_Init(flags);
+			if ((initialized_flags & flags) != flags) {
+				LOG_ERROR("SDL", "Mix_Init failed to initialize all requested decoders: " + std::string(Mix_GetError()));
+			}
+			else {
+				LOG_INFO("SDL", "SDL_mixer decoders (MP3, OGG, etc.) initialized successfully.");
+			}
 		}
 	}
 
