@@ -68,7 +68,6 @@ public:
     InputMonitor& operator=(const InputMonitor&) = delete;
 
 private:
-    SDLJoystickScopeGuard sdlGuard_;
 
     // --- UPDATED Configuration State ---
     std::set<int> singleQuitButtonIndices_; // <-- NEW: For `quit = joyButton0`
