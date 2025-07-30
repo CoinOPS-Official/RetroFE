@@ -119,6 +119,13 @@ bool UnixProcessManager::launch(const std::string& executable, const std::string
             }
         }
 
+        int fd = open("/dev/null", O_WRONLY);
+        if (fd != -1) {
+            dup2(fd, STDOUT_FILENO);
+            dup2(fd, STDERR_FILENO);
+            close(fd);
+        }
+
         // execvp requires a null-terminated array of char*
         execvp(we.p.we_wordv[0], we.p.we_wordv);
 
