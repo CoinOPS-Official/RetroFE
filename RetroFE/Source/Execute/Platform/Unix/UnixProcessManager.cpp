@@ -146,38 +146,53 @@ WaitResult UnixProcessManager::wait(double timeoutSeconds, const std::function<b
     }
 
     auto startTime = std::chrono::steady_clock::now();
+    // This timer will control our ~30 FPS rendering and logic tick.
+    auto lastFrameTime = startTime;
 
     while (true) {
-        // --- 1. Let the frontend do its thing ---
-        if (onFrameTick) {
-            onFrameTick();
-        }
-
-        // --- 2. Check for user input ---
+        // --- 1. HIGH-FREQUENCY INPUT POLLING ---
+        // We poll for input on every single spin of this tight `while` loop.
+        // This ensures maximum responsiveness and prevents missed combos.
         if (userInputCheck && userInputCheck()) {
             return WaitResult::UserInput;
         }
 
-        // --- 3. Check for process exit (non-blocking) ---
-        int status;
-        pid_t result = waitpid(pid_, &status, WNOHANG);
-        if (result == pid_) {
-            LOG_INFO("ProcessManager", "Process " + std::to_string(pid_) + " has exited.");
-            pid_ = -1; // Mark as not running
-            return WaitResult::ProcessExit;
-        }
+        // --- 2. THROTTLED LOGIC AND RENDERING (~30 FPS) ---
+        auto now = std::chrono::steady_clock::now();
+        auto elapsedFrameMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFrameTime).count();
 
-        // --- 4. Check for timeout ---
-        if (timeoutSeconds > 0) {
-            auto now = std::chrono::steady_clock::now();
-            auto elapsedSec = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
-            if (elapsedSec >= timeoutSeconds) {
-                return WaitResult::Timeout;
+        // Only run the "heavy" logic if ~33ms have passed since the last frame.
+        if (elapsedFrameMs >= 33) {
+            // A. Call the expensive onFrameTick to render graphics.
+            if (onFrameTick) {
+                onFrameTick();
             }
+
+            // B. Check for process exit. This doesn't need to be checked 1000x per second.
+            int status;
+            pid_t result = waitpid(pid_, &status, WNOHANG);
+            if (result == pid_) {
+                LOG_INFO("ProcessManager", "Process " + std::to_string(pid_) + " has exited.");
+                pid_ = -1; // Mark as not running
+                return WaitResult::ProcessExit;
+            }
+
+            // C. Check for the main timeout.
+            if (timeoutSeconds > 0) {
+                auto elapsedTotalSec = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
+                if (elapsedTotalSec >= timeoutSeconds) {
+                    return WaitResult::Timeout;
+                }
+            }
+
+            // Reset the timer for the next frame.
+            lastFrameTime = now;
         }
 
-        // --- 5. Yield to prevent busy-waiting ---
-        std::this_thread::sleep_for(std::chrono::milliseconds(33)); // ~30 FPS
+        // --- 3. YIELD TO THE OS ---
+        // A very short sleep to prevent this tight loop from consuming 100% CPU,
+        // while still allowing it to spin very fast for input polling.
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
 
