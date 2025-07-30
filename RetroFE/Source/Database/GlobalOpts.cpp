@@ -86,6 +86,7 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_CYCLECOLLECTION,          "",         global_options::option_type::MSTRING,  "Set of collections that can be cycled through, CSV list of collection names" },
     { OPTION_LASTPLAYEDSIZE,           "10",       global_options::option_type::INTEGER,  "Size of the auto-generated last played playlist, 0 to disable" },
     { OPTION_LASTPLAYEDSKIPCOLLECTION, "",         global_options::option_type::MSTRING,  "Skip CSV list of collections being added to last played" },
+    { OPTION_LASTPLAYEDSORTTYPE,       "time",     global_options::option_type::STRING,   "Sort type for last played playlist, time or alpha" },
     { OPTION_ACTION,                   "",         global_options::option_type::STRING,   "If action=<something> and the action has setting=<something> then perform animation" },
     { OPTION_ENTERONCOLLECTION,        "false",    global_options::option_type::BOOLEAN,  "Enter the collection when using collection up/down controls" },
     { OPTION_BACKONCOLLECTION,         "false",    global_options::option_type::BOOLEAN,  "Move to the next/previous collection when using the collectionUp/Down/Left/Right buttons" },

@@ -79,6 +79,7 @@
 #define OPTION_CYCLECOLLECTION       "cycleCollection"
 #define OPTION_LASTPLAYEDSIZE         "lastplayedSize"
 #define OPTION_LASTPLAYEDSKIPCOLLECTION "lastPlayedSkipCollection"
+#define OPTION_LASTPLAYEDSORTTYPE     "lastPlayedSortType"
 #define OPTION_ACTION                 "action"
 #define OPTION_ENTERONCOLLECTION      "enterOnCollection"
 #define OPTION_BACKONCOLLECTION       "backOnCollection"
@@ -212,6 +213,7 @@ public:
     const char* cyclecollection() { return value(OPTION_CYCLECOLLECTION); }
     int lastplayedsize() { return int_value(OPTION_LASTPLAYEDSIZE); }
     const char* lastplayedskipcollection() { return value(OPTION_LASTPLAYEDSKIPCOLLECTION); }
+	const char* lastplayedsorttype() { return value(OPTION_LASTPLAYEDSORTTYPE); }
     bool enteroncollection() { return bool_value(OPTION_ENTERONCOLLECTION); }
     bool backoncollection() { return bool_value(OPTION_BACKONCOLLECTION); }
     bool startcollectionenter() { return bool_value(OPTION_STARTCOLLECTIONENTER); }

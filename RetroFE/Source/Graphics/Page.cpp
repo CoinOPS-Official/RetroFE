@@ -204,7 +204,19 @@ void Page::rememberSelectedItem() {
 	if (!amenu || !amenu->getItems().size()) return;
 
 	std::string name = getPlaylistName();
-	if (name != "" && selectedItem_) {
+	if (name == "lastplayed") {
+		// For the "last played" list, we only remember our position in "alpha" mode.
+		std::string lastPlayedSort = "time";
+		config_.getProperty(OPTION_LASTPLAYEDSORTTYPE, lastPlayedSort);
+
+		if (lastPlayedSort == "alpha") {
+			lastPlaylistOffsets_[name] = amenu->getScrollOffsetIndex();
+		}
+		// Implicitly, if the mode is "time", we do nothing, "forgetting" the position.
+
+	}
+	else if (name != "" && selectedItem_) {
+		// For any other playlist, we always remember the position.
 		lastPlaylistOffsets_[name] = amenu->getScrollOffsetIndex();
 	}
 }
@@ -1053,68 +1065,89 @@ void Page::prevPlaylist() {
 void Page::selectPlaylist(const std::string& playlist) {
 	MenuInfo_S& info = collections_.back();
 
-	// Check if "remember menu" functionality is enabled
+	// Check if "remember menu" functionality is enabled.
+	// Our modified rememberSelectedItem() will handle when to actually store the offset.
 	bool rememberMenu = false;
 	config_.getProperty(OPTION_REMEMBERMENU, rememberMenu);
 	if (rememberMenu)
 		rememberSelectedItem();
 
-	// Check if "random start" functionality is enabled
-	bool randomStart = false;
-	config_.getProperty(OPTION_RANDOMSTART, randomStart);
-	std::string settingsPlaylist = "settings";
-	config_.getProperty("settingsPlaylist", settingsPlaylist);
-
-	// Store the current playlist to restore if needed
+	// Store the current playlist to restore if the target is not found or empty.
 	CollectionInfo::Playlists_T::iterator playlist_store = playlist_;
 
-	// Find the target playlist
-	for (size_t i = 0; i <= info.collection->playlists.size(); ++i) {
-		playlist_++;
-		// Wrap around to the beginning if necessary
-		if (playlist_ == info.collection->playlists.end())
-			playlist_ = info.collection->playlists.begin();
+	// Find the target playlist.
+	auto it_playlist = info.collection->playlists.find(playlist);
 
-		// Match the desired playlist
-		if (!playlist_->second->empty() && getPlaylistName() == playlist)
-			break;
-	}
-
-	// If playlist not found or empty, restore the original playlist
-	if (playlist_->second->empty() || getPlaylistName() != playlist) {
+	// If the playlist doesn't exist or is empty, restore the original and exit.
+	if (it_playlist == info.collection->playlists.end() || it_playlist->second->empty()) {
+		// Log a warning if the playlist exists but is just empty, as this is useful info.
+		if (it_playlist != info.collection->playlists.end()) {
+			LOG_WARNING("Page", "Attempted to select playlist '" + playlist + "', but it is empty.");
+		}
 		playlist_ = playlist_store;
 		return;
 	}
 
-	// Update active menu items
+	// The playlist is valid, so set it.
+	playlist_ = it_playlist;
+
+	// Update the active menu's items from the newly selected playlist.
 	for (auto it = activeMenu_.begin(); it != activeMenu_.end(); it++) {
 		setActiveMenuItemsFromPlaylist(info, *it);
 	}
 
-	// Determine the initial offset
+	// --- Determine the initial scroll position for the new playlist ---
 	size_t initialOffset = 0;
 	ScrollingList* amenu = getAnActiveMenu();
 
+	// Priority 1: Check for a remembered position.
+	// This will only be true for 'lastplayed' if the mode is 'alpha'.
 	if (lastPlaylistOffsets_.count(playlist) > 0) {
-		// Use the remembered offset
 		initialOffset = lastPlaylistOffsets_[playlist];
 	}
-	else if (randomStart && amenu && (getPlaylistName() != settingsPlaylist) && (getPlaylistName() != "lastplayed")) {
-		// First-time navigation: select a random item
-		amenu->random();
-		initialOffset = amenu->getScrollOffsetIndex();
+	else {
+		// Priority 2: If no position was remembered, check if we should apply a random start.
+		bool randomStart = false;
+		config_.getProperty(OPTION_RANDOMSTART, randomStart);
 
-		// Remember the random selection for subsequent navigations
-		lastPlaylistOffsets_[playlist] = initialOffset;
+		bool applyRandomStart = randomStart; // Assume we can apply it based on the global setting.
+
+		// Now, apply exclusion rules.
+		if (playlist == "lastplayed") {
+			// For the "last played" list, we must check its sort mode.
+			std::string lastPlayedSort = "time";
+			config_.getProperty(OPTION_LASTPLAYEDSORTTYPE, lastPlayedSort);
+			if (lastPlayedSort == "time") {
+				// In "time" mode, we explicitly FORBID random start.
+				applyRandomStart = false;
+			}
+		}
+		else if (playlist == "settings") { // You can add other lists here if needed.
+			// Never apply random start to the settings playlist.
+			applyRandomStart = false;
+		}
+
+		// If, after all checks, we should apply random start, do it now.
+		if (applyRandomStart && amenu) {
+			amenu->random();
+			initialOffset = amenu->getScrollOffsetIndex();
+
+			// If "remember menu" is on, store this random position so it's consistent
+			// for the rest of the session.
+			if (rememberMenu) {
+				lastPlaylistOffsets_[playlist] = initialOffset;
+			}
+		}
+		// If we reach here and applyRandomStart was false, initialOffset remains 0,
+		// which is the correct default for "time" mode and other excluded lists.
 	}
 
 	setScrollOffsetIndex(initialOffset);
 
-	// Trigger playlist change
+	// Trigger the necessary UI updates.
 	playlistChange();
 	setSelectedItem();
 }
-
 
 
 void Page::updatePlaylistMenuPosition() {
