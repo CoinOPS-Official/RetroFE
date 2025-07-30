@@ -83,6 +83,14 @@ bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::
 }
 
 bool UnixProcessManager::launch(const std::string& executable, const std::string& args, const std::string& currentDirectory) {
+    LOG_INFO("ProcessManager", "Attempting to launch: " + executable);
+    if (!args.empty()) {
+        LOG_INFO("ProcessManager", "           Arguments: " + args);
+    }
+    if (!currentDirectory.empty()) {
+        LOG_INFO("ProcessManager", "     Working directory: " + currentDirectory);
+    }
+    
     std::string commandLine = executable + " " + args;
     WordExpWrapper we;
     // WRDE_NOCMD prevents command substitution for security.
