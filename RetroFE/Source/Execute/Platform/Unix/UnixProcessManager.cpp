@@ -174,20 +174,42 @@ WaitResult UnixProcessManager::wait(double timeoutSeconds, const std::function<b
 }
 
 void UnixProcessManager::terminate() {
-    if (isRunning()) {
-        LOG_INFO("ProcessManager", "Terminating process group " + std::to_string(pid_) + " with SIGKILL.");
+    if (!isRunning()) {
+        LOG_WARNING("ProcessManager", "Terminate called but no process was running.");
+        return;
+    }
 
-        // *** The Process Group Trick in Action ***
-        // By sending the signal to the negative PID, we signal the entire process group
-        // that was created with setsid(). This is the Unix equivalent of TerminateJobObject.
+    LOG_INFO("ProcessManager", "Attempting graceful termination of process group " + std::to_string(pid_) + " with SIGTERM.");
+
+    // Step 1: Ask the entire process group to terminate nicely.
+    if (kill(-pid_, SIGTERM) == -1) {
+        LOG_ERROR("ProcessManager", "Failed to send SIGTERM. Escalating to SIGKILL.");
         kill(-pid_, SIGKILL);
-
         waitpid(pid_, nullptr, 0);
         pid_ = -1;
+        return;
     }
-    else {
-        LOG_WARNING("ProcessManager", "Terminate called but no process was running.");
+
+    // Step 2: Wait for a short period for the process to exit on its own.
+    const int timeout_ms = 3000; // 3 seconds
+    const int sleep_interval_ms = 100;
+    for (int i = 0; i < timeout_ms / sleep_interval_ms; ++i) {
+        int status;
+        pid_t result = waitpid(pid_, &status, WNOHANG);
+        if (result == pid_) {
+            LOG_INFO("ProcessManager", "Process group terminated gracefully.");
+            pid_ = -1;
+            return;
+        }
+        // Wait a bit before checking again.
+        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_interval_ms));
     }
+
+    // Step 3: If the process is still running, use the sledgehammer.
+    LOG_WARNING("ProcessManager", "Process group did not respond to SIGTERM. Escalating to SIGKILL.");
+    kill(-pid_, SIGKILL);
+    waitpid(pid_, nullptr, 0); // Final cleanup reap.
+    pid_ = -1;
 }
 
 bool UnixProcessManager::isRunning() const {
