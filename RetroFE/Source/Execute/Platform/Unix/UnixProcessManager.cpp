@@ -215,7 +215,7 @@ void UnixProcessManager::terminate() {
 
     // Step 2: Wait for a short period for the process to exit on its own.
     const int timeout_ms = 500;
-    const int sleep_interval_ms = 100;
+    const int sleep_interval_ms = 50;
     for (int i = 0; i < timeout_ms / sleep_interval_ms; ++i) {
         int status;
         pid_t result = waitpid(pid_, &status, WNOHANG);
