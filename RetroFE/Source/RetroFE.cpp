@@ -832,7 +832,6 @@ bool RetroFE::run() {
 				int currentLayout = currentPage_->getCurrentLayout();
 
 				// Properly cleanup splash page
-				currentPage_->stop();
 				currentPage_->deInitialize();
 				delete currentPage_;
 				currentPage_ = nullptr;  // Prevent dangling pointer
