@@ -111,9 +111,12 @@ Page* PageBuilder::buildPage(const std::string& collectionName, bool defaultToCu
 
 	std::vector<std::string> layouts;
 	layouts.push_back(layoutPage);
-	// Add "layout - #.xml" files
-	for (int i = 0; i < Page::MAX_LAYOUTS; i++) {
-		layouts.push_back("layout - " + std::to_string(i));
+	// Add "layout - #.xml" files unless the layoutPage is "splash".
+	if (layoutPage != "splash") {
+		// Add "layout - #.xml" files to the list of things to parse.
+		for (int i = 0; i < Page::MAX_LAYOUTS; i++) {
+			layouts.push_back("layout - " + std::to_string(i));
+		}
 	}
 
 	for (unsigned int layoutIndex = 0; layoutIndex < layouts.size(); ++layoutIndex) {
