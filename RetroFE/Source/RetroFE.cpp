@@ -651,7 +651,7 @@ bool RetroFE::run() {
 
 	Launcher l(config_, *this);
 	Menu m(config_, input_);
-	preloadTime = static_cast<float>(SDL_GetTicks()) / 1000;
+	preloadTime = static_cast<float>(SDL_GetPerformanceCounter() / freq_);
 
 	l.LEDBlinky(1);
 	l.startScript();
@@ -780,7 +780,9 @@ bool RetroFE::run() {
 			// Handle end of splash mode
 			if ((initialized || initializeError) && splashMode &&
 				(exitSplashMode ||
-					(currentPage_->getMinShowTime() <= (currentTime_ - preloadTime) && !(currentPage_->isPlaying()))))
+					(currentPage_->isIdle() && // <-- THE ELEGANT FIX
+						currentPage_->getMinShowTime() <= (currentTime_ - preloadTime) &&
+						!(currentPage_->isPlaying()))))
 			{
 				SDL_WaitThread(initializeThread, &initializeStatus);
 
