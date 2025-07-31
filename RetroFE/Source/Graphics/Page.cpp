@@ -48,7 +48,7 @@ Page::Page(Configuration& config, int layoutWidth, int layoutHeight)
 	, unloadSoundChunk_(NULL)
 	, highlightSoundChunk_(NULL)
 	, selectSoundChunk_(NULL)
-	, minShowTime_(0)
+	, minShowTime_(0.5)
 	, jukebox_(false)
 {
 
