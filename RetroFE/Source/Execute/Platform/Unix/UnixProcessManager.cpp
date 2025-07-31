@@ -25,6 +25,7 @@
 #include <thread>       // For std::this_thread::sleep_for
 #include <vector>
 #include <wordexp.h> // For robust shell-like word expansion
+#include <fcntl.h> // For open, O_WRONLY
 
 #include "../../../Utility/Log.h"
 
