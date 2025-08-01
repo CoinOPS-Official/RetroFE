@@ -558,19 +558,17 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 		Mix_CloseAudio();
 		Mix_Quit();
 		SDL_Quit();
+		
+		if (mutex_) {
+			SDL_DestroyMutex(mutex_);
+			mutex_ = nullptr;
+		}
 	}
 	else
 	{
 		// This is the unloadSDL case. Shut down ONLY the video subsystem.
 		LOG_INFO("SDL", "De-initializing video subsystem only.");
 		SDL_QuitSubSystem(SDL_INIT_VIDEO);
-	}
-
-	// Step 3: Clean up remaining resources.
-	if (mutex_)
-	{
-		SDL_DestroyMutex(mutex_);
-		mutex_ = nullptr;
 	}
 
 	displayWidth_.clear();

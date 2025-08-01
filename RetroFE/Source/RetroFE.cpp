@@ -327,8 +327,8 @@ void RetroFE::launchEnter() {
 	{
 		LOG_INFO("RetroFE", "Unloading SDL for launch (no reboot).");
 		VideoPool::shuttingDown_ = true;
-		freeGraphicsMemory();
 		VideoPool::shutdown();
+		freeGraphicsMemory();
 		Image::cleanupTextureCache();
 	}
 	else if (unloadSDL && reboot) {
