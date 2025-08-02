@@ -16,16 +16,16 @@
 
 #pragma once
 
-#include "../../Control/Restrictor/RestrictorInstance.h"
+#include "../../Control/Restrictor/RestrictorManager.h"
 #include "../../Utility/Log.h"
 
-/**
- * @brief An RAII scope guard to manage the state of a hardware restrictor (e.g., ServoStik).
- *
- * This class sets the restrictor to a specified mode upon construction and
- * automatically restores it to the default 8-way mode upon destruction.
- * This ensures the restrictor state is always cleaned up, even if errors occur.
- */
+ /**
+  * @brief An RAII scope guard to manage the state of a hardware restrictor (e.g., ServoStik).
+  *
+  * This class sets the restrictor to a specified mode upon construction and
+  * automatically restores it to the default 8-way mode upon destruction.
+  * This ensures the restrictor state is always cleaned up, even if errors occur.
+  */
 class RestrictorGuard {
 public:
     /**
@@ -33,22 +33,23 @@ public:
      * @param way The mode to set the restrictor to (e.g., 4 for 4-way).
      */
     explicit RestrictorGuard(int way) {
-        // gRestrictor is assumed to be a globally accessible pointer/instance
-        if (gRestrictor && gRestrictor->setWay(way)) {
-                LOG_INFO("RestrictorGuard", "Restrictor set to " + std::to_string(way) + "-way mode.");
-                wasSet_ = true;
-            }
-            else {
-                LOG_ERROR("RestrictorGuard", "Failed to set restrictor to " + std::to_string(way) + "-way mode.");
-            }
+        IRestrictor* restrictor = RestrictorManager::getGlobalRestrictor();
+        if (restrictor && restrictor->setWay(way)) {
+            LOG_INFO("RestrictorGuard", "Restrictor set to " + std::to_string(way) + "-way mode.");
+            wasSet_ = true;
         }
+        else {
+            LOG_ERROR("RestrictorGuard", "Failed to set restrictor to " + std::to_string(way) + "-way mode.");
+        }
+    }
 
     /**
      * @brief Destructs the guard and restores the restrictor to its default 8-way mode.
      */
     ~RestrictorGuard() {
         if (wasSet_) {
-            if (gRestrictor && gRestrictor->setWay(8)) {
+            IRestrictor* restrictor = RestrictorManager::getGlobalRestrictor();
+            if (restrictor && restrictor->setWay(8)) {
                 LOG_INFO("RestrictorGuard", "Returned restrictor to 8-way mode.");
             }
             else {
@@ -57,7 +58,6 @@ public:
         }
     }
 
-    // Disable copying and assignment to prevent incorrect resource management.
     RestrictorGuard(const RestrictorGuard&) = delete;
     RestrictorGuard& operator=(const RestrictorGuard&) = delete;
 

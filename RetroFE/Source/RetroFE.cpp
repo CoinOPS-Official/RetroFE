@@ -19,8 +19,7 @@
 #include "Collection/CollectionInfoBuilder.h"
 #include "Collection/Item.h"
 #include "Collection/MenuParser.h"
-#include "Control/Restrictor/Restrictor.h"
-#include "Control/Restrictor/RestrictorInstance.h"
+#include "Control/Restrictor/RestrictorManager.h"
 #include "Control/UserInput.h"
 #include "Database/Configuration.h"
 #include "Database/GlobalOpts.h"
@@ -83,6 +82,9 @@ RetroFE::RetroFE(Configuration& c)
 	attractModePlaylistCollectionNumber_ = 0;
 	firstPlaylist_ = "all"; // todo
 }
+
+RestrictorManager g_restrictorManager;
+bool g_isRestrictorCheckDone = false;
 
 namespace fs = std::filesystem;
 
@@ -275,7 +277,6 @@ int RetroFE::initialize(void* context) {
 	}
 
 	instance->initializeMusicPlayer();
-
 
 	// Initialize HiScores
 	std::string zipPath = Utils::combinePath(Configuration::absolutePath, "hi2txt", "hi2txt_defaults.zip");
@@ -528,6 +529,8 @@ bool RetroFE::run() {
 	if (!fontcache_.initialize())
 		return false;
 
+	g_restrictorManager.startInitialization();
+
 	config_.getProperty(OPTION_SHOWFPS, showFps_);
 	if (showFps_)
 	{
@@ -551,10 +554,6 @@ bool RetroFE::run() {
 	SDL_RestoreWindow(SDL::getWindow(0));
 	SDL_RaiseWindow(SDL::getWindow(0));
 	SDL_SetWindowGrab(SDL::getWindow(0), SDL_TRUE);
-
-	restrictor_ = IRestrictor::create();
-	gRestrictor = restrictor_.get();
-	config_.setProperty("restrictorEnabled", gRestrictor != nullptr);
 
 	// Define control configuration
 	config_.import("controls", controlsConfPath + ".conf");
@@ -718,6 +717,21 @@ bool RetroFE::run() {
 				g_main_context_iteration(nullptr, false);
 			}
 			glibAccumulator -= glibUpdateInterval;
+		}
+
+		if (!g_isRestrictorCheckDone) {
+			if (g_restrictorManager.isReady()) {
+				g_isRestrictorCheckDone = true;
+
+				IRestrictor* restrictor = RestrictorManager::getGlobalRestrictor();
+				if (restrictor) {
+					LOG_INFO("RetroFE", "Restrictor hardware is initialized and ready.");
+					config_.setProperty("restrictorEnabled", true);
+				}
+				else {
+					LOG_INFO("RetroFE", "Restrictor hardware detection finished: No device found.");
+				}
+			}
 		}
 
 		// Exit splash mode when an active key is pressed
