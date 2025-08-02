@@ -109,14 +109,23 @@ std::string intToHex(int value) {
 	return ss.str();
 }
 
-sp_port* TOSGRSRestrictor::findPort(uint16_t /*vid*/, uint16_t /*pid*/) {
+sp_port* TOSGRSRestrictor::findPort(uint16_t vid, uint16_t pid) {
 	sp_port** ports = nullptr;
-	if (sp_list_ports(&ports) != SP_OK) return nullptr;
+	if (sp_list_ports(&ports) != SP_OK) {
+		LOG_ERROR(COMPONENT, "sp_list_ports() failed. Cannot search for device.");
+		return nullptr;
+	}
 
 	sp_port* result = nullptr;
 
 	for (int i = 0; ports[i]; ++i) {
-		LOG_INFO(COMPONENT, "Probing port: " + std::string(sp_get_port_name(ports[i])) +
+		// Only proceed if the port is a physical USB device.
+		// This will skip Bluetooth, legacy, and virtual ports.
+		if (sp_get_port_transport(ports[i]) != SP_TRANSPORT_USB) {
+			continue; // Skip this port
+		}
+
+		LOG_INFO(COMPONENT, "Probing USB port: " + std::string(sp_get_port_name(ports[i])) +
 			" [" + sp_get_port_description(ports[i]) + "]");
 
 		sp_port* testPort = nullptr;
@@ -127,7 +136,7 @@ sp_port* TOSGRSRestrictor::findPort(uint16_t /*vid*/, uint16_t /*pid*/) {
 			continue;
 		}
 
-		// Configure port (if your device expects 115200 8N1, else adjust)
+		// Configure port...
 		sp_set_baudrate(testPort, 115200);
 		sp_set_bits(testPort, 8);
 		sp_set_parity(testPort, SP_PARITY_NONE);
@@ -143,7 +152,6 @@ sp_port* TOSGRSRestrictor::findPort(uint16_t /*vid*/, uint16_t /*pid*/) {
 		if (n > 0) {
 			std::string response(buf, n);
 
-			// Strip trailing CR/LF for log output
 			std::string logResponse = response;
 			while (!logResponse.empty() && (logResponse.back() == '\r' || logResponse.back() == '\n'))
 				logResponse.pop_back();
@@ -155,6 +163,7 @@ sp_port* TOSGRSRestrictor::findPort(uint16_t /*vid*/, uint16_t /*pid*/) {
 			if (lower.find("tos428") != std::string::npos) {
 				LOG_INFO(COMPONENT, "Confirmed TOS GRS on port: " + std::string(sp_get_port_name(testPort)));
 				result = testPort;
+				// Since we found it, no need to keep searching.
 				break;
 			}
 		}
