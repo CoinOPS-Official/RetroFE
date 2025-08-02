@@ -201,11 +201,14 @@ void RetroFE::render() {
 		// --- Compose overlay text ---
 		char overlayText[128];
 		if (waitingForFpsData) {
-			snprintf(overlayText, sizeof(overlayText), "FPS: -- | Frame: -- ms | Draw: -- ms");
+			snprintf(overlayText, sizeof(overlayText),
+				"FPS: -- | Frame: -- ms | Draw: -- ms | Mem: -- MB");
 		}
 		else {
-			snprintf(overlayText, sizeof(overlayText), "FPS: %.1f | Frame: %.2f ms | Draw: %.2f ms",
-				displayedFps, this->lastFrameTimeMs_, displayedRenderMs);
+			snprintf(overlayText, sizeof(overlayText),
+				"FPS: %.1f | Frame: %.2f ms | Draw: %.2f ms | Mem: %zu MB",
+				displayedFps, this->lastFrameTimeMs_, displayedRenderMs,
+				Utils::getMemoryUsage() / 1024);
 		}
 
 		if (lastOverlayText_ != overlayText) {

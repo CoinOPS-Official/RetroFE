@@ -70,6 +70,7 @@ public:
     static std::string obfuscate(const std::string& data);
     static std::string deobfuscate(const std::string& data);
     static std::string removeNullCharacters(const std::string& input);
+	static size_t getMemoryUsage();
 
 
     template <typename... Paths>

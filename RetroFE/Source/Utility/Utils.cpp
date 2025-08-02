@@ -34,6 +34,7 @@
 
 #ifdef WIN32
 #include <Windows.h>
+#include <psapi.h>
 #endif
 
 #ifdef WIN32
@@ -44,6 +45,7 @@
 
 // Initialize the static member variables
 #ifdef __APPLE__
+#include <mach/mach.h>
 std::unordered_map<std::filesystem::path, std::unordered_set<std::string>, PathHash> Utils::fileCache;
 std::unordered_set<std::filesystem::path, PathHash> Utils::nonExistingDirectories;
 #else
@@ -500,4 +502,35 @@ std::string Utils::removeNullCharacters(const std::string& input) {
         }
     }
     return output;
+}
+
+size_t Utils::getMemoryUsage() {
+#ifdef _WIN32
+    PROCESS_MEMORY_COUNTERS pmc = {};
+    if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc))) {
+        return pmc.WorkingSetSize / 1024;
+    }
+    return 0;
+#elif defined(__APPLE__)
+    struct mach_task_basic_info info;
+    mach_msg_type_number_t infoCount = MACH_TASK_BASIC_INFO_COUNT;
+    if (task_info(mach_task_self(), MACH_TASK_BASIC_INFO,
+        (task_info_t)&info, &infoCount) == KERN_SUCCESS) {
+        return info.resident_size / 1024;
+    }
+    return 0;
+#elif defined(__linux__)
+    std::ifstream status("/proc/self/status");
+    std::string line;
+    while (std::getline(status, line)) {
+        if (line.compare(0, 6, "VmRSS:") == 0) {
+            size_t kb = 0;
+            sscanf(line.c_str(), "VmRSS: %zu kB", &kb);
+            return kb;
+        }
+    }
+    return 0;
+#else
+    return 0;
+#endif
 }
