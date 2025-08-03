@@ -198,17 +198,25 @@ void RetroFE::render() {
 			waitingForFpsData = false;  // Got real data now
 		}
 
+
 		// --- Compose overlay text ---
-		char overlayText[128];
+		char overlayText[192]; // Increased for more info
+		int outW = 0, outH = 0;
+		SDL_Renderer* renderer0 = SDL::getRenderer(0);
+		if (renderer0) {
+			SDL_GetRendererOutputSize(renderer0, &outW, &outH);
+		}
+
 		if (waitingForFpsData) {
 			snprintf(overlayText, sizeof(overlayText),
-				"FPS: -- | Frame: -- ms | Draw: -- ms | Mem: -- MB");
+				"FPS: -- | Frame: -- ms | Draw: -- ms | Mem: -- MB | Res: %dx%d",
+				outW, outH);
 		}
 		else {
 			snprintf(overlayText, sizeof(overlayText),
-				"FPS: %.1f | Frame: %.2f ms | Draw: %.2f ms | Mem: %zu MB",
+				"FPS: %.1f | Frame: %.2f ms | Draw: %.2f ms | Mem: %zu MB | Res: %dx%d",
 				displayedFps, this->lastFrameTimeMs_, displayedRenderMs,
-				Utils::getMemoryUsage() / 1024);
+				Utils::getMemoryUsage() / 1024, outW, outH);
 		}
 
 		if (lastOverlayText_ != overlayText) {
@@ -1697,13 +1705,9 @@ bool RetroFE::run() {
 						attractModePlaylistCollectionNumber_ >= attractModePlaylistCollectionNumber)
 					{
 						attractModePlaylistCollectionNumber_ = 0;
-						currentPage_->nextPlaylist();
 
-						if (isInAttractModeSkipPlaylist(currentPage_->getPlaylistName()))
-						{
-							// todo find next playlist that isn't in skip list
-							currentPage_->nextPlaylist();
-						}
+						// Call our new, robust function to handle the playlist change correctly.
+						advanceToNextValidAttractPlaylist();
 
 						setState(RETROFE_PLAYLIST_REQUEST);
 					}
@@ -1793,12 +1797,10 @@ bool RetroFE::run() {
 						attractModePlaylistCollectionNumber_ >= attractModePlaylistCollectionNumber)
 					{
 						attractModePlaylistCollectionNumber_ = 0;
-						currentPage_->nextPlaylist();
-						if (isInAttractModeSkipPlaylist(currentPage_->getPlaylistName()))
-						{
-							// todo find next playlist that isn't in skip list
-							currentPage_->nextPlaylist();
-						}
+
+						// Also call our new function here to ensure consistency.
+						advanceToNextValidAttractPlaylist();
+
 						setState(RETROFE_PLAYLIST_REQUEST);
 					}
 				}
@@ -2477,25 +2479,8 @@ bool RetroFE::run() {
 					{
 						attract_.reset(attract_.isSet());
 
-						bool attractModeCyclePlaylist = getAttractModeCyclePlaylist();
-						if (attractModeCyclePlaylist)
-							currentPage_->nextCyclePlaylist(getPlaylistCycle());
-						else
-							currentPage_->nextPlaylist();
+						advanceToNextValidAttractPlaylist();
 
-						// if that next playlist is one to skip for attract, then find one that isn't
-						if (isInAttractModeSkipPlaylist(currentPage_->getPlaylistName()))
-						{
-							if (attractModeCyclePlaylist)
-							{
-								goToNextAttractModePlaylistByCycle(getPlaylistCycle());
-							}
-							else
-							{
-								// todo perform smarter playlist skipping
-								currentPage_->nextPlaylist();
-							}
-						}
 						setState(RETROFE_PLAYLIST_REQUEST);
 					}
 					if (!kioskLock_ && attractReturn == 2) // Change collection
@@ -2800,6 +2785,44 @@ void RetroFE::goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleV
 	if (currentPage_->playlistExists(*it))
 	{
 		currentPage_->selectPlaylist(*it);
+	}
+}
+
+void RetroFE::advanceToNextValidAttractPlaylist() {
+	const bool useCycle = getAttractModeCyclePlaylist();
+
+	// First, advance the playlist ONE step using the appropriate method (cycle or linear).
+	if (useCycle)
+	{
+		currentPage_->nextCyclePlaylist(getPlaylistCycle());
+	}
+	else
+	{
+		currentPage_->nextPlaylist();
+	}
+
+	// Now, VERIFY the result. If the new playlist is on the skip list, this block will
+	// robustly find the next valid one, handling any number of consecutive skips.
+	if (isInAttractModeSkipPlaylist(currentPage_->getPlaylistName()))
+	{
+		if (useCycle)
+		{
+			// This existing helper function is already robust for cycling. It finds the current
+			// position in the cycle and iterates until a non-skippable one is found.
+			goToNextAttractModePlaylistByCycle(getPlaylistCycle());
+		}
+		else
+		{
+			// This is the FIX for the non-cycling path. We loop until we find a valid playlist
+			// or we've tried every playlist to prevent an infinite loop.
+			const int maxAttempts = currentPage_->getCollection()->playlists.size();
+			int attempts = 0;
+			while (isInAttractModeSkipPlaylist(currentPage_->getPlaylistName()) && attempts < maxAttempts)
+			{
+				currentPage_->nextPlaylist();
+				attempts++;
+			}
+		}
 	}
 }
 

@@ -166,7 +166,7 @@ private:
         RETROFE_SCROLL_PLAYLIST_BACK,
     };
 
-    RETROFE_STATE state_ = RETROFE_IDLE;  // Private version of your state variable
+    RETROFE_STATE state_ = RETROFE_IDLE;
 
     void setState(RETROFE_STATE newState);
     RETROFE_STATE getState() const;
@@ -177,8 +177,8 @@ private:
     bool isStandalonePlaylist(std::string playlist);
     bool isInAttractModeSkipPlaylist(std::string playlist);
     void goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleVector);
+    void advanceToNextValidAttractPlaylist();
     void handleMusicControls(UserInput::KeyCode_E input);
-    void            quit( );
     Page           *loadPage(const std::string& collectionName);
     Page           *loadSplashPage( );
 
@@ -186,7 +186,6 @@ private:
     std::vector<std::string>::iterator collectionCycleIt_;
 
     RETROFE_STATE   processUserInput( Page *page );
-    void            update( float dt, bool scrollActive );
     CollectionInfo *getCollection( const std::string& collectionName );
     void updatePageControls(const std::string& type);
     CollectionInfo *getMenuCollection( const std::string& collectionName );
