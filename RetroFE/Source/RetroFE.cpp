@@ -2444,7 +2444,7 @@ bool RetroFE::run() {
 		case RETROFE_AMBIENT_REQUEST:
 			// First stage of entering ambient mode: stop the current page, which fades it out visually.
 			currentPage_->stop();
-			state = RETROFE_AMBIENT;
+			state_ = RETROFE_AMBIENT;
 			break;
 		case RETROFE_AMBIENT:
 			// second stage of entering ambient mode: once the fade-out is complete, actually enter ambient mode.
@@ -2462,7 +2462,7 @@ bool RetroFE::run() {
 					AmbientMode ambientMode(input_, Configuration::absolutePath, ambientModeMinutesPerImage);
     				ambientMode.activate(); // blocks until user exits					
 					currentPage_->start();	// ... and we're back! Restart the page, and continue normally
-					state = RETROFE_IDLE;
+					state_ = RETROFE_IDLE;
 					// START: honestly, I'm not sure how much of this is needed, but adding it solved problems with a blank screen on exiting from ambient mode.
 					currentPage_->setIsLaunched(false);
 					currentPage_->updateReloadables(0);
