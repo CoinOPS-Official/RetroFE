@@ -358,117 +358,108 @@ bool GStreamerVideo::deInitialize() {
 }
 
 bool GStreamerVideo::stop() {
-	std::string currentFileForLog = currentFile_; // Cache for logging before it's cleared
-	LOG_INFO("GStreamerVideo", "Stop called for " + (!currentFileForLog.empty() ? currentFileForLog : "unspecified video") +
-		" (Session: " + std::to_string(currentPlaySessionId_.load()) + ")");
+	const std::string currentFileForLog = currentFile_; // Cache for logging before it's cleared
+	LOG_INFO("GStreamerVideo", "Stop (full cleanup) called for " + (!currentFileForLog.empty() ? currentFileForLog : "unspecified video"));
 
-	// --- 1. Signal No Longer Playing ---
-	// This should be done early to prevent other threads (e.g., draw, bus callback)
-	// from attempting operations on a pipeline that's being torn down.
+	// --- 1. Signal No Longer Active ---
+	// Immediately signal that this instance is being torn down to prevent other
+	// threads (e.g., draw) from attempting to use it.
 	pipeLineReady_ = false;
 	targetState_ = IVideo::VideoState::None;
 
 	// --- 2. GStreamer Pipeline Teardown ---
-	// This lock protects GStreamer element operations and GStreamer-related shared state.
 	std::lock_guard<std::mutex> lock(pipelineMutex_);
 
 	if (playbin_) {
-		// Remove active pad probe if one was registered for the current session
+		// --- Synchronization Barrier ---
+		// Before issuing a new state change to NULL, we must ensure any pending
+		// state change from a previous `unload()` call has completed. This prevents
+		// a race condition during rapid shutdown or re-allocation scenarios.
+		LOG_DEBUG("GStreamerVideo::stop", "Synchronizing pipeline state before final stop...");
+		constexpr GstClockTime stopSyncTimeout = 500 * GST_MSECOND;
+		GstStateChangeReturn syncRet = gst_element_get_state(playbin_, nullptr, nullptr, stopSyncTimeout);
+
+		// GST_STATE_CHANGE_NO_PREROLL is a valid success state when going from READY to NULL.
+		if (syncRet != GST_STATE_CHANGE_SUCCESS && syncRet != GST_STATE_CHANGE_NO_PREROLL) {
+			// We log a warning but proceed anyway, as stop() MUST continue with cleanup.
+			LOG_WARNING("GStreamerVideo::stop", "Timed out or failed synchronizing before stop. Forcing cleanup regardless.");
+		}
+		else {
+			LOG_DEBUG("GStreamerVideo::stop", "Pipeline synchronized successfully.");
+		}
+		// --- End of Synchronization Barrier ---
+
+		// --- Disconnect Callbacks and Probes ---
+		// It's critical to remove these before tearing down the pipeline to prevent
+		// any late-arriving async events from calling into a partially destroyed object.
 		if (padProbeId_ != 0 && videoSink_) {
 			GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink");
 			if (sinkPad) {
-				LOG_DEBUG("GStreamerVideo::stop", "Removing active pad probe ID " + std::to_string(padProbeId_));
 				gst_pad_remove_probe(sinkPad, padProbeId_);
 				gst_object_unref(sinkPad);
 			}
-			else {
-				LOG_WARNING("GStreamerVideo::stop", "Could not get sink pad to remove probe during stop.");
-			}
-			// padProbeId_ will be reset with other members later.
 		}
-
-		// Remove bus watch
 		if (busWatchId_ != 0) {
 			g_source_remove(busWatchId_);
-			// busWatchId_ will be reset with other members later.
-			LOG_DEBUG("GStreamerVideo::stop", "Removed bus watch.");
+		}
+		if (elementSetupHandlerId_ != 0 && g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
+			g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
 		}
 
-		// Disconnect signal handlers (like element-setup)
-		if (elementSetupHandlerId_ != 0) {
-			// Check if connected before disconnecting, to avoid warnings if already disconnected
-			if (g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
-				g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
-			}
-			// elementSetupHandlerId_ will be reset with other members later.
-			LOG_DEBUG("GStreamerVideo::stop", "Disconnected element-setup signal handler.");
-		}
+		// --- Forceful Cleanup ---
+		// Set state to NULL first. This is a "best effort" graceful shutdown attempt.
+		// We do not check the return value or wait for it, as the subsequent unref is the true failsafe.
+		gst_element_set_state(playbin_, GST_STATE_NULL);
 
-		GstSample* s = stagedSample_.exchange(nullptr);
-		if (s) gst_sample_unref(s);
-
-		// Set the pipeline state to NULL to release all GStreamer resources.
-		LOG_DEBUG("GStreamerVideo::stop", "Setting playbin state to NULL.");
-		if (gst_element_set_state(playbin_, GST_STATE_NULL) == GST_STATE_CHANGE_FAILURE) {
-			LOG_ERROR("GStreamerVideo::stop", "Failed to set playbin state to NULL. Resources may not be fully released by GStreamer.");
-			hasError_.store(true, std::memory_order_release);
-		}
-
-		// Unreference the playbin. This will destroy all elements it contains.
-		LOG_DEBUG("GStreamerVideo::stop", "Unreffing playbin_.");
+		// The guaranteed non-blocking failsafe. gst_object_unref() will forcefully
+		// free the pipeline and all its resources, even if it was in a hung state.
+		// This is the most important step to prevent application freezes.
+		LOG_DEBUG("GStreamerVideo::stop", "Unreffing playbin to guarantee final cleanup.");
 		gst_object_unref(playbin_);
 		playbin_ = nullptr;
 		videoSink_ = nullptr;   // Was part of playbin_
 		perspective_ = nullptr; // Was part of playbin_
-
 	}
 	else {
 		LOG_DEBUG("GStreamerVideo", "stop(): No playbin_ was active to stop and unref.");
 	}
 
-	// --- 3. SDL Texture Cleanup
-	// This lock protects all SDL texture objects and their associated state.
+	// --- 3. SDL and Member Variable Cleanup ---
+	// Now that GStreamer is gone, clean up everything else.
+
 	SDL_LockMutex(SDL::getMutex());
 	texture_ = nullptr;
 	if (videoTexture_) {
 		SDL_DestroyTexture(videoTexture_);
 		videoTexture_ = nullptr;
-		LOG_DEBUG("GStreamerVideo", "stop (): Destroyed videoTexture_.");
 	}
 	SDL_UnlockMutex(SDL::getMutex());
 
-	hasError_.store(false, std::memory_order_release);
-
-
-	width_ = -1;
-	height_ = -1;
-
-	currentFile_.clear();
-	playCount_ = 0;
-	numLoops_ = 0;
-
-	// Reset volume state
-	currentVolume_ = 0.0f;
-	lastSetVolume_ = -1.0f; // Force re-application if volume is set again
-	lastSetMuteState_ = true; // Sensible default to start muted
-	volume_ = 0.0f;
-
-	// Reset GStreamer IDs
-	padProbeId_ = 0;
-	busWatchId_ = 0;
-	elementSetupHandlerId_ = 0;
-	// currentPlaySessionId_ will be updated by the static generator on the next play() call.
-
-	// Free GStreamer GValueArray for perspective matrix
+	// Clean up any final GStreamer-related data
+	GstSample* s = stagedSample_.exchange(nullptr);
+	if (s) gst_sample_unref(s);
 	if (perspective_gva_) {
 		g_value_array_free(perspective_gva_);
 		perspective_gva_ = nullptr;
 	}
 
-	// Any other custom member variables specific to a playback session should be reset.
+	// Reset all internal state variables to their defaults.
+	width_ = -1;
+	height_ = -1;
+	currentFile_.clear();
+	playCount_ = 0;
+	numLoops_ = 0;
+	volume_ = 0.0f;
+	currentVolume_ = 0.0f;
+	lastSetVolume_ = -1.0f;
+	lastSetMuteState_ = true;
+	padProbeId_ = 0;
+	busWatchId_ = 0;
+	elementSetupHandlerId_ = 0;
 
-	LOG_INFO("GStreamerVideo", "stop (): Instance for " + (!currentFileForLog.empty() ? currentFileForLog : "previous video") +
-		" fully stopped, all GStreamer and SDL resources released.");
+	LOG_INFO("GStreamerVideo", "stop(): Instance for '" + (!currentFileForLog.empty() ? currentFileForLog : "previous video") +
+		"' fully stopped and all resources released.");
+
 	return true;
 }
 
