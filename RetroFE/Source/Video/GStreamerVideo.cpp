@@ -457,14 +457,16 @@ bool GStreamerVideo::stop() {
 	busWatchId_ = 0;
 	elementSetupHandlerId_ = 0;
 
-	LOG_INFO("GStreamerVideo", "stop(): Instance for '" + (!currentFileForLog.empty() ? currentFileForLog : "previous video") +
-		"' fully stopped and all resources released.");
+	LOG_INFO("GStreamerVideo", "stop(): Instance for " + (!currentFileForLog.empty() ? currentFileForLog : "previous video") +
+		" fully stopped and all resources released.");
 
 	return true;
 }
 
 bool GStreamerVideo::unload() {
-	LOG_DEBUG("GStreamerVideo", "Unload called for " + currentFile_ + " (Session: " + std::to_string(currentPlaySessionId_.load()) + ")");
+	const std::string currentFileForLog = currentFile_;
+
+	LOG_DEBUG("GStreamerVideo", "Unload (for reuse) called for " + currentFileForLog + " (Session: " + std::to_string(currentPlaySessionId_.load()) + ")");
 
 	// --- 1. Initial State Check ---
 	if (!playbin_) { // If no pipeline, nothing to unload from GStreamer's perspective
@@ -546,7 +548,7 @@ bool GStreamerVideo::unload() {
 		LOG_DEBUG("GStreamerVideo", "unload(): Freed perspective_gva_ for " + currentFile_);
 	}
 
-	currentFile_.clear();
+	currentFile_ = "[idle-in-pool]";
 	playCount_ = 0;
 	numLoops_ = 0;
 
