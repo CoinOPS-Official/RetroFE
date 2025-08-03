@@ -184,79 +184,114 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
 	// Now start async worker
 	ThreadPool::getInstance().enqueue([monitor, listId]() {
 		VideoPtr videoToProcess;
-		bool poolIsMarkedForCleanup = false; // *** MODIFICATION ***
+		bool poolIsMarkedForCleanup = false;
 
-		// --- Phase 1: Dequeue a video and check cleanup status ---
+		// --- Phase 1: Dequeue a video from the 'pending' list ---
+		// This is the only time we need to lock the pool to modify the deque.
 		{
+			// The global lock is needed to safely access the 'pools_' map itself.
 			std::lock_guard<std::mutex> globalLock(s_poolsMutex);
 			auto monitorIt = pools_.find(monitor);
-			if (monitorIt == pools_.end()) return;
+			if (monitorIt == pools_.end()) {
+				// Pool for this monitor was cleaned up while this task was queued.
+				return;
+			}
 			auto listIt = monitorIt->second.find(listId);
-			if (listIt == monitorIt->second.end()) return;
+			if (listIt == monitorIt->second.end()) {
+				// Pool for this listId was cleaned up.
+				return;
+			}
 
 			PoolInfo& pool = listIt->second;
 			std::lock_guard<std::mutex> localLock(pool.poolMutex);
-			if (pool.pending.empty()) return;
 
-			poolIsMarkedForCleanup = pool.markedForCleanup; // *** MODIFICATION ***
+			if (pool.pending.empty()) {
+				// Another worker may have processed the last item. Nothing to do.
+				return;
+			}
+
+			// Check if the pool has been marked for cleanup since we were enqueued.
+			poolIsMarkedForCleanup = pool.markedForCleanup;
 			videoToProcess = std::move(pool.pending.front());
 			pool.pending.pop_front();
-		}
+		} // All pool locks are released here.
 
-		// *** MODIFICATION START ***
-		// If the pool was marked for cleanup when we took the video, just let the
-		// video instance be destroyed without performing a wasteful unload.
+		// --- Phase 2: Perform Work (if not cleaning up) ---
+		// This happens outside of any pool locks, allowing other threads to work.
+
+		// If the pool is being shut down, we just let videoToProcess be destroyed
+		// at the end of this scope. No need to waste time calling unload().
 		if (poolIsMarkedForCleanup) {
-			LOG_DEBUG("VideoPool_Worker", "Skipping unload for cleanup-marked pool. Instance will be destroyed. Monitor: " + std::to_string(monitor) + ", List: " + std::to_string(listId));
-			return; // The VideoPtr goes out of scope, calling the destructor which calls stop().
+			LOG_DEBUG("VideoPool", "Skipping unload for cleanup-marked pool. Instance will be destroyed.");
+			// We still need to notify in case a thread is waiting on the condition variable during a shutdown.
+			// So we proceed to Phase 3 with unloadSucceeded = false.
 		}
-		// *** MODIFICATION END ***
 
-		// --- Phase 2: Perform the long-running work (only if not cleaning up) ---
-		bool isFaulty = false;
-		try {
-			if (videoToProcess) {
-				videoToProcess->unload();
-				isFaulty = videoToProcess->hasError();
+		bool unloadSucceeded = false;
+		if (videoToProcess && !poolIsMarkedForCleanup) {
+			try {
+				// Our new `unload()` is non-blocking and its return value is our single
+				// source of truth for whether the instance is healthy enough for reuse.
+				unloadSucceeded = videoToProcess->unload();
+			}
+			catch (const std::exception& e) {
+				LOG_ERROR("VideoPool", "Exception during video unload(): " + std::string(e.what()));
+				unloadSucceeded = false; // Treat exceptions as unload failures.
+			}
+			catch (...) {
+				LOG_ERROR("VideoPool", "Unknown exception during video unload().");
+				unloadSucceeded = false;
 			}
 		}
-		catch (...) {
-			LOG_ERROR("VideoPool_Worker", "Exception during video unload.");
-			isFaulty = true;
-		}
 
-		// --- Phase 3: Re-integrate the video and check for cleanup ---
+		// --- Phase 3: Re-integrate or Discard Video ---
+		// We must re-acquire locks to safely modify the pool's state.
 		{
 			std::lock_guard<std::mutex> globalLock(s_poolsMutex);
 			auto monitorIt = pools_.find(monitor);
-			if (monitorIt == pools_.end()) return;
-
+			if (monitorIt == pools_.end()) {
+				return; // Pool was cleaned up.
+			}
 			auto listIt = monitorIt->second.find(listId);
-			if (listIt == monitorIt->second.end()) return;
+			if (listIt == monitorIt->second.end()) {
+				return; // Pool was cleaned up.
+			}
 
 			PoolInfo& pool = listIt->second;
 			std::lock_guard<std::mutex> localLock(pool.poolMutex);
 
+			// This check handles the case where the pool was marked for cleanup while
+			// we were busy in the non-locked Phase 2.
+			if (pool.markedForCleanup) {
+				LOG_DEBUG("VideoPool", "Discarding video post-unload because pool is now marked for cleanup.");
+				// Let videoToProcess be destroyed.
+			}
+			else if (unloadSucceeded && videoToProcess) {
+				// Unload was successful. The instance is now ready for reuse.
+				pool.ready.push_back(std::move(videoToProcess));
+				LOG_DEBUG("VideoPool", "Successfully returned video instance to the ready queue.");
+			}
+			else {
+				// Unload failed or was skipped. The video instance is faulty or obsolete.
+				// Let videoToProcess be destroyed when it goes out of scope.
+				LOG_DEBUG("VideoPool", "Discarding video instance because unload() failed or pool is cleaning up.");
+			}
+
+			// ALWAYS notify any waiting threads. This is the crucial step that prevents
+			// deadlocks in acquireVideo(). A waiting thread can now wake up, check the
+			// 'ready' queue, and either grab our returned instance or see that the
+			// queue is still empty and decide to create a new video.
+			pool.poolCond.notify_one();
+
+			// Final check to see if this worker should perform the final cleanup.
 			if (pool.markedForCleanup && pool.currentActive == 0 && pool.pending.empty() && pool.ready.empty()) {
-				LOG_INFO("VideoPool_Worker", "Performing final cleanup for Monitor: " + std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+				LOG_INFO("VideoPool", "This is the last active instance. Performing final cleanup for Monitor: " + std::to_string(monitor) + ", List ID: " + std::to_string(listId));
 				monitorIt->second.erase(listIt);
 				if (monitorIt->second.empty()) {
 					pools_.erase(monitorIt);
 				}
-				return;
 			}
-
-			// The check for `pool.markedForCleanup` here is still necessary in case the pool
-			// was marked for cleanup *while* unload() was running.
-			if (!isFaulty && videoToProcess && !pool.markedForCleanup) {
-				pool.ready.push_back(std::move(videoToProcess));
-				pool.poolCond.notify_one();
-			}
-			else {
-				// Discard faulty or cleanup-marked videos
-				LOG_DEBUG("VideoPool_Worker", "Discarding video instance post-unload. Faulty: " + std::string(isFaulty ? "yes" : "no") + ", Marked for cleanup: " + std::string(pool.markedForCleanup ? "yes" : "no"));
-			}
-		}
+		} // All locks released.
 		});
 }
 
@@ -310,71 +345,114 @@ void VideoPool::releaseVideoBatch(std::vector<VideoPtr> videos, int monitor, int
 	for (size_t i = 0; i < releaseCount; ++i) {
 		ThreadPool::getInstance().enqueue([monitor, listId]() {
 			VideoPtr videoToProcess;
-			bool poolIsMarkedForCleanup = false; // *** MODIFICATION ***
+			bool poolIsMarkedForCleanup = false;
 
+			// --- Phase 1: Dequeue a video from the 'pending' list ---
+			// This is the only time we need to lock the pool to modify the deque.
 			{
+				// The global lock is needed to safely access the 'pools_' map itself.
 				std::lock_guard<std::mutex> globalLock(s_poolsMutex);
 				auto monitorIt = pools_.find(monitor);
-				if (monitorIt == pools_.end()) return;
+				if (monitorIt == pools_.end()) {
+					// Pool for this monitor was cleaned up while this task was queued.
+					return;
+				}
 				auto listIt = monitorIt->second.find(listId);
-				if (listIt == monitorIt->second.end()) return;
+				if (listIt == monitorIt->second.end()) {
+					// Pool for this listId was cleaned up.
+					return;
+				}
 
 				PoolInfo& pool = listIt->second;
 				std::lock_guard<std::mutex> localLock(pool.poolMutex);
-				if (pool.pending.empty()) return;
 
-				poolIsMarkedForCleanup = pool.markedForCleanup; // *** MODIFICATION ***
+				if (pool.pending.empty()) {
+					// Another worker may have processed the last item. Nothing to do.
+					return;
+				}
+
+				// Check if the pool has been marked for cleanup since we were enqueued.
+				poolIsMarkedForCleanup = pool.markedForCleanup;
 				videoToProcess = std::move(pool.pending.front());
 				pool.pending.pop_front();
-			}
+			} // All pool locks are released here.
 
-			// *** MODIFICATION START ***
+			// --- Phase 2: Perform Work (if not cleaning up) ---
+			// This happens outside of any pool locks, allowing other threads to work.
+
+			// If the pool is being shut down, we just let videoToProcess be destroyed
+			// at the end of this scope. No need to waste time calling unload().
 			if (poolIsMarkedForCleanup) {
-				return; // Efficiently discard
+				LOG_DEBUG("VideoPool", "Skipping unload for cleanup-marked pool. Instance will be destroyed.");
+				// We still need to notify in case a thread is waiting on the condition variable during a shutdown.
+				// So we proceed to Phase 3 with unloadSucceeded = false.
 			}
-			// *** MODIFICATION END ***
 
-			bool isFaulty = false;
-			try {
-				if (videoToProcess) {
-					videoToProcess->unload();
-					isFaulty = videoToProcess->hasError();
+			bool unloadSucceeded = false;
+			if (videoToProcess && !poolIsMarkedForCleanup) {
+				try {
+					// Our new `unload()` is non-blocking and its return value is our single
+					// source of truth for whether the instance is healthy enough for reuse.
+					unloadSucceeded = videoToProcess->unload();
+				}
+				catch (const std::exception& e) {
+					LOG_ERROR("VideoPool", "Exception during video unload(): " + std::string(e.what()));
+					unloadSucceeded = false; // Treat exceptions as unload failures.
+				}
+				catch (...) {
+					LOG_ERROR("VideoPool", "Unknown exception during video unload().");
+					unloadSucceeded = false;
 				}
 			}
-			catch (...) {
-				LOG_ERROR("VideoPool_Worker", "Exception during video unload.");
-				isFaulty = true;
-			}
 
+			// --- Phase 3: Re-integrate or Discard Video ---
+			// We must re-acquire locks to safely modify the pool's state.
 			{
 				std::lock_guard<std::mutex> globalLock(s_poolsMutex);
 				auto monitorIt = pools_.find(monitor);
-				if (monitorIt == pools_.end()) return;
+				if (monitorIt == pools_.end()) {
+					return; // Pool was cleaned up.
+				}
 				auto listIt = monitorIt->second.find(listId);
-				if (listIt == monitorIt->second.end()) return;
+				if (listIt == monitorIt->second.end()) {
+					return; // Pool was cleaned up.
+				}
 
 				PoolInfo& pool = listIt->second;
 				std::lock_guard<std::mutex> localLock(pool.poolMutex);
 
-				if (pool.markedForCleanup && pool.currentActive == 0 &&
-					pool.pending.empty() && pool.ready.empty()) {
-					LOG_INFO("VideoPool_Worker", "Final cleanup after batch release.");
+				// This check handles the case where the pool was marked for cleanup while
+				// we were busy in the non-locked Phase 2.
+				if (pool.markedForCleanup) {
+					LOG_DEBUG("VideoPool", "Discarding video post-unload because pool is now marked for cleanup.");
+					// Let videoToProcess be destroyed.
+				}
+				else if (unloadSucceeded && videoToProcess) {
+					// Unload was successful. The instance is now ready for reuse.
+					pool.ready.push_back(std::move(videoToProcess));
+					LOG_DEBUG("VideoPool", "Successfully returned video instance to the ready queue.");
+				}
+				else {
+					// Unload failed or was skipped. The video instance is faulty or obsolete.
+					// Let videoToProcess be destroyed when it goes out of scope.
+					LOG_DEBUG("VideoPool", "Discarding video instance because unload() failed or pool is cleaning up.");
+				}
+
+				// ALWAYS notify any waiting threads. This is the crucial step that prevents
+				// deadlocks in acquireVideo(). A waiting thread can now wake up, check the
+				// 'ready' queue, and either grab our returned instance or see that the
+				// queue is still empty and decide to create a new video.
+				pool.poolCond.notify_one();
+
+				// Final check to see if this worker should perform the final cleanup.
+				if (pool.markedForCleanup && pool.currentActive == 0 && pool.pending.empty() && pool.ready.empty()) {
+					LOG_INFO("VideoPool", "This is the last active instance. Performing final cleanup for Monitor: " + std::to_string(monitor) + ", List ID: " + std::to_string(listId));
 					monitorIt->second.erase(listIt);
 					if (monitorIt->second.empty()) {
 						pools_.erase(monitorIt);
 					}
-					return;
 				}
-
-				if (!isFaulty && videoToProcess && !pool.markedForCleanup) {
-					pool.ready.push_back(std::move(videoToProcess));
-					pool.poolCond.notify_one();
-				}
-				else {
-					LOG_DEBUG("VideoPool_Worker", "Discarding faulty or cleanup video.");
-					pool.poolCond.notify_one();
-				}
-			}
+			} // All locks released.
 			});
 	}
 }

@@ -539,14 +539,6 @@ bool GStreamerVideo::unload() {
 		return false;
 	}
 
-	// Wait until the state change completes (timeout in nanoseconds; GST_CLOCK_TIME_NONE = infinite)
-	GstStateChangeReturn stateReturn = gst_element_get_state(playbin_, nullptr, nullptr, GST_CLOCK_TIME_NONE);
-	if (stateReturn != GST_STATE_CHANGE_SUCCESS) {
-		LOG_ERROR("GStreamerVideo", "unload(): Timed out or failed waiting for READY state for " + currentFile_);
-		hasError_.store(true, std::memory_order_release);
-		return false;
-	}
-
 	// Flush the bus to discard any pending messages from the previous playback
 	GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(playbin_));
 	if (bus) {
@@ -554,9 +546,6 @@ bool GStreamerVideo::unload() {
 		gst_object_unref(bus);
 		LOG_DEBUG("GStreamerVideo", "unload(): Flushed bus for " + currentFile_);
 	}
-
-	// --- 4. Reset Instance State for Reuse ---
-	hasError_.store(false, std::memory_order_release); // Clear error from previous playback
 
 	// Reset GStreamer specific data that might be tied to the previous stream's content
 	// perspective_gva_ was calculated based on previous video's dimensions.
@@ -810,6 +799,17 @@ bool GStreamerVideo::play(const std::string& file) {
 		return false;
 	}
 
+	if (playbin_) {
+		constexpr GstClockTime syncTimeout = 500 * GST_MSECOND;
+		const GstStateChangeReturn ret = gst_element_get_state(playbin_, nullptr, nullptr, syncTimeout);
+
+		if (ret != GST_STATE_CHANGE_SUCCESS) {
+			LOG_ERROR("GStreamerVideo", "play(): Timed out or failed synchronizing to READY state before playing " + file + ". Instance is faulty.");
+			hasError_.store(true, std::memory_order_release);
+			return false;
+		}
+	}
+
 	// Atomically increment and assign a new unique session ID for this play attempt.
 	// This ID is unique across all GStreamerVideo instances and all play attempts.
 	currentPlaySessionId_.store(nextUniquePlaySessionId_++, std::memory_order_release);
@@ -869,13 +869,6 @@ bool GStreamerVideo::play(const std::string& file) {
 		LOG_DEBUG("Video", "Failed to convert filename to URI");
 		hasError_.store(true, std::memory_order_release);
 		return false;
-	}
-
-
-	if (!busWatchId_) {
-		GstBus* bus = gst_element_get_bus(playbin_);
-		busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
-		gst_object_unref(bus);
 	}
 
 	// Update URI - no need to set to READY first
