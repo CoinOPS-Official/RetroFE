@@ -14,8 +14,8 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 #pragma once
-#include <SDL2/SDL.h>
-#include <SDL2/SDL_joystick.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_joystick.h>
 #include <map>
 #include <string>
 #include <vector>

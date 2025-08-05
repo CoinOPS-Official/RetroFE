@@ -12,10 +12,10 @@ void KeyboardHandler::reset()
 
 bool KeyboardHandler::update(SDL_Event &e)
 {
-    if(e.type != SDL_KEYUP && e.type != SDL_KEYDOWN) return false;
+    if(e.type != SDL_EVENT_KEY_UP && e.type != SDL_EVENT_KEY_DOWN) return false;
 
-    if(e.key.keysym.scancode == scancode_) {
-        pressed_ = (e.type == SDL_KEYDOWN);
+    if(e.key.scancode == scancode_) {
+        pressed_ = (e.type == SDL_EVENT_KEY_DOWN);
         return true;
     }
 
@@ -29,6 +29,6 @@ bool KeyboardHandler::pressed()
 
 void KeyboardHandler::updateKeystate()
 {
-	const Uint8 *state = SDL_GetKeyboardState(nullptr);
+	const bool *state = SDL_GetKeyboardState(nullptr);
 	pressed_ = state[scancode_];
 }

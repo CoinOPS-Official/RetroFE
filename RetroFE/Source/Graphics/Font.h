@@ -15,7 +15,7 @@
 */
 #pragma once
 
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 #if __has_include(<SDL2/SDL_ttf.h>)
 #include <SDL2/SDL_ttf.h>
 #elif __has_include(<SDL2_ttf/SDL_ttf.h>)

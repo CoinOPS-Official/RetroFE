@@ -58,7 +58,7 @@ endif()
 if(WIN32)
     find_package(Glib2 REQUIRED)
     find_package(GStreamer REQUIRED)
-    find_package(SDL2 REQUIRED)
+    find_package(SDL3 REQUIRED)
     find_package(SDL2_image REQUIRED)
     find_package(SDL2_mixer REQUIRED)
     find_package(SDL2_ttf REQUIRED)
@@ -67,7 +67,7 @@ if(WIN32)
 elseif(APPLE)
     find_package(Glib2 REQUIRED)
     find_package(GStreamer REQUIRED)
-    find_package(SDL2 REQUIRED)
+    find_package(SDL3 REQUIRED)
     find_package(SDL2_image REQUIRED)
     find_package(SDL2_mixer REQUIRED)
     find_package(SDL2_ttf REQUIRED)
@@ -85,7 +85,7 @@ else()
     include(FindPkgConfig)
     
     # Find necessary libraries using pkg-config
-    pkg_search_module(SDL2 REQUIRED sdl2)
+    pkg_search_module(SDL3 REQUIRED sdl3)
     pkg_search_module(SDL2_IMAGE REQUIRED SDL2_image)
     pkg_search_module(SDL2_MIXER REQUIRED SDL2_mixer)
     pkg_search_module(SDL2_TTF REQUIRED SDL2_ttf)
@@ -102,7 +102,7 @@ else()
     
     # Include directories for all found libraries
     include_directories(
-        ${SDL2_INCLUDE_DIRS}
+        ${SDL3_INCLUDE_DIRS}
         ${SDL2_IMAGE_INCLUDE_DIRS}
         ${SDL2_MIXER_INCLUDE_DIRS}
         ${SDL2_TTF_INCLUDE_DIRS}
@@ -120,7 +120,7 @@ else()
     
     # Link directories (optional, mostly handled by pkg-config)
     link_directories(
-        ${SDL2_LIBRARY_DIRS}
+        ${SDL3_LIBRARY_DIRS}
         ${SDL2_IMAGE_LIBRARY_DIRS}
         ${SDL2_MIXER_LIBRARY_DIRS}
         ${SDL2_TTF_LIBRARY_DIRS}
@@ -136,7 +136,7 @@ else()
     
     # Append the necessary libraries to be linked
     list(APPEND RETROFE_LIBRARIES
-        ${SDL2_LIBRARIES}
+        ${SDL3_LIBRARIES}
         ${SDL2_IMAGE_LIBRARIES}
         ${SDL2_MIXER_LIBRARIES}
         ${SDL2_TTF_LIBRARIES}
@@ -158,7 +158,7 @@ else()
 set(RETROFE_INCLUDE_DIRS
     "${GLIB2_INCLUDE_DIRS}"
     "${GSTREAMER_INCLUDE_DIRS}"
-    "${SDL2_INCLUDE_DIRS}"
+    "${SDL3_INCLUDE_DIRS}"
     "${SDL2_IMAGE_INCLUDE_DIRS}"
     "${SDL2_MIXER_INCLUDE_DIRS}"
     "${SDL2_TTF_INCLUDE_DIRS}"
@@ -176,7 +176,7 @@ if(WIN32)
     set(RETROFE_LIBRARIES
     ${GLIB2_LIBRARIES}
     ${GSTREAMER_LIBRARIES}
-    ${SDL2_LIBRARIES}
+    ${SDL3_LIBRARIES}
     ${SDL2_IMAGE_LIBRARIES}
     ${SDL2_MIXER_LIBRARIES}
     ${SDL2_TTF_LIBRARIES}
@@ -400,7 +400,7 @@ if(APPLE)
     target_link_libraries(retrofe
         ${COREFOUNDATION}
         ${IOKIT}
-        ${SDL2_LIBRARIES}
+        ${SDL3_LIBRARIES}
         ${SDL2_IMAGE_LIBRARIES}
         ${SDL2_MIXER_LIBRARIES}
         ${SDL2_TTF_LIBRARIES}

@@ -14,7 +14,7 @@ void JoyHatHandler::reset()
 
 bool JoyHatHandler::update(SDL_Event &e)
 {
-    if(e.type != SDL_JOYHATMOTION || (joynum_ != -1 && e.jhat.which != joynum_) || e.jhat.hat != hatnum_) return false;
+    if(e.type != SDL_EVENT_JOYSTICK_HAT_MOTION || (joynum_ != -1 && e.jhat.which != joynum_) || e.jhat.hat != hatnum_) return false;
 
     pressed_ = (e.jhat.value == direction_);
     return true;

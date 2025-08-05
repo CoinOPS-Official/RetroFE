@@ -22,7 +22,7 @@
 #include <set> 
 #include <chrono>
 
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 #include "SDLJoyStickScopeGuard.h"
 #include "../../Database/Configuration.h" // For reading config values

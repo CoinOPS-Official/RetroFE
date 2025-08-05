@@ -20,7 +20,7 @@
 #include "../../Collection/Item.h"
 #include "../../Video/IVideo.h"
 #include "../../Video/VideoFactory.h"
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 #include <thread>
 #include <string>
 #include <string_view>

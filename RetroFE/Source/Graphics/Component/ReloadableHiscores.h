@@ -19,7 +19,7 @@
 #include <filesystem>
 #include <unordered_set>
 
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 
 #include "Component.h"
 #include "../../Collection/Item.h"
