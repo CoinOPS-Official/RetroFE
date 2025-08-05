@@ -32,8 +32,8 @@
 #include "../../Video/VideoFactory.h"
 #include "../Page.h"
 #ifdef __APPLE__
-#include "SDL2/SDL_rect.h"
-#include "SDL2/SDL_render.h"
+#include "SDL3/SDL_rect.h"
+#include "SDL3/SDL_render.h"
 #else
 #include "SDL_rect.h"
 #include "SDL_render.h"

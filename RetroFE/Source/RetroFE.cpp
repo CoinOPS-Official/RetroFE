@@ -66,8 +66,8 @@
 #endif
 
 #ifdef WIN32
-#include <SDL2/SDL_syswm.h>
-#include <SDL2/SDL_thread.h>
+#include <SDL3/SDL_syswm.h>
+#include <SDL3/SDL_thread.h>
 #include <Windows.h>
 #include "StdAfx.h"
 #endif

@@ -21,7 +21,7 @@
 #include <filesystem>
 #include <Psapi.h> // For GetModuleFileNameExA
 #include <tlhelp32.h> // For CreateToolhelp32Snapshot
-#include <SDL2/SDL_syswm.h>
+#include <SDL3/SDL_syswm.h>
 #include "../../../SDL.h" // For SDL::getActiveWindow
 
 #include "../../../Utility/Log.h"

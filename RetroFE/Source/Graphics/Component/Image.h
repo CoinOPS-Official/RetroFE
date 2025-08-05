@@ -18,7 +18,7 @@
 
 #include <string>
 #include "Component.h"
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 #if __has_include(<SDL2/SDL_image.h>)
 #include <SDL2/SDL_image.h>
 #elif __has_include(<SDL2_image/SDL_image.h>)

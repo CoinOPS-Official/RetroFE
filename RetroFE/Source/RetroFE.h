@@ -26,7 +26,7 @@
 #include "Video/VideoFactory.h"
 #include "Video/GStreamerVideo.h"
 #include "Sound/MusicPlayer.h"
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 #include "Control/Restrictor/Restrictor.h"
 #if __has_include(<SDL2/SDL_ttf.h>)
 #include <SDL2/SDL_ttf.h>

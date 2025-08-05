@@ -31,7 +31,7 @@
 std::vector<SDL_Window*>    SDL::window_;
 std::vector<SDL_Renderer*>  SDL::renderer_;
 std::vector<SDL_Texture*>   SDL::renderTargets_;
-SDL_mutex* SDL::mutex_ = nullptr;
+SDL_Mutex* SDL::mutex_ = nullptr;
 std::vector<int>            SDL::displayWidth_;
 std::vector<int>            SDL::displayHeight_;
 std::vector<int>            SDL::windowWidth_;
@@ -62,7 +62,7 @@ bool SDL::initialize(Configuration& config) {
 	if (SDL_WasInit(0) == 0) {
 		// First-time startup: Initialize everything.
 		LOG_INFO("SDL", "Performing first-time full initialization of all SDL subsystems.");
-		if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
+		if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMEPAD | SDL_INIT_EVENTS) != 0)
 		{
 			std::string error = SDL_GetError();
 			LOG_ERROR("SDL", "Initial SDL_Init failed: " + error);
@@ -109,8 +109,13 @@ bool SDL::initialize(Configuration& config) {
 
 	SDL_SetHint(SDL_HINT_RENDER_BATCHING, "0"); // For all renderers
 
-	if (config.getProperty(OPTION_HIDEMOUSE, hideMouse))
-		SDL_ShowCursor(hideMouse ? SDL_FALSE : SDL_TRUE);
+	if (config.getProperty(OPTION_HIDEMOUSE, hideMouse)) {
+		if (hideMouse) {
+			SDL_HideCursor();
+		} else {
+			SDL_ShowCursor();
+		}
+	}
 
 	// --- Configuration for hardware/video/audio ---
 	bool HardwareVideoAccel = false;
@@ -326,7 +331,7 @@ bool SDL::initialize(Configuration& config) {
 		if (fullscreen_[logicalScreen])
 		{
 #ifdef WIN32
-			windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+			windowFlags |= SDL_WINDOW_FULLSCREEN;
 #elif defined(__APPLE__)
 			windowFlags |= SDL_WINDOW_BORDERLESS;
 #else
@@ -368,8 +373,16 @@ bool SDL::initialize(Configuration& config) {
 		if (!window_[logicalScreen])
 		{
 			window_[logicalScreen] = SDL_CreateWindow(retrofeTitle.c_str(),
-				SDL_WINDOWPOS_CENTERED_DISPLAY(physicalDisplay), SDL_WINDOWPOS_CENTERED_DISPLAY(physicalDisplay),
 				windowWidth_[logicalScreen], windowHeight_[logicalScreen], windowFlags);
+			// Position the window on the correct display
+			if (window_[logicalScreen]) {
+				SDL_Rect displayBounds;
+				if (SDL_GetDisplayBounds(physicalDisplay, &displayBounds) == 0) {
+					int x = displayBounds.x + (displayBounds.w - windowWidth_[logicalScreen]) / 2;
+					int y = displayBounds.y + (displayBounds.h - windowHeight_[logicalScreen]) / 2;
+					SDL_SetWindowPosition(window_[logicalScreen], x, y);
+				}
+			}
 		}
 
 		if (window_[logicalScreen] == NULL)
@@ -403,12 +416,13 @@ bool SDL::initialize(Configuration& config) {
 			{
 				if (vSync)
 				{
-					renderer_[logicalScreen] = SDL_CreateRenderer(window_[logicalScreen], -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
+					renderer_[logicalScreen] = SDL_CreateRenderer(window_[logicalScreen], NULL);
+					SDL_SetRenderVSync(renderer_[logicalScreen], 1);
 					LOG_INFO("SDL", "vSync Enabled");
 				}
 				else
 				{
-					renderer_[logicalScreen] = SDL_CreateRenderer(window_[logicalScreen], -1, SDL_RENDERER_ACCELERATED);
+					renderer_[logicalScreen] = SDL_CreateRenderer(window_[logicalScreen], NULL);
 				}
 			}
 			if (renderer_[logicalScreen] == NULL)
@@ -579,7 +593,7 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	mirror_.clear();
 	rotation_.clear();
 
-	SDL_ShowCursor(SDL_TRUE);
+	SDL_ShowCursor();
 
 	return true;
 }
@@ -769,11 +783,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 				angle += 180;
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 			}
 		}
 		else {
@@ -783,11 +797,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 				angle += 90;
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 				angle += 180;
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 			}
 		}
 	}
@@ -812,7 +826,7 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 
 		if (srcRect.h > 0 && srcRect.w > 0) {
 			SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-			SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+			SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 		}
 	}
 
@@ -889,11 +903,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 				if (srcRect.h > 0 && srcRect.w > 0) {
 					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 				}
 			}
 			else {
@@ -903,11 +917,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 					angle += 90;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 				}
 			}
 		}
@@ -931,7 +945,7 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 			}
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 			}
 		}
 	}
@@ -1004,11 +1018,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 				if (srcRect.h > 0 && srcRect.w > 0) {
 					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 				}
 			}
 			else {
@@ -1018,11 +1032,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 					angle += 90;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 				}
 			}
 		}
@@ -1046,7 +1060,7 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 			}
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 			}
 		}
 	}
@@ -1119,11 +1133,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 				if (srcRect.h > 0 && srcRect.w > 0) {
 					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 				}
 			}
 			else {
@@ -1133,11 +1147,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 					angle += 90;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 				}
 			}
 		}
@@ -1161,7 +1175,7 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 			}
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 			}
 		}
 	}
@@ -1234,11 +1248,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 				if (srcRect.h > 0 && srcRect.w > 0) {
 					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 				}
 			}
 			else {
@@ -1248,11 +1262,11 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 					angle += 90;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 				}
 			}
 		}
@@ -1276,7 +1290,7 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 			}
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 			}
 		}
 	}
@@ -1420,11 +1434,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 				angle += 180;
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 			}
 		}
 		else {
@@ -1434,11 +1448,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 				angle += 90;
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 				angle += 180;
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 			}
 		}
 	}
@@ -1463,7 +1477,7 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 
 		if (srcRect.h > 0 && srcRect.w > 0) {
 			SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-			SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+			SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
 		}
 	}
 
@@ -1540,11 +1554,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 				if (srcRect.h > 0 && srcRect.w > 0) {
 					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 				}
 			}
 			else {
@@ -1554,11 +1568,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 					angle += 90;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 				}
 			}
 		}
@@ -1582,7 +1596,7 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 			}
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 			}
 		}
 	}
@@ -1655,11 +1669,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 				if (srcRect.h > 0 && srcRect.w > 0) {
 					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 				}
 			}
 			else {
@@ -1669,11 +1683,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 					angle += 90;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 				}
 			}
 		}
@@ -1697,7 +1711,7 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 			}
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
 			}
 		}
 	}
@@ -1770,11 +1784,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 				if (srcRect.h > 0 && srcRect.w > 0) {
 					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 				}
 			}
 			else {
@@ -1784,11 +1798,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 					angle += 90;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 				}
 			}
 		}
@@ -1812,7 +1826,7 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 			}
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 			}
 		}
 	}
@@ -1886,11 +1900,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 				if (srcRect.h > 0 && srcRect.w > 0) {
 					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 				}
 			}
 			else {
@@ -1900,11 +1914,11 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
 					angle += 90;
 					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
 					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
 					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+					SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 				}
 			}
 		}
@@ -1928,7 +1942,7 @@ bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, co
 			}
 			if (srcRect.h > 0 && srcRect.w > 0) {
 				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
+				SDL_RenderTextureRotated(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
 			}
 		}
 	}

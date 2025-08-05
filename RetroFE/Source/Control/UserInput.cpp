@@ -340,8 +340,9 @@ bool UserInput::update( SDL_Event &e )
     memset( currentKeyState_, 0, sizeof( currentKeyState_ ) );
 
     // Handle adding a joystick
-    if ( e.type == SDL_JOYDEVICEADDED ) {
-        SDL_JoystickID id = SDL_JoystickInstanceID( SDL_JoystickOpen( e.jdevice.which ) );
+    if ( e.type == SDL_EVENT_JOYSTICK_ADDED ) {
+        SDL_Joystick* joystick = SDL_OpenJoystick( e.jdevice.which );
+        SDL_JoystickID id = SDL_GetJoystickID( joystick );
         for ( unsigned int i = 0; i < cMaxJoy; i++ ) {
             if ( joysticks_[i] == -1 ) {
                 joysticks_[i] = id;
@@ -351,21 +352,21 @@ bool UserInput::update( SDL_Event &e )
     }
 
     // Handle removing a joystick
-    if ( e.type == SDL_JOYDEVICEREMOVED ) {
+    if ( e.type == SDL_EVENT_JOYSTICK_REMOVED ) {
         for ( unsigned int i = 0; i < cMaxJoy; i++ ) {
             if ( joysticks_[i] == e.jdevice.which ) {
                 joysticks_[i] = -1;
                 break;
             }
         }
-        SDL_JoystickClose( SDL_JoystickFromInstanceID( e.jdevice.which ) );
+        SDL_CloseJoystick( SDL_GetJoystickFromID( e.jdevice.which ) );
     }
 
     // Remap joystick events
-    if ( e.type == SDL_JOYAXISMOTION ||
-         e.type == SDL_JOYBUTTONUP   ||
-         e.type == SDL_JOYBUTTONDOWN ||
-         e.type == SDL_JOYHATMOTION ) {
+    if ( e.type == SDL_EVENT_JOYSTICK_AXIS_MOTION ||
+         e.type == SDL_EVENT_JOYSTICK_BUTTON_UP   ||
+         e.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN ||
+         e.type == SDL_EVENT_JOYSTICK_HAT_MOTION ) {
         for ( unsigned int i = 0; i < cMaxJoy; i++ ) {
             if ( joysticks_[i] == e.jdevice.which ) {
                 e.jdevice.which = i;

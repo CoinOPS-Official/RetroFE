@@ -17,7 +17,7 @@
 
 #include "Component/Image.h"
 #include "FontCache.h"
-#include <SDL2/SDL.h>
+#include <SDL3/SDL.h>
 #if __has_include(<SDL2/SDL_mixer.h>)
 #include <SDL2/SDL_mixer.h>
 #elif __has_include(<SDL2_mixer/SDL_mixer.h>)
