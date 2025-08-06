@@ -346,9 +346,7 @@ void RetroFE::launchEnter() {
 	else if (unloadSDL && reboot) {
 		LOG_INFO("RetroFE", "Skipping unloadSDL cycle; a full application reboot is scheduled.");
 	}
-#ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_FALSE);
-#endif
 	if (musicPlayer_) {
 		musicPlayer_->onGameLaunchStart();
 	}
@@ -406,6 +404,7 @@ void RetroFE::launchExit(bool userInitiated) {
 #ifndef __APPLE__
 	SDL_WarpMouseInWindow(SDL::getWindow(0), SDL::getWindowWidth(0), 0);
 #endif
+	SDL_SetRelativeMouseMode(SDL_TRUE);
 	if (musicPlayer_) {
 		// Pass the final, correct state to the music player.
 		musicPlayer_->onGameLaunchEnd(unloadSDL);
@@ -705,6 +704,14 @@ bool RetroFE::run() {
 
 	while (running)
 	{
+		input_.beginFrame();
+		SDL_Event e;
+		while (SDL_PollEvent(&e)) {
+			input_.update(e);
+		}
+
+		input_.updateKeystate();       // Update held keys/buttons
+		
 		uint64_t loopStart = SDL_GetPerformanceCounter();
 		double nowMs_loopStart = loopStart * 1000.0 / freq_; // freq is SDL_GetPerformanceFrequency()
 
@@ -746,29 +753,21 @@ bool RetroFE::run() {
 		}
 
 		// Exit splash mode when an active key is pressed
-		if (SDL_Event e; splashMode && (SDL_PollEvent(&e)))
-		{
-			if (screensaver || input_.update(e))
-			{
-				if (screensaver || input_.keystate(UserInput::KeyCodeSelect))
-				{
-					exitSplashMode = true;
-					while (SDL_PollEvent(&e))
-					{
-						if (e.type == SDL_JOYDEVICEADDED || e.type == SDL_JOYDEVICEREMOVED)
-						{
-							input_.update(e);
-						}
-					}
-					input_.resetStates();
-					attract_.reset();
-				}
-				else if (input_.keystate(UserInput::KeyCodeQuit))
-				{
-					l.exitScript();
-					running = false;
-					break;
-				}
+		if (splashMode) {
+			input_.beginFrame();
+			SDL_Event e;
+			while (SDL_PollEvent(&e)) {
+				input_.update(e);
+			}
+			input_.updateKeystate(); // Optional, if splash accepts held input
+
+			if (screensaver || input_.pressed(UserInput::KeyCodeSelect)) {
+				exitSplashMode = true;
+				// cleanup/reset states here if needed
+			}
+			else if (input_.pressed(UserInput::KeyCodeQuit)) {
+				l.exitScript();
+				running = false;
 			}
 		}
 
@@ -2568,8 +2567,9 @@ bool RetroFE::run() {
 			double actualTotalFrameDurationMs = (loopEnd - loopStart) * 1000.0 / freq_;
 			lastFrameTimeMs_ = actualTotalFrameDurationMs;
 		}
+		input_.endFrame();
 	}
-
+	
 	return reboot_;
 }
 
@@ -2815,8 +2815,8 @@ void RetroFE::advanceToNextValidAttractPlaylist() {
 		{
 			// This is the FIX for the non-cycling path. We loop until we find a valid playlist
 			// or we've tried every playlist to prevent an infinite loop.
-			const int maxAttempts = currentPage_->getCollection()->playlists.size();
-			int attempts = 0;
+			size_t maxAttempts = currentPage_->getCollection()->playlists.size();
+			size_t attempts = 0;
 			while (isInAttractModeSkipPlaylist(currentPage_->getPlaylistName()) && attempts < maxAttempts)
 			{
 				currentPage_->nextPlaylist();
@@ -2936,7 +2936,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 	if (page->isHorizontalScroll())
 	{
 		// playlist scroll
-		if (!kioskLock_ && input_.keystate(UserInput::KeyCodeDown)) {
+		if (!kioskLock_ && (input_.pressed(UserInput::KeyCodeDown) || input_.keystate(UserInput::KeyCodeDown))) {
 			if (page->isGamesScrolling()) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
@@ -2947,7 +2947,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			}
 			return RETROFE_SCROLL_PLAYLIST_FORWARD;
 		}
-		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodeUp)) {
+		else if (!kioskLock_ && (input_.pressed(UserInput::KeyCodeUp) || input_.keystate(UserInput::KeyCodeUp))) {
 			if (page->isGamesScrolling()) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
@@ -2960,7 +2960,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 		}
 
 		// game scroll
-		if (input_.keystate(UserInput::KeyCodeRight))
+		if (input_.pressed(UserInput::KeyCodeRight) || input_.keystate(UserInput::KeyCodeRight))
 		{
 			if (page->isPlaylistScrolling())
 			{
@@ -2973,7 +2973,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			}
 			return RETROFE_SCROLL_FORWARD;
 		}
-		else if (input_.keystate(UserInput::KeyCodeLeft))
+		else if (input_.pressed(UserInput::KeyCodeLeft) || input_.keystate(UserInput::KeyCodeLeft))
 		{
 			if (page->isPlaylistScrolling())
 			{

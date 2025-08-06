@@ -391,11 +391,10 @@ bool SDL::initialize(Configuration& config) {
 			{
 #ifndef __APPLE__
 				SDL_WarpMouseInWindow(window_[logicalScreen], windowWidth_[logicalScreen], 0);
-#endif
-#ifdef __APPLE__
+#else
 				SDL_WarpMouseInWindow(window_[logicalScreen], windowWidth_[logicalScreen] / 2, windowHeight_[logicalScreen] / 2);
-				SDL_SetRelativeMouseMode(SDL_TRUE);
 #endif
+				SDL_SetRelativeMouseMode(SDL_TRUE);
 			}
 			bool vSync = false;
 			config.getProperty(OPTION_VSYNC, vSync);

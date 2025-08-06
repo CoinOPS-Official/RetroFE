@@ -106,12 +106,16 @@ public:
     bool initialize();
     void resetStates();
     bool update(SDL_Event& e);
+    void beginFrame();
+    void endFrame();
     bool keystate(KeyCode_E) const;
     bool lastKeyPressed(KeyCode_E code) const;
     bool newKeyPressed(KeyCode_E code) const;
     void clearJoysticks();
     void reconfigure();
     void updateKeystate();
+
+    bool pressed(KeyCode_E code) const;
 
 private:
     bool MapKey(const std::string& keyDescription, KeyCode_E key);
