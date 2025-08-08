@@ -222,6 +222,40 @@ bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, cons
 				found = true;
 			}
 		}
+		else if (tokenLowered.rfind("touchdrag", 0) == 0) {
+			std::string direction = tokenLowered.substr(9); // "left", "right", "up", or "down"
+
+			// Set a default threshold, but allow it to be configured.
+			int touchThreshold = 5;
+			config_.getProperty("controls.touchThreshold", touchThreshold);
+			bool mapped = false;
+
+			if (direction == "left") {
+				keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
+					new TouchDragHandler(TouchDragHandler::X_AXIS, -1, touchThreshold, key), key));
+				mapped = true;
+			}
+			else if (direction == "right") {
+				keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
+					new TouchDragHandler(TouchDragHandler::X_AXIS, +1, touchThreshold, key), key));
+				mapped = true;
+			}
+			else if (direction == "up") {
+				keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
+					new TouchDragHandler(TouchDragHandler::Y_AXIS, -1, touchThreshold, key), key));
+				mapped = true;
+			}
+			else if (direction == "down") {
+				keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
+					new TouchDragHandler(TouchDragHandler::Y_AXIS, +1, touchThreshold, key), key));
+				mapped = true;
+			}
+
+			if (mapped) {
+				LOG_INFO("Input", "Binding " + token + " to " + configKey);
+				found = true;
+			}
+		}
 		else if (tokenLowered.find("joy") == 0) {
 			std::string joydesc = Utils::replace(Utils::toLower(token), "joy", "");
 			int joynum;
@@ -367,6 +401,11 @@ void UserInput::resetStates() {
 
 bool UserInput::update(SDL_Event& e) {
 	
+	// Accumulate mouse motion
+	if (e.type == SDL_MOUSEMOTION) {
+		accumulateMouseMotion(e.motion.xrel, e.motion.yrel);
+	}
+
 	// Handle adding a joystick
 	if (e.type == SDL_JOYDEVICEADDED) {
 		SDL_JoystickID id = SDL_JoystickInstanceID(SDL_JoystickOpen(e.jdevice.which));
@@ -417,12 +456,23 @@ bool UserInput::update(SDL_Event& e) {
 }
 
 void UserInput::beginFrame() {
+	totalXrel_ = 0;
+	totalYrel_ = 0;
 	memset(currentKeyState_, 0, sizeof(currentKeyState_));
 	// Reset all handlers (including MouseMoveHandler) at the start of the frame
 	for (auto& pair : keyHandlers_) {
 		if (pair.first) pair.first->reset();
 	}
 }
+
+void UserInput::accumulateMouseMotion(int xrel, int yrel) {
+	totalXrel_ += xrel;
+	totalYrel_ += yrel;
+}
+
+int UserInput::getTotalXrel() const { return totalXrel_; }
+
+int UserInput::getTotalYrel() const { return totalYrel_; }
 
 void UserInput::endFrame() {
 	memcpy(lastKeyState_, currentKeyState_, sizeof(currentKeyState_));
