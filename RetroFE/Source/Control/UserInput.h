@@ -114,7 +114,9 @@ public:
     void clearJoysticks();
     void reconfigure();
     void updateKeystate();
-
+    void accumulateMouseMotion(int xrel, int yrel); // Called by update()
+    int getTotalXrel() const;
+    int getTotalYrel() const;
     bool pressed(KeyCode_E code) const;
 
 private:
@@ -128,4 +130,6 @@ private:
     std::vector<std::pair<InputHandler *, KeyCode_E> > keyHandlers_;
     bool lastKeyState_[KeyCodeMax]; 
     bool currentKeyState_[KeyCodeMax]; 
+    int totalXrel_ = 0;
+    int totalYrel_ = 0;
 };

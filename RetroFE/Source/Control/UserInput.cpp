@@ -24,7 +24,8 @@
 #include "JoyHatHandler.h"
 #include "KeyboardHandler.h"
 #include "MouseButtonHandler.h"
-#include "MouseMoveHandler.h"
+#include "MouseAxisHandler.h"
+#include "TouchDragHandler.h"
 
 UserInput::UserInput(Configuration& c)
 	: config_(c) {
@@ -172,7 +173,7 @@ bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, cons
 			std::string mousedesc = Utils::replace(Utils::toLower(token), "mouse", "");
 
 			// ----------- ADD THIS BLOCK FIRST (before the "button" check) -----------
-			if (mousedesc == "movex+" || mousedesc == "movex-" || mousedesc == "movey+" || mousedesc == "movey-") {
+			if (mousedesc == "x+" || mousedesc == "x-" || mousedesc == "y+" || mousedesc == "y-") {
 
 				// --- THIS IS THE NEW LOGIC ---
 				// 1. Set a reasonable default sensitivity.
@@ -184,21 +185,21 @@ bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, cons
 
 				LOG_INFO("Input", "Using mouse movement threshold: " + std::to_string(mouseThreshold));
 
-				if (mousedesc == "movex+") {
+				if (mousedesc == "x+") {
 					keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
-						new MouseMoveHandler(MouseMoveHandler::X, +1, mouseThreshold, key), key));
+						new MouseAxisHandler(MouseAxisHandler::X, +1, mouseThreshold, *this), key));
 				}
-				else if (mousedesc == "movex-") {
+				else if (mousedesc == "x-") {
 					keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
-						new MouseMoveHandler(MouseMoveHandler::X, -1, mouseThreshold, key), key));
+						new MouseAxisHandler(MouseAxisHandler::X, -1, mouseThreshold, *this), key));
 				}
-				else if (mousedesc == "movey+") {
+				else if (mousedesc == "y+") {
 					keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
-						new MouseMoveHandler(MouseMoveHandler::Y, +1, mouseThreshold, key), key));
+						new MouseAxisHandler(MouseAxisHandler::Y, +1, mouseThreshold, *this), key));
 				}
-				else if (mousedesc == "movey-") {
+				else if (mousedesc == "y-") {
 					keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
-						new MouseMoveHandler(MouseMoveHandler::Y, -1, mouseThreshold, key), key));
+						new MouseAxisHandler(MouseAxisHandler::Y, -1, mouseThreshold, *this), key));
 				}
 
 				LOG_INFO("Input", "Binding " + mousedesc + " to " + configKey);
