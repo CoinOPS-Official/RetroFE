@@ -657,11 +657,12 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 
 	// Configure appsink.
 	g_object_set(videoSink_,
-		"max-buffers", 1,  // Only keep latest buffer.
-		"drop", TRUE,      // Drop old buffers.
-		"wait-on-eos", FALSE,
-		"qos", FALSE,
-		nullptr);
+		"emit-signals", FALSE,          // fewer wakeups
+		"max-buffers", 2,              // tiny queue
+		"drop", TRUE,           // drop if we fall behind
+		"sync", TRUE,           // keep running-time sync
+		"enable-last-sample", FALSE,
+		NULL);
 
 	// Set caps depending on whether perspective is enabled.
 	GstCaps* videoCaps = nullptr;
@@ -915,16 +916,44 @@ bool GStreamerVideo::play(const std::string& file) {
 	return true;
 }
 
-void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin, GstElement* element, [[maybe_unused]] gpointer data) {
-	// Check if the element is a video decoder
-	if (!Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element))
-	{
-		// Configure the video decoder
-		g_object_set(element, "thread-type", Configuration::AvdecThreadType,
+void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
+	GstElement* element,
+	[[maybe_unused]] gpointer data) {
+	const gchar* name = gst_element_get_name(element);
+
+	auto has_prop = [](GstElement* e, const char* p) {
+		return g_object_class_find_property(G_OBJECT_GET_CLASS(e), p) != nullptr;
+		};
+
+	// ---- Tune multiqueue to reduce CPU churn ----
+	if (g_str_has_prefix(name, "multiqueue")) {
+		if (has_prop(element, "max-size-buffers")) g_object_set(element, "max-size-buffers", 2, NULL);
+		if (has_prop(element, "max-size-bytes"))   g_object_set(element, "max-size-bytes", (guint64)0, NULL);
+		if (has_prop(element, "max-size-time"))    g_object_set(element, "max-size-time", (guint64)0, NULL);
+		if (has_prop(element, "low-percent"))      g_object_set(element, "low-percent", 5, NULL);
+		if (has_prop(element, "high-percent"))     g_object_set(element, "high-percent", 25, NULL);
+		if (has_prop(element, "sync-by-running-time"))
+			g_object_set(element, "sync-by-running-time", TRUE, NULL);
+	}
+
+	// ---- Tune plain queues (if present) ----
+	if (g_str_has_prefix(name, "queue")) {
+		if (has_prop(element, "max-size-buffers")) g_object_set(element, "max-size-buffers", 2, NULL);
+		if (has_prop(element, "leaky"))            g_object_set(element, "leaky", 2 /*DOWNSTREAM*/, NULL);
+		if (has_prop(element, "silent"))           g_object_set(element, "silent", TRUE, NULL);
+	}
+
+	// ---- Video decoder settings ----
+	if (!Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element)) {
+		g_object_set(element,
+			"thread-type", Configuration::AvdecThreadType,
 			"max-threads", Configuration::AvdecMaxThreads,
-			"direct-rendering", FALSE, "std-compliance", 0, nullptr);
+			"direct-rendering", FALSE,
+			"std-compliance", 0,
+			nullptr);
 	}
 }
+
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
 	auto* self = static_cast<GStreamerVideo*>(user_data);
