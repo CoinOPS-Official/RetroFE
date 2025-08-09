@@ -10,6 +10,7 @@ public:
     bool update(SDL_Event& e) override;
     bool pressed() override;
     void updateKeystate() override;
+    void beginFrame() override { reset(); }   // same idea
 private:
     DragAxis axis_;
     int direction_;

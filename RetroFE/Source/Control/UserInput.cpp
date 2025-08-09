@@ -459,9 +459,11 @@ void UserInput::beginFrame() {
 	totalXrel_ = 0;
 	totalYrel_ = 0;
 	memset(currentKeyState_, 0, sizeof(currentKeyState_));
-	// Reset all handlers (including MouseMoveHandler) at the start of the frame
+	updated_ = false;
+
+	// Only handlers that *need* it do anything here.
 	for (auto& pair : keyHandlers_) {
-		if (pair.first) pair.first->reset();
+		if (pair.first) pair.first->beginFrame();
 	}
 }
 

@@ -12,6 +12,7 @@ public:
     bool update(SDL_Event& e) override;
     bool pressed() override;
     void updateKeystate() override;
+    void beginFrame() override { reset(); }   // clear transient per-frame state only
 
 private:
     Axis axis_;
