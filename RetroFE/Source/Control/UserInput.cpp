@@ -232,22 +232,22 @@ bool UserInput::HandleInputMapping(const std::string& token, KeyCode_E key, cons
 
 			if (direction == "left") {
 				keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
-					new TouchDragHandler(TouchDragHandler::X_AXIS, -1, touchThreshold, key), key));
+					new TouchDragHandler(TouchDragHandler::X_AXIS, -1, touchThreshold), key));
 				mapped = true;
 			}
 			else if (direction == "right") {
 				keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
-					new TouchDragHandler(TouchDragHandler::X_AXIS, +1, touchThreshold, key), key));
+					new TouchDragHandler(TouchDragHandler::X_AXIS, +1, touchThreshold), key));
 				mapped = true;
 			}
 			else if (direction == "up") {
 				keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
-					new TouchDragHandler(TouchDragHandler::Y_AXIS, -1, touchThreshold, key), key));
+					new TouchDragHandler(TouchDragHandler::Y_AXIS, -1, touchThreshold), key));
 				mapped = true;
 			}
 			else if (direction == "down") {
 				keyHandlers_.push_back(std::pair<InputHandler*, KeyCode_E>(
-					new TouchDragHandler(TouchDragHandler::Y_AXIS, +1, touchThreshold, key), key));
+					new TouchDragHandler(TouchDragHandler::Y_AXIS, +1, touchThreshold), key));
 				mapped = true;
 			}
 

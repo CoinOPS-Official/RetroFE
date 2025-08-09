@@ -282,7 +282,7 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Control/KeyboardHandler.cpp"
 	"${RETROFE_DIR}/Source/Control/MouseButtonHandler.cpp"
     "${RETROFE_DIR}/Source/Control/MouseAxisHandler.cpp"
-	"${RETROFE_DIR}/Source/Control/TouchDragHandler.h"
+	"${RETROFE_DIR}/Source/Control/TouchDragHandler.cpp"
     "${RETROFE_DIR}/Source/Control/Restrictor/Restrictor.cpp"
     "${RETROFE_DIR}/Source/Control/Restrictor/RestrictorManager.cpp"
     "${RETROFE_DIR}/Source/Control/Restrictor/ServoStikRestrictor.cpp"

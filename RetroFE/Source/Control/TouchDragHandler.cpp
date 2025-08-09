@@ -12,8 +12,8 @@ const float ACCELERATION_FACTOR = 0.5f;
 const float FRICTION = 0.85f;
 
 
-TouchDragHandler::TouchDragHandler(DragAxis axis, int direction, int threshold, UserInput::KeyCode_E boundKeyCode)
-    : axis_(axis), direction_(direction), threshold_(threshold), boundKeyCode_(boundKeyCode),
+TouchDragHandler::TouchDragHandler(DragAxis axis, int direction, int threshold)
+    : axis_(axis), direction_(direction), threshold_(threshold),
     pressed_(false), isTracking_(false), trackingFingerId_(-1),
     anchorX_(0.0f), anchorY_(0.0f), currentX_(0.0f), currentY_(0.0f), accumulator_(0.0f) {
 }
