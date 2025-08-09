@@ -341,8 +341,11 @@ int main(int argc, char** argv)
                 exit(EXIT_FAILURE);
             }
             RetroFE p(config);
-            if (p.run()) // Check if we need to reboot after running
+            if (p.run()){ // Check if we need to reboot after running
+                SDL::deInitialize(true);   // full teardown: destroys window/renderer/subsystems
                 config.clearProperties();
+                continue;
+            }
             else
                 break;
         }
