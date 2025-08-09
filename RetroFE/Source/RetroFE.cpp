@@ -3198,39 +3198,39 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 		const bool upHeld = input_.keystate(UserInput::KeyCodeLetterUp);
 		const bool downHeld = input_.keystate(UserInput::KeyCodeLetterDown);
 
-		static double letterNextAt = 0.0; // when next repeat is allowed
-		static double letterLastAt = 0.0; // when we last fired (>0 means we've fired once)
+		static double letterNextAt = 0.0; // next allowed repeat
+		static double letterLastAt = 0.0; // time of last fire (0 => never)
 		const double now = currentTime_;
 
 		auto doLetter = [&](bool forward) {
 			attract_.reset();
 			resetInfoToggle();
 			if (Item::validSortType(page->getPlaylistName())) {
-				page->metaScroll(forward ? Page::ScrollDirectionForward : Page::ScrollDirectionBack,
+				page->metaScroll(forward ? Page::ScrollDirectionForward
+					: Page::ScrollDirectionBack,
 					page->getPlaylistName());
 			}
 			else {
 				bool cfwLetterSub = false;
 				config_.getProperty(OPTION_CFWLETTERSUB, cfwLetterSub);
 				if (cfwLetterSub && page->hasSubs())
-					page->cfwLetterSubScroll(forward ? Page::ScrollDirectionForward : Page::ScrollDirectionBack);
+					page->cfwLetterSubScroll(forward ? Page::ScrollDirectionForward
+						: Page::ScrollDirectionBack);
 				else
-					page->letterScroll(forward ? Page::ScrollDirectionForward : Page::ScrollDirectionBack);
+					page->letterScroll(forward ? Page::ScrollDirectionForward
+						: Page::ScrollDirectionBack);
 			}
 			};
 
-		const bool firstAllowed = (currentTime_ - keyLastTime_) > keyDelayTime_;
-
-		// First press: only fire after the standard throttle window
-		if ((upNow || downNow) && firstAllowed) {
+		// First press: fire immediately on rising edge (no global throttle)
+		if (upNow || downNow) {
 			doLetter(/*forward=*/downNow);
 			letterLastAt = now;
-			letterNextAt = now + keyDelayTime_;   // long first gap to prevent "double"
-			keyLastTime_ = currentTime_;          // align with global key throttle
+			letterNextAt = now + keyLetterSkipDelayTime_; // first repeat uses fast cadence
 			return RETROFE_MENUJUMP_REQUEST;
 		}
 
-		// Held repeat: only after we've fired once, at faster cadence
+		// Held repeat at fast cadence after first fire
 		if ((upHeld || downHeld) &&
 			letterLastAt > 0.0 &&
 			now >= std::max(letterNextAt, letterLastAt + keyLetterSkipDelayTime_)) {
@@ -3240,7 +3240,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			return RETROFE_MENUJUMP_REQUEST;
 		}
 
-		// Release resets the cadence state
+		// Released: reset cadence
 		if (!upHeld && !downHeld) {
 			letterNextAt = 0.0;
 			letterLastAt = 0.0;
