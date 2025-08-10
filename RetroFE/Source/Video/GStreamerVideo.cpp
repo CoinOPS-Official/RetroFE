@@ -518,27 +518,24 @@ bool GStreamerVideo::unload() {
 
 	// --- 3) Schedule state change + bus flush on the main GLib context ---
 	// Important: do not hold pipelineMutex_ while scheduling or running these.
-	g_main_context_invoke(nullptr,
-		[](gpointer ud) -> gboolean {
-			auto* v = static_cast<GStreamerVideo*>(ud);
-			if (!v->playbin_) return G_SOURCE_REMOVE;
+	g_main_context_invoke(nullptr, [](gpointer ud) -> gboolean {
+		auto* v = static_cast<GStreamerVideo*>(ud);
+		if (!v->playbin_) return G_SOURCE_REMOVE;
 
-			// Request READY asynchronously; do not wait here
-			GstStateChangeReturn r = gst_element_set_state(v->playbin_, GST_STATE_READY);
-			if (r == GST_STATE_CHANGE_FAILURE) {
-				LOG_ERROR("GStreamerVideo", "unload(): set_state(READY) failed for " + v->currentFile_);
-				v->hasError_.store(true, std::memory_order_release);
-			}
+		if (v->busWatchId_ != 0) {
+			g_source_remove(v->busWatchId_);
+			v->busWatchId_ = 0;
+		}
 
-			// Start flushing the bus so stale messages don’t affect next run
-			if (GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(v->playbin_))) {
-				gst_bus_set_flushing(bus, TRUE);
-				gst_object_unref(bus);
-			}
+		// Now flush bus and drop to READY
+		if (GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(v->playbin_))) {
+			gst_bus_set_flushing(bus, TRUE);
+			gst_object_unref(bus);
+		}
+		gst_element_set_state(v->playbin_, GST_STATE_READY);
+		return G_SOURCE_REMOVE;
+		}, this);
 
-			return G_SOURCE_REMOVE;
-		},
-		this);
 
 	// --- 4) Local bookkeeping (pure app state) ---
 	currentFile_ = "[idle-in-pool]";
@@ -742,7 +739,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		this,     // user_data, e.g., your GStreamerVideo instance
 		nullptr   // GDestroyNotify
 	);
-	
+
 	initializeUpdateFunction();
 
 	return true;
@@ -829,10 +826,11 @@ bool GStreamerVideo::play(const std::string& file) {
 		return false;
 	}
 
-	GstBus* bus = gst_element_get_bus(playbin_);
-	if (bus) {
-		gst_bus_set_flushing(bus, FALSE); // Ensure bus is not in flushing state before adding watch
-		busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
+	if (GstBus* bus = gst_element_get_bus(playbin_)) {
+		gst_bus_set_flushing(bus, FALSE);
+		if (busWatchId_ == 0) {
+			busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
+		}
 		gst_object_unref(bus);
 	}
 
