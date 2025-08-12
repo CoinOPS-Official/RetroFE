@@ -23,6 +23,7 @@ class IVideo {
 public:
 	enum class VideoState {
 		None,
+		Ready,
 		Playing,
 		Paused
 	};
@@ -39,6 +40,7 @@ public:
 	virtual void volumeUpdate() = 0;
 	virtual int getHeight() = 0;
 	virtual int getWidth() = 0;
+	virtual void setSoftOverlay(bool value) = 0;
 	virtual void setVolume(float volume) = 0;
 	virtual void skipForward() = 0;
 	virtual void skipBackward() = 0;

@@ -89,11 +89,11 @@ public:
     IVideo::VideoState getActualState() const override { return actualState_; }
     bool isPipelineReady() const override {
         return pipeLineReady_;
-	}
+    }
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
 
-private:   
+private:
     // === Thread-shared atomics ===
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
@@ -126,7 +126,6 @@ private:
     SDL_Texture* texture_{ nullptr };
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     guint elementSetupHandlerId_{ 0 };
-    guint padProbeId_{ 0 };
     guint busWatchId_{ 0 };
     GValueArray* gva_{ nullptr };
     GValueArray* perspective_gva_{ nullptr };
@@ -138,7 +137,6 @@ private:
     static bool initialized_;
     static bool pluginsInitialized_;
 
-    mutable std::mutex pipelineMutex_;
 
     // === Internal helpers ===
     struct PadProbeUserdata {
@@ -147,9 +145,10 @@ private:
     };
     static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
+    static GstFlowReturn on_new_preroll(GstAppSink* sink, gpointer user_data);
     static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer user_data);
-    static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
+    static gboolean on_dimensions_idle(gpointer user_data);
     void createSdlTexture();
     void initializeUpdateFunction();
     bool updateTextureFromFrameIYUV(SDL_Texture*, GstVideoFrame*) const;

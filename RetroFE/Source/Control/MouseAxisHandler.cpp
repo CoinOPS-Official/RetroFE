@@ -12,25 +12,7 @@ void MouseAxisHandler::reset() {
 
 bool MouseAxisHandler::update(SDL_Event& e) {
     pressed_ = false;
-    if (e.type == SDL_MOUSEMOTION) {
-        int absX = std::abs(input_.getTotalXrel());
-        int absY = std::abs(input_.getTotalYrel());
-        bool xPast = absX >= threshold_;
-        bool yPast = absY >= threshold_;
 
-        // Diagonal deadzone: ignore if both past threshold
-        if (xPast && yPast)
-            return false;
-
-        // Only activate for our axis if the other is not active
-        if ((axis_ == X && xPast && !yPast) ||
-            (axis_ == Y && yPast && !xPast)) {
-            int delta = (axis_ == X) ? input_.getTotalXrel() : input_.getTotalYrel();
-            if ((delta * direction_) >= threshold_) {
-                pressed_ = true;
-            }
-        }
-    }
     return pressed_;
 }
 

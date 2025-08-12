@@ -227,4 +227,10 @@ private:
     std::map<std::string, std::string>  lastMenuPlaylists_;
     std::vector<std::string> cycleVector_;
     std::filesystem::file_time_type lastHiFileModifiedTime_{};
+    std::map<UserInput::KeyCode_E, float> nextRepeatTime_;
+
+    const float KEY_REPEAT_INITIAL_DELAY = 0.4f; // How long to wait before the first repeat
+    const float KEY_REPEAT_RATE = 0.1f;          // How quickly to repeat after the first one
+    const float LETTER_SKIP_INITIAL_DELAY = 0.5f; // A slightly longer initial pause
+    const float LETTER_SKIP_RATE = 0.3f;          // A slightly slower repeat rate for better control
 };

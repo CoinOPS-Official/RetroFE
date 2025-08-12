@@ -79,6 +79,13 @@ struct Point2D {
 	constexpr Point2D(double x, double y) : x(x), y(y) {}
 };
 
+// A simple struct to hold the data for our idle callback
+struct DimensionsData {
+	GStreamerVideo* video;
+	int width;
+	int height;
+};
+
 #ifdef WIN32
 static bool IsIntelGPU() {
 	Microsoft::WRL::ComPtr<IDXGIFactory> factory;
@@ -223,32 +230,31 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 			if (dbg_info) g_free(dbg_info);
 			break;
 		}
-
-		case GST_MESSAGE_APPLICATION: {
-			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
-				const GstStructure* s = gst_message_get_structure(msg);
-
-				// Check for the message posted by padProbeCallback
-				if (s && gst_structure_has_name(s, "dimensions")) {
-					int w = 0, h = 0;
-					gst_structure_get_int(s, "width", &w);
-					gst_structure_get_int(s, "height", &h);
-					LOG_INFO("GStreamerVideo", "busCallback(): Received 'dimensions' message for " + video->currentFile_ +
-						" (" + std::to_string(w) + "x" + std::to_string(h) + ")");
-					video->width_ = w;
-					video->height_ = h;
-					video->createSdlTexture();
-				}
-			} // End of: if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_))
-			break; // Break for case GST_MESSAGE_APPLICATION
-		} // End of case GST_MESSAGE_APPLICATION
-
 		default:
 		break;
 
 	}
 
 	return TRUE; // Keep the bus watch active
+}
+
+gboolean GStreamerVideo::on_dimensions_idle(gpointer user_data) {
+	auto* data = static_cast<DimensionsData*>(user_data);
+
+	// This code now runs safely on the main thread during an idle cycle
+	if (data && data->video) {
+		LOG_INFO("GStreamerVideo", "IdleCallback: Creating SDL texture for " + data->video->currentFile_ +
+			" (" + std::to_string(data->width) + "x" + std::to_string(data->height) + ")");
+
+		data->video->width_ = data->width;
+		data->video->height_ = data->height;
+		data->video->createSdlTexture();
+	}
+
+	// Clean up the memory we allocated for the data struct
+	delete data;
+
+	return G_SOURCE_REMOVE; // This function should only run once per event
 }
 
 void GStreamerVideo::initializePlugins() {
@@ -368,7 +374,6 @@ bool GStreamerVideo::stop() {
 	targetState_ = IVideo::VideoState::None;
 
 	// --- 2. GStreamer Pipeline Teardown ---
-	std::lock_guard<std::mutex> lock(pipelineMutex_);
 
 	if (playbin_) {
 		// --- Synchronization Barrier ---
@@ -392,13 +397,7 @@ bool GStreamerVideo::stop() {
 		// --- Disconnect Callbacks and Probes ---
 		// It's critical to remove these before tearing down the pipeline to prevent
 		// any late-arriving async events from calling into a partially destroyed object.
-		if (padProbeId_ != 0 && videoSink_) {
-			GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink");
-			if (sinkPad) {
-				gst_pad_remove_probe(sinkPad, padProbeId_);
-				gst_object_unref(sinkPad);
-			}
-		}
+
 		if (busWatchId_ != 0) {
 			g_source_remove(busWatchId_);
 		}
@@ -453,7 +452,6 @@ bool GStreamerVideo::stop() {
 	currentVolume_ = 0.0f;
 	lastSetVolume_ = -1.0f;
 	lastSetMuteState_ = true;
-	padProbeId_ = 0;
 	busWatchId_ = 0;
 	elementSetupHandlerId_ = 0;
 
@@ -464,87 +462,36 @@ bool GStreamerVideo::stop() {
 }
 
 bool GStreamerVideo::unload() {
-	LOG_DEBUG("GStreamerVideo", "Unload (for reuse) called for " + currentFile_ +
-		" (Session: " + std::to_string(currentPlaySessionId_.load()) + ")");
+	LOG_DEBUG("GStreamerVideo", "Unload (async) called for " + currentFile_);
 
-	if (!playbin_) {
-		LOG_WARNING("GStreamerVideo", "unload(): No playbin_");
-		// local reset
-		hasError_.store(false, std::memory_order_release);
-		width_ = height_ = 0;
-		SDL_LockMutex(SDL::getMutex());
-		texture_ = nullptr;
-		SDL_UnlockMutex(SDL::getMutex());
-		currentFile_.clear();
-		playCount_ = 0;
-		return true;
+	if (!playbin_ || actualState_ == IVideo::VideoState::None) {
+		LOG_WARNING("GStreamerVideo", "unload() called but pipeline is already stopped or null.");
+		actualState_ = IVideo::VideoState::None;
+		return true; // Nothing to do, it's already "ready".
 	}
 
-	// --- 0) Stop accepting/holding frames ASAP (no GStreamer calls needed) ---
-	{
-		std::lock_guard<std::mutex> lock(pipelineMutex_);
-		pipeLineReady_ = false;
-		targetState_ = IVideo::VideoState::None;
-		width_ = height_ = -1;
-		SDL_LockMutex(SDL::getMutex());
-		texture_ = nullptr; // keep videoTexture_ for reuse
-		SDL_UnlockMutex(SDL::getMutex());
-	}
+	// --- 1. Update Application-Side State ---
+	pipeLineReady_ = false;
+	targetState_ = IVideo::VideoState::None;
+	// We do NOT change actualState_ here. The busCallback will do that upon confirmation.
 
-	// Drain our own staging queue
+	SDL_LockMutex(SDL::getMutex());
+	texture_ = nullptr;
+	SDL_UnlockMutex(SDL::getMutex());
+
 	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) {
 		gst_sample_unref(s);
 	}
+	// --- 3. Request Asynchronous State Change ---
+	// This is fast and returns immediately.
+	gst_element_set_state(playbin_, GST_STATE_READY);
 
-	// --- 1) Make the sink stop pushing & drain a bit (thread-safe ops) ---
-	// Note: these g_object_set calls are thread-safe on elements.
-	if (videoSink_) {
-		// pull & drop a couple pending samples so tasks can quiesce
-		for (int i = 0; i < 4; ++i) {
-			GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0);
-			if (!s) break;
-			gst_sample_unref(s);
-		}
-	}
-
-	// --- 2) Remove our pad probe before state transition (reduces reentrancy) ---
-	if (padProbeId_ != 0 && videoSink_) {
-		if (GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink")) {
-			gst_pad_remove_probe(sinkPad, padProbeId_);
-			gst_object_unref(sinkPad);
-		}
-		padProbeId_ = 0;
-	}
-
-	// --- 3) Schedule state change + bus flush on the main GLib context ---
-	// Important: do not hold pipelineMutex_ while scheduling or running these.
-	g_main_context_invoke(nullptr, [](gpointer ud) -> gboolean {
-		auto* v = static_cast<GStreamerVideo*>(ud);
-		if (!v->playbin_) return G_SOURCE_REMOVE;
-
-		if (v->busWatchId_ != 0) {
-			g_source_remove(v->busWatchId_);
-			v->busWatchId_ = 0;
-		}
-
-		// Now flush bus and drop to READY
-		if (GstBus* bus = gst_pipeline_get_bus(GST_PIPELINE(v->playbin_))) {
-			gst_bus_set_flushing(bus, TRUE);
-			gst_object_unref(bus);
-		}
-		gst_element_set_state(v->playbin_, GST_STATE_READY);
-		return G_SOURCE_REMOVE;
-		}, this);
-
-
-	// --- 4) Local bookkeeping (pure app state) ---
-	currentFile_ = "[idle-in-pool]";
+	// --- 4. Final Local Bookkeeping ---
+	currentFile_ = "[unloading]";
 	playCount_ = 0;
 	numLoops_ = 0;
-	currentVolume_ = 0.0f;
-	lastSetVolume_ = -1.0f;
-	lastSetMuteState_ = false;
-	volume_ = 0.0f;
+	width_ = -1;
+	height_ = -1;
 
 	return true;
 }
@@ -647,7 +594,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		"emit-signals", FALSE,          // fewer wakeups
 		"max-buffers", 2,              // tiny queue
 		"drop", TRUE,           // drop if we fall behind
-		"sync", TRUE,           // keep running-time sync
+		"sync", TRUE,
 		"enable-last-sample", FALSE,
 		NULL);
 
@@ -730,7 +677,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 
 	GstAppSinkCallbacks callbacks = {};
 	callbacks.eos = nullptr; // You can add an EOS handler if you want
-	callbacks.new_preroll = nullptr; // You can handle preroll if needed
+	callbacks.new_preroll = &GStreamerVideo::on_new_preroll; // You can handle preroll if needed
 	callbacks.new_sample = &GStreamerVideo::on_new_sample; // Or just on_new_sample if static
 
 	gst_app_sink_set_callbacks(
@@ -772,7 +719,6 @@ void GStreamerVideo::initializeUpdateFunction() {
 }
 
 bool GStreamerVideo::play(const std::string& file) {
-	std::unique_lock<std::mutex> lock(pipelineMutex_);
 
 	if (!initialized_) {
 		LOG_ERROR("GStreamerVideo", "Play called but GStreamer not initialized for file: " + file);
@@ -790,39 +736,6 @@ bool GStreamerVideo::play(const std::string& file) {
 	if (!createPipelineIfNeeded()) {
 		LOG_ERROR("Video", "Failed to create GStreamer pipeline");
 		hasError_.store(true, std::memory_order_release);
-		return false;
-	}
-
-	// Reconnect the pad probe if it's not connected.
-	// This should be done for each new 'play' call to ensure the probe is fresh for this stream.
-	GstPad* sinkPad = gst_element_get_static_pad(videoSink_, "sink");
-	if (sinkPad) {
-		if (padProbeId_ != 0) { // Remove any existing probe on this pad from this instance
-			gst_pad_remove_probe(sinkPad, padProbeId_);
-			padProbeId_ = 0;
-		}
-
-		// --- Create Userdata for the Probe ---
-		auto* userdataForProbe = static_cast<PadProbeUserdata*>(g_malloc(sizeof(PadProbeUserdata)));
-		if (!userdataForProbe) {
-			LOG_ERROR("GStreamerVideo", "Failed to allocate memory for PadProbeUserdata for file: " + file);
-			gst_object_unref(sinkPad);
-			hasError_.store(true);
-			return false;
-		}
-		userdataForProbe->videoInstance = this;
-		userdataForProbe->playSessionId = currentPlaySessionId_.load(std::memory_order_acquire);
-
-		padProbeId_ = gst_pad_add_probe(sinkPad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
-			GStreamerVideo::padProbeCallback,
-			userdataForProbe,
-			g_free);
-
-		gst_object_unref(sinkPad);
-	}
-	else {
-		LOG_ERROR("GStreamerVideo", "Failed to get sink pad from videoSink_ for file: " + file);
-		hasError_.store(true);
 		return false;
 	}
 
@@ -846,7 +759,6 @@ bool GStreamerVideo::play(const std::string& file) {
 	g_object_set(playbin_, "uri", uriFile, nullptr);
 	g_free(uriFile);
 
-	lock.unlock();
 
 	// Request PAUSED (preroll) asynchronously; do not wait here
 	GstStateChangeReturn scr = gst_element_set_state(playbin_, GST_STATE_PAUSED);
@@ -928,6 +840,49 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 	}
 }
 
+GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_data) {
+	auto* self = static_cast<GStreamerVideo*>(user_data);
+	
+	// Add this check for a fast play->unload->play scenario
+	uint64_t currentSessionId = self->currentPlaySessionId_.load(std::memory_order_acquire);
+	if (self->targetState_ == IVideo::VideoState::None) {
+		LOG_DEBUG("GStreamerVideo", "on_new_preroll: Ignoring preroll for unloaded video");
+		return GST_FLOW_OK;
+	}
+	
+	GstSample* prerollSample = gst_app_sink_pull_preroll(sink);
+	if (!prerollSample) return GST_FLOW_OK;
+
+	LOG_DEBUG("GStreamerVideo", "on_new_preroll: Got preroll sample for " + self->currentFile_);
+
+	// Check if we need to extract dimensions
+	if (self->width_ <= 0 || self->height_ <= 0) {
+		const GstCaps* caps = gst_sample_get_caps(prerollSample);
+		if (caps) {
+			const GstStructure* str = gst_caps_get_structure(caps, 0);
+			gint width = 0, height = 0;
+
+			if (gst_structure_get_int(str, "width", &width) &&
+				gst_structure_get_int(str, "height", &height) &&
+				width > 0 && height > 0) {
+
+				LOG_INFO("GStreamerVideo", "on_new_preroll: Detected dimensions " +
+					std::to_string(width) + "x" + std::to_string(height) +
+					" for " + self->currentFile_);
+
+				// Post a message to create texture on main thread
+				auto* data = new DimensionsData();
+				data->video = self;
+				data->width = width;
+				data->height = height;
+				g_idle_add(GStreamerVideo::on_dimensions_idle, data);
+			}
+		}
+	}
+
+	gst_sample_unref(prerollSample);
+	return GST_FLOW_OK;
+}
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
 	auto* self = static_cast<GStreamerVideo*>(user_data);
@@ -940,127 +895,6 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data
 		gst_sample_unref(oldSample);
 
 	return GST_FLOW_OK;
-}
-
-GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data) {
-	auto* probeData = static_cast<PadProbeUserdata*>(user_data);
-
-	// --- 1. Basic Probe Sanity Checks ---
-	if (!probeData || !probeData->videoInstance) {
-		LOG_ERROR("GStreamerVideo", "padProbeCallback(): Probe fired with invalid user_data or videoInstance.");
-		return GST_PAD_PROBE_REMOVE;
-	}
-
-	GStreamerVideo* video = probeData->videoInstance;
-	uint64_t callbackSessionId = probeData->playSessionId;
-
-	// --- 2. Session ID Check (Crucial for Stale Probes) ---
-	uint64_t videoCurrentSessionId = video->currentPlaySessionId_.load(std::memory_order_acquire);
-	if (videoCurrentSessionId != callbackSessionId) {
-		LOG_ERROR("GStreamerVideo", "padProbeCallback(): Stale probe for session ID: " + std::to_string(callbackSessionId) +
-			" (current: " + std::to_string(videoCurrentSessionId) + " for file: " + video->currentFile_ + "). Removing probe.");
-		return GST_PAD_PROBE_REMOVE;
-	}
-
-	// --- 3. Instance State Check (Is this GStreamerVideo instance still actively playing?) ---
-	if (!video->playbin_) {
-		LOG_ERROR("GStreamerVideo", "padProbeCallback(): Probe for session ID: " + std::to_string(callbackSessionId) +
-			" fired, but playbin_ is NULL or video not playing (file: " + video->currentFile_ + "). Removing probe.");
-		video->padProbeId_ = 0; // Mark that this instance no longer expects this probe to be active.
-		return GST_PAD_PROBE_REMOVE;
-	}
-
-	// --- 4. Handle CAPS Event ---
-	auto* event = GST_PAD_PROBE_INFO_EVENT(info);
-	if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
-		GstCaps* caps = nullptr;
-		gst_event_parse_caps(event, &caps);
-
-		if (caps) {
-			const GstStructure* s = gst_caps_get_structure(caps, 0);
-			int newWidth = 0;
-			int	newHeight = 0;
-
-			if (gst_structure_get_int(s, "width", &newWidth) &&
-				gst_structure_get_int(s, "height", &newHeight) &&
-				newWidth > 0 && newHeight > 0) {
-
-				LOG_INFO("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) +
-					"): Caps received for " + video->currentFile_ + " (" +
-					std::to_string(newWidth) + "x" + std::to_string(newHeight) + ")");
-
-				// Instead of writing to atomics, just post a message with these values
-				GstStructure* msg_struct = gst_structure_new(
-					"dimensions",
-					"width", G_TYPE_INT, newWidth,
-					"height", G_TYPE_INT, newHeight,
-					nullptr
-				);
-				GstBus* bus = gst_element_get_bus(video->playbin_);
-				if (bus) {
-					gst_bus_post(bus, gst_message_new_application(GST_OBJECT(video->playbin_), msg_struct));
-					gst_object_unref(bus);
-				}
-				else {
-					gst_structure_free(msg_struct);
-					LOG_ERROR("GStreamerVideo", "padProbeCallback(): Failed to get bus to post 'dimensions' message.");
-				}
-
-				// --- Perspective Matrix Calculation and Setting (if applicable) ---
-				if (video->hasPerspective_) {
-					if (!video->perspective_) {
-						LOG_ERROR("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) +
-							"): hasPerspective_ is true, but perspective_ GstElement is NULL for " + video->currentFile_);
-					}
-					else {
-						if (video->perspective_gva_) {
-							g_value_array_free(video->perspective_gva_);
-							video->perspective_gva_ = nullptr;
-						}
-						std::array<Point2D, 4> perspectiveBox = {
-							Point2D(static_cast<double>(video->perspectiveCorners_[0]), static_cast<double>(video->perspectiveCorners_[1])),
-							Point2D(static_cast<double>(video->perspectiveCorners_[2]), static_cast<double>(video->perspectiveCorners_[3])),
-							Point2D(static_cast<double>(video->perspectiveCorners_[4]), static_cast<double>(video->perspectiveCorners_[5])),
-							Point2D(static_cast<double>(video->perspectiveCorners_[6]), static_cast<double>(video->perspectiveCorners_[7]))
-						};
-						std::array<double, 9> mat = computePerspectiveMatrixFromCorners(newWidth, newHeight, perspectiveBox);
-
-						LOG_DEBUG("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) +
-							") Calculated Matrix for " + video->currentFile_ + ": [" + /* ... log matrix ... */ "]");
-
-						video->perspective_gva_ = g_value_array_new(9);
-						GValue val = G_VALUE_INIT;
-						g_value_init(&val, G_TYPE_DOUBLE);
-						for (const double element : mat) {
-							g_value_set_double(&val, element);
-							g_value_array_append(video->perspective_gva_, &val);
-						}
-						g_value_unset(&val);
-
-						g_object_set(G_OBJECT(video->perspective_), "matrix", video->perspective_gva_, nullptr);
-						LOG_DEBUG("GStreamerVideo", "PadProbe (Session " + std::to_string(callbackSessionId) +
-							"): Updated perspective matrix on GstElement " + GST_OBJECT_NAME(video->perspective_) + " for " + video->currentFile_);
-					}
-				}
-
-			}
-			else { // Failed to get width/height from CAPS
-				LOG_ERROR("GStreamerVideo", "padProbeCallback(): Session " + std::to_string(callbackSessionId) +
-					": Failed to get valid dimensions from CAPS structure for " + video->currentFile_);
-				video->hasError_.store(true, std::memory_order_release);
-			}
-		}
-		else { // gst_event_parse_caps failed
-			LOG_ERROR("GStreamerVideo", "padProbeCallback(): Session " + std::to_string(callbackSessionId) +
-				": Caps event, but gst_event_parse_caps failed (returned NULL caps) for " + video->currentFile_);
-			video->hasError_.store(true, std::memory_order_release);
-		}
-		video->padProbeId_ = 0; // This probe has done its job for this CAPS event.
-		return GST_PAD_PROBE_REMOVE; // Remove the probe.
-	}
-
-	// --- 5. For other event types (not expected with GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM for CAPS) ---
-	return GST_PAD_PROBE_OK;
 }
 
 void GStreamerVideo::createSdlTexture() {
@@ -1158,7 +992,6 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-	std::lock_guard<std::mutex> pipelineLock(pipelineMutex_); // Protects pipeline state
 
 	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
 	if (!sample) return;

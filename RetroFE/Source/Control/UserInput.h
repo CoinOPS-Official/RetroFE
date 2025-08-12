@@ -106,18 +106,12 @@ public:
     bool initialize();
     void resetStates();
     bool update(SDL_Event& e);
-    void beginFrame();
-    void endFrame();
     bool keystate(KeyCode_E) const;
     bool lastKeyPressed(KeyCode_E code) const;
     bool newKeyPressed(KeyCode_E code) const;
     void clearJoysticks();
     void reconfigure();
     void updateKeystate();
-    void accumulateMouseMotion(int xrel, int yrel); // Called by update()
-    int getTotalXrel() const;
-    int getTotalYrel() const;
-    bool pressed(KeyCode_E code) const;
 
 private:
     bool MapKey(const std::string& keyDescription, KeyCode_E key);
@@ -130,6 +124,4 @@ private:
     std::vector<std::pair<InputHandler *, KeyCode_E> > keyHandlers_;
     bool lastKeyState_[KeyCodeMax]; 
     bool currentKeyState_[KeyCodeMax]; 
-    int totalXrel_ = 0;
-    int totalYrel_ = 0;
 };
