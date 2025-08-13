@@ -669,8 +669,8 @@ GstPadProbeReturn GStreamerVideo::caps_probe(GstPad* pad, GstPadProbeInfo* info,
 	GstEvent* ev = GST_PAD_PROBE_INFO_EVENT(info);
 	if (GST_EVENT_TYPE(ev) != GST_EVENT_CAPS) return GST_PAD_PROBE_OK;
 
-	GstCaps* caps = nullptr;                   // non-const for parse API
-	gst_event_parse_caps(ev, &caps);           // borrowed; do NOT unref or modify
+	GstCaps* caps = nullptr;
+	gst_event_parse_caps(ev, &caps);
 
 	GstVideoInfo vi;
 	if (!caps || !gst_video_info_from_caps(&vi, caps)) return GST_PAD_PROBE_OK;
@@ -680,26 +680,31 @@ GstPadProbeReturn GStreamerVideo::caps_probe(GstPad* pad, GstPadProbeInfo* info,
 	const int h = GST_VIDEO_INFO_HEIGHT(&vi);
 	const uint64_t session = self->currentPlaySessionId_.load(std::memory_order_acquire);
 
-	// Gate: only act once per (session, dims)
+	// Gate: act once per (session, dims)
 	if (session == self->lastMatrixSessionId_.load(std::memory_order_acquire) &&
-		w == self->lastMatW_ && h == self->lastMatH_)
+		w == self->lastMatW_ && h == self->lastMatH_) {
 		return GST_PAD_PROBE_OK;
+	}
 
+	// Hand off to the GLib main context; keep probe lightweight.
 	struct Payload { GStreamerVideo* v; int w, h; uint64_t s; };
-	g_main_context_invoke_full(nullptr, G_PRIORITY_HIGH,
+	g_main_context_invoke_full(
+		/*context*/ nullptr, G_PRIORITY_HIGH,
 		[](gpointer p)->gboolean {
 			std::unique_ptr<Payload> pp(static_cast<Payload*>(p));
-			auto* v = pp->v;
-			if (!v || v->targetState_ == IVideo::VideoState::None) return G_SOURCE_REMOVE;
+			GStreamerVideo* v = pp->v;
+			if (!v || v->getTargetState() == IVideo::VideoState::None) return G_SOURCE_REMOVE;
 
 			const bool dimsChanged = (pp->w != v->width_) || (pp->h != v->height_);
 			v->width_ = pp->w;
 			v->height_ = pp->h;
 
-			const bool needMatrix = v->hasPerspective_ && v->perspective_ &&
-				(dimsChanged || v->lastMatrixSessionId_.load(std::memory_order_acquire) != pp->s);
-			if (needMatrix) {
+			// Set the perspective matrix on the main context (safe for most elements)
+			if (v->hasPerspective_ && v->perspective_ &&
+				(dimsChanged || v->lastMatrixSessionId_.load(std::memory_order_acquire) != pp->s)) {
+
 				if (v->perspective_gva_) { g_value_array_free(v->perspective_gva_); v->perspective_gva_ = nullptr; }
+
 				std::array<Point2D, 4> box = {
 					Point2D(v->perspectiveCorners_[0], v->perspectiveCorners_[1]),
 					Point2D(v->perspectiveCorners_[2], v->perspectiveCorners_[3]),
@@ -707,15 +712,13 @@ GstPadProbeReturn GStreamerVideo::caps_probe(GstPad* pad, GstPadProbeInfo* info,
 					Point2D(v->perspectiveCorners_[6], v->perspectiveCorners_[7])
 				};
 				auto mat = computePerspectiveMatrixFromCorners(v->width_, v->height_, box);
+
 				v->perspective_gva_ = g_value_array_new(9);
 				GValue val = G_VALUE_INIT; g_value_init(&val, G_TYPE_DOUBLE);
 				for (double d : mat) { g_value_set_double(&val, d); g_value_array_append(v->perspective_gva_, &val); }
 				g_value_unset(&val);
-				g_object_set(G_OBJECT(v->perspective_), "matrix", v->perspective_gva_, nullptr);
-			}
 
-			if (dimsChanged || !v->videoTexture_) {
-				v->createSdlTexture();   // main thread; recreates if size/format changed
+				g_object_set(G_OBJECT(v->perspective_), "matrix", v->perspective_gva_, nullptr);
 			}
 
 			v->lastMatrixSessionId_.store(pp->s, std::memory_order_release);
@@ -723,9 +726,9 @@ GstPadProbeReturn GStreamerVideo::caps_probe(GstPad* pad, GstPadProbeInfo* info,
 			return G_SOURCE_REMOVE;
 		},
 		new Payload{ self, w, h, session },
-		nullptr);
+		/*notify*/ nullptr);
 
-	return GST_PAD_PROBE_OK; // persistent, non-blocking
+	return GST_PAD_PROBE_OK;  // persistent, non-blocking
 }
 
 
@@ -957,6 +960,7 @@ void GStreamerVideo::createSdlTexture() {
 	SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
 	SDL_SetTextureBlendMode(videoTexture_, blendMode);
 }
+
 void GStreamerVideo::volumeUpdate() {
 	if (!pipeLineReady_ || !playbin_)
 		return;
