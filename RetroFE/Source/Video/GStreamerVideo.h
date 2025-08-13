@@ -15,15 +15,11 @@
 */
 #pragma once
 
-#include "../Database/Configuration.h"
-#include "../SDL.h"
-#include "../Utility/Utils.h"
-#include "../Utility/Log.h"
 #include "IVideo.h"
-#include <atomic>
+#include "../SDL.h"
 #include <string>
-#include <mutex>
-#include <vector>
+#include <array>
+#include <atomic>
 #include <functional>
 
 extern "C" {
@@ -40,7 +36,6 @@ extern "C" {
 #else
 #include <gst/gst.h>
 #include <gst/app/gstappsink.h>
-#include <gst/pbutils/pbutils.h>
 #include <gst/video/video.h>
 #endif
 }
@@ -56,8 +51,7 @@ public:
     // --- Interface methods ---
     bool initialize() override;
     bool deInitialize() override;
-    bool unload();
-    bool createPipelineIfNeeded();
+    bool unload() override;
     bool play(const std::string& file) override;
     bool stop() override;
     SDL_Texture* getTexture() const override;
@@ -75,33 +69,39 @@ public:
     void pause() override;
     void resume() override;
     void restart() override;
-    void loop();
+    void loop() override;
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
-    void setSoftOverlay(bool value);
+    void setSoftOverlay(bool value) override;
     void setPerspectiveCorners(const int* corners);
 
     bool hasError() const override {
         return hasError_.load(std::memory_order_acquire);
     }
     IVideo::VideoState getTargetState() const override { return targetState_; }
-    IVideo::VideoState getActualState() const override { return actualState_; }
+    IVideo::VideoState getActualState() const override {
+        return actualState_.load(std::memory_order_acquire);
+    }
+    void setActualState(IVideo::VideoState s) {
+        actualState_.store(s, std::memory_order_release);
+    }
     bool isPipelineReady() const override {
         return pipeLineReady_;
     }
-    static void enablePlugin(const std::string& pluginName);
-    static void disablePlugin(const std::string& pluginName);
+
 
 private:
     // === Thread-shared atomics ===
     std::atomic<uint64_t> currentPlaySessionId_{ 0 };
+    std::atomic<IVideo::VideoState> actualState_{ IVideo::VideoState::None };
     static std::atomic<uint64_t> nextUniquePlaySessionId_;
     std::atomic<bool> hasError_{ false };              // Set by pad probe, read main
+    std::atomic<uint64_t> lastMatrixSessionId_{ 0 };
+    int lastMatW_ = 0, lastMatH_ = 0;
 
     // === Main-thread only ===
     IVideo::VideoState targetState_{ IVideo::VideoState::None };
-    IVideo::VideoState actualState_{ IVideo::VideoState::None };
 
     int width_{ -1 };
     int height_{ -1 };
@@ -127,7 +127,6 @@ private:
     SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     guint elementSetupHandlerId_{ 0 };
     guint busWatchId_{ 0 };
-    GValueArray* gva_{ nullptr };
     GValueArray* perspective_gva_{ nullptr };
     std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
 
@@ -137,18 +136,17 @@ private:
     static bool initialized_;
     static bool pluginsInitialized_;
 
+    static void enablePlugin(const std::string& pluginName);
+    static void disablePlugin(const std::string& pluginName);
 
-    // === Internal helpers ===
-    struct PadProbeUserdata {
-        GStreamerVideo* videoInstance;
-        uint64_t playSessionId;
-    };
+
     static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstFlowReturn on_new_preroll(GstAppSink* sink, gpointer user_data);
     static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer user_data);
     static void initializePlugins();
-    static gboolean on_dimensions_idle(gpointer user_data);
+    static GstPadProbeReturn caps_probe(GstPad* pad, GstPadProbeInfo* info, gpointer ud);
+    bool createPipelineIfNeeded();
     void createSdlTexture();
     void initializeUpdateFunction();
     bool updateTextureFromFrameIYUV(SDL_Texture*, GstVideoFrame*) const;
