@@ -39,205 +39,241 @@ VideoPool::PoolInfo& VideoPool::getPoolInfo(int monitor, int listId) {
 }
 
 VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOverlay) {
-	if (listId == -1) { /* ... same as before ... */ }
+    // Non-pooled path
+    if (listId == -1) {
+        VideoPtr vid = std::make_unique<GStreamerVideo>(monitor);
+        if (!vid || vid->hasError()) {
+            LOG_ERROR("VideoPool", "Failed to construct GStreamerVideo (non-pooled).");
+            return nullptr;
+        }
+        vid->setSoftOverlay(softOverlay);
+        return vid;
+    }
 
-	PoolInfo* poolPtr = nullptr;
-	{
-		std::lock_guard<std::mutex> globalLock(s_poolsMutex);
-		poolPtr = &pools_[monitor][listId];
-	}
+    PoolInfo* poolPtr = nullptr;
+    {
+        std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+        poolPtr = &pools_[monitor][listId]; // auto-create if missing
+    }
 
-	VideoPtr vid;
-	bool shouldCreateNew = false;
+    VideoPtr vid;
+    bool shouldCreateNew = false;
 
-	// This is the main decision loop.
-	for (;;) {
-		{ // Start of mutex-protected scope
-			std::lock_guard<std::mutex> lock(poolPtr->poolMutex);
+    for (;;) {
+        // -------- decision block (locked) --------
+        {
+            std::lock_guard<std::mutex> lock(poolPtr->poolMutex);
 
-			// --- ALL DECISION LOGIC IS INSIDE THE LOCK ---
-			// Dynamic sizing phase (unchanged from your working code)
-			if (!poolPtr->initialCountLatched) {
-				poolPtr->currentActive++;
-				if (poolPtr->currentActive > poolPtr->observedMaxActive) {
-					poolPtr->observedMaxActive = poolPtr->currentActive;
-				}
-				shouldCreateNew = true;
-				break; // Exit loop to create new video
-			}
+            // PRE-LATCH PHASE: measure peak concurrency by creating on every acquire
+            if (!poolPtr->initialCountLatched) {
+                poolPtr->currentActive++;
+                if (poolPtr->currentActive > poolPtr->observedMaxActive) {
+                    poolPtr->observedMaxActive = poolPtr->currentActive;
+                }
+                shouldCreateNew = true;
+                goto DECISION_MADE;
+            }
 
-			// PRIORITY 1: Reuse from 'ready' queue.
-			if (!poolPtr->ready.empty()) {
-				vid = std::move(poolPtr->ready.front());
-				poolPtr->ready.pop_front();
-				poolPtr->currentActive++;
-				break; // Success, exit loop
-			}
+            // POST-LATCH PHASE: GROWTH-FIRST UNTIL TARGET POPULATION REACHED
+            const size_t totalPopulation =
+                poolPtr->currentActive + poolPtr->ready.size() + poolPtr->pending.size();
 
-			// PRIORITY 2: Reclaim from 'pending' queue.
-			auto it = poolPtr->pending.begin();
-			bool foundInPending = false;
-			while (it != poolPtr->pending.end()) {
-				if ((*it)->getActualState() == IVideo::VideoState::None) {
-					vid = std::move(*it);
-					poolPtr->pending.erase(it);
-					poolPtr->currentActive++;
-					foundInPending = true;
-					break;
-				}
-				++it;
-			}
-			if (foundInPending) {
-				break; // Success, exit loop
-			}
+            if (totalPopulation < poolPtr->requiredInstanceCount) {
+                // keep creating until population == requiredInstanceCount
+                poolPtr->currentActive++;
+                shouldCreateNew = true;
+                goto DECISION_MADE;
+            }
 
-			// PRIORITY 3: Create a new instance if the pool is not yet full.
-			size_t totalPopulation = poolPtr->currentActive + poolPtr->ready.size() + poolPtr->pending.size();
-			if (totalPopulation < poolPtr->requiredInstanceCount) {
-				poolPtr->currentActive++;
-				shouldCreateNew = true;
-				break; // Success, exit loop
-			}
-		} // Mutex is released here
+            // At/above required population: reuse priorities
+            // (1) ready queue
+            if (!poolPtr->ready.empty()) {
+                vid = std::move(poolPtr->ready.front());
+                poolPtr->ready.pop_front();
+                poolPtr->currentActive++;
+                goto DECISION_MADE;
+            }
 
-		// --- THE ACTIVE WAIT ---
-		// If we've reached this point, the pool is full and nothing is ready.
-		// We now actively process GStreamer events until a video becomes available.
-		LOG_DEBUG("VideoPool", "Pool full, actively waiting for an instance to become ready...");
+            // (2) pending where state is None
+            for (auto it = poolPtr->pending.begin(); it != poolPtr->pending.end(); ++it) {
+                if ((*it)->getActualState() == IVideo::VideoState::None) {
+                    vid = std::move(*it);
+                    poolPtr->pending.erase(it);
+                    poolPtr->currentActive++;
+                    goto DECISION_MADE;
+                }
+            }
 
-		// Process GStreamer bus messages. This is the critical step that allows
-		// videos in 'pending' to change their state to 'None'.
-		while (g_main_context_pending(nullptr)) {
-			g_main_context_iteration(nullptr, false);
-		}
+            // (3) pool already at target population: must wait
+        } // unlock
 
-		if (shuttingDown_) return nullptr;
-		// The for(;;) will now loop, re-lock, and re-check the queues.
-	} // End of for(;;) loop
+        // -------- active wait (pool at target, nothing reusable yet) --------
+        LOG_DEBUG("VideoPool", "Pool full, waiting for an instance to become ready...");
 
-	if (shouldCreateNew) {
-		vid = std::make_unique<GStreamerVideo>(monitor);
-		if (!vid || vid->hasError()) {
-			LOG_ERROR("VideoPool", "Failed to construct a new GStreamerVideo instance.");
-			{
-				std::lock_guard<std::mutex> lock(poolPtr->poolMutex);
-				if (poolPtr->currentActive > 0) poolPtr->currentActive--;
-			}
-			return nullptr;
-		}
-	}
+        {
+            std::unique_lock<std::mutex> lk(poolPtr->poolMutex);
+            poolPtr->poolCond.wait_for(
+                lk, std::chrono::milliseconds(5),
+                [&] {
+                    return shuttingDown_ ||
+                        !poolPtr->ready.empty() ||
+                        std::any_of(poolPtr->pending.begin(), poolPtr->pending.end(),
+                            [](const VideoPtr& v) {
+                                return v->getActualState() == IVideo::VideoState::None;
+                            }) ||
+                        poolPtr->markedForCleanup;
+                });
+        }
 
-	if (vid) {
-		vid->setSoftOverlay(softOverlay);
-	}
+        if (shuttingDown_) return nullptr;
 
-	return vid;
+        // Optional: safely pump default GLib context without racing another thread
+        if (GMainContext* ctx = g_main_context_default()) {
+            if (g_main_context_acquire(ctx)) {
+                while (g_main_context_pending(ctx)) {
+                    g_main_context_iteration(ctx, false);
+                }
+                g_main_context_release(ctx);
+            }
+        }
+
+        continue;
+
+    DECISION_MADE:
+        break;
+    }
+
+    // create new instance if requested by decision logic
+    if (shouldCreateNew) {
+        vid = std::make_unique<GStreamerVideo>(monitor);
+        if (!vid || vid->hasError()) {
+            LOG_ERROR("VideoPool", "Failed to construct a new GStreamerVideo instance.");
+            // decrement currentActive we incremented in the decision block
+            std::lock_guard<std::mutex> lock(poolPtr->poolMutex);
+            if (poolPtr->currentActive > 0) poolPtr->currentActive--;
+            return nullptr;
+        }
+    }
+
+    if (vid) {
+        vid->setSoftOverlay(softOverlay);
+    }
+
+    return vid;
 }
+
 void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
-	if (!vid || listId == -1 || shuttingDown_) return;
+    if (!vid || listId == -1 || shuttingDown_) return;
 
-	PoolInfo* poolPtr = nullptr;
-	{
-		std::lock_guard<std::mutex> globalLock(s_poolsMutex);
-		auto monitorIt = pools_.find(monitor);
-		if (monitorIt == pools_.end()) return;
-		auto listIt = monitorIt->second.find(listId);
-		if (listIt == monitorIt->second.end()) return;
-		poolPtr = &listIt->second;
-	}
+    PoolInfo* poolPtr = nullptr;
+    {
+        std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+        auto monitorIt = pools_.find(monitor);
+        if (monitorIt == pools_.end()) return;
+        auto listIt = monitorIt->second.find(listId);
+        if (listIt == monitorIt->second.end()) return;
+        poolPtr = &listIt->second;
+    }
 
-	vid->unload(); // Call the fast, non-blocking unload directly.
+    // Fast, non-blocking instance teardown; it will transition to None soon
+    vid->unload();
 
-	bool latchedOnThisRelease = false;
-	size_t latchedPoolSize = 0;
+    bool latchedOnThisRelease = false;
+    size_t latchedPoolSize = 0;
 
-	{
-		std::lock_guard<std::mutex> lock(poolPtr->poolMutex);
-		if (poolPtr->currentActive > 0) {
-			poolPtr->currentActive--;
-		}
+    {
+        std::lock_guard<std::mutex> lock(poolPtr->poolMutex);
 
-		poolPtr->pending.push_back(std::move(vid));
+        if (poolPtr->currentActive > 0) {
+            poolPtr->currentActive--;
+        }
 
-		// This is the latching logic, moved here from the worker thread.
-		if (!poolPtr->initialCountLatched) {
-			poolPtr->requiredInstanceCount = poolPtr->observedMaxActive + POOL_BUFFER_INSTANCES;
-			poolPtr->initialCountLatched = true;
-			latchedOnThisRelease = true;
-			latchedPoolSize = poolPtr->requiredInstanceCount;
-		}
+        // put the instance into pending; acquire() will either reclaim later
+        // (once at/over target population) or keep growing first.
+        poolPtr->pending.push_back(std::move(vid));
 
-		LOG_DEBUG("VideoPool", "Instance moved to pending queue. Active: " +
-			std::to_string(poolPtr->currentActive) + ", Pending: " +
-			std::to_string(poolPtr->pending.size()) +
-			(latchedOnThisRelease ? (" [Latched pool size: " + std::to_string(latchedPoolSize) + "]") : ""));
+        // LATCH HERE on the first release
+        if (!poolPtr->initialCountLatched) {
+            poolPtr->requiredInstanceCount = poolPtr->observedMaxActive + POOL_BUFFER_INSTANCES; // "+2"
+            poolPtr->initialCountLatched = true;
+            latchedOnThisRelease = true;
+            latchedPoolSize = poolPtr->requiredInstanceCount;
+        }
 
-		poolPtr->poolCond.notify_one();
-	}
+        LOG_DEBUG("VideoPool",
+            "Instance moved to pending. Active: " + std::to_string(poolPtr->currentActive) +
+            ", Ready: " + std::to_string(poolPtr->ready.size()) +
+            ", Pending: " + std::to_string(poolPtr->pending.size()) +
+            (latchedOnThisRelease ? (" [Latched pool size: " + std::to_string(latchedPoolSize) + "]") : ""));
+
+        // wake any waiter in acquireVideo()
+        poolPtr->poolCond.notify_all();
+    }
 }
 
 void VideoPool::releaseVideoBatch(std::vector<VideoPtr> videos, int monitor, int listId) {
-	if (videos.empty() || listId == -1 || shuttingDown_) return;
-
-	for (auto& vid : videos) {
-		releaseVideo(std::move(vid), monitor, listId);
-	}
+    if (videos.empty() || listId == -1 || shuttingDown_) return;
+    for (auto& vid : videos) {
+        releaseVideo(std::move(vid), monitor, listId);
+    }
 }
 
 void VideoPool::cleanup_nolock(int monitor, int listId) {
-	auto monitorIt = pools_.find(monitor);
-	if (monitorIt == pools_.end()) return;
-	auto listIt = monitorIt->second.find(listId);
-	if (listIt == monitorIt->second.end()) return;
+    auto monitorIt = pools_.find(monitor);
+    if (monitorIt == pools_.end()) return;
+    auto listIt = monitorIt->second.find(listId);
+    if (listIt == monitorIt->second.end()) return;
 
-	PoolInfo& pool = listIt->second;
-
-	{
-		std::lock_guard<std::mutex> lock(pool.poolMutex);
-		pool.markedForCleanup = true; // Mark, but don't erase yet
-	}
-	LOG_DEBUG("VideoPool", "Marked for cleanup: Monitor: " + std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+    PoolInfo& pool = listIt->second;
+    {
+        std::lock_guard<std::mutex> lock(pool.poolMutex);
+        pool.markedForCleanup = true;
+        pool.poolCond.notify_all();
+    }
+    LOG_DEBUG("VideoPool", "Marked for cleanup: Monitor: " + std::to_string(monitor) +
+        ", List ID: " + std::to_string(listId));
 }
 
 void VideoPool::cleanup(int monitor, int listId) {
-	std::lock_guard<std::mutex> globalLock(s_poolsMutex);
-	auto monitorIt = pools_.find(monitor);
-	if (monitorIt == pools_.end()) return;
-	auto listIt = monitorIt->second.find(listId);
-	if (listIt == monitorIt->second.end()) return;
+    std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+    auto monitorIt = pools_.find(monitor);
+    if (monitorIt == pools_.end()) return;
+    auto listIt = monitorIt->second.find(listId);
+    if (listIt == monitorIt->second.end()) return;
 
-	PoolInfo& pool = listIt->second;
-
-	{
-		std::lock_guard<std::mutex> lock(pool.poolMutex);
-		pool.markedForCleanup = true; // Mark, but don't erase yet
-	}
-	LOG_DEBUG("VideoPool", "Marked for cleanup: Monitor: " + std::to_string(monitor) + ", List ID: " + std::to_string(listId));
+    PoolInfo& pool = listIt->second;
+    {
+        std::lock_guard<std::mutex> lock(pool.poolMutex);
+        pool.markedForCleanup = true;
+        pool.poolCond.notify_all();
+    }
+    LOG_DEBUG("VideoPool", "Marked for cleanup: Monitor: " + std::to_string(monitor) +
+        ", List ID: " + std::to_string(listId));
 }
 
 void VideoPool::shutdown() {
-	LOG_INFO("VideoPool", "Starting VideoPool shutdown...");
-	shuttingDown_ = true;
+    LOG_INFO("VideoPool", "Starting VideoPool shutdown...");
+    shuttingDown_ = true;
 
-	{
-		std::lock_guard<std::mutex> globalLock(s_poolsMutex);
-		for (auto& [monitor, listMap] : pools_) {
-			for (auto& [listId, pool] : listMap) {
-				std::lock_guard<std::mutex> localLock(pool.poolMutex);
-				pool.markedForCleanup = true;
-				pool.poolCond.notify_all(); // Unblock any waiting threads
-			}
-		}
-	}
+    {
+        std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+        for (auto& [monitor, listMap] : pools_) {
+            for (auto& [listId, pool] : listMap) {
+                std::lock_guard<std::mutex> localLock(pool.poolMutex);
+                pool.markedForCleanup = true;
+                pool.poolCond.notify_all();
+            }
+        }
+    }
 
-	// Now safely clear all pools
-	{
-		std::lock_guard<std::mutex> globalLock(s_poolsMutex);
-		pools_.clear();
-	}
+    // Destroy all pools and their instances
+    {
+        std::lock_guard<std::mutex> globalLock(s_poolsMutex);
+        pools_.clear();
+    }
 
-	shuttingDown_ = false;
-	LOG_INFO("VideoPool", "VideoPool shutdown complete.");
+    shuttingDown_ = false;
+    LOG_INFO("VideoPool", "VideoPool shutdown complete.");
 }
 
 bool VideoPool::checkPoolHealth(int monitor, int listId) {
