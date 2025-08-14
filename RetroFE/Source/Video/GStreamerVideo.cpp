@@ -86,6 +86,11 @@ struct DimensionsData {
 	int height;
 };
 
+static std::array<double, 9> computePerspectiveMatrixFromCorners(
+	int width,
+	int height,
+	const std::array<Point2D, 4>& pts);
+
 #ifdef WIN32
 static bool IsIntelGPU() {
 	Microsoft::WRL::ComPtr<IDXGIFactory> factory;
@@ -212,22 +217,27 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 			break;
 		}
 		case GST_MESSAGE_ERROR: {
-			GError* err = nullptr;
-			gchar* dbg_info = nullptr;
+			GError* err = nullptr; gchar* dbg = nullptr;
+			gst_message_parse_error(msg, &err, &dbg);
 
-			gst_message_parse_error(msg, &err, &dbg_info);
+			const bool unloading = (video->targetState_ == IVideo::VideoState::None);
+			if (unloading && err && err->domain == GST_STREAM_ERROR) {
+				LOG_DEBUG("GStreamerVideo", std::string("Ignoring stream error during unload: ") +
+					(err->message ? err->message : "n/a"));
+				if (err) g_error_free(err);
+				if (dbg) g_free(dbg);
+				break;
+			}
 
-			LOG_ERROR("GStreamerVideo", "busCallback(): GStreamer ERROR received for " + video->currentFile_ +
-				" (Session: " + std::to_string(video->currentPlaySessionId_.load()) + "): " +
-				(err ? err->message : "Unknown error") +
-				(dbg_info ? (std::string(" | Debug: ") + dbg_info) : ""));
-
+			LOG_ERROR("GStreamerVideo", std::string("busCallback(): GStreamer ERROR received for ") +
+				video->currentFile_ + ": " +
+				(err && err->message ? err->message : "Unknown") +
+				(dbg ? (std::string(" | Debug: ") + dbg) : ""));
 			video->hasError_.store(true, std::memory_order_release);
 			video->pipeLineReady_ = false;
-			video->targetState_ = IVideo::VideoState::None; // Reflect that it's no longer in a valid playing/paused state
-
+			video->targetState_ = IVideo::VideoState::None;
 			if (err) g_error_free(err);
-			if (dbg_info) g_free(dbg_info);
+			if (dbg) g_free(dbg);
 			break;
 		}
 		default:
@@ -240,21 +250,41 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 
 gboolean GStreamerVideo::on_dimensions_idle(gpointer user_data) {
 	auto* data = static_cast<DimensionsData*>(user_data);
+	if (!data || !data->video) { delete data; return G_SOURCE_REMOVE; }
 
-	// This code now runs safely on the main thread during an idle cycle
-	if (data && data->video) {
-		LOG_INFO("GStreamerVideo", "IdleCallback: Creating SDL texture for " + data->video->currentFile_ +
-			" (" + std::to_string(data->width) + "x" + std::to_string(data->height) + ")");
+	GStreamerVideo* v = data->video;
+	if (v->targetState_ == IVideo::VideoState::None) { delete data; return G_SOURCE_REMOVE; }
 
-		data->video->width_ = data->width;
-		data->video->height_ = data->height;
-		data->video->createSdlTexture();
+	// Publish dims.
+	v->width_ = data->width;
+	v->height_ = data->height;
+
+	// Apply perspective matrix now that we know the size.
+	if (v->hasPerspective_ && v->perspective_) {
+		if (v->perspective_gva_) { g_value_array_free(v->perspective_gva_); v->perspective_gva_ = nullptr; }
+
+		std::array<Point2D, 4> box = {
+			Point2D(v->perspectiveCorners_[0], v->perspectiveCorners_[1]),
+			Point2D(v->perspectiveCorners_[2], v->perspectiveCorners_[3]),
+			Point2D(v->perspectiveCorners_[4], v->perspectiveCorners_[5]),
+			Point2D(v->perspectiveCorners_[6], v->perspectiveCorners_[7])
+		};
+		auto mat = computePerspectiveMatrixFromCorners(v->width_, v->height_, box);
+
+		v->perspective_gva_ = g_value_array_new(9);
+		GValue val = G_VALUE_INIT; g_value_init(&val, G_TYPE_DOUBLE);
+		for (double d : mat) { g_value_set_double(&val, d); g_value_array_append(v->perspective_gva_, &val); }
+		g_value_unset(&val);
+
+		g_object_set(G_OBJECT(v->perspective_), "matrix", v->perspective_gva_, nullptr);
 	}
 
-	// Clean up the memory we allocated for the data struct
-	delete data;
+	// Texture creation: if your GLib idle runs on the same thread as SDL/GL, this is fine.
+	// If you ever see GL complaints, move this call into draw() instead.
+	v->createSdlTexture();
 
-	return G_SOURCE_REMOVE; // This function should only run once per event
+	delete data;
+	return G_SOURCE_REMOVE;
 }
 
 void GStreamerVideo::initializePlugins() {
@@ -464,29 +494,41 @@ bool GStreamerVideo::stop() {
 bool GStreamerVideo::unload() {
 	LOG_DEBUG("GStreamerVideo", "Unload (async) called for " + currentFile_);
 
+	// Already gone or idle -> nothing to do
 	if (!playbin_ || actualState_ == IVideo::VideoState::None) {
 		LOG_WARNING("GStreamerVideo", "unload() called but pipeline is already stopped or null.");
 		actualState_ = IVideo::VideoState::None;
-		return true; // Nothing to do, it's already "ready".
+		return true;
 	}
 
-	// --- 1. Update Application-Side State ---
+	// 1) App-side gates first
 	pipeLineReady_ = false;
-	targetState_ = IVideo::VideoState::None;
-	// We do NOT change actualState_ here. The busCallback will do that upon confirmation.
-
+	targetState_ = IVideo::VideoState::None;   // bus will eventually set actualState_
+	// Nuke the currently bound texture from the renderer
 	SDL_LockMutex(SDL::getMutex());
 	texture_ = nullptr;
 	SDL_UnlockMutex(SDL::getMutex());
 
+	// 2) Quiesce appsink so nothing else calls back while we switch
+	if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
+		GstAppSinkCallbacks empty{};
+		gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &empty, nullptr, nullptr);
+		gst_app_sink_set_emit_signals(GST_APP_SINK(videoSink_), FALSE);
+
+		// Drain any queued frames/preroll so draw() won’t paint stale pixels
+		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
+		while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
+	}
+
+	// Also clear anything we staged on our side
 	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) {
 		gst_sample_unref(s);
 	}
-	// --- 3. Request Asynchronous State Change ---
-	// This is fast and returns immediately.
+
+	// 3) Drop to READY (asynchronously). We don’t block here.
 	gst_element_set_state(playbin_, GST_STATE_READY);
 
-	// --- 4. Final Local Bookkeeping ---
+	// 4) Local bookkeeping for the next play()
 	currentFile_ = "[unloading]";
 	playCount_ = 0;
 	numLoops_ = 0;
@@ -495,7 +537,6 @@ bool GStreamerVideo::unload() {
 
 	return true;
 }
-
 // Main function to compute perspective transform from 4 arbitrary points
 static inline std::array<double, 9> computePerspectiveMatrixFromCorners(
 	int width,
@@ -674,19 +715,6 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		g_object_set(playbin_, "video-sink", videoSink_, nullptr);
 	}
 
-
-	GstAppSinkCallbacks callbacks = {};
-	callbacks.eos = nullptr; // You can add an EOS handler if you want
-	callbacks.new_preroll = &GStreamerVideo::on_new_preroll; // You can handle preroll if needed
-	callbacks.new_sample = &GStreamerVideo::on_new_sample; // Or just on_new_sample if static
-
-	gst_app_sink_set_callbacks(
-		GST_APP_SINK(videoSink_), // your appsink pointer
-		&callbacks,
-		this,     // user_data, e.g., your GStreamerVideo instance
-		nullptr   // GDestroyNotify
-	);
-
 	initializeUpdateFunction();
 
 	return true;
@@ -759,6 +787,17 @@ bool GStreamerVideo::play(const std::string& file) {
 	g_object_set(playbin_, "uri", uriFile, nullptr);
 	g_free(uriFile);
 
+	GstAppSinkCallbacks callbacks = {};
+	callbacks.eos = nullptr; // You can add an EOS handler if you want
+	callbacks.new_preroll = &GStreamerVideo::on_new_preroll; // You can handle preroll if needed
+	callbacks.new_sample = &GStreamerVideo::on_new_sample; // Or just on_new_sample if static
+
+	gst_app_sink_set_callbacks(
+		GST_APP_SINK(videoSink_), // your appsink pointer
+		&callbacks,
+		this,     // user_data, e.g., your GStreamerVideo instance
+		nullptr   // GDestroyNotify
+	);
 
 	// Request PAUSED (preroll) asynchronously; do not wait here
 	GstStateChangeReturn scr = gst_element_set_state(playbin_, GST_STATE_PAUSED);
@@ -842,45 +881,34 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 
 GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_data) {
 	auto* self = static_cast<GStreamerVideo*>(user_data);
-	
-	// Add this check for a fast play->unload->play scenario
-	uint64_t currentSessionId = self->currentPlaySessionId_.load(std::memory_order_acquire);
-	if (self->targetState_ == IVideo::VideoState::None) {
-		LOG_DEBUG("GStreamerVideo", "on_new_preroll: Ignoring preroll for unloaded video");
+
+	if (!self || self->targetState_ == IVideo::VideoState::None) {
 		return GST_FLOW_OK;
 	}
-	
+
+	// Pull preroll; this clears appsink's internal preroll ref.
 	GstSample* prerollSample = gst_app_sink_pull_preroll(sink);
 	if (!prerollSample) return GST_FLOW_OK;
 
-	LOG_DEBUG("GStreamerVideo", "on_new_preroll: Got preroll sample for " + self->currentFile_);
-
-	// Check if we need to extract dimensions
-	if (self->width_ <= 0 || self->height_ <= 0) {
-		const GstCaps* caps = gst_sample_get_caps(prerollSample);
-		if (caps) {
-			const GstStructure* str = gst_caps_get_structure(caps, 0);
-			gint width = 0, height = 0;
-
-			if (gst_structure_get_int(str, "width", &width) &&
-				gst_structure_get_int(str, "height", &height) &&
-				width > 0 && height > 0) {
-
-				LOG_INFO("GStreamerVideo", "on_new_preroll: Detected dimensions " +
-					std::to_string(width) + "x" + std::to_string(height) +
-					" for " + self->currentFile_);
-
-				// Post a message to create texture on main thread
-				auto* data = new DimensionsData();
-				data->video = self;
-				data->width = width;
-				data->height = height;
+	// Try to extract dimensions immediately from the preroll sample's caps.
+	const GstCaps* caps = gst_sample_get_caps(prerollSample);
+	if (caps) {
+		GstVideoInfo vi;
+		if (gst_video_info_from_caps(&vi, caps)) {
+			const int w = GST_VIDEO_INFO_WIDTH(&vi);
+			const int h = GST_VIDEO_INFO_HEIGHT(&vi);
+			if (w > 0 && h > 0) {
+				auto* data = new DimensionsData{ self, w, h };
 				g_idle_add(GStreamerVideo::on_dimensions_idle, data);
 			}
 		}
 	}
 
-	gst_sample_unref(prerollSample);
+	// Stage preroll so first draw can paint ASAP.
+	if (GstSample* old = self->stagedSample_.exchange(prerollSample, std::memory_order_acq_rel)) {
+		gst_sample_unref(old);
+	}
+
 	return GST_FLOW_OK;
 }
 
