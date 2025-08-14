@@ -193,8 +193,13 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 		case GST_MESSAGE_EOS: {
 			// Check if the EOS is from our main playbin element
 			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
+				uint64_t session = video->currentPlaySessionId_.load();
 				LOG_DEBUG("GStreamerVideo", "BusCallback: Received EOS for " + video->currentFile_ +
-					" (Session: " + std::to_string(video->currentPlaySessionId_.load()) + ")");
+					" (Session: " + std::to_string(session) + ")");
+				if (video->targetState_ == IVideo::VideoState::None) {
+					LOG_DEBUG("GStreamerVideo", "EOS ignored (unloaded) for session " + std::to_string(session));
+					break;
+				}
 				if (video->playbin_ && video->getCurrent() > GST_SECOND / 2) { // Check if it played for a meaningful duration
 					video->playCount_++;
 					if (!video->numLoops_ || video->numLoops_ > video->playCount_) {
@@ -251,9 +256,13 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 gboolean GStreamerVideo::on_dimensions_idle(gpointer user_data) {
 	auto* data = static_cast<DimensionsData*>(user_data);
 	if (!data || !data->video) { delete data; return G_SOURCE_REMOVE; }
-
+	
+	if (data->video->targetState_ == IVideo::VideoState::None ||
+		data->video->playbin_ == nullptr) {
+		delete data;
+		return G_SOURCE_REMOVE;
+	}
 	GStreamerVideo* v = data->video;
-	if (v->targetState_ == IVideo::VideoState::None) { delete data; return G_SOURCE_REMOVE; }
 
 	// Publish dims.
 	v->width_ = data->width;
@@ -428,8 +437,15 @@ bool GStreamerVideo::stop() {
 		// It's critical to remove these before tearing down the pipeline to prevent
 		// any late-arriving async events from calling into a partially destroyed object.
 
-		if (busWatchId_ != 0) {
-			g_source_remove(busWatchId_);
+		if (playbin_) {
+			if (GstBus* bus = gst_element_get_bus(playbin_)) {
+				gst_bus_set_flushing(bus, TRUE);
+				gst_object_unref(bus);
+			}
+			if (busWatchId_ != 0) {
+				g_source_remove(busWatchId_);
+				busWatchId_ = 0;
+			}
 		}
 		if (elementSetupHandlerId_ != 0 && g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
 			g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
@@ -524,6 +540,7 @@ bool GStreamerVideo::unload() {
 	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) {
 		gst_sample_unref(s);
 	}
+	g_object_set(videoSink_, "sync", FALSE, nullptr);
 
 	// 3) Drop to READY (asynchronously). We don’t block here.
 	gst_element_set_state(playbin_, GST_STATE_READY);
@@ -635,7 +652,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		"emit-signals", FALSE,          // fewer wakeups
 		"max-buffers", 2,              // tiny queue
 		"drop", TRUE,           // drop if we fall behind
-		"sync", TRUE,
+		"sync", FALSE,
 		"enable-last-sample", FALSE,
 		NULL);
 
@@ -903,18 +920,22 @@ GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_dat
 			}
 		}
 	}
-
 	// Stage preroll so first draw can paint ASAP.
-	if (GstSample* old = self->stagedSample_.exchange(prerollSample, std::memory_order_acq_rel)) {
-		gst_sample_unref(old);
-	}
+	//if (GstSample* old = self->stagedSample_.exchange(prerollSample, std::memory_order_acq_rel)) {
+	//	gst_sample_unref(old);
+	//}
 
 	return GST_FLOW_OK;
 }
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
 	auto* self = static_cast<GStreamerVideo*>(user_data);
-	GstSample* newSample = gst_app_sink_try_pull_sample(sink, 0);
+
+	if (!self || self->targetState_ == IVideo::VideoState::None) {
+		return GST_FLOW_OK;
+	}
+	
+	GstSample* newSample = gst_app_sink_pull_sample(sink);
 	if (!newSample) return GST_FLOW_OK;
 
 	// Atomically swap in new sample, drop old
@@ -926,6 +947,7 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data
 }
 
 void GStreamerVideo::createSdlTexture() {
+	if (targetState_ == IVideo::VideoState::None || !playbin_) return;
 	if (width_ <= 0 || height_ <= 0) {
 		LOG_ERROR("GStreamerVideo", "createSdlTexture(): Cannot create texture, target dimensions are invalid: "
 			+ std::to_string(width_) + "x" + std::to_string(height_));
@@ -962,7 +984,7 @@ void GStreamerVideo::createSdlTexture() {
 		videoTexture_ = SDL_CreateTexture(
 			SDL::getRenderer(monitor_),
 			sdlFormat_,
-			SDL_TEXTUREACCESS_STATIC,
+			SDL_TEXTUREACCESS_STREAMING,
 			width_, height_);
 
 		if (!videoTexture_) {
@@ -1076,7 +1098,6 @@ bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFr
 	const int strideU = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
 	const int strideV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 2);
 
-	// Update the texture using the explicit frame rectangle
 	if (SDL_UpdateYUVTexture(texture, nullptr, srcY, strideY, srcU, strideU, srcV, strideV) != 0) {
 		LOG_ERROR("GStreamerVideo", std::string("SDL_UpdateYUVTexture failed: ") + SDL_GetError());
 		return false;
@@ -1196,7 +1217,7 @@ void GStreamerVideo::pause() {
 		return;
 
 	targetState_ = IVideo::VideoState::Paused;
-
+	g_object_set(videoSink_, "sync", FALSE, nullptr);
 	LOG_DEBUG("GStreamerVideo", "Requesting PAUSED for " + currentFile_);
 	if (gst_element_set_state(playbin_, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "Failed to set PAUSED for " + currentFile_);
@@ -1214,7 +1235,7 @@ void GStreamerVideo::resume() {
 		return;
 
 	targetState_ = IVideo::VideoState::Playing;
-
+	g_object_set(videoSink_, "sync", TRUE, nullptr);
 	LOG_DEBUG("GStreamerVideo", "Requesting PLAYING for " + currentFile_);
 	if (gst_element_set_state(playbin_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "Failed to set PLAYING for " + currentFile_);
