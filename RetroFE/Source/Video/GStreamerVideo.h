@@ -85,11 +85,9 @@ public:
     bool hasError() const override {
         return hasError_.load(std::memory_order_acquire);
     }
-    IVideo::VideoState getTargetState() const override { return targetState_; }
-    IVideo::VideoState getActualState() const override { return actualState_; }
-    bool isPipelineReady() const override {
-        return pipeLineReady_;
-    }
+    IVideo::VideoState getTargetState() const override { return targetState_.load(std::memory_order_acquire); }
+    IVideo::VideoState getActualState() const override { return actualState_.load(std::memory_order_acquire); }
+    bool isPipelineReady() const override { return pipeLineReady_.load(std::memory_order_acquire); }
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
 
@@ -100,8 +98,8 @@ private:
     std::atomic<bool> hasError_{ false };              // Set by pad probe, read main
 
     // === Main-thread only ===
-    IVideo::VideoState targetState_{ IVideo::VideoState::None };
-    IVideo::VideoState actualState_{ IVideo::VideoState::None };
+    std::atomic<IVideo::VideoState> targetState_{ IVideo::VideoState::None };
+    std::atomic<IVideo::VideoState> actualState_{ IVideo::VideoState::None };
 
     int width_{ -1 };
     int height_{ -1 };
@@ -116,7 +114,7 @@ private:
     bool softOverlay_;
     int perspectiveCorners_[8]{ 0 };
     bool hasPerspective_{ false };
-    bool pipeLineReady_{ false };
+    std::atomic<bool> pipeLineReady_{ false };
 
     // === GStreamer and SDL resource pointers ===
     GstElement* playbin_{ nullptr };
@@ -139,10 +137,12 @@ private:
 
 
     // === Internal helpers ===
-    struct PadProbeUserdata {
-        GStreamerVideo* videoInstance;
-        uint64_t playSessionId;
+    struct AppsinkCtx {
+        GStreamerVideo* self;
+        uint64_t session;
     };
+    std::unique_ptr<AppsinkCtx> appsinkCtx_;
+
     static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
     static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
     static GstFlowReturn on_new_preroll(GstAppSink* sink, gpointer user_data);

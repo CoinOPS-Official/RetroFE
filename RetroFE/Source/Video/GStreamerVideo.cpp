@@ -163,29 +163,37 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 				// Track state internally
 				switch (newState) {
 					case GST_STATE_PLAYING:
-					video->actualState_ = IVideo::VideoState::Playing;
+					video->actualState_.store(IVideo::VideoState::Playing, std::memory_order_release);
 					break;
 					case GST_STATE_PAUSED:
-					video->actualState_ = IVideo::VideoState::Paused;
+					video->actualState_.store(IVideo::VideoState::Paused, std::memory_order_release);
 					break;
 					case GST_STATE_READY:
 					case GST_STATE_NULL:
 					default:
-					video->actualState_ = IVideo::VideoState::None;
-					video->pipeLineReady_ = false;
+					video->actualState_.store(IVideo::VideoState::None, std::memory_order_release);
+					video->pipeLineReady_.store(false, std::memory_order_release);
 					break;
 				}
 
 				// Only set pipelineReady_ = true if this is the active session
 				if ((newState == GST_STATE_PAUSED || newState == GST_STATE_PLAYING) &&
-					video->targetState_ != IVideo::VideoState::None &&
-					!video->pipeLineReady_) {
-
-					LOG_DEBUG("GStreamerVideo", "busCallback(): pipelineReady_ = true (state reached: " +
-						std::string(gst_element_state_get_name(newState)) +
-						", session: " + std::to_string(currentSession) + ")");
-
-					video->pipeLineReady_ = true;
+					video->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::None)
+				{
+					const auto cur = video->currentPlaySessionId_.load(std::memory_order_acquire);
+					if (cur == currentSession) {
+						bool expected = false;
+						if (video->pipeLineReady_.compare_exchange_strong(
+							expected, true,
+							std::memory_order_release,
+							std::memory_order_relaxed))
+						{
+							LOG_DEBUG("GStreamerVideo",
+								"busCallback(): pipelineReady_ = true (state reached: " +
+								std::string(gst_element_state_get_name(newState)) +
+								", session: " + std::to_string(currentSession) + ")");
+						}
+					}
 				}
 			}
 			break;
@@ -481,7 +489,7 @@ bool GStreamerVideo::stop() {
 	SDL_UnlockMutex(SDL::getMutex());
 
 	// Clean up any final GStreamer-related data
-	GstSample* s = stagedSample_.exchange(nullptr);
+	GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acquire);
 	if (s) gst_sample_unref(s);
 	if (perspective_gva_) {
 		g_value_array_free(perspective_gva_);
@@ -529,6 +537,8 @@ bool GStreamerVideo::unload() {
 	if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
 		GstAppSinkCallbacks empty{};
 		gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &empty, nullptr, nullptr);
+	
+		appsinkCtx_.reset();
 
 		// Drain any queued frames/preroll so draw() won’t paint stale pixels
 		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
@@ -536,7 +546,7 @@ bool GStreamerVideo::unload() {
 	}
 
 	// Also clear anything we staged on our side
-	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) {
+	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acquire)) {
 		gst_sample_unref(s);
 	}
 
@@ -654,6 +664,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	g_object_set(videoSink_,
 		"emit-signals", FALSE,          // fewer wakeups
 		"max-buffers", 2,              // tiny queue
+		"qos", TRUE,
 		"drop", TRUE,           // drop if we fall behind
 		"sync", FALSE,
 		"enable-last-sample", FALSE,
@@ -778,6 +789,8 @@ bool GStreamerVideo::play(const std::string& file) {
 	// This ID is unique across all GStreamerVideo instances and all play attempts.
 	currentPlaySessionId_.store(nextUniquePlaySessionId_++, std::memory_order_release);
 
+	appsinkCtx_ = std::make_unique<AppsinkCtx>(AppsinkCtx{ this, currentPlaySessionId_.load(std::memory_order_acquire) });
+
 	currentFile_ = file;
 
 	// 1. Create the pipeline if we haven’t already
@@ -807,18 +820,12 @@ bool GStreamerVideo::play(const std::string& file) {
 	g_object_set(playbin_, "uri", uriFile, nullptr);
 	g_free(uriFile);
 
-	GstAppSinkCallbacks callbacks = {};
-	callbacks.eos = nullptr; // You can add an EOS handler if you want
-	callbacks.new_preroll = &GStreamerVideo::on_new_preroll; // You can handle preroll if needed
-	callbacks.new_sample = &GStreamerVideo::on_new_sample; // Or just on_new_sample if static
+	GstAppSinkCallbacks cbs{};
+	cbs.new_preroll = &GStreamerVideo::on_new_preroll;
+	cbs.new_sample = &GStreamerVideo::on_new_sample;
+	gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &cbs, appsinkCtx_.get(), nullptr);
 
-	gst_app_sink_set_callbacks(
-		GST_APP_SINK(videoSink_), // your appsink pointer
-		&callbacks,
-		this,     // user_data, e.g., your GStreamerVideo instance
-		nullptr   // GDestroyNotify
-	);
-
+	
 	// Request PAUSED (preroll) asynchronously; do not wait here
 	GstStateChangeReturn scr = gst_element_set_state(playbin_, GST_STATE_PAUSED);
 	targetState_ = IVideo::VideoState::Paused;
@@ -900,14 +907,20 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 }
 
 GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_data) {
-	auto* self = static_cast<GStreamerVideo*>(user_data);
+	auto* ctx = static_cast<AppsinkCtx*>(user_data);
+	auto* self = ctx ? ctx->self : nullptr;
+	if (!self) return GST_FLOW_OK;
+
+	// Drop if session isn't the one that installed these callbacks
+	if (ctx->session != self->currentPlaySessionId_.load(std::memory_order_acquire))
+		return GST_FLOW_OK;
 
 	if (!self || self->targetState_ == IVideo::VideoState::None) {
 		return GST_FLOW_OK;
 	}
 
 	// Pull preroll; this clears appsink's internal preroll ref.
-	GstSample* prerollSample = gst_app_sink_pull_preroll(sink);
+	GstSample* prerollSample = gst_app_sink_try_pull_preroll(sink, 0);
 	if (!prerollSample) return GST_FLOW_OK;
 
 	// Try to extract dimensions immediately from the preroll sample's caps.
@@ -924,28 +937,30 @@ GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_dat
 		}
 	}
 	// Stage preroll so first draw can paint ASAP.
-	//if (GstSample* old = self->stagedSample_.exchange(prerollSample, std::memory_order_acq_rel)) {
-	//	gst_sample_unref(old);
-	//}
-	gst_sample_unref(prerollSample);
+	if (GstSample* old = self->stagedSample_.exchange(prerollSample, std::memory_order_release)) {
+		gst_sample_unref(old);
+	}
+	//gst_sample_unref(prerollSample);
 	return GST_FLOW_OK;
 }
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
-	auto* self = static_cast<GStreamerVideo*>(user_data);
+	auto* ctx = static_cast<AppsinkCtx*>(user_data);
+	auto* self = ctx ? ctx->self : nullptr;
+	if (!self) return GST_FLOW_OK;
 
-	if (!self || self->targetState_ != IVideo::VideoState::Playing) {
+	// Drop if session isn't the one that installed these callbacks
+	if (ctx->session != self->currentPlaySessionId_.load(std::memory_order_acquire))
 		return GST_FLOW_OK;
-	}
 
-	GstSample* newSample = gst_app_sink_try_pull_sample(sink, 0);
-	if (!newSample) return GST_FLOW_OK;
+	if (self->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::Playing)
+		return GST_FLOW_OK;
 
-	// Atomically swap in new sample, drop old
-	GstSample* oldSample = self->stagedSample_.exchange(newSample, std::memory_order_acq_rel);
-	if (oldSample)
-		gst_sample_unref(oldSample);
+	GstSample* s = gst_app_sink_try_pull_sample(sink, 0);
+	if (!s) return GST_FLOW_OK;
 
+	if (GstSample* old = self->stagedSample_.exchange(s, std::memory_order_release))
+		gst_sample_unref(old);
 	return GST_FLOW_OK;
 }
 
@@ -1046,7 +1061,7 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
+	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acquire);
 	if (!sample) return;
 
 	GstBuffer* buf = gst_sample_get_buffer(sample);
