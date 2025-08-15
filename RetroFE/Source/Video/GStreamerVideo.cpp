@@ -551,7 +551,6 @@ bool GStreamerVideo::unload() {
 	}
 
 	g_object_set(videoSink_, "sync", FALSE, nullptr);
-	g_object_set(playbin_, "uri", nullptr, nullptr);
 
 	// 3) Drop to READY (asynchronously). We don’t block here.
 	gst_element_set_state(playbin_, GST_STATE_READY);
