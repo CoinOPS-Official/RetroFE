@@ -256,7 +256,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 gboolean GStreamerVideo::on_dimensions_idle(gpointer user_data) {
 	auto* data = static_cast<DimensionsData*>(user_data);
 	if (!data || !data->video) { delete data; return G_SOURCE_REMOVE; }
-	
+
 	if (data->video->targetState_ == IVideo::VideoState::None ||
 		data->video->playbin_ == nullptr) {
 		delete data;
@@ -525,11 +525,10 @@ bool GStreamerVideo::unload() {
 	texture_ = nullptr;
 	SDL_UnlockMutex(SDL::getMutex());
 
-	// 2) Quiesce appsink so nothing else calls back while we switch
+	// THEN safely clear callbacks
 	if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
 		GstAppSinkCallbacks empty{};
 		gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &empty, nullptr, nullptr);
-		gst_app_sink_set_emit_signals(GST_APP_SINK(videoSink_), FALSE);
 
 		// Drain any queued frames/preroll so draw() won’t paint stale pixels
 		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
@@ -540,10 +539,14 @@ bool GStreamerVideo::unload() {
 	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) {
 		gst_sample_unref(s);
 	}
+
 	g_object_set(videoSink_, "sync", FALSE, nullptr);
+	g_object_set(playbin_, "uri", nullptr, nullptr);
 
 	// 3) Drop to READY (asynchronously). We don’t block here.
 	gst_element_set_state(playbin_, GST_STATE_READY);
+
+
 
 	// 4) Local bookkeeping for the next play()
 	currentFile_ = "[unloading]";
@@ -924,18 +927,18 @@ GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_dat
 	//if (GstSample* old = self->stagedSample_.exchange(prerollSample, std::memory_order_acq_rel)) {
 	//	gst_sample_unref(old);
 	//}
-
+	gst_sample_unref(prerollSample);
 	return GST_FLOW_OK;
 }
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
 	auto* self = static_cast<GStreamerVideo*>(user_data);
 
-	if (!self || self->targetState_ == IVideo::VideoState::None) {
+	if (!self || self->targetState_ != IVideo::VideoState::Playing) {
 		return GST_FLOW_OK;
 	}
-	
-	GstSample* newSample = gst_app_sink_pull_sample(sink);
+
+	GstSample* newSample = gst_app_sink_try_pull_sample(sink, 0);
 	if (!newSample) return GST_FLOW_OK;
 
 	// Atomically swap in new sample, drop old
@@ -947,6 +950,7 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data
 }
 
 void GStreamerVideo::createSdlTexture() {
+	SDL_LockMutex(SDL::getMutex()); // Lock the SDL mutex for texture operations
 	if (targetState_ == IVideo::VideoState::None || !playbin_) return;
 	if (width_ <= 0 || height_ <= 0) {
 		LOG_ERROR("GStreamerVideo", "createSdlTexture(): Cannot create texture, target dimensions are invalid: "
@@ -996,6 +1000,7 @@ void GStreamerVideo::createSdlTexture() {
 		SDL_BlendMode blendMode = softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND;
 		SDL_SetTextureBlendMode(videoTexture_, blendMode);
 	}
+	SDL_UnlockMutex(SDL::getMutex()); // Unlock the SDL mutex after texture operations
 }
 
 void GStreamerVideo::volumeUpdate() {
@@ -1032,7 +1037,6 @@ void GStreamerVideo::volumeUpdate() {
 	}
 }
 
-
 int GStreamerVideo::getHeight() {
 	return height_;
 }
@@ -1042,50 +1046,44 @@ int GStreamerVideo::getWidth() {
 }
 
 void GStreamerVideo::draw() {
-
 	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
 	if (!sample) return;
 
-	// Now, lock the SDL mutex before touching any SDL textures
-	SDL_LockMutex(SDL::getMutex());
-
-	if (!videoTexture_) {
-		// If the texture doesn't exist, we can't draw.
-		// Clean up the sample and release the mutex.
-		gst_sample_unref(sample);
-		SDL_UnlockMutex(SDL::getMutex());
-		return;
-	}
-
 	GstBuffer* buf = gst_sample_get_buffer(sample);
-	if (!buf) { gst_sample_unref(sample); SDL_UnlockMutex(SDL::getMutex()); return; }
-
 	const GstCaps* caps = gst_sample_get_caps(sample);
-	if (!caps) { gst_sample_unref(sample); SDL_UnlockMutex(SDL::getMutex()); return; }
+	if (!buf || !caps) { gst_sample_unref(sample); return; }
 
 	GstVideoInfo info;
-	if (!gst_video_info_from_caps(&info, caps)) { gst_sample_unref(sample); SDL_UnlockMutex(SDL::getMutex()); return; }
+	if (!gst_video_info_from_caps(&info, caps)) { gst_sample_unref(sample); return; }
 
 	GstVideoFrame frame;
 	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
 		gst_sample_unref(sample);
-		SDL_UnlockMutex(SDL::getMutex());
 		return;
 	}
 
-	bool success = updateTextureFunc_(videoTexture_, &frame);
-	if (success && !texture_)
-		texture_ = videoTexture_;
+	// Only now touch SDL
+	SDL_LockMutex(SDL::getMutex());
 
-	if (!success) {
+	if (!videoTexture_) {
+		SDL_UnlockMutex(SDL::getMutex());
+		gst_video_frame_unmap(&frame);
+		gst_sample_unref(sample);
+		return;
+	}
+
+	bool ok = updateTextureFunc_(videoTexture_, &frame);
+	if (ok && !texture_) texture_ = videoTexture_;
+	if (!ok) {
 		LOG_ERROR("GStreamerVideo::draw", "Texture update failed for " + currentFile_);
 		texture_ = nullptr;
 	}
 
 	SDL_UnlockMutex(SDL::getMutex());
 
+	// Unmap after texture update completes (no SDL held here)
 	gst_video_frame_unmap(&frame);
-	gst_sample_unref(sample); // We're done with this frame.
+	gst_sample_unref(sample);
 }
 
 bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) const {
