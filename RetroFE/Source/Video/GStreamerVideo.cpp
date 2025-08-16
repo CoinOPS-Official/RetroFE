@@ -146,53 +146,60 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 	}
 
 	switch (GST_MESSAGE_TYPE(msg)) {
+		case GST_MESSAGE_ASYNC_START: {
+			// Any state transition (or flushing seek) kicked off
+			video->pipeLineReady_.store(false, std::memory_order_release);
+			//if (video->videoSink_) g_object_set(video->videoSink_, "sync", FALSE, NULL);
+			break;
+		}
+
 		case GST_MESSAGE_STATE_CHANGED: {
 			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
-				GstState oldState, newState, pending;
-				gst_message_parse_state_changed(msg, &oldState, &newState, &pending);
+				GstState oldS, newS, pending;
+				gst_message_parse_state_changed(msg, &oldS, &newS, &pending);
 
-				uint64_t currentSession = video->currentPlaySessionId_.load();
-
-				// Log state transition
-				LOG_DEBUG("GStreamerVideo", "busCallback(): State changed: " +
-					std::string(gst_element_state_get_name(oldState)) + " -> " +
-					std::string(gst_element_state_get_name(newState)) +
-					(pending == GST_STATE_VOID_PENDING ? "" : " (pending: " + std::string(gst_element_state_get_name(pending)) + ")") +
-					" for " + video->currentFile_ + " (Session: " + std::to_string(currentSession) + ")");
-
-				// Track state internally
-				switch (newState) {
-					case GST_STATE_PLAYING:
-					video->actualState_.store(IVideo::VideoState::Playing, std::memory_order_release);
-					break;
-					case GST_STATE_PAUSED:
-					video->actualState_.store(IVideo::VideoState::Paused, std::memory_order_release);
-					break;
-					case GST_STATE_READY:
-					case GST_STATE_NULL:
-					default:
-					video->actualState_.store(IVideo::VideoState::None, std::memory_order_release);
-					video->pipeLineReady_.store(false, std::memory_order_release);
-					break;
-				}
-
-				// Only set pipelineReady_ = true if this is the active session
-				if ((newState == GST_STATE_PAUSED || newState == GST_STATE_PLAYING) &&
-					video->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::None)
-				{
-					const auto cur = video->currentPlaySessionId_.load(std::memory_order_acquire);
-					if (cur == currentSession) {
-						bool expected = false;
-						if (video->pipeLineReady_.compare_exchange_strong(
-							expected, true,
-							std::memory_order_release,
-							std::memory_order_relaxed))
-						{
-							LOG_DEBUG("GStreamerVideo",
-								"busCallback(): pipelineReady_ = true (state reached: " +
-								std::string(gst_element_state_get_name(newState)) +
-								", session: " + std::to_string(currentSession) + ")");
+				// Only publish a settled state
+				if (pending == GST_STATE_VOID_PENDING) {
+					switch (newS) {
+						case GST_STATE_PLAYING:
+						video->actualState_.store(IVideo::VideoState::Playing, std::memory_order_release);
+						if (video->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::None) {
+							bool expected = false;
+							(void)video->pipeLineReady_.compare_exchange_strong(expected, true,
+								std::memory_order_release, std::memory_order_relaxed);
+							//if (video->videoSink_) g_object_set(video->videoSink_, "sync", TRUE, NULL);
 						}
+						break;
+						case GST_STATE_PAUSED:
+						video->actualState_.store(IVideo::VideoState::Paused, std::memory_order_release);
+						if (video->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::None) {
+							bool expected = false;
+							(void)video->pipeLineReady_.compare_exchange_strong(expected, true,
+								std::memory_order_release, std::memory_order_relaxed);
+						}
+						break;
+						default:
+						video->actualState_.store(IVideo::VideoState::None, std::memory_order_release);
+						video->pipeLineReady_.store(false, std::memory_order_release);
+						//if (video->videoSink_) g_object_set(video->videoSink_, "sync", FALSE, NULL);
+						break;
+					}
+				}
+			}
+			break;
+		}
+
+		case GST_MESSAGE_ASYNC_DONE: {
+			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_) &&
+				video->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::None) {
+
+				// Check that we're actually in a usable state
+				GstState current, pending;
+				if (gst_element_get_state(video->playbin_, &current, &pending, 0) == GST_STATE_CHANGE_SUCCESS) {
+					if (current == GST_STATE_PAUSED || current == GST_STATE_PLAYING) {
+						bool expected = false;
+						(void)video->pipeLineReady_.compare_exchange_strong(expected, true,
+							std::memory_order_release, std::memory_order_relaxed);
 					}
 				}
 			}
@@ -550,7 +557,7 @@ bool GStreamerVideo::unload() {
 		gst_sample_unref(s);
 	}
 
-	g_object_set(videoSink_, "sync", FALSE, nullptr);
+	//g_object_set(videoSink_, "sync", FALSE, nullptr);
 
 	// 3) Drop to READY (asynchronously). We don’t block here.
 	gst_element_set_state(playbin_, GST_STATE_READY);
@@ -665,7 +672,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		"max-buffers", 2,              // tiny queue
 		"qos", TRUE,
 		"drop", TRUE,           // drop if we fall behind
-		"sync", FALSE,
+		"sync", TRUE,
 		"enable-last-sample", FALSE,
 		NULL);
 
@@ -784,6 +791,24 @@ bool GStreamerVideo::play(const std::string& file) {
 		return false;
 	}
 
+	if (playbin_) {
+		LOG_DEBUG("GStreamerVideo", "Synchronizing pipeline state before play: " + file);
+		constexpr GstClockTime syncTimeout = 2 * GST_SECOND;
+		GstStateChangeReturn syncRet = gst_element_get_state(playbin_, nullptr, nullptr, syncTimeout);
+
+		if (syncRet == GST_STATE_CHANGE_ASYNC) {
+			LOG_WARNING("GStreamerVideo", "Previous state change still pending after 2s, forcing abort for: " + file);
+			// Force a hard reset rather than risk deadlock
+			gst_element_set_state(playbin_, GST_STATE_NULL);
+			gst_element_get_state(playbin_, nullptr, nullptr, GST_SECOND);
+		}
+		else if (syncRet == GST_STATE_CHANGE_FAILURE) {
+			LOG_ERROR("GStreamerVideo", "Pipeline in failed state, resetting for: " + file);
+			gst_element_set_state(playbin_, GST_STATE_NULL);
+			gst_element_get_state(playbin_, nullptr, nullptr, GST_SECOND);
+		}
+	}
+
 	// Atomically increment and assign a new unique session ID for this play attempt.
 	// This ID is unique across all GStreamerVideo instances and all play attempts.
 	currentPlaySessionId_.store(nextUniquePlaySessionId_++, std::memory_order_release);
@@ -870,31 +895,54 @@ bool GStreamerVideo::play(const std::string& file) {
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 	GstElement* element,
 	[[maybe_unused]] gpointer data) {
-	const gchar* name = gst_element_get_name(element);
-
-	auto has_prop = [](GstElement* e, const char* p) {
+	auto has_prop = [](GstElement* e, const char* p) -> bool {
 		return g_object_class_find_property(G_OBJECT_GET_CLASS(e), p) != nullptr;
 		};
 
-	// ---- Tune multiqueue to reduce CPU churn ----
-	if (g_str_has_prefix(name, "multiqueue")) {
-		if (has_prop(element, "max-size-buffers")) g_object_set(element, "max-size-buffers", 2, NULL);
-		if (has_prop(element, "max-size-bytes"))   g_object_set(element, "max-size-bytes", (guint64)0, NULL);
-		if (has_prop(element, "max-size-time"))    g_object_set(element, "max-size-time", (guint64)0, NULL);
-		if (has_prop(element, "low-percent"))      g_object_set(element, "low-percent", 5, NULL);
-		if (has_prop(element, "high-percent"))     g_object_set(element, "high-percent", 25, NULL);
+	const GstElementFactory* fac = gst_element_get_factory(element);
+	const gchar* fac_name = fac ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(fac)) : nullptr;
+
+	// Fallback: use the type name if factory name not available
+	const gchar* type_name = !fac_name ? G_OBJECT_TYPE_NAME(element) : nullptr;
+
+	auto is_factory = [&](const char* n) -> bool {
+		return (fac_name && g_strcmp0(fac_name, n) == 0) ||
+			(type_name && g_str_has_suffix(type_name, n));
+		};
+
+	// ---- multiqueue (playsink fanout) ----
+	if (is_factory("multiqueue")) {
+		if (has_prop(element, "max-size-buffers"))
+			g_object_set(element, "max-size-buffers", 0, nullptr); // let time govern
+		if (has_prop(element, "max-size-time"))
+			g_object_set(element, "max-size-time", (guint64)(2 * GST_SECOND), nullptr);
+		if (has_prop(element, "max-size-bytes"))
+			g_object_set(element, "max-size-bytes", (guint64)0, nullptr);
+		if (has_prop(element, "leaky"))
+			g_object_set(element, "leaky", 2 /* DOWNSTREAM */, nullptr);
+		if (has_prop(element, "low-percent"))
+			g_object_set(element, "low-percent", 5, nullptr);
+		if (has_prop(element, "high-percent"))
+			g_object_set(element, "high-percent", 25, nullptr);
 		if (has_prop(element, "sync-by-running-time"))
-			g_object_set(element, "sync-by-running-time", TRUE, NULL);
+			g_object_set(element, "sync-by-running-time", TRUE, nullptr);
 	}
 
-	// ---- Tune plain queues (if present) ----
-	if (g_str_has_prefix(name, "queue")) {
-		if (has_prop(element, "max-size-buffers")) g_object_set(element, "max-size-buffers", 2, NULL);
-		if (has_prop(element, "leaky"))            g_object_set(element, "leaky", 2 /*DOWNSTREAM*/, NULL);
-		if (has_prop(element, "silent"))           g_object_set(element, "silent", TRUE, NULL);
+	// ---- queue / queue2 (covers vqueue*/aqueue*) ----
+	if (is_factory("queue") || is_factory("queue2")) {
+		if (has_prop(element, "max-size-buffers"))
+			g_object_set(element, "max-size-buffers", 0, nullptr);
+		if (has_prop(element, "max-size-time"))
+			g_object_set(element, "max-size-time", (guint64)(2 * GST_SECOND), nullptr);
+		if (has_prop(element, "max-size-bytes"))
+			g_object_set(element, "max-size-bytes", (guint64)0, nullptr);
+		if (has_prop(element, "leaky"))
+			//g_object_set(element, "leaky", 2 /* DOWNSTREAM */, nullptr);
+		if (has_prop(element, "silent"))
+			g_object_set(element, "silent", TRUE, nullptr);
 	}
 
-	// ---- Video decoder settings ----
+	// ---- software video decoder tuning ----
 	if (!Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element)) {
 		g_object_set(element,
 			"thread-type", Configuration::AvdecThreadType,
@@ -904,6 +952,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 			nullptr);
 	}
 }
+
 
 GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_data) {
 	auto* ctx = static_cast<AppsinkCtx*>(user_data);
@@ -1229,7 +1278,7 @@ void GStreamerVideo::pause() {
 		return;
 
 	targetState_ = IVideo::VideoState::Paused;
-	g_object_set(videoSink_, "sync", FALSE, nullptr);
+	//g_object_set(videoSink_, "sync", FALSE, nullptr);
 	LOG_DEBUG("GStreamerVideo", "Requesting PAUSED for " + currentFile_);
 	if (gst_element_set_state(playbin_, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "Failed to set PAUSED for " + currentFile_);
@@ -1247,7 +1296,7 @@ void GStreamerVideo::resume() {
 		return;
 
 	targetState_ = IVideo::VideoState::Playing;
-	g_object_set(videoSink_, "sync", TRUE, nullptr);
+	//g_object_set(videoSink_, "sync", TRUE, nullptr);
 	LOG_DEBUG("GStreamerVideo", "Requesting PLAYING for " + currentFile_);
 	if (gst_element_set_state(playbin_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "Failed to set PLAYING for " + currentFile_);
