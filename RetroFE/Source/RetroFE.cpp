@@ -711,12 +711,12 @@ bool RetroFE::run() {
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) input_.update(e);
 		input_.updateKeystate(); // once per frame, AFTER consuming events, BEFORE processUserInput()
-
-		RETROFE_STATE inputState = processUserInput(currentPage_);
-		if (inputState != RETROFE_IDLE) {
-			setState(inputState); // User input overrides the current state transition.
+		if (!splashMode) {
+			RETROFE_STATE inputState = processUserInput(currentPage_);
+			if (inputState != RETROFE_IDLE) {
+				setState(inputState); // User input overrides the current state transition.
+			}
 		}
-		
 		if (nextFrameTime < nowMs_loopStart) {
 			nextFrameTime = nowMs_loopStart;
 		}
@@ -2232,7 +2232,7 @@ bool RetroFE::run() {
 			}
 
 
-			// Go back a page; start onMenuExit animation
+									// Go back a page; start onMenuExit animation
 			case RETROFE_BACK_REQUEST:
 			if (currentPage_ && currentPage_->getMenuDepth() == 1)
 			{
