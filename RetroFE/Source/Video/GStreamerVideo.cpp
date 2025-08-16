@@ -895,54 +895,31 @@ bool GStreamerVideo::play(const std::string& file) {
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 	GstElement* element,
 	[[maybe_unused]] gpointer data) {
-	auto has_prop = [](GstElement* e, const char* p) -> bool {
+	const gchar* name = gst_element_get_name(element);
+
+	auto has_prop = [](GstElement* e, const char* p) {
 		return g_object_class_find_property(G_OBJECT_GET_CLASS(e), p) != nullptr;
 		};
 
-	const GstElementFactory* fac = gst_element_get_factory(element);
-	const gchar* fac_name = fac ? gst_plugin_feature_get_name(GST_PLUGIN_FEATURE(fac)) : nullptr;
-
-	// Fallback: use the type name if factory name not available
-	const gchar* type_name = !fac_name ? G_OBJECT_TYPE_NAME(element) : nullptr;
-
-	auto is_factory = [&](const char* n) -> bool {
-		return (fac_name && g_strcmp0(fac_name, n) == 0) ||
-			(type_name && g_str_has_suffix(type_name, n));
-		};
-
-	// ---- multiqueue (playsink fanout) ----
-	if (is_factory("multiqueue")) {
-		if (has_prop(element, "max-size-buffers"))
-			g_object_set(element, "max-size-buffers", 0, nullptr); // let time govern
-		if (has_prop(element, "max-size-time"))
-			g_object_set(element, "max-size-time", (guint64)(2 * GST_SECOND), nullptr);
-		if (has_prop(element, "max-size-bytes"))
-			g_object_set(element, "max-size-bytes", (guint64)0, nullptr);
-		if (has_prop(element, "leaky"))
-			g_object_set(element, "leaky", 2 /* DOWNSTREAM */, nullptr);
-		if (has_prop(element, "low-percent"))
-			g_object_set(element, "low-percent", 5, nullptr);
-		if (has_prop(element, "high-percent"))
-			g_object_set(element, "high-percent", 25, nullptr);
+	// ---- Tune multiqueue to reduce CPU churn ----
+	if (g_str_has_prefix(name, "multiqueue")) {
+		if (has_prop(element, "max-size-buffers")) g_object_set(element, "max-size-buffers", 2, NULL);
+		if (has_prop(element, "max-size-bytes"))   g_object_set(element, "max-size-bytes", (guint64)0, NULL);
+		if (has_prop(element, "max-size-time"))    g_object_set(element, "max-size-time", (guint64)0, NULL);
+		if (has_prop(element, "low-percent"))      g_object_set(element, "low-percent", 5, NULL);
+		if (has_prop(element, "high-percent"))     g_object_set(element, "high-percent", 25, NULL);
 		if (has_prop(element, "sync-by-running-time"))
-			g_object_set(element, "sync-by-running-time", TRUE, nullptr);
+			g_object_set(element, "sync-by-running-time", TRUE, NULL);
 	}
 
-	// ---- queue / queue2 (covers vqueue*/aqueue*) ----
-	if (is_factory("queue") || is_factory("queue2")) {
-		if (has_prop(element, "max-size-buffers"))
-			g_object_set(element, "max-size-buffers", 0, nullptr);
-		if (has_prop(element, "max-size-time"))
-			g_object_set(element, "max-size-time", (guint64)(2 * GST_SECOND), nullptr);
-		if (has_prop(element, "max-size-bytes"))
-			g_object_set(element, "max-size-bytes", (guint64)0, nullptr);
-		if (has_prop(element, "leaky"))
-			//g_object_set(element, "leaky", 2 /* DOWNSTREAM */, nullptr);
-		if (has_prop(element, "silent"))
-			g_object_set(element, "silent", TRUE, nullptr);
+	// ---- Tune plain queues (if present) ----
+	if (g_str_has_prefix(name, "queue")) {
+		if (has_prop(element, "max-size-buffers")) g_object_set(element, "max-size-buffers", 2, NULL);
+		if (has_prop(element, "leaky"))            g_object_set(element, "leaky", 2 /*DOWNSTREAM*/, NULL);
+		if (has_prop(element, "silent"))           g_object_set(element, "silent", TRUE, NULL);
 	}
 
-	// ---- software video decoder tuning ----
+	// ---- Video decoder settings ----
 	if (!Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element)) {
 		g_object_set(element,
 			"thread-type", Configuration::AvdecThreadType,
