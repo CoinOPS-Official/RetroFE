@@ -418,31 +418,28 @@ bool SDL::initialize(Configuration& config) {
 			}
 			else
 			{
+				// ensure vector sized once before the per-screen loop (or here; harmless)
 				renderTargets_.resize(screenCount_);
 
-				for (int logicalScreen = 0; logicalScreen < screenCount_; ++logicalScreen) {
+				// Create the ring for THIS logicalScreen
+				{
 					SDL_Renderer* r = renderer_[logicalScreen];
 					if (!r) return false;
 
-					int w = windowWidth_[logicalScreen];
-					int h = windowHeight_[logicalScreen];
+					const int w = windowWidth_[logicalScreen];
+					const int h = windowHeight_[logicalScreen];
 
 					auto& ring = renderTargets_[logicalScreen];
+					ring.ringCount = 2;         // or 3
+					ring.writeIdx = 0;
 					ring.width = w; ring.height = h;
-					ring.ringCount = 2;         // set to 3 if you want triple buffering
 
 					for (int i = 0; i < ring.ringCount; ++i) {
-						SDL_Texture* t = SDL_CreateTexture(
-							r,
-							SDL_PIXELFORMAT_RGBA32,           // OK alias for RGBA8888
-							SDL_TEXTUREACCESS_TARGET,
-							w, h);
-						if (!t) {
-							LOG_ERROR("SDL", std::string("Create render target texture failed: ") + SDL_GetError());
-							return false;
-						}
+						SDL_Texture* t = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA32,
+							SDL_TEXTUREACCESS_TARGET, w, h);
+						if (!t) { /* log+return false */ }
 						SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
-						SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest); // or Linear if you prefer
+						SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
 						ring.rt[i] = t;
 					}
 				}
@@ -543,11 +540,10 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 
 	// Destroy render target textures
 	for (auto& ring : renderTargets_) {
-		for (int i = 0; i < 3; ++i) {
-			if (ring.rt[i]) { SDL_DestroyTexture(ring.rt[i]); ring.rt[i] = nullptr; }
+		for (auto& t : ring.rt) {
+			if (t) { SDL_DestroyTexture(t); t = nullptr; }
 		}
 	}
-	renderTargets_.clear();
 
 	// Destroy renderers and windows
 	for (auto renderer : renderer_)
@@ -639,11 +635,9 @@ SDL_Window* SDL::getWindow(int index) {
 SDL_Texture* SDL::getRenderTarget(int index) {
 	if (renderTargets_.empty()) return nullptr;
 	int i = (index < screenCount_) ? index : 0;
-	auto& ring = renderTargets_[i];
-	return ring.rt[ring.writeIdx];
+	return renderTargets_[i].rt[renderTargets_[i].writeIdx];
 }
 
-// call after presenting that monitor to advance the ring
 void SDL::advanceRenderTarget(int index) {
 	if (renderTargets_.empty()) return;
 	int i = (index < screenCount_) ? index : 0;

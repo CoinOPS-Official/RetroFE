@@ -20,6 +20,7 @@
 #include <string>
 #include "Graphics/ViewInfo.h"
 #include <vector>
+#include <array>
 
 
 class Configuration;
@@ -86,7 +87,7 @@ private:
     static int                         numDisplays_;
 	static int                         screenCount_;
     struct MonitorRT {
-        SDL_Texture* rt[3] = { nullptr, nullptr, nullptr };
+        std::array<SDL_Texture*, 2> rt{};
         int ringCount = 2;
         int writeIdx = 0;
         int width = 0, height = 0;
