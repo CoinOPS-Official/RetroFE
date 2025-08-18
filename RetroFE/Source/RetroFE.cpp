@@ -128,43 +128,36 @@ void RetroFE::render() {
 
 	uint64_t r_startTicks = SDL_GetPerformanceCounter(); // 'r_' prefix for render-specific
 
-	// --- 1. Clear render targets ---
+	// --- 1. Clear render targets & draw ---
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
-		SDL_Renderer* currentRenderer = SDL::getRenderer(i);
-		SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
-		if (!currentRenderer || !currentRenderTarget) continue;
+		SDL_Renderer* rr = SDL::getRenderer(i);
+		SDL_Texture* rt = SDL::getRenderTarget(i);    // now returns ring[writeIdx]
+		if (!rr || !rt) continue;
 
-		SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
-		SDL_SetRenderDrawColor(currentRenderer, 0, 0, 0, 255);
-		SDL_RenderClear(currentRenderer);
-	}
+		SDL_SetRenderTarget(rr, rt);
+		SDL_SetRenderDrawColor(rr, 0, 0, 0, 255);
+		SDL_RenderClear(rr);
 
-	// --- 2. Draw main content and overlay ---
-	if (currentPage_) {
-		for (int i = 0; i < SDL::getScreenCount(); ++i) {
-			SDL_Renderer* currentRenderer = SDL::getRenderer(i);
-			SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
-			if (!currentRenderer || !currentRenderTarget) continue;
+		if (currentPage_) currentPage_->draw(i);
 
-			SDL_SetRenderTarget(currentRenderer, currentRenderTarget);
-			currentPage_->draw(i);
-
-			if (showFps_ && i == 0 && fpsOverlayTexture_) {
-				SDL_Rect dst = { 20, 20, fpsOverlayW_, fpsOverlayH_ };
-				SDL_RenderCopy(currentRenderer, fpsOverlayTexture_, nullptr, &dst);
-			}
+		if (showFps_ && i == 0 && fpsOverlayTexture_) {
+			SDL_Rect dst = { 20, 20, fpsOverlayW_, fpsOverlayH_ };
+			SDL_RenderCopy(rr, fpsOverlayTexture_, nullptr, &dst);
 		}
 	}
 
-	// --- 3. Present to screens ---
+	// --- 2. Blit to backbuffer & present ---
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
-		SDL_Renderer* currentRenderer = SDL::getRenderer(i);
-		SDL_Texture* currentRenderTarget = SDL::getRenderTarget(i);
-		if (!currentRenderer || !currentRenderTarget) continue;
+		SDL_Renderer* rr = SDL::getRenderer(i);
+		SDL_Texture* rt = SDL::getRenderTarget(i); // same index we just rendered into
+		if (!rr || !rt) continue;
 
-		SDL_SetRenderTarget(currentRenderer, nullptr);
-		SDL_RenderCopy(currentRenderer, currentRenderTarget, nullptr, nullptr);
-		SDL_RenderPresent(currentRenderer); // Blocks if VSync is on
+		SDL_SetRenderTarget(rr, nullptr);
+		SDL_RenderCopy(rr, rt, nullptr, nullptr);
+		SDL_RenderPresent(rr);
+
+		// flip AFTER present so the just-used texture gets a whole frame to “cool down”
+		SDL::advanceRenderTarget(i);
 	}
 
 	// --- 4. Timing for THIS render() call ---

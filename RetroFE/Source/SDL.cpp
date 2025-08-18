@@ -30,7 +30,7 @@
 
 std::vector<SDL_Window*>    SDL::window_;
 std::vector<SDL_Renderer*>  SDL::renderer_;
-std::vector<SDL_Texture*>   SDL::renderTargets_;
+std::vector<SDL::MonitorRT> SDL::renderTargets_;
 SDL_mutex* SDL::mutex_ = nullptr;
 std::vector<int>            SDL::displayWidth_;
 std::vector<int>            SDL::displayHeight_;
@@ -418,22 +418,34 @@ bool SDL::initialize(Configuration& config) {
 			}
 			else
 			{
-				// Create a render target texture for this screen
-				SDL_Texture* renderTarget = SDL_CreateTexture(renderer_[logicalScreen],
-					SDL_PIXELFORMAT_RGBA32,
-					SDL_TEXTUREACCESS_TARGET,
-					windowWidth_[logicalScreen],
-					windowHeight_[logicalScreen]);
+				renderTargets_.resize(screenCount_);
 
-				if (renderTarget == NULL)
-				{
-					std::string error = SDL_GetError();
-					LOG_ERROR("SDL", "Create render target texture failed: " + error);
-					return false;
+				for (int logicalScreen = 0; logicalScreen < screenCount_; ++logicalScreen) {
+					SDL_Renderer* r = renderer_[logicalScreen];
+					if (!r) return false;
+
+					int w = windowWidth_[logicalScreen];
+					int h = windowHeight_[logicalScreen];
+
+					auto& ring = renderTargets_[logicalScreen];
+					ring.width = w; ring.height = h;
+					ring.ringCount = 2;         // set to 3 if you want triple buffering
+
+					for (int i = 0; i < ring.ringCount; ++i) {
+						SDL_Texture* t = SDL_CreateTexture(
+							r,
+							SDL_PIXELFORMAT_RGBA32,           // OK alias for RGBA8888
+							SDL_TEXTUREACCESS_TARGET,
+							w, h);
+						if (!t) {
+							LOG_ERROR("SDL", std::string("Create render target texture failed: ") + SDL_GetError());
+							return false;
+						}
+						SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
+						SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest); // or Linear if you prefer
+						ring.rt[i] = t;
+					}
 				}
-
-				// Store the render target texture
-				renderTargets_.push_back(renderTarget);
 
 				SDL_RendererInfo info;
 				if (SDL_GetRendererInfo(renderer_[logicalScreen], &info) == 0)
@@ -530,9 +542,10 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	}
 
 	// Destroy render target textures
-	for (auto texture : renderTargets_)
-	{
-		if (texture) SDL_DestroyTexture(texture);
+	for (auto& ring : renderTargets_) {
+		for (int i = 0; i < 3; ++i) {
+			if (ring.rt[i]) { SDL_DestroyTexture(ring.rt[i]); ring.rt[i] = nullptr; }
+		}
 	}
 	renderTargets_.clear();
 
@@ -622,12 +635,20 @@ SDL_Window* SDL::getWindow(int index) {
 	return (index < screenCount_ ? window_[index] : window_[0]);
 }
 
-SDL_Texture* SDL::getRenderTarget(int index)
-{
-	if (renderTargets_.empty()) {
-		return nullptr;
-	}
-	return (index < screenCount_ ? renderTargets_[index] : renderTargets_[0]);
+// current target to render into for this frame
+SDL_Texture* SDL::getRenderTarget(int index) {
+	if (renderTargets_.empty()) return nullptr;
+	int i = (index < screenCount_) ? index : 0;
+	auto& ring = renderTargets_[i];
+	return ring.rt[ring.writeIdx];
+}
+
+// call after presenting that monitor to advance the ring
+void SDL::advanceRenderTarget(int index) {
+	if (renderTargets_.empty()) return;
+	int i = (index < screenCount_) ? index : 0;
+	auto& ring = renderTargets_[i];
+	ring.writeIdx = (ring.writeIdx + 1) % ring.ringCount;
 }
 
 // Render a copy of a texture
