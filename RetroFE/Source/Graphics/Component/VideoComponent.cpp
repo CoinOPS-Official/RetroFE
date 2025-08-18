@@ -55,102 +55,130 @@ VideoComponent::~VideoComponent() {
 }
 
 bool VideoComponent::update(float dt) {
-	if (!videoInst_ || !currentPage_ || !instanceReady_)
-		return Component::update(dt);
+    if (!videoInst_ || !currentPage_ || !instanceReady_)
+        return Component::update(dt);
 
-	if (!videoInst_->isPipelineReady())
-		return Component::update(dt);
+    if (!videoInst_->isPipelineReady())
+        return Component::update(dt);
 
-	if (videoInst_->hasError()) { // New check
-		LOG_WARNING("VideoComponent", "Update: GStreamerVideo instance for " + videoFile_ +
-			" has an error. Halting further video operations for this component.");
-		// The pool will handle the faulty instance upon its release.
-		return Component::update(dt);
-	}
+    if (videoInst_->hasError()) {
+        LOG_WARNING("VideoComponent", "Update: GStreamerVideo instance for " + videoFile_ +
+            " has an error. Halting further video operations for this component.");
+        return Component::update(dt);
+    }
 
-	if (!dimensionsUpdated_) {
-		if (videoInst_->getWidth() > 0 && videoInst_->getHeight() > 0) {
-			baseViewInfo.ImageWidth = static_cast<float>(videoInst_->getWidth());
-			baseViewInfo.ImageHeight = static_cast<float>(videoInst_->getHeight());
-			dimensionsUpdated_ = true;
-			LOG_DEBUG("VideoComponent", "Video dimensions ready: " +
-				std::to_string(videoInst_->getWidth()) + "x" +
-				std::to_string(videoInst_->getHeight()) + " for " + videoFile_);
-		}
-		else {
-			return Component::update(dt);
-		}
-	}
+    // Dimensions once available
+    if (!dimensionsUpdated_) {
+        const int w = videoInst_->getWidth(), h = videoInst_->getHeight();
+        if (w <= 0 || h <= 0) return Component::update(dt);
+        baseViewInfo.ImageWidth = static_cast<float>(w);
+        baseViewInfo.ImageHeight = static_cast<float>(h);
+        dimensionsUpdated_ = true;
+        LOG_DEBUG("VideoComponent", "Video dimensions ready: " +
+            std::to_string(w) + "x" + std::to_string(h) + " for " + videoFile_);
+    }
 
-	if (currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0) {
-		if (videoInst_->getTargetState() != IVideo::VideoState::Paused &&
-			videoInst_->getActualState() != IVideo::VideoState::Paused) {
-			videoInst_->pause();
-		}
-		return Component::update(dt);
-	}
+    // Volume
+    videoInst_->setVolume(baseViewInfo.Volume);
+    if (!currentPage_->isMenuScrolling())
+        videoInst_->volumeUpdate();
 
-	if (currentPage_->isMenuFastScrolling()) {
-		// Always ensure video is playing during fast scroll
-		if (videoInst_->getTargetState() != IVideo::VideoState::Playing &&
-			videoInst_->getActualState() != IVideo::VideoState::Playing) {
-			videoInst_->resume();
-			LOG_DEBUG("VideoComponent", "Force-resume during fast scroll: " + videoFile_);
-		}
-		// No restart logic here, as we want the video to continue playing
-		if (baseViewInfo.Restart) {
-			baseViewInfo.Restart = false;
-			LOG_DEBUG("VideoComponent", "Restarted (fast scroll) " + Utils::getFileName(videoFile_));
-		}
-		return Component::update(dt);
-	}
+    // Snapshot state (needed before fast-scroll branch)
+    const auto actual = videoInst_->getActualState();
+    const auto target = videoInst_->getTargetState();
+    const bool inFlight = (target != actual);
 
-	videoInst_->setVolume(baseViewInfo.Volume);
+    // Hard rule: if game launched on primary monitor -> pause and return
+    if (currentPage_->getIsLaunched() && baseViewInfo.Monitor == 0) {
+        if (actual != IVideo::VideoState::Paused &&
+            target != IVideo::VideoState::Paused) {
+            videoInst_->pause();
+        }
+        return Component::update(dt);
+    }
 
-	if (!currentPage_->isMenuScrolling())
-		videoInst_->volumeUpdate();
+    if (currentPage_->isMenuFastScrolling()) {
+        if (!inFlight &&
+            actual != IVideo::VideoState::Playing &&
+            target != IVideo::VideoState::Playing) {
+            videoInst_->resume();
+            LOG_DEBUG("VideoComponent", "Force-resume during fast scroll: " + videoFile_);
+        }
+        // No restart while flapping
+        if (baseViewInfo.Restart) {
+            baseViewInfo.Restart = false;
+        }
+        pendingRestart_ = false;   // also drop any deferred restart
+        // Early return to avoid any other state changes in this frame
+        return Component::update(dt);
+    }
 
-	bool isCurrentlyVisible = baseViewInfo.Alpha > 0.0f;
-	if (isCurrentlyVisible)
-		hasBeenOnScreen_ = true;
+    // Visibility
+    const bool visibleNow = (baseViewInfo.Alpha > 0.0f);
+    if (visibleNow) hasBeenOnScreen_ = true;
 
-	if (isCurrentlyVisible) {
-		if (videoInst_->getTargetState() != IVideo::VideoState::Playing &&
-			videoInst_->getActualState() != IVideo::VideoState::Playing) {
-			videoInst_->resume();
-			LOG_DEBUG("VideoComponent", "Auto-played (PauseOnScroll false) " + videoFile_);
-		}
-	}
+    // ---------------- Desired state ----------------
+    IVideo::VideoState desired = IVideo::VideoState::None;
 
-	// --- Only toggle playback state when visibility changes (pause on hide, as before) ---
-	if (baseViewInfo.PauseOnScroll && (isCurrentlyVisible != wasVisible_)) {
-		if (!isCurrentlyVisible) {
-			if (videoInst_->getTargetState() != IVideo::VideoState::Paused &&
-				videoInst_->getActualState() != IVideo::VideoState::Paused) {
-				videoInst_->pause();
-				LOG_DEBUG("VideoComponent", "Paused " + videoFile_);
-			}
-		}
-	}
-	wasVisible_ = isCurrentlyVisible; // Always update!
+    // Always ensure play when visible (original auto-play)
+    if (visibleNow) {
+        desired = IVideo::VideoState::Playing;
+    }
 
-	// Restart support
-	if (baseViewInfo.Restart && hasBeenOnScreen_) {
-		if (videoInst_->getTargetState() == IVideo::VideoState::Paused &&
-			videoInst_->getActualState() == IVideo::VideoState::Paused) {
-			videoInst_->resume();
-		}
+    // Pause-on-scroll: pause only on the HIDE edge
+    if (baseViewInfo.PauseOnScroll && !visibleNow && wasVisible_) {
+        desired = IVideo::VideoState::Paused;
+    }
 
-		GstClockTime currentTime = videoInst_->getCurrent();
-		if (currentTime > GST_SECOND) {
-			videoInst_->restart();
-			baseViewInfo.Restart = false;
-			LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
-		}
-	}
+    // Apply at most one transition, only if not in-flight
+    if (!inFlight && desired != IVideo::VideoState::None) {
+        if (desired == IVideo::VideoState::Playing && actual != IVideo::VideoState::Playing) {
+            videoInst_->resume();
+            LOG_DEBUG("VideoComponent", "Resume -> " + videoFile_);
+        }
+        else if (desired == IVideo::VideoState::Paused && actual != IVideo::VideoState::Paused) {
+            videoInst_->pause();
+            LOG_DEBUG("VideoComponent", "Pause -> " + videoFile_);
+        }
+    }
 
+    // Restart handling (two-phase, no timers)
+    if (baseViewInfo.Restart && hasBeenOnScreen_) {
+        if (!inFlight) {
+            if (actual == IVideo::VideoState::Paused) {
+                videoInst_->resume();      // get to PLAYING first
+                pendingRestart_ = true;    // perform seek once PLAYING
+                LOG_DEBUG("VideoComponent", "Deferred restart: resuming first for " + videoFile_);
+            }
+            else if (actual == IVideo::VideoState::Playing) {
+                if (videoInst_->getCurrent() > GST_SECOND) {
+                    videoInst_->restart();
+                    LOG_DEBUG("VideoComponent", "Seeking to beginning of " + Utils::getFileName(videoFile_));
+                }
+                baseViewInfo.Restart = false;
+                pendingRestart_ = false;
+            }
+            else {
+                pendingRestart_ = true; // READY/transitioning: defer
+            }
+        }
+        else {
+            pendingRestart_ = true;     // defer while transitioning
+        }
+    }
 
-	return Component::update(dt);
+    // Complete deferred restart once PLAYING & not in-flight
+    if (pendingRestart_ && !inFlight && videoInst_->getActualState() == IVideo::VideoState::Playing) {
+        if (videoInst_->getCurrent() > GST_SECOND) {
+            videoInst_->restart();
+            LOG_DEBUG("VideoComponent", "Post-transition seek to start: " + Utils::getFileName(videoFile_));
+        }
+        baseViewInfo.Restart = false;
+        pendingRestart_ = false;
+    }
+
+    wasVisible_ = visibleNow;
+    return Component::update(dt);
 }
 
 
