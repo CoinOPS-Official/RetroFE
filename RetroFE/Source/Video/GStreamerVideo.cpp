@@ -409,7 +409,8 @@ bool GStreamerVideo::stop() {
 		}
 
 		if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
-			gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), nullptr, nullptr, nullptr);
+			GstAppSinkCallbacks empty{};
+			gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &empty, nullptr, nullptr);
 
 			if (padProbeId_ != 0) {
 				GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink");
