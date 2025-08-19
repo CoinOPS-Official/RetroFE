@@ -91,6 +91,18 @@ public:
 	static void enablePlugin(const std::string& pluginName);
 	static void disablePlugin(const std::string& pluginName);
 
+	void armOnBecameNone(std::function<void(GStreamerVideo*)> cb) {
+		std::lock_guard<std::mutex> g(cbMutex_);
+		onBecameNone_ = std::move(cb);
+		notifyOnNone_.store(true, std::memory_order_release);
+	}
+	void disarmOnBecameNone() {
+		// Clear flag first so bus thread won’t fire after this point
+		notifyOnNone_.store(false, std::memory_order_release);
+		std::lock_guard<std::mutex> g(cbMutex_);
+		onBecameNone_ = nullptr;
+	}
+
 private:
 	// === Thread-shared atomics ===
 	std::atomic<uint64_t> currentPlaySessionId_{ 0 };
@@ -170,5 +182,9 @@ private:
 	bool updateTextureFromFrameNV12(SDL_Texture*, GstVideoFrame*) const;
 	bool updateTextureFromFrameRGBA(SDL_Texture*, GstVideoFrame*) const;
 	std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
+
+	std::function<void(GStreamerVideo*)> onBecameNone_;
+	std::atomic<bool> notifyOnNone_{ false };
+	std::mutex cbMutex_;
 };
 

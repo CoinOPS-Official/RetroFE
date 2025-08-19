@@ -142,7 +142,6 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 		case GST_MESSAGE_ASYNC_START: {
 			// Any state transition (or flushing seek) kicked off
 			video->pipeLineReady_.store(false, std::memory_order_release);
-			//if (video->videoSink_) g_object_set(video->videoSink_, "sync", FALSE, NULL);
 			break;
 		}
 
@@ -160,7 +159,6 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 							bool expected = false;
 							(void)video->pipeLineReady_.compare_exchange_strong(expected, true,
 								std::memory_order_release, std::memory_order_relaxed);
-							//if (video->videoSink_) g_object_set(video->videoSink_, "sync", TRUE, NULL);
 						}
 						break;
 						case GST_STATE_PAUSED:
@@ -174,7 +172,12 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 						default:
 						video->actualState_.store(IVideo::VideoState::None, std::memory_order_release);
 						video->pipeLineReady_.store(false, std::memory_order_release);
-						//if (video->videoSink_) g_object_set(video->videoSink_, "sync", FALSE, NULL);
+						// NEW: one-shot notify if armed
+						if (video->notifyOnNone_.exchange(false, std::memory_order_acq_rel)) {
+							std::function<void(GStreamerVideo*)> cb;
+							{ std::lock_guard<std::mutex> g(video->cbMutex_); cb = std::move(video->onBecameNone_); }
+							if (cb) cb(video);
+						}
 						break;
 					}
 				}
@@ -480,6 +483,12 @@ bool GStreamerVideo::unload() {
 	// Already gone or idle -> nothing to do
 	if (!playbin_ || actualState_.load(std::memory_order_acquire) == IVideo::VideoState::None) {
 		actualState_.store(IVideo::VideoState::None, std::memory_order_release);
+		// NEW: one-shot notify if armed (because bus won't fire)
+		if (notifyOnNone_.exchange(false, std::memory_order_acq_rel)) {
+			std::function<void(GStreamerVideo*)> cb;
+			{ std::lock_guard<std::mutex> g(cbMutex_); cb = std::move(onBecameNone_); }
+			if (cb) cb(this);
+		}
 		return true;
 	}
 

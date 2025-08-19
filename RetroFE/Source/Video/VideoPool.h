@@ -19,6 +19,7 @@
 #include <deque>
 #include <memory>
 #include <unordered_map>
+#include <unordered_set>
 #include <string>
 #include <mutex>
 #include <condition_variable>
@@ -37,18 +38,31 @@ public:
 
 private:
 
-	struct PoolInfo {
-		std::deque<VideoPtr> ready;      // Ready for reuse
-		std::deque<VideoPtr> pending;    // Being reset/unloaded
-		size_t currentActive = 0;
-		size_t observedMaxActive = 0;
-		size_t requiredInstanceCount = 0;
-		bool initialCountLatched = false;
-		std::mutex poolMutex;
-		bool markedForCleanup = false;
-		bool cleanupInProgress = false;
-		std::condition_variable poolCond;
-	};
+    struct PoolInfo {
+        // Idle instances, oldest-first (we insert at back)
+        std::list<VideoPtr> available;
+
+        // Fast path: raw pointers to items known to be VideoState::None
+        std::deque<IVideo*> readyHints;
+
+        // O(1) lookup/validation & removal by pointer
+        std::unordered_map<IVideo*, std::list<VideoPtr>::iterator> index;
+
+        // Prevent duplicate hints spamming the queue
+        std::unordered_set<IVideo*> hinted;
+
+        // Bookkeeping
+        size_t currentActive = 0;
+        size_t observedMaxActive = 0;
+        size_t requiredInstanceCount = 0;
+        bool initialCountLatched = false;
+
+        // Sync
+        std::mutex poolMutex;
+        std::condition_variable poolCond;
+        bool markedForCleanup = false;
+        bool cleanupInProgress = false;
+    };
 
 	using ListPoolMap = std::unordered_map<int, PoolInfo>;
 	using PoolMap = std::unordered_map<int, ListPoolMap>;
