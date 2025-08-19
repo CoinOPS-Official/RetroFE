@@ -704,10 +704,10 @@ bool RetroFE::run() {
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) input_.update(e);
 		input_.updateKeystate(); // once per frame, AFTER consuming events, BEFORE processUserInput()
-		if (!splashMode) {
+		if (!splashMode && state_accepts_input(state_)) {
 			RETROFE_STATE inputState = processUserInput(currentPage_);
 			if (inputState != RETROFE_IDLE) {
-				setState(inputState); // User input overrides the current state transition.
+				setState(inputState);
 			}
 		}
 		if (nextFrameTime < nowMs_loopStart) {
@@ -2821,6 +2821,57 @@ void RetroFE::advanceToNextValidAttractPlaylist() {
 		}
 	}
 }
+
+inline bool RetroFE::state_accepts_input(RetroFE::RETROFE_STATE s) {
+	switch (s) {
+		// modal / transition states that must flow to their next state
+		case RETROFE_ATTRACT_LAUNCH_ENTER:
+		case RETROFE_ATTRACT_LAUNCH_REQUEST:
+		case RETROFE_LAUNCH_ENTER:
+		case RETROFE_LAUNCH_REQUEST:
+		case RETROFE_LAUNCH_EXIT:
+		case RETROFE_NEXT_PAGE_MENU_EXIT:
+		case RETROFE_NEXT_PAGE_MENU_LOAD_ART:
+		case RETROFE_NEXT_PAGE_MENU_ENTER:
+		case RETROFE_BACK_MENU_EXIT:
+		case RETROFE_BACK_MENU_LOAD_ART:
+		case RETROFE_BACK_MENU_ENTER:
+		case RETROFE_PLAYLIST_EXIT:
+		case RETROFE_PLAYLIST_LOAD_ART:
+		case RETROFE_PLAYLIST_ENTER:
+		case RETROFE_HIGHLIGHT_EXIT:
+		case RETROFE_HIGHLIGHT_LOAD_ART:
+		case RETROFE_HIGHLIGHT_ENTER:
+		case RETROFE_COLLECTION_UP_EXIT:
+		case RETROFE_COLLECTION_DOWN_EXIT:
+		case RETROFE_COLLECTION_UP_ENTER:
+		case RETROFE_COLLECTION_DOWN_ENTER:
+		case RETROFE_COLLECTION_HIGHLIGHT_EXIT:
+		case RETROFE_COLLECTION_DOWN_SCROLL:
+		case RETROFE_COLLECTION_UP_SCROLL:
+		case RETROFE_MENUJUMP_EXIT:
+		case RETROFE_MENUJUMP_LOAD_ART:
+		case RETROFE_MENUJUMP_ENTER:
+		case RETROFE_SPLASH_EXIT:
+		case RETROFE_QUIT:
+		return false;
+
+		// safe places to read/apply input
+		case RETROFE_IDLE:
+		case RETROFE_NEW:
+		case RETROFE_LOAD_ART:
+		case RETROFE_ENTER:
+		case RETROFE_MENUMODE_START_REQUEST:
+		case RETROFE_SETTINGS_REQUEST:
+		case RETROFE_QUICKLIST_REQUEST:
+		case RETROFE_PLAYLIST_REQUEST:
+		case RETROFE_NEXT_PAGE_REQUEST:
+		case RETROFE_BACK_REQUEST:
+		default:
+		return true;
+	}
+}
+
 
 // Process the user input
 RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {

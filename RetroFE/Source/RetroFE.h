@@ -178,6 +178,7 @@ private:
     bool isInAttractModeSkipPlaylist(std::string playlist);
     void goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleVector);
     void advanceToNextValidAttractPlaylist();
+    bool state_accepts_input(RetroFE::RETROFE_STATE s);
     void handleMusicControls(UserInput::KeyCode_E input);
     Page           *loadPage(const std::string& collectionName);
     Page           *loadSplashPage( );
