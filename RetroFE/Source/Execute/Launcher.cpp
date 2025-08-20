@@ -208,9 +208,6 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                     delta = 0.0167f;
 
                 if (currentPage) {
-                    while (g_main_context_pending(nullptr)) {
-                        g_main_context_iteration(nullptr, false);
-                    }
                     currentPage->update(delta);
                 }
                 };
@@ -229,9 +226,6 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                 if (delta > 0.1f)
                     delta = 0.0167f;
 
-                while (g_main_context_pending(nullptr)) {
-                    g_main_context_iteration(nullptr, false);
-                }
                 currentPage->update(delta);
                 bool multiple_display = SDL::getScreenCount() > 1;
                 bool animateDuringGame = true;

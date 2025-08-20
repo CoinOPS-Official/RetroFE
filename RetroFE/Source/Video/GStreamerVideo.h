@@ -130,6 +130,7 @@ private:
 	std::atomic<bool> pipeLineReady_{ false };
 
 	// === GStreamer and SDL resource pointers ===
+	GstElement* pipeline_{ nullptr };   // top-level pipeline
 	GstElement* playbin_{ nullptr };
 	GstElement* videoSink_{ nullptr };
 	GstElement* perspective_{ nullptr };

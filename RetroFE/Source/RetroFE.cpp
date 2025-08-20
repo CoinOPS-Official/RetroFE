@@ -685,16 +685,11 @@ bool RetroFE::run() {
 	}
 
 	float deltaTime = 0;
-	float inputUpdateInterval = 0.0333f; // Update every ~33.33ms (~30Hz)
-	static float lastInputUpdateTime = 0.0f;
 
 	double initial_current_time_ms = SDL_GetPerformanceCounter() * 1000.0 / (double)freq_;
 
 	double nextFrameTime = initial_current_time_ms;
 	lastFrameTimePointMs_ = initial_current_time_ms;
-
-	float glibUpdateInterval = 0.016f; // ~16ms (60Hz)
-	static float glibAccumulator = 0.0f;
 
 	while (running)
 	{
@@ -722,30 +717,6 @@ bool RetroFE::run() {
 
 		currentTime_ = static_cast<float>(nowMs_loopStart / 1000.0);
 		lastFrameTimePointMs_ = nowMs_loopStart; // For next frame's deltaTime
-
-		// ----- GLib processing -----
-		// ----- GLib processing (after input/timing, before state) -----
-		glibAccumulator += deltaTime;
-
-		// Clamp backlog so we don't try to catch up for many frames
-		const float maxBacklog = 2.0f * glibUpdateInterval; // tune 13x
-		if (glibAccumulator > maxBacklog)
-			glibAccumulator = maxBacklog;
-
-		while (glibAccumulator >= glibUpdateInterval) {
-			// Drain while pending, but with a small time budget to avoid frame hitches
-			const double budgetUs = 2000.0; // ~2 ms, tune 13 ms
-			Uint64 t0 = SDL_GetPerformanceCounter();
-
-			while (g_main_context_iteration(nullptr, false)) {
-				double elapsedUs = (SDL_GetPerformanceCounter() - t0) * 1e6 / static_cast<double>(freq_);
-				if (elapsedUs >= budgetUs)
-					break; // stop draining this frame
-			}
-
-			glibAccumulator -= glibUpdateInterval;
-		}
-
 
 		if (!g_isRestrictorCheckDone) {
 			if (g_restrictorManager.isReady()) {
@@ -2526,14 +2497,6 @@ bool RetroFE::run() {
 			if (!currentPage_->getIsLaunched())
 				render();
 
-
-			// Always do a tiny post-render micro-pump (non-blocking)
-			{
-				int slices = 0, maxSlices = 2; // tune 24 if needed
-				while (slices < maxSlices && g_main_context_iteration(nullptr, false)) {
-					++slices;
-				}
-			}
 
 			// Only do custom frame pacing if vsync is OFF
 			if (!vSync) {

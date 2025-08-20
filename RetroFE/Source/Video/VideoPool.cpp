@@ -150,13 +150,6 @@ VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOv
             return nullptr;
         }
 
-        // (Optional) Nudge GLib teardown
-        if (GMainContext* ctx = g_main_context_default()) {
-            if (g_main_context_acquire(ctx)) {
-                while (g_main_context_pending(ctx)) g_main_context_iteration(ctx, false);
-                g_main_context_release(ctx);
-            }
-        }
         continue;
 
     DECISION_MADE:

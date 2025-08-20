@@ -20,6 +20,7 @@
 #include <wrl/client.h>
 #endif
 #include "GStreamerVideo.h"
+#include "GlibLoop.h"
 #include "../Database/Configuration.h"
 #include "../Graphics/Component/Image.h"
 #include "../Graphics/ViewInfo.h"
@@ -146,7 +147,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 		}
 
 		case GST_MESSAGE_STATE_CHANGED: {
-			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
+			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->pipeline_)) {
 				GstState oldS, newS, pending;
 				gst_message_parse_state_changed(msg, &oldS, &newS, &pending);
 
@@ -403,7 +404,7 @@ bool GStreamerVideo::stop() {
 				gst_object_unref(bus);
 			}
 			if (busWatchId_ != 0) {
-				g_source_remove(busWatchId_);
+				GlibLoop::instance().removeSource(busWatchId_);
 				busWatchId_ = 0;
 			}
 		}
@@ -428,11 +429,10 @@ bool GStreamerVideo::stop() {
 			while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
 		}
 
-		gst_element_set_state(playbin_, GST_STATE_NULL);
+		gst_element_set_state(pipeline_, GST_STATE_NULL);
 
 		LOG_DEBUG("GStreamerVideo::stop", "Unreffing playbin to guarantee final cleanup.");
-		gst_object_unref(playbin_);
-		playbin_ = nullptr;
+		if (pipeline_) { gst_object_unref(pipeline_); pipeline_ = nullptr; playbin_ = nullptr; }
 		videoSink_ = nullptr;   // Was part of playbin_
 		perspective_ = nullptr; // Was part of playbin_
 	}
@@ -531,7 +531,7 @@ bool GStreamerVideo::unload() {
 	}
 
 	// 3) Drop to READY (asynchronously). We don’t block here.
-	gst_element_set_state(playbin_, GST_STATE_READY);
+	gst_element_set_state(pipeline_, GST_STATE_READY);
 
 	// 4) Local bookkeeping for the next play()
 	currentFile_ = "[unloading]";
@@ -623,14 +623,23 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	}
 
 	// Create playbin3 and appsink elements.
+	pipeline_ = gst_pipeline_new(nullptr);
 	playbin_ = gst_element_factory_make("playbin3", "player");
+
+	gst_bin_add(GST_BIN(pipeline_), playbin_);
+
 	videoSink_ = gst_element_factory_make("appsink", "video_sink");
 
-	if (!playbin_ || !videoSink_) {
+	if (!pipeline_ || !playbin_ || !videoSink_) {
 		LOG_DEBUG("Video", "Could not create GStreamer elements");
 		hasError_.store(true, std::memory_order_release);
 		return false;
 	}
+
+	// Force the system clock and disable auto reselection
+	GstClock* sys = gst_system_clock_obtain();
+	gst_pipeline_use_clock(GST_PIPELINE(pipeline_), sys);
+	gst_object_unref(sys);
 
 	// Set playbin flags and properties.
 	gint flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO | GST_PLAY_FLAG_SOFT_VOLUME;
@@ -773,6 +782,7 @@ void GStreamerVideo::initializeUpdateFunction() {
 	std::lock_guard<std::mutex> lk(updateFuncMutex_);
 	updateTextureFunc_ = std::move(f);
 }
+
 bool GStreamerVideo::play(const std::string& file) {
 
 	if (!initialized_) {
@@ -789,13 +799,13 @@ bool GStreamerVideo::play(const std::string& file) {
 		if (syncRet == GST_STATE_CHANGE_ASYNC) {
 			LOG_WARNING("GStreamerVideo", "Previous state change still pending after 2s, forcing abort for: " + file);
 			// Force a hard reset rather than risk deadlock
-			gst_element_set_state(playbin_, GST_STATE_NULL);
-			gst_element_get_state(playbin_, nullptr, nullptr, GST_SECOND);
+			gst_element_set_state(pipeline_, GST_STATE_NULL);
+			gst_element_get_state(pipeline_, nullptr, nullptr, GST_SECOND);
 		}
 		else if (syncRet == GST_STATE_CHANGE_FAILURE) {
 			LOG_ERROR("GStreamerVideo", "Pipeline in failed state, resetting for: " + file);
-			gst_element_set_state(playbin_, GST_STATE_NULL);
-			gst_element_get_state(playbin_, nullptr, nullptr, GST_SECOND);
+			gst_element_set_state(pipeline_, GST_STATE_NULL);
+			gst_element_get_state(pipeline_, nullptr, nullptr, GST_SECOND);
 		}
 	}
 
@@ -814,12 +824,19 @@ bool GStreamerVideo::play(const std::string& file) {
 
 	initializeUpdateFunction();
 
-	if (GstBus* bus = gst_element_get_bus(playbin_)) {
+	if (GstBus* bus = gst_element_get_bus(pipeline_)) {
 		gst_bus_set_flushing(bus, FALSE);
 		if (busWatchId_ == 0) {
-			busWatchId_ = gst_bus_add_watch(bus, GStreamerVideo::busCallback, this);
+			busWatchId_ = GlibLoop::instance().addBusWatch(
+				bus,
+				// Your existing bus handler
+				[](GstBus* b, GstMessage* msg, gpointer user_data) -> gboolean {
+					return GStreamerVideo::busCallback(b, msg, user_data);
+				},
+				this
+			);
+			gst_object_unref(bus);
 		}
-		gst_object_unref(bus);
 	}
 
 	// Convert file path to URI
@@ -844,7 +861,7 @@ bool GStreamerVideo::play(const std::string& file) {
 		[](gpointer data) { delete static_cast<SessionCtx*>(data); });
 
 	// Request PAUSED (preroll) asynchronously; do not wait here
-	GstStateChangeReturn scr = gst_element_set_state(playbin_, GST_STATE_PAUSED);
+	GstStateChangeReturn scr = gst_element_set_state(pipeline_, GST_STATE_PAUSED);
 	targetState_.store(IVideo::VideoState::Paused, std::memory_order_release);
 	if (scr == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "Pipeline failed to set PAUSED for " + file);
@@ -1326,7 +1343,7 @@ void GStreamerVideo::pause() {
 	targetState_.store(IVideo::VideoState::Paused, std::memory_order_release);
 
 	LOG_DEBUG("GStreamerVideo", "Requesting PAUSED for " + currentFile_);
-	if (gst_element_set_state(playbin_, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
+	if (gst_element_set_state(pipeline_, GST_STATE_PAUSED) == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "Failed to set PAUSED for " + currentFile_);
 		hasError_.store(true);
 	}
@@ -1345,7 +1362,7 @@ void GStreamerVideo::resume() {
 	targetState_.store(IVideo::VideoState::Playing, std::memory_order_release);
 	//g_object_set(videoSink_, "sync", TRUE, nullptr);
 	LOG_DEBUG("GStreamerVideo", "Requesting PLAYING for " + currentFile_);
-	if (gst_element_set_state(playbin_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
+	if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "Failed to set PLAYING for " + currentFile_);
 		hasError_.store(true);
 	}
@@ -1354,7 +1371,7 @@ void GStreamerVideo::resume() {
 void GStreamerVideo::restart() {
 	if (!pipeLineReady_.load(std::memory_order_acquire))
 		return;
-	bool ok = gst_element_seek(playbin_, 1.0, GST_FORMAT_TIME,
+	bool ok = gst_element_seek(pipeline_, 1.0, GST_FORMAT_TIME,
 		GST_SEEK_FLAG_FLUSH,
 		GST_SEEK_TYPE_SET, 0,
 		GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
