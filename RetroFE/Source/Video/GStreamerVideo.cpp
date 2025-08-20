@@ -403,10 +403,6 @@ bool GStreamerVideo::stop() {
 				gst_bus_set_flushing(bus, TRUE);
 				gst_object_unref(bus);
 			}
-			if (busWatchId_ != 0) {
-				GlibLoop::instance().removeSource(busWatchId_);
-				busWatchId_ = 0;
-			}
 		}
 		if (elementSetupHandlerId_ != 0 && g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
 			g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
@@ -756,6 +752,21 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		g_object_set(playbin_, "video-sink", videoSink_, nullptr);
 	}
 
+	if (GstBus* bus = gst_element_get_bus(pipeline_ /* or playbin_ if that’s your top */)) {
+		busWatchId_ = GlibLoop::instance().addBusWatch(
+			bus,
+			+[](GstBus* b, GstMessage* msg, gpointer self) -> gboolean {
+				return GStreamerVideo::busCallback(b, msg, self); // MUST return TRUE (don’t auto-remove)
+			},
+			this,
+			// destroy_notify: called when source is removed/destroyed
+			[](gpointer self) {
+				static_cast<GStreamerVideo*>(self)->busWatchId_ = 0;
+			}
+		);
+		gst_object_unref(bus);
+	}
+
 	return true;
 }
 
@@ -823,21 +834,6 @@ bool GStreamerVideo::play(const std::string& file) {
 	}
 
 	initializeUpdateFunction();
-
-	if (GstBus* bus = gst_element_get_bus(pipeline_)) {
-		gst_bus_set_flushing(bus, FALSE);
-		if (busWatchId_ == 0) {
-			busWatchId_ = GlibLoop::instance().addBusWatch(
-				bus,
-				// Your existing bus handler
-				[](GstBus* b, GstMessage* msg, gpointer user_data) -> gboolean {
-					return GStreamerVideo::busCallback(b, msg, user_data);
-				},
-				this
-			);
-			gst_object_unref(bus);
-		}
-	}
 
 	// Convert file path to URI
 	gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);

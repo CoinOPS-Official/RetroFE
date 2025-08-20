@@ -70,28 +70,19 @@ void GlibLoop::invoke(std::function<void()> fn, int priority) {
 guint GlibLoop::addBusWatch(GstBus* bus, GstBusFunc func, gpointer user_data,
     GDestroyNotify notify, int priority) {
     if (!isRunning() || !bus || !func) return 0;
-
-    // We need a synchronous result (the watch ID). Use a promise.
     std::promise<guint> pr;
     auto fut = pr.get_future();
-
-    // Ensure bus stays alive across the invoke
-    gst_object_ref(bus);
-
+    gst_object_ref(bus); // survive the hop
     invoke([bus, func, user_data, notify, &pr, priority]() mutable {
+        // Attaches to THIS thread’s thread-default context (set in start())
         guint id = gst_bus_add_watch_full(bus, priority, func, user_data, notify);
-        // gst_bus_add_watch_full attaches to the thread-default context of THIS thread
-        // (we set it in start()), so the watch runs on our loop.
         pr.set_value(id);
         gst_object_unref(bus);
         }, priority);
-
     return fut.get();
 }
 
 void GlibLoop::removeSource(guint sourceId) {
     if (!isRunning() || sourceId == 0) return;
-    invoke([sourceId]() {
-        g_source_remove(sourceId);
-        });
+    invoke([sourceId]() { g_source_remove(sourceId); });
 }
