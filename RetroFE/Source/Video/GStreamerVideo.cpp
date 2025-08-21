@@ -385,7 +385,7 @@ bool GStreamerVideo::stop() {
 		// --- Synchronization Barrier ---
 		LOG_DEBUG("GStreamerVideo::stop", "Synchronizing pipeline state before final stop...");
 		constexpr GstClockTime stopSyncTimeout = 500 * GST_MSECOND;
-		GstStateChangeReturn syncRet = gst_element_get_state(playbin_, nullptr, nullptr, stopSyncTimeout);
+		GstStateChangeReturn syncRet = gst_element_get_state(pipeline_, nullptr, nullptr, stopSyncTimeout);
 
 		// GST_STATE_CHANGE_NO_PREROLL is a valid success state when going from READY to NULL.
 		if (syncRet != GST_STATE_CHANGE_SUCCESS && syncRet != GST_STATE_CHANGE_NO_PREROLL) {
@@ -398,9 +398,14 @@ bool GStreamerVideo::stop() {
 		// --- End of Synchronization Barrier ---
 
 		// --- Disconnect Callbacks and Probes ---
-		if (playbin_) {
-			if (GstBus* bus = gst_element_get_bus(playbin_)) {
+		if (pipeline_) {
+			if (GstBus* bus = gst_element_get_bus(pipeline_)) {
+				// 1) detach the watch on the loop thread (safe even if no watch is present)
+				GlibLoop::instance().invoke([bus]() { (void)gst_bus_remove_watch(bus); });
+
+				// 2) optional: stop delivering any queued messages
 				gst_bus_set_flushing(bus, TRUE);
+
 				gst_object_unref(bus);
 			}
 		}
