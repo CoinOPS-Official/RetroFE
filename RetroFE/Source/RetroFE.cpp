@@ -359,6 +359,10 @@ void RetroFE::launchExit(bool userInitiated) {
 	{
 		allocateGraphicsMemory();
 	}
+	else
+	{
+		currentPage_->reallocateMenuSpritePoints();
+	}
 
 #ifdef WIN32
 	// On Windows, SDL_RaiseWindow is not always enough to steal focus back from
