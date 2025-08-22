@@ -372,109 +372,91 @@ bool GStreamerVideo::deInitialize() {
 }
 
 bool GStreamerVideo::stop() {
-	const std::string currentFileForLog = currentFile_; // Cache for logging before it's cleared
-	LOG_INFO("GStreamerVideo", "Stop (full cleanup) called for " + (!currentFileForLog.empty() ? currentFileForLog : "unspecified video"));
+	const std::string currentFileForLog = currentFile_;
+	LOG_INFO("GStreamerVideo", "Stop (full cleanup) called for " + (currentFileForLog.empty() ? "unspecified video" : currentFileForLog));
 
-	// --- 1. Signal No Longer Active ---
 	pipeLineReady_.store(false, std::memory_order_release);
 	targetState_.store(IVideo::VideoState::None, std::memory_order_release);
 
-	// --- 2. GStreamer Pipeline Teardown ---
-
-	if (playbin_) {
-		// --- Synchronization Barrier ---
+	if (pipeline_) {
 		LOG_DEBUG("GStreamerVideo::stop", "Synchronizing pipeline state before final stop...");
 		constexpr GstClockTime stopSyncTimeout = 500 * GST_MSECOND;
 		GstStateChangeReturn syncRet = gst_element_get_state(pipeline_, nullptr, nullptr, stopSyncTimeout);
-
-		// GST_STATE_CHANGE_NO_PREROLL is a valid success state when going from READY to NULL.
 		if (syncRet != GST_STATE_CHANGE_SUCCESS && syncRet != GST_STATE_CHANGE_NO_PREROLL) {
-			// We log a warning but proceed anyway, as stop() MUST continue with cleanup.
 			LOG_WARNING("GStreamerVideo::stop", "Timed out or failed synchronizing before stop. Forcing cleanup regardless.");
 		}
 		else {
 			LOG_DEBUG("GStreamerVideo::stop", "Pipeline synchronized successfully.");
 		}
-		// --- End of Synchronization Barrier ---
 
-		// --- Disconnect Callbacks and Probes ---
-		if (pipeline_) {
-			if (GstBus* bus = gst_element_get_bus(pipeline_)) {
-				// 1) detach the watch on the loop thread (safe even if no watch is present)
-				GlibLoop::instance().invoke([bus]() { (void)gst_bus_remove_watch(bus); });
-
-				// 2) optional: stop delivering any queued messages
-				gst_bus_set_flushing(bus, TRUE);
-
-				gst_object_unref(bus);
-			}
+		// --- Detach bus watch on GLib loop (take a ref for the cross-thread call) ---
+		if (GstBus* bus = gst_element_get_bus(pipeline_)) {
+			GstBus* bus_for_loop = GST_BUS(gst_object_ref(bus));
+			GlibLoop::instance().invoke([bus_for_loop]() {
+				(void)gst_bus_remove_watch(bus_for_loop);
+				gst_object_unref(bus_for_loop);
+				});
+			// Optional: stop delivering queued messages
+			gst_bus_set_flushing(bus, TRUE);
+			gst_object_unref(bus);
 		}
+
+		// --- Disconnect signals/probes on elements we own ---
 		if (elementSetupHandlerId_ != 0 && g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
 			g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
+			elementSetupHandlerId_ = 0;
 		}
+		// If you used a BUS sync-message handler, also disconnect it here (store its id).
 
 		if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
 			GstAppSinkCallbacks empty{};
 			gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &empty, nullptr, nullptr);
 
 			if (padProbeId_ != 0) {
-				GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink");
-				if (sinkPad) {
+				if (GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink")) {
 					gst_pad_remove_probe(sinkPad, padProbeId_);
 					gst_object_unref(sinkPad);
 				}
-				padProbeId_ = 0; // Mark as no active probe from our side
+				padProbeId_ = 0;
 			}
-			// Drain any queued frames/preroll so draw() won’t paint stale pixels
 			while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
 			while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
 		}
 
+		// --- Drive to NULL and unref ---
 		gst_element_set_state(pipeline_, GST_STATE_NULL);
+		(void)gst_element_get_state(pipeline_, nullptr, nullptr, 2 * GST_SECOND);
 
-		LOG_DEBUG("GStreamerVideo::stop", "Unreffing playbin to guarantee final cleanup.");
-		if (pipeline_) { gst_object_unref(pipeline_); pipeline_ = nullptr; playbin_ = nullptr; }
-		videoSink_ = nullptr;   // Was part of playbin_
-		perspective_ = nullptr; // Was part of playbin_
+		LOG_DEBUG("GStreamerVideo::stop", "Unreffing pipeline to guarantee final cleanup.");
+		gst_object_unref(pipeline_);
+		pipeline_ = nullptr;
+		playbin_ = nullptr;
+		videoSink_ = nullptr;
+		perspective_ = nullptr;
 	}
 	else {
-		LOG_DEBUG("GStreamerVideo", "stop(): No playbin_ was active to stop and unref.");
+		LOG_DEBUG("GStreamerVideo", "stop(): No pipeline_ was active to stop and unref.");
 	}
 
-	// --- 3. SDL and Member Variable Cleanup ---
-	// Now that GStreamer is gone, clean up everything else.
-
+	// SDL & member cleanup unchanged...
 	SDL_LockMutex(SDL::getMutex());
 	texture_ = nullptr;
-	for (int i = 0; i < 3; i++) {
+	for (int i = 0; i < 3; ++i) {
 		if (videoTexRing_[i]) { SDL_DestroyTexture(videoTexRing_[i]); videoTexRing_[i] = nullptr; }
 	}
 	SDL_UnlockMutex(SDL::getMutex());
 
-	// Clean up any final GStreamer-related data
-	GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
-	if (s) gst_sample_unref(s);
-	if (perspective_gva_) {
-		g_value_array_free(perspective_gva_);
-		perspective_gva_ = nullptr;
-	}
+	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) gst_sample_unref(s);
+	if (perspective_gva_) { g_value_array_free(perspective_gva_); perspective_gva_ = nullptr; }
 
-	// Reset all internal state variables to their defaults.
-	width_ = -1;
-	height_ = -1;
+	width_ = height_ = -1;
 	currentFile_.clear();
-	playCount_ = 0;
-	numLoops_ = 0;
-	volume_ = 0.0f;
-	currentVolume_ = 0.0f;
-	lastSetVolume_ = -1.0f;
-	lastSetMuteState_ = true;
+	playCount_ = 0; numLoops_ = 0;
+	volume_ = currentVolume_ = 0.0f;
+	lastSetVolume_ = -1.0f; lastSetMuteState_ = true;
 	busWatchId_ = 0;
-	elementSetupHandlerId_ = 0;
 
-	LOG_INFO("GStreamerVideo", "stop(): Instance for " + (!currentFileForLog.empty() ? currentFileForLog : "previous video") +
-		" fully stopped and all resources released.");
-
+	LOG_INFO("GStreamerVideo", "stop(): Instance for " + (currentFileForLog.empty() ? "previous video" : currentFileForLog) + " fully stopped and all resources released.");
 	return true;
 }
 
@@ -619,7 +601,7 @@ static inline std::array<double, 9> computePerspectiveMatrixFromCorners(
 }
 
 bool GStreamerVideo::createPipelineIfNeeded() {
-	if (playbin_) {
+	if (pipeline_) {
 		return true;
 	}
 
@@ -644,7 +626,8 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 
 	// Set playbin flags and properties.
 	gint flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO | GST_PLAY_FLAG_SOFT_VOLUME;
-	g_object_set(playbin_, "flags", flags, "instant-uri", TRUE, "async-handling", TRUE, nullptr);
+	g_object_set(playbin_, "flags", flags, "instant-uri", TRUE, nullptr);
+	g_object_set(pipeline_, "async-handling", TRUE, nullptr);
 
 	// Configure appsink.
 	g_object_set(videoSink_,
@@ -726,6 +709,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 
 		// Set the bin as the video-sink.
 		g_object_set(playbin_, "video-sink", videoBin, nullptr);
+		gst_object_unref(videoBin);
 	
 		GstPad* sinkPad = gst_element_get_static_pad(videoSink_, "sink");
 		if (sinkPad) {
@@ -807,21 +791,15 @@ bool GStreamerVideo::play(const std::string& file) {
 		return false;
 	}
 
-	if (playbin_) {
+	if (pipeline_) {
 		LOG_DEBUG("GStreamerVideo", "Synchronizing pipeline state before play: " + file);
 		constexpr GstClockTime syncTimeout = 2 * GST_SECOND;
-		GstStateChangeReturn syncRet = gst_element_get_state(playbin_, nullptr, nullptr, syncTimeout);
+		GstStateChangeReturn syncRet = gst_element_get_state(pipeline_, nullptr, nullptr, syncTimeout);
 
-		if (syncRet == GST_STATE_CHANGE_ASYNC) {
-			LOG_WARNING("GStreamerVideo", "Previous state change still pending after 2s, forcing abort for: " + file);
-			// Force a hard reset rather than risk deadlock
-			gst_element_set_state(pipeline_, GST_STATE_NULL);
-			gst_element_get_state(pipeline_, nullptr, nullptr, GST_SECOND);
-		}
-		else if (syncRet == GST_STATE_CHANGE_FAILURE) {
-			LOG_ERROR("GStreamerVideo", "Pipeline in failed state, resetting for: " + file);
-			gst_element_set_state(pipeline_, GST_STATE_NULL);
-			gst_element_get_state(pipeline_, nullptr, nullptr, GST_SECOND);
+		if (syncRet == GST_STATE_CHANGE_ASYNC || syncRet == GST_STATE_CHANGE_FAILURE) {
+			LOG_WARNING("GStreamerVideo", "Previous state change pending/failed, bouncing to READY for: " + file);
+			gst_element_set_state(pipeline_, GST_STATE_READY);
+			(void)gst_element_get_state(pipeline_, nullptr, nullptr, GST_SECOND);
 		}
 	}
 
@@ -1361,7 +1339,6 @@ void GStreamerVideo::resume() {
 		return;
 
 	targetState_.store(IVideo::VideoState::Playing, std::memory_order_release);
-	//g_object_set(videoSink_, "sync", TRUE, nullptr);
 	LOG_DEBUG("GStreamerVideo", "Requesting PLAYING for " + currentFile_);
 	if (gst_element_set_state(pipeline_, GST_STATE_PLAYING) == GST_STATE_CHANGE_FAILURE) {
 		LOG_ERROR("GStreamerVideo", "Failed to set PLAYING for " + currentFile_);
@@ -1379,10 +1356,6 @@ void GStreamerVideo::restart() {
 	if (!ok) {
 		LOG_ERROR("GStreamerVideo", "Failed to seek to start (" + currentFile_ + ")");
 	}
-	else {
-		LOG_DEBUG("GStreamerVideo", "Seeked to start successfully (" + currentFile_ + ")");
-		pause();
-	}
 }
 
 void GStreamerVideo::loop() {
@@ -1394,10 +1367,6 @@ void GStreamerVideo::loop() {
 		GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 	if (!ok) {
 		LOG_ERROR("GStreamerVideo", "Failed to seek to start (" + currentFile_ + ")");
-	}
-	else {
-		LOG_DEBUG("GStreamerVideo", "Seeked to start successfully (" + currentFile_ + ")");
-		resume(); // <-- Not pause!
 	}
 }
 
