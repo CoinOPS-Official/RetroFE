@@ -32,6 +32,8 @@ FontManager::FontManager(std::string fontPath, int fontSize, SDL_Color color, in
     , height (0)
     , descent (0)
     , ascent (0)
+	, atlasW(0)
+	, atlasH(0)
     , fontPath_(fontPath)
     , fontSize_(fontSize)
     , color_(color)
@@ -63,6 +65,16 @@ int FontManager::getWidth(const std::string& text) {
         }
     }
     return width;
+}
+
+int  FontManager::getAtlasW() const 
+{ 
+    return atlasW; 
+}
+
+int  FontManager::getAtlasH() const 
+{ 
+    return atlasH; 
 }
 
 int FontManager::getFontSize() const
@@ -179,6 +191,9 @@ bool FontManager::initialize() {
         return false;
     }
 
+    atlasW = atlasSurface->w;
+    atlasH = atlasSurface->h;
+
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_FreeSurface(atlasSurface);
     TTF_CloseFont(font);
@@ -197,7 +212,8 @@ void FontManager::deInitialize() {
     for (auto& pair : atlas) {
         delete pair.second; // Free each GlyphInfoBuild object
     }
-
+    atlasW = 0;
+    atlasH = 0;
     // Clear the atlas to release all keys and pointers
     atlas.clear();
 }
