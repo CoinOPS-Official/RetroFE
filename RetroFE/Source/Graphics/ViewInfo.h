@@ -65,7 +65,9 @@ public:
     float        BackgroundGreen{ 0 };
     float        BackgroundBlue{ 0 };
     float        BackgroundAlpha{ 0 };
+	bool         hasReflection{ false };
     std::string  Reflection{ "" };
+    uint8_t      reflectionMask = 0; // bit0=top, bit1=bottom, bit2=left, bit3=right
     unsigned int ReflectionDistance{ 0 };
     float        ReflectionScale{ .25 };
     float        ReflectionAlpha{ 1 };
