@@ -16,11 +16,12 @@
 
 #pragma once
 
+#include <list>
+#include <vector>
 #include <deque>
-#include <memory>
 #include <unordered_map>
 #include <unordered_set>
-#include <string>
+#include <atomic>
 #include <mutex>
 #include <condition_variable>
 #include "GStreamerVideo.h"
@@ -29,7 +30,7 @@ class VideoPool {
 public:
 	using VideoPtr = std::unique_ptr<IVideo>;  // <-- Use base type
 
-	static VideoPtr acquireVideo(int monitor, int listId, bool softOverlay);
+    static VideoPtr acquireVideo(int monitor, int listId, bool softOverlay);
 	static void releaseVideo(VideoPtr vid, int monitor, int listId);
 	static void releaseVideoBatch(std::vector<VideoPtr> videos, int monitor, int listId);
 	static void cleanup(int monitor, int listId);
@@ -58,20 +59,17 @@ private:
         bool initialCountLatched = false;
 
         // Sync
-        std::mutex poolMutex;
-        std::condition_variable poolCond;
         bool markedForCleanup = false;
-        bool cleanupInProgress = false;
     };
+
+    static void erasePoolIfIdle_nolock(int monitor, int listId);
+    static std::string poolStateStr(int monitor, int listId, const VideoPool::PoolInfo& p);
+
 
 	using ListPoolMap = std::unordered_map<int, PoolInfo>;
 	using PoolMap = std::unordered_map<int, ListPoolMap>;
 
 	static PoolMap pools_;
-	static std::mutex s_poolsMutex;
-
-	static PoolInfo& getPoolInfo(int monitor, int listId);
-	static bool checkPoolHealth(int monitor, int listId);
-	static void cleanup_nolock(int monitor, int listId);
-
+    static std::mutex s_mutex;
+    static std::condition_variable s_cv;
 };
