@@ -67,11 +67,18 @@ public:
     {
         rotation_[index] = rotation;
     }
-    static int getRotation(int index)
-    {
-        return rotation_[index];
+    static int getDisplayWidth(int index) {
+        return (index < screenCount_ ? displayWidth_[index] : displayWidth_[0]);
     }
-
+    static int getDisplayHeight(int index) {
+        return (index < screenCount_ ? displayHeight_[index] : displayHeight_[0]);
+    }
+    static bool isMirrorEnabled(int index) {
+        return (index < screenCount_ ? mirror_[index] : mirror_[0]);
+    }
+    static int getRotation(int index) {
+        return (index < screenCount_ ? (rotation_[index] & 3) : (rotation_[0] & 3));
+    }
 private:
     static std::vector<SDL_Window *>   window_;
     static std::vector<SDL_Renderer *> renderer_;

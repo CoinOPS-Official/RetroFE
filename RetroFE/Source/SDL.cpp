@@ -440,6 +440,13 @@ bool SDL::initialize(Configuration& config) {
 						if (!t) { /* log+return false */ }
 						SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
 						SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
+						// --- One-time init clear so contents are defined ---
+						SDL_SetRenderTarget(r, t);
+						SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE); // avoid accidental blending
+						SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
+						SDL_RenderClear(r);
+						// (Optional) draw a background image/color here if you want a non-black default
+						SDL_SetRenderTarget(r, nullptr);
 						ring.rt[i] = t;
 					}
 				}
@@ -1308,31 +1315,41 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 	// --- Quick rejects ---
 	if (!texture) return false;
 	if (alpha <= 0.0f) return true;
-
 	const int m = viewInfo.Monitor;
 	if (m < 0 || m >= screenCount_ || !renderer_[m]) return true;
 
-	// Hoist hot-path locals
-	SDL_Renderer* r = renderer_[m];
+	// Output size (pixels)
 	const int outW = windowWidth_[m];
 	const int outH = windowHeight_[m];
-	const int rot = (rotation_[m] & 3);
-	const bool rotOdd = (rot & 1) != 0;
-	const bool mir = mirror_[m];
 
-	// Logical -> pixel scales (swap when rotated 90/270)
+	// Logical -> pixel scales
 	float scaleX = layoutWidth > 0 ? float(outW) / float(layoutWidth) : 1.0f;
 	float scaleY = layoutHeight > 0 ? float(outH) / float(layoutHeight) : 1.0f;
-	if (rotOdd) std::swap(scaleX, scaleY);
+	if ((rotation_[m] & 1) == 1) {
+		scaleX = layoutWidth > 0 ? float(outH) / float(layoutWidth) : 1.0f;
+		scaleY = layoutHeight > 0 ? float(outW) / float(layoutHeight) : 1.0f;
+	}
+	if (mirror_[m]) scaleY /= 2.0f;
 
-	// Split-screen style mirror
-	if (mir) scaleY /= 2.0f;
+	// Local container (don’t mutate viewInfo)
+	SDL_FRect container{};
+	bool hasContainer = (viewInfo.ContainerWidth > 0.0f && viewInfo.ContainerHeight > 0.0f);
+	if (mirror_[m] && !hasContainer) {
+		container = { 0.0f, 0.0f, float(layoutWidth), float(layoutHeight) };
+		hasContainer = true;
+	}
+	else if (hasContainer) {
+		container = { viewInfo.ContainerX, viewInfo.ContainerY,
+					  viewInfo.ContainerWidth, viewInfo.ContainerHeight };
+	}
 
 	// Texture size for UVs (from ViewInfo)
 	const int texW = int(viewInfo.ImageWidth);
 	const int texH = int(viewInfo.ImageHeight);
+	const int rot = (rotation_[m] & 3);
+	const bool mir = mirror_[m];
 
-	// Source / Destination (logical space)
+	// --- Source / Destination (logical space) ---
 	SDL_Rect  srcRect = src ? *src : SDL_Rect{ 0, 0, texW, texH };
 	SDL_FRect dstRect = *dest;
 
@@ -1372,6 +1389,7 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 		}
 	}
 
+
 	if (dstRect.w <= 0.f || dstRect.h <= 0.f || srcRect.w <= 0 || srcRect.h <= 0)
 		return true;
 
@@ -1385,10 +1403,8 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 		int v = (int)lroundf(a01 * 255.f);
 		return (Uint8)clamp_int(v, 0, 255);
 		};
-	auto to_pixels = [&](SDL_FRect r)->SDL_FRect {
-		r.x *= scaleX; r.y *= scaleY; r.w *= scaleX; r.h *= scaleY;
-		return r;
-		};
+	auto to_pixels = [&](SDL_FRect r)->SDL_FRect { r.x *= scaleX; r.y *= scaleY; r.w *= scaleX; r.h *= scaleY; return r; };
+
 	auto clamp_src_to_rect = [&](SDL_Rect& s, const SDL_Rect& limit) {
 		const int minX = limit.x, minY = limit.y, maxX = limit.x + limit.w, maxY = limit.y + limit.h;
 		if (s.x < minX) s.x = minX;
@@ -1396,6 +1412,7 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 		if (s.x + s.w > maxX) s.w = std::max(0, maxX - s.x);
 		if (s.y + s.h > maxY) s.h = std::max(0, maxY - s.y);
 		};
+
 	auto recompute_src_from_dst = [&](SDL_Rect& s, const SDL_Rect& sCopy,
 		const SDL_FRect& d, const SDL_FRect& dCopy) {
 			const float sx = (dCopy.w > 0.f) ? float(sCopy.w) / dCopy.w : 0.f;
@@ -1404,13 +1421,41 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 			s.h = (int)lroundf(d.h * sy);
 			if (dCopy.w > 0.f) s.x = sCopy.x + (int)lroundf((d.x - dCopy.x) * sx);
 			if (dCopy.h > 0.f) s.y = sCopy.y + (int)lroundf((d.y - dCopy.y) * sy);
-			clamp_src_to_rect(s, src ? *src : SDL_Rect{ 0, 0, texW, texH });
+			clamp_src_to_rect(s, src ? *src : SDL_Rect{ 0,0,texW,texH });
 		};
+
+	auto clip_to_container = [&](SDL_Rect& s, SDL_FRect& d, const SDL_Rect& sCopy, const SDL_FRect& dCopy) {
+		if (!hasContainer || dCopy.w <= 0.f || dCopy.h <= 0.f) return;
+		if (d.x < container.x) { const float newW = dCopy.w + dCopy.x - container.x; d.x = container.x; d.w = std::max(0.0f, newW); }
+		if ((d.x + d.w) > (container.x + container.w)) d.w = std::max(0.0f, (container.x + container.w) - d.x);
+		if (d.y < container.y) { const float newH = dCopy.h + dCopy.y - container.y; d.y = container.y; d.h = std::max(0.0f, newH); }
+		if ((d.y + d.h) > (container.y + container.h)) d.h = std::max(0.0f, (container.y + container.h) - d.y);
+		recompute_src_from_dst(s, sCopy, d, dCopy);
+		};
+
+	auto apply_output_rotation_rect = [&](SDL_FRect& dPx) {
+		switch (rotation_[m] & 3) {
+			case 0: break;
+			case 1: {
+				float tmp = dPx.x;
+				dPx.x = float(outW) - dPx.y - dPx.h * 0.5f - dPx.w * 0.5f;
+				dPx.y = tmp - dPx.h * 0.5f + dPx.w * 0.5f;
+			} break;
+			case 2: dPx.x = float(outW) - dPx.x - dPx.w;
+				dPx.y = float(outH) - dPx.y - dPx.h; break;
+			case 3: {
+				float tmp = dPx.x;
+				dPx.x = dPx.y + dPx.h * 0.5f - dPx.w * 0.5f;
+				dPx.y = float(outH) - tmp - dPx.h * 0.5f - dPx.w * 0.5f;
+			} break;
+		}
+		};
+
 	auto rect_to_points = [](const SDL_FRect& r, SDL_FPoint p[4]) {
-		p[0] = { r.x,         r.y };
-		p[1] = { r.x + r.w,   r.y };
-		p[2] = { r.x + r.w,   r.y + r.h };
-		p[3] = { r.x,         r.y + r.h };
+		p[0] = { r.x,         r.y }; // TL
+		p[1] = { r.x + r.w,   r.y }; // TR
+		p[2] = { r.x + r.w,   r.y + r.h }; // BR
+		p[3] = { r.x,         r.y + r.h }; // BL
 		};
 	auto rotate_points_about_center = [](SDL_FPoint p[4], const SDL_FRect& r, float angleDeg) {
 		if (angleDeg == 0.0f) return;
@@ -1423,8 +1468,10 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 			p[i].y = x * s + y * c + cy;
 		}
 		};
+
 	auto make_verts = [&](const SDL_Rect& s, SDL_FRect dPx, float angleDeg,
 		bool flipH, bool flipV, float alpha01, SDL_Vertex out[4]) {
+			// UVs
 			float u0 = float(s.x) / float(texW);
 			float v0 = float(s.y) / float(texH);
 			float u1 = float(s.x + s.w) / float(texW);
@@ -1435,20 +1482,20 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 			SDL_FPoint pts[4]; rect_to_points(dPx, pts);
 			rotate_points_about_center(pts, dPx, angleDeg);
 
-			const Uint8 a8 = (alpha01 >= 1.0f) ? Uint8(255) : clamp_u8(alpha01);
-			const SDL_Color col = { 255, 255, 255, a8 };
+			const SDL_Color col = { 255,255,255, clamp_u8(alpha01) };
 			out[0] = { {pts[0].x, pts[0].y}, col, {u0, v0} };
 			out[1] = { {pts[1].x, pts[1].y}, col, {u1, v0} };
 			out[2] = { {pts[2].x, pts[2].y}, col, {u1, v1} };
 			out[3] = { {pts[3].x, pts[3].y}, col, {u0, v1} };
 		};
+
 	auto draw_quad = [&](const SDL_Rect& s, const SDL_FRect& dPx, float angleDeg,
 		bool flipH, bool flipV, float alpha01)->bool
 		{
 			SDL_Vertex v[4];
 			make_verts(s, dPx, angleDeg, flipH, flipV, alpha01, v);
-			static const int idx[6] = { 0, 1, 2,  0, 2, 3 };
-			return SDL_RenderGeometry(r, texture, v, 4, idx, 6) == 0;
+			static const int idx[6] = { 0,1,2, 0,2,3 };
+			return SDL_RenderGeometry(renderer_[m], texture, v, 4, idx, 6) == 0;
 		};
 
 	// --- Base draw path (no reflection) ---
@@ -1456,46 +1503,39 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 		SDL_Rect  s = src0;
 		SDL_FRect d = dst0;
 
-		// (containers off in your app; keep hook if ever used)
-		// clip_to_container(s, d, sCopy, dCopy);
-
+		const SDL_Rect  sCopy = s;
+		const SDL_FRect dCopy = d;
+		clip_to_container(s, d, sCopy, dCopy);
 		if (d.w <= 0.f || d.h <= 0.f || s.w <= 0 || s.h <= 0) return true;
 
-		// Fast path: no component rotation and not mirrored
-		if (viewInfo.Angle == 0.0f && !mir) {
-			SDL_FRect dPx = to_pixels(d);
-			const float angle = float(rot * 90);
-			return draw_quad(s, dPx, angle, false, false, alpha);
-		}
-
-		// General / mirrored path
 		float angle = viewInfo.Angle;
-		if (!mir) angle += float(rot * 90);
+		if (!mirror_[m]) angle += float(rotation_[m] * 90);
 
 		SDL_FRect dPx = to_pixels(d);
-		bool ok = true;
 
-		if (mir) {
-			if (!rotOdd) {
-				SDL_FRect rpx = dPx;
-				rpx.y += float(outH) * 0.5f;
-				ok &= draw_quad(s, rpx, angle, false, false, alpha);
-				rpx.x = float(outW) - rpx.x - rpx.w;
-				rpx.y = float(outH) - rpx.y - rpx.h;
-				ok &= draw_quad(s, rpx, angle + 180.0f, false, false, alpha);
+		bool ok = true;
+		if (mirror_[m]) {
+			if ((rotation_[m] & 1) == 0) {
+				SDL_FRect r = dPx;
+				r.y += float(outH) * 0.5f;
+				ok &= draw_quad(s, r, angle, false, false, alpha);
+				r.x = float(outW) - r.x - r.w;
+				r.y = float(outH) - r.y - r.h;
+				ok &= draw_quad(s, r, angle + 180.0f, false, false, alpha);
 			}
 			else {
-				SDL_FRect rpx = dPx;
-				float tmpx = rpx.x;
-				rpx.x = float(outW) * 0.5f - rpx.y - rpx.h * 0.5f - rpx.w * 0.5f;
-				rpx.y = tmpx - rpx.h * 0.5f + rpx.w * 0.5f;
-				ok &= draw_quad(s, rpx, angle + 90.0f, false, false, alpha);
-				rpx.x = float(outW) - rpx.x - rpx.w;
-				rpx.y = float(outH) - rpx.y - rpx.h;
-				ok &= draw_quad(s, rpx, angle + 270.0f, false, false, alpha);
+				SDL_FRect r = dPx;
+				float tmpx = r.x;
+				r.x = float(outW) * 0.5f - r.y - r.h * 0.5f - r.w * 0.5f;
+				r.y = tmpx - r.h * 0.5f + r.w * 0.5f;
+				ok &= draw_quad(s, r, angle + 90.0f, false, false, alpha);
+				r.x = float(outW) - r.x - r.w;
+				r.y = float(outH) - r.y - r.h;
+				ok &= draw_quad(s, r, angle + 270.0f, false, false, alpha);
 			}
 		}
 		else {
+			apply_output_rotation_rect(dPx);
 			ok &= draw_quad(s, dPx, angle, false, false, alpha);
 		}
 		return ok;
@@ -1517,71 +1557,43 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 				d.w = std::max(0.0f, d.w * viewInfo.ReflectionScale); break;
 		}
 
+		const SDL_Rect  sCopy = s;
+		const SDL_FRect dCopy = d;
+		clip_to_container(s, d, sCopy, dCopy);
 		if (d.w <= 0.f || d.h <= 0.f || s.w <= 0 || s.h <= 0) return true;
 
-		// ---------- CULL reflection (same logic as base) ----------
-		if (viewInfo.Angle == 0.0f && !mir) {
-			const SDL_FRect dPx = { d.x * scaleX, d.y * scaleY,
-									d.w * scaleX, d.h * scaleY };
-			if (dPx.x + dPx.w <= 0.0f || dPx.y + dPx.h <= 0.0f ||
-				dPx.x >= float(outW) || dPx.y >= float(outH)) {
-				return true; // fully offscreen
-			}
-		}
-		else {
-			const float pxW = d.w * scaleX;
-			const float pxH = d.h * scaleY;
-			const float cx = (d.x * scaleX) + 0.5f * pxW;
-			const float cy = (d.y * scaleY) + 0.5f * pxH;
-			float theta = viewInfo.Angle;
-			if (!mir) theta += float(rot * 90);
-			const float rad = theta * 3.1415926535f / 180.0f;
-			const float c = fabsf(cosf(rad)), s = fabsf(sinf(rad));
-			const float hx = 0.5f * (c * pxW + s * pxH);
-			const float hy = 0.5f * (s * pxW + c * pxH);
-			const float minX = cx - hx, maxX = cx + hx;
-			const float minY = cy - hy, maxY = cy + hy;
-			if (maxX <= 0.0f || maxY <= 0.0f ||
-				minX >= float(outW) || minY >= float(outH)) {
-				return true; // fully offscreen
-			}
-		}
-		// ----------------------------------------------------------
-
-		const float aRef = viewInfo.ReflectionAlpha * alpha;
-		if (aRef <= 0.0f) return true;
-
-		// General / mirrored draw (fast path folded into this using draw_quad)
 		float baseAngle = viewInfo.Angle;
-		if (!mir) baseAngle += float(rot * 90);
+		if (!mirror_[m]) baseAngle += float(rotation_[m] * 90);
 
 		const bool flipV = (kind == 0 || kind == 1);
 		const bool flipH = (kind == 2 || kind == 3);
+		const float aRef = viewInfo.ReflectionAlpha * alpha;
 
 		SDL_FRect dPx = to_pixels(d);
-		bool ok = true;
 
-		if (mir) {
-			if (!rotOdd) {
-				SDL_FRect rpx = dPx;
-				rpx.y += float(outH) * 0.5f;
-				ok &= draw_quad(s, rpx, baseAngle, flipH, flipV, aRef);
-				rpx.x = float(outW) - rpx.x - rpx.w;
-				rpx.y = float(outH) - rpx.y - rpx.h;
-				ok &= draw_quad(s, rpx, baseAngle + 180.0f, flipH, flipV, aRef);
+		bool ok = true;
+		if (mirror_[m]) {
+			if ((rotation_[m] & 1) == 0) {
+				SDL_FRect r = dPx;
+				r.y += float(outH) * 0.5f;
+				ok &= draw_quad(s, r, baseAngle, flipH, flipV, aRef);
+				r.x = float(outW) - r.x - r.w;
+				r.y = float(outH) - r.y - r.h;
+				ok &= draw_quad(s, r, baseAngle + 180.0f, flipH, flipV, aRef);
 			}
 			else {
-				SDL_FRect rpx = dPx;
-				float tmpx = rpx.x;
-				rpx.x = float(outW) * 0.5f - rpx.y - rpx.h * 0.5f - rpx.w * 0.5f;
-				rpx.y = tmpx - rpx.h * 0.5f + rpx.w * 0.5f;
-				ok &= draw_quad(s, rpx, baseAngle + 90.0f, flipH, flipV, aRef);
-				rpx.x = float(outW) - rpx.x - rpx.w;
-				rpx.y = float(outH) - rpx.y - rpx.h;
-				ok &= draw_quad(s, rpx, baseAngle + 270.0f, flipH, flipV, aRef);
+				SDL_FRect r = dPx;
+				float tmpx = r.x;
+				r.x = float(outW) * 0.5f - r.y - r.h * 0.5f - r.w * 0.5f;
+				r.y = tmpx - r.h * 0.5f + r.w * 0.5f;
+				ok &= draw_quad(s, r, baseAngle + 90.0f, flipH, flipV, aRef);
+				r.x = float(outW) - r.x - r.w;
+				r.y = float(outH) - r.y - r.h;
+				ok &= draw_quad(s, r, baseAngle + 270.0f, flipH, flipV, aRef);
 			}
 		}
 		else {
+			apply_output_rotation_rect(dPx);
 			ok &= draw_quad(s, dPx, baseAngle, flipH, flipV, aRef);
 		}
 		return ok;
