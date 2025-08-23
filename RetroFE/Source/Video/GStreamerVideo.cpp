@@ -187,12 +187,12 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 		}
 
 		case GST_MESSAGE_ASYNC_DONE: {
-			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_) &&
+			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->pipeline_) &&
 				video->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::None) {
 
 				// Check that we're actually in a usable state
 				GstState current, pending;
-				if (gst_element_get_state(video->playbin_, &current, &pending, 0) == GST_STATE_CHANGE_SUCCESS) {
+				if (gst_element_get_state(video->pipeline_, &current, &pending, 0) == GST_STATE_CHANGE_SUCCESS) {
 					if (current == GST_STATE_PAUSED || current == GST_STATE_PLAYING) {
 						bool expected = false;
 						(void)video->pipeLineReady_.compare_exchange_strong(expected, true,
@@ -204,7 +204,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 		}
 		case GST_MESSAGE_EOS: {
 			// Check if the EOS is from our main playbin element
-			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->playbin_)) {
+			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(video->pipeline_)) {
 				uint64_t session = video->currentPlaySessionId_.load();
 				LOG_DEBUG("GStreamerVideo", "BusCallback: Received EOS for " + video->currentFile_ +
 					" (Session: " + std::to_string(session) + ")");
@@ -212,7 +212,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 					LOG_DEBUG("GStreamerVideo", "EOS ignored (unloaded) for session " + std::to_string(session));
 					break;
 				}
-				if (video->playbin_ && video->getCurrent() > GST_SECOND / 2) { // Check if it played for a meaningful duration
+				if (video->pipeline_ && video->getCurrent() > GST_SECOND / 2) { // Check if it played for a meaningful duration
 					video->playCount_++;
 					if (!video->numLoops_ || video->numLoops_ > video->playCount_) {
 						LOG_DEBUG("GStreamerVideo", "BusCallback: Looping " + video->currentFile_);
@@ -224,7 +224,7 @@ gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user
 						video->pipeLineReady_.store(false, std::memory_order_release);
 					}
 				}
-				else if (video->playbin_) {
+				else if (video->pipeline_) {
 					LOG_DEBUG("GStreamerVideo", "BusCallback: EOS received very early for " + video->currentFile_ + ". Not looping.");
 					// Potentially an issue if EOS comes too fast, could indicate a problem loading the file.
 					// video->hasError_.store(true, std::memory_order_release);
