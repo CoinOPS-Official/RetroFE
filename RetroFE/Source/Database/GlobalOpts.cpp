@@ -143,7 +143,7 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_BASEMEDIAPATH,            "",         global_options::option_type::PATH,     "Path to media if stored outside the build" },
     { OPTION_BASEITEMPATH,             "",         global_options::option_type::PATH,     "Path to items if stored outside the build" },
 
-    { nullptr }
+    { nullptr, nullptr, global_options::option_type::INVALID, nullptr }
 };
 
 // Function to format and print contents of global_options::options_entry

@@ -156,10 +156,18 @@ public:
 
     // Definition of options_entry describing a single option with its description and default value
     struct options_entry {
-        const char* name;               // name on the command line
-        const char* defvalue;           // default value of this argument
-        option_type                 type;               // type of option
-        const char* description;        // description for -showusage
+        const char* name;        // name on the command line
+        const char* defvalue;    // default value of this argument
+        option_type  type;        // type of option
+        const char* description; // description for -showusage
+
+        // Default all fields if someone forgets to fill them
+        constexpr options_entry(const char* n = nullptr,
+            const char* d = nullptr,
+            option_type t = option_type::INVALID,
+            const char* desc = nullptr)
+            : name(n), defvalue(d), type(t), description(desc) {
+        }
     };
 
     // Definition of functions to directly return the values of specific options
