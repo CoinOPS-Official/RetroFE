@@ -197,26 +197,7 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
 	lk.unlock();
 
 	if (auto* gsv = dynamic_cast<GStreamerVideo*>(key)) {
-		const bool teardown =
-			shuttingDown_ || tryErase /* pool was markedForCleanup & became idle */;
-
-		if (teardown) {
-			// Teardown path: ensure the instance is quiescent before any erase
-			gsv->unload(); // synchronous
-		}
-		else {
-			// Normal path: fire-and-forget on the threadpool
-			try {
-				(void)ThreadPool::getInstance().enqueue([gsv] {
-					gsv->unload(); // background
-					});
-			}
-			catch (const std::exception& e) {
-				// Pool is stopping or unavailable; do it synchronously
-				LOG_WARNING("VideoPool", std::string("ThreadPool enqueue failed: ") + e.what());
-				gsv->unload();
-			}
-		}
+		gsv->unload();
 	}
 	if (tryErase) {
 		std::scoped_lock<std::mutex> relk(s_mutex);
