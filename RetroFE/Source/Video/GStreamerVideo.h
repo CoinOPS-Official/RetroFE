@@ -186,6 +186,7 @@ private:
 
 	std::function<void(GStreamerVideo*)> onBecameNone_;
 	std::atomic<bool> notifyOnNone_{ false };
+	std::atomic<bool> unloading_{ false };
 	std::mutex cbMutex_;
 };
 

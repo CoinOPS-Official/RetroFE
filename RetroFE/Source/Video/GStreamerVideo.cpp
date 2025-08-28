@@ -483,9 +483,7 @@ bool GStreamerVideo::unload() {
 		updateTextureFunc_ = [](SDL_Texture*, GstVideoFrame*) { return false; };
 	}
 	// Nuke the currently bound texture from the renderer
-	SDL_LockMutex(SDL::getMutex());
 	texture_ = nullptr;
-	SDL_UnlockMutex(SDL::getMutex());
 
 	// THEN safely clear callbacks
 	if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
