@@ -722,7 +722,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			hasError_.store(true, std::memory_order_release);
 			return false;
 		}
-
+		gst_object_ref_sink(videoBin);
 		// Set the bin as the video-sink.
 		g_object_set(playbin_, "video-sink", videoBin, nullptr);
 		gst_object_unref(videoBin);
