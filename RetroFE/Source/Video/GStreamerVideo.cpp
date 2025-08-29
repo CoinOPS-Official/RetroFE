@@ -42,6 +42,7 @@
 #include <array>
 #include <mutex>
 #include <algorithm>
+#include <utility>
 
 bool GStreamerVideo::initialized_ = false;
 bool GStreamerVideo::pluginsInitialized_ = false;
