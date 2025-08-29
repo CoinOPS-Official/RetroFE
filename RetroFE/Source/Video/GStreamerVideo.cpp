@@ -393,8 +393,16 @@ bool GStreamerVideo::stop() {
 		const guint id = std::exchange(busWatchId_, 0);
 		if (id != 0) {
 			GlibLoop::instance().invokeAndWait([id] {
-				// run on the loop thread so the default context matches
-				(void)g_source_remove(id);  // returns FALSE if already removed — fine
+				// We are on the GLib loop thread; use its thread-default context.
+				GMainContext* ctx = g_main_context_get_thread_default();
+				if (!ctx) return;  // should not happen if your loop started correctly
+
+				// Only destroy if the source is still registered in this context.
+				if (GSource* src = g_main_context_find_source_by_id(ctx, id)) {
+					g_source_destroy(src);     // synchronous; no warning
+					// No g_source_unref() needed; the context owns the ref
+				}
+				// If src == nullptr, it was already removed; do nothing (no warning)
 				});
 		}
 
