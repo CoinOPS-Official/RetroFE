@@ -382,10 +382,9 @@ bool GStreamerVideo::stop() {
 
 	if (pipeline_) {
 		// Strong ref for cross-thread safety
-		GstElement* pl = GST_ELEMENT(gst_object_ref(pipeline_));
 
 		// 1) Stop bus delivery and remove its watch on the GLib thread
-		if (GstBus* bus = gst_element_get_bus(pl)) {
+		if (GstBus* bus = gst_element_get_bus(pipeline_)) {
 			gst_bus_set_flushing(bus, TRUE);     // stop delivering new messages
 			gst_object_unref(bus);               // unref from get_bus
 		}
@@ -423,17 +422,17 @@ bool GStreamerVideo::stop() {
 		}
 
 		// 3) Break waits immediately
-		gst_element_send_event(pl, gst_event_new_flush_start());
+		gst_element_send_event(pipeline_, gst_event_new_flush_start());
 
 		// 4) Step down with bounded waits
 		constexpr GstClockTime tshort = 500 * GST_MSECOND;
-		gst_element_set_state(pl, GST_STATE_READY);
-		(void)gst_element_get_state(pl, nullptr, nullptr, tshort);
+		gst_element_set_state(pipeline_, GST_STATE_READY);
+		(void)gst_element_get_state(pipeline_, nullptr, nullptr, tshort);
 
-		gst_element_send_event(pl, gst_event_new_flush_stop(TRUE));
+		gst_element_send_event(pipeline_, gst_event_new_flush_stop(TRUE));
 
-		gst_element_set_state(pl, GST_STATE_NULL);
-		(void)gst_element_get_state(pl, nullptr, nullptr, 2 * GST_SECOND);
+		gst_element_set_state(pipeline_, GST_STATE_NULL);
+		(void)gst_element_get_state(pipeline_, nullptr, nullptr, 2 * GST_SECOND);
 
 		// 5) Disconnect signals after NULL
 		if (elementSetupHandlerId_ != 0 && playbin_ &&
@@ -443,7 +442,7 @@ bool GStreamerVideo::stop() {
 		}
 
 		LOG_DEBUG("GStreamerVideo::stop", "Unreffing pipeline to guarantee final cleanup.");
-		gst_object_unref(pl);
+		gst_object_unref(pipeline_);
 
 		// 6) Clear pointers after teardown
 		pipeline_ = nullptr;
@@ -925,7 +924,7 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(GstPad* pad, GstPadProbeInfo*
 
 					// run on the main loop, with a destroy notify to avoid leaks if never dispatched
 					g_main_context_invoke_full(
-						/*context*/ nullptr,
+						/*context*/ GlibLoop::instance().context(),
 						/*priority*/ G_PRIORITY_DEFAULT,
 						[](gpointer data) -> gboolean {
 							Task* t = static_cast<Task*>(data);
