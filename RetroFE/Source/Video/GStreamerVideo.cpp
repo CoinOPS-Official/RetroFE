@@ -385,22 +385,16 @@ bool GStreamerVideo::stop() {
 
 		// 1) Stop bus delivery and remove its watch on the GLib thread
 		if (GstBus* bus = gst_element_get_bus(pl)) {
-			gst_object_ref(bus);                              // keep alive across invoke
-			gst_bus_set_flushing(bus, TRUE);                  // stop new messages
+			gst_bus_set_flushing(bus, TRUE);     // stop delivering new messages
+			gst_object_unref(bus);               // unref from get_bus
+		}
 
-			if (busWatchId_) {
-				GlibLoop::instance().invokeAndWait([id = busWatchId_]() {
-					g_source_remove(id);
-					});
-				busWatchId_ = 0;
-			}
-			else {
-				GlibLoop::instance().invokeAndWait([bus]() {
-					(void)gst_bus_remove_watch(bus);
-					});
-			}
-			gst_object_unref(bus); // our extra ref
-			gst_object_unref(bus); // from get_bus
+		const guint id = std::exchange(busWatchId_, 0);
+		if (id != 0) {
+			GlibLoop::instance().invokeAndWait([id] {
+				// run on the loop thread so the default context matches
+				(void)g_source_remove(id);  // returns FALSE if already removed — fine
+				});
 		}
 
 		// 2) Detach appsink callbacks/probes
@@ -421,12 +415,13 @@ bool GStreamerVideo::stop() {
 
 		// 3) Break waits immediately
 		gst_element_send_event(pl, gst_event_new_flush_start());
-		gst_element_send_event(pl, gst_event_new_flush_stop(TRUE));
 
 		// 4) Step down with bounded waits
 		constexpr GstClockTime tshort = 500 * GST_MSECOND;
 		gst_element_set_state(pl, GST_STATE_READY);
 		(void)gst_element_get_state(pl, nullptr, nullptr, tshort);
+
+		gst_element_send_event(pl, gst_event_new_flush_stop(TRUE));
 
 		gst_element_set_state(pl, GST_STATE_NULL);
 		(void)gst_element_get_state(pl, nullptr, nullptr, 2 * GST_SECOND);
@@ -757,14 +752,11 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	if (GstBus* bus = gst_element_get_bus(pipeline_ /* or playbin_ if that’s your top */)) {
 		busWatchId_ = GlibLoop::instance().addBusWatch(
 			bus,
-			+[](GstBus* b, GstMessage* msg, gpointer self) -> gboolean {
-				return GStreamerVideo::busCallback(b, msg, self); // MUST return TRUE (don’t auto-remove)
+			+[](GstBus* b, GstMessage* m, gpointer self) -> gboolean {
+				return GStreamerVideo::busCallback(b, m, self); // must return TRUE
 			},
 			this,
-			// destroy_notify: called when source is removed/destroyed
-			[](gpointer self) {
-				static_cast<GStreamerVideo*>(self)->busWatchId_ = 0;
-			}
+			[](gpointer self) { static_cast<GStreamerVideo*>(self)->busWatchId_ = 0; } // only clears when removed
 		);
 		gst_object_unref(bus);
 	}
