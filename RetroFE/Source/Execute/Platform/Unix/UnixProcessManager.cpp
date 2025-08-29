@@ -136,6 +136,7 @@ bool UnixProcessManager::launch(const std::string& executable, const std::string
     }
     else if (pid_ > 0) {
         // === PARENT PROCESS ===
+        pgid_ = pid_;  // Save the process group ID for this launched process
         LOG_INFO("ProcessManager", "Successfully forked process with group PID: " + std::to_string(pid_));
         return true;
     }
@@ -210,38 +211,105 @@ void UnixProcessManager::terminate() {
         return;
     }
 
-    LOG_INFO("ProcessManager", "Attempting graceful termination of process group " + std::to_string(pid_) + " with SIGTERM.");
+    // Prefer the recorded process group (child does setsid()). Fall back to PID if needed.
+    const pid_t target_pgid = (pgid_ > 0 ? pgid_ : pid_);
+    const pid_t target_pid = pid_;
 
-    // Step 1: Ask the entire process group to terminate nicely.
-    if (kill(-pid_, SIGTERM) == -1) {
-        LOG_ERROR("ProcessManager", "Failed to send SIGTERM. Escalating to SIGKILL.");
-        kill(-pid_, SIGKILL);
-        waitpid(pid_, nullptr, 0);
+    LOG_INFO("ProcessManager",
+        "Attempting graceful termination of process group "
+        + std::to_string(target_pgid) + " (child pid " + std::to_string(target_pid) + ") with SIGTERM.");
+
+    // --- helpers (inline, so we keep everything in this function and retain logging) ---
+    auto send_group = [&](int sig, const char* name) {
+        int rc = kill(-target_pgid, sig);
+        if (rc == -1) {
+            LOG_ERROR("ProcessManager", std::string("Failed to send ") + name +
+                " to PGID " + std::to_string(target_pgid) +
+                " (errno=" + std::to_string(errno) + ")."
+                " Falling back to PID " + std::to_string(target_pid) + ".");
+            if (kill(target_pid, sig) == -1) {
+                LOG_ERROR("ProcessManager", std::string("Also failed to send ") + name +
+                    " to PID " + std::to_string(target_pid) +
+                    " (errno=" + std::to_string(errno) + ").");
+            }
+        }
+        else {
+            LOG_INFO("ProcessManager", std::string("Sent ") + name + " to PGID " + std::to_string(target_pgid) + ".");
+        }
+        };
+
+    auto waitChildExitTimed = [&](int ms_timeout) -> bool {
+        int status = 0;
+        const int step_ms = 50;
+        for (int waited = 0; waited <= ms_timeout; waited += step_ms) {
+            pid_t r = waitpid(target_pid, &status, WNOHANG);
+            if (r == target_pid) {
+                if (WIFEXITED(status)) {
+                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) +
+                        " exited with code " + std::to_string(WEXITSTATUS(status)) + ".");
+                }
+                else if (WIFSIGNALED(status)) {
+                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) +
+                        " killed by signal " + std::to_string(WTERMSIG(status)) + ".");
+                }
+                else {
+                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) + " reaped.");
+                }
+                return true;
+            }
+            if (r < 0) {
+                if (errno == ECHILD) {
+                    LOG_INFO("ProcessManager", "No child to reap (ECHILD). Treating as already exited.");
+                    return true;
+                }
+                LOG_WARNING("ProcessManager", "waitpid transient error (errno=" + std::to_string(errno) + ").");
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(step_ms));
+        }
+        return false; // still not gone
+        };
+
+    auto reapAllChildrenNonBlocking = [&]() {
+        int total = 0;
+        for (;;) {
+            int status = 0;
+            pid_t r = waitpid(-1, &status, WNOHANG);
+            if (r > 0) {
+                ++total;
+                continue;
+            }
+            if (r == 0 || (r < 0 && errno == ECHILD)) break;
+            // other error: bail
+            break;
+        }
+        if (total > 0) {
+            LOG_INFO("ProcessManager", "Reaped " + std::to_string(total) + " additional child(ren) (zombies/helpers).");
+        }
+        };
+    // --- end helpers ---
+
+    // 1) Polite: SIGTERM to the group, short bounded wait
+    send_group(SIGTERM, "SIGTERM");
+    if (waitChildExitTimed(500)) {
+        reapAllChildrenNonBlocking();
         pid_ = -1;
+        pgid_ = -1;
+        LOG_INFO("ProcessManager", "Process group terminated gracefully after SIGTERM.");
         return;
     }
 
-    // Step 2: Wait for a short period for the process to exit on its own.
-    const int timeout_ms = 500;
-    const int sleep_interval_ms = 50;
-    for (int i = 0; i < timeout_ms / sleep_interval_ms; ++i) {
-        int status;
-        pid_t result = waitpid(pid_, &status, WNOHANG);
-        if (result == pid_) {
-            LOG_INFO("ProcessManager", "Process group terminated gracefully.");
-            pid_ = -1;
-            return;
-        }
-        // Wait a bit before checking again.
-        std::this_thread::sleep_for(std::chrono::milliseconds(sleep_interval_ms));
-    }
-
-    // Step 3: If the process is still running, use the sledgehammer.
+    // 2) Sledgehammer: SIGKILL to the group, short bounded wait
     LOG_WARNING("ProcessManager", "Process group did not respond to SIGTERM. Escalating to SIGKILL.");
-    kill(-pid_, SIGKILL);
-    waitpid(pid_, nullptr, 0); // Final cleanup reap.
+    send_group(SIGKILL, "SIGKILL");
+    (void)waitChildExitTimed(2000); // best effort
+    reapAllChildrenNonBlocking();
+
+    // 3) Cleanup state regardless; if anything remains, it’s not our child anymore
     pid_ = -1;
+    pgid_ = -1;
+    LOG_INFO("ProcessManager", "Terminate() complete.");
 }
+
 
 bool UnixProcessManager::isRunning() const {
     if (pid_ <= 0) {

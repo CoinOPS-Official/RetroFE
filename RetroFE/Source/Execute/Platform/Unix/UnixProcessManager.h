@@ -51,6 +51,7 @@ public:
 
 private:
     pid_t pid_ = -1; // Process ID of the forked child process.
+    pid_t pgid_ = -1;
     bool isRunning() const;
 
 };
