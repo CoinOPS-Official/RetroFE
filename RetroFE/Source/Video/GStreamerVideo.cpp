@@ -373,71 +373,81 @@ bool GStreamerVideo::deInitialize() {
 
 bool GStreamerVideo::stop() {
 	const std::string currentFileForLog = currentFile_;
-	LOG_INFO("GStreamerVideo", "Stop (full cleanup) called for " + (currentFileForLog.empty() ? "unspecified video" : currentFileForLog));
+	LOG_INFO("GStreamerVideo", "Stop (full cleanup) called for " +
+		(currentFileForLog.empty() ? "unspecified video" : currentFileForLog));
 
 	pipeLineReady_.store(false, std::memory_order_release);
 	targetState_.store(IVideo::VideoState::None, std::memory_order_release);
 
-	if (pipeline_) {
-		LOG_DEBUG("GStreamerVideo::stop", "Synchronizing pipeline state before final stop...");
-		constexpr GstClockTime stopSyncTimeout = 500 * GST_MSECOND;
-		GstStateChangeReturn syncRet = gst_element_get_state(pipeline_, nullptr, nullptr, stopSyncTimeout);
-		if (syncRet != GST_STATE_CHANGE_SUCCESS && syncRet != GST_STATE_CHANGE_NO_PREROLL) {
-			LOG_WARNING("GStreamerVideo::stop", "Timed out or failed synchronizing before stop. Forcing cleanup regardless.");
+	if (!pipeline_) {
+		LOG_DEBUG("GStreamerVideo", "stop(): No pipeline_ was active to stop and unref.");
+		goto sdl_cleanup;
+	}
+
+	// Take a strong ref so we can safely interact across context boundaries.
+	GstElement* pl = GST_ELEMENT(gst_object_ref(pipeline_));
+
+	// 1) Stop bus delivery ASAP and remove the watch **synchronously**.
+	if (GstBus* bus = gst_element_get_bus(pl)) {
+		// Stop new messages from being delivered while we tear down.
+		if (busWatchId_) {
+			GlibLoop::instance().invokeAndWait([id = busWatchId_]() {
+				g_source_remove(id);
+				});
+			busWatchId_ = 0;
 		}
 		else {
-			LOG_DEBUG("GStreamerVideo::stop", "Pipeline synchronized successfully.");
-		}
-
-		// --- Detach bus watch on GLib loop (take a ref for the cross-thread call) ---
-		if (GstBus* bus = gst_element_get_bus(pipeline_)) {
-			GstBus* bus_for_loop = GST_BUS(gst_object_ref(bus));
-			GlibLoop::instance().invoke([bus_for_loop]() {
-				(void)gst_bus_remove_watch(bus_for_loop);
-				gst_object_unref(bus_for_loop);
+			GlibLoop::instance().invokeAndWait([bus]() {
+				(void)gst_bus_remove_watch(bus);
 				});
-			// Optional: stop delivering queued messages
-			gst_bus_set_flushing(bus, TRUE);
-			gst_object_unref(bus);
 		}
+		gst_object_unref(bus);
+	}
 
-		// --- Disconnect signals/probes on elements we own ---
-		if (elementSetupHandlerId_ != 0 && g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
-			g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
-			elementSetupHandlerId_ = 0;
-		}
-		// If you used a BUS sync-message handler, also disconnect it here (store its id).
+	// 2) Detach appsink callbacks & probes (so no cross-calls race with teardown).
+	if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
+		GstAppSinkCallbacks empty{};
+		gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &empty, nullptr, nullptr);
 
-		if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
-			GstAppSinkCallbacks empty{};
-			gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &empty, nullptr, nullptr);
-
-			if (padProbeId_ != 0) {
-				if (GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink")) {
-					gst_pad_remove_probe(sinkPad, padProbeId_);
-					gst_object_unref(sinkPad);
-				}
-				padProbeId_ = 0;
+		if (padProbeId_ != 0) {
+			if (GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink")) {
+				gst_pad_remove_probe(sinkPad, padProbeId_);
+				gst_object_unref(sinkPad);
 			}
-			while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
-			while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
+			padProbeId_ = 0;
 		}
-
-		// --- Drive to NULL and unref ---
-		gst_element_set_state(pipeline_, GST_STATE_NULL);
-		(void)gst_element_get_state(pipeline_, nullptr, nullptr, 2 * GST_SECOND);
-
-		LOG_DEBUG("GStreamerVideo::stop", "Unreffing pipeline to guarantee final cleanup.");
-		gst_object_unref(pipeline_);
-		pipeline_ = nullptr;
-		playbin_ = nullptr;
-		videoSink_ = nullptr;
-		perspective_ = nullptr;
-	}
-	else {
-		LOG_DEBUG("GStreamerVideo", "stop(): No pipeline_ was active to stop and unref.");
+		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
+		while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
 	}
 
+	// 3) Flush the pipeline to break preroll/clock waits immediately.
+	gst_element_send_event(pl, gst_event_new_flush_start());
+	gst_element_send_event(pl, gst_event_new_flush_stop(TRUE));
+
+	// 4) Drive down with short, bounded waits (READY ? NULL beats straight to NULL on some graphs).
+	constexpr GstClockTime tshort = 500 * GST_MSECOND;
+	gst_element_set_state(pl, GST_STATE_READY);
+	(void)gst_element_get_state(pl, nullptr, nullptr, tshort);
+
+	gst_element_set_state(pl, GST_STATE_NULL);
+	(void)gst_element_get_state(pl, nullptr, nullptr, 2 * GST_SECOND);
+
+	// 5) Disconnect any signal handlers on playbin after state is NULL.
+	if (elementSetupHandlerId_ != 0 && playbin_ && g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
+		g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
+		elementSetupHandlerId_ = 0;
+	}
+
+	LOG_DEBUG("GStreamerVideo::stop", "Unreffing pipeline to guarantee final cleanup.");
+	gst_object_unref(pl);
+
+	// 6) Clear pointers only after teardown is complete.
+	pipeline_ = nullptr;
+	playbin_ = nullptr;
+	videoSink_ = nullptr;
+	perspective_ = nullptr;
+
+sdl_cleanup:
 	// SDL & member cleanup unchanged...
 	SDL_LockMutex(SDL::getMutex());
 	texture_ = nullptr;
@@ -456,7 +466,9 @@ bool GStreamerVideo::stop() {
 	lastSetVolume_ = -1.0f; lastSetMuteState_ = true;
 	busWatchId_ = 0;
 
-	LOG_INFO("GStreamerVideo", "stop(): Instance for " + (currentFileForLog.empty() ? "previous video" : currentFileForLog) + " fully stopped and all resources released.");
+	LOG_INFO("GStreamerVideo", "stop(): Instance for " +
+		(currentFileForLog.empty() ? "previous video" : currentFileForLog) +
+		" fully stopped and all resources released.");
 	return true;
 }
 

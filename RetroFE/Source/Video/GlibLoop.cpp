@@ -67,6 +67,67 @@ void GlibLoop::invoke(std::function<void()> fn, int priority) {
         heapFn, /*notify*/ nullptr);
 }
 
+namespace {
+    struct WaitCall {
+        std::function<void()> fn;
+        std::shared_ptr<std::promise<void>> pr;
+    };
+
+    static gboolean invokeWaitThunk(gpointer data) {
+        auto* wc = static_cast<WaitCall*>(data);
+        // run the user function on the GLib thread
+        wc->fn();
+        // signal completion
+        wc->pr->set_value();
+        delete wc;
+        return G_SOURCE_REMOVE;
+    }
+} // namespace
+
+void GlibLoop::invokeAndWait(std::function<void()> fn, int priority) {
+    if (!isRunning()) {
+        // No loop? Just run inline.
+        fn();
+        return;
+    }
+
+    // If we’re already on the GLib thread, run inline to avoid deadlock.
+    if (th_.joinable() && std::this_thread::get_id() == th_.get_id()) {
+        fn();
+        return;
+    }
+
+    auto pr = std::make_shared<std::promise<void>>();
+    auto fut = pr->get_future();
+
+    auto* wc = new WaitCall{ std::move(fn), pr };
+    g_main_context_invoke_full(context(), priority, &invokeWaitThunk, wc, /*notify*/ nullptr);
+
+    // block until the GLib thread has executed the task
+    fut.get();
+}
+
+bool GlibLoop::invokeAndWaitFor(std::function<void()> fn,
+    std::chrono::milliseconds timeout,
+    int priority) {
+    if (!isRunning()) {
+        fn();
+        return true;
+    }
+    if (th_.joinable() && std::this_thread::get_id() == th_.get_id()) {
+        fn();
+        return true;
+    }
+
+    auto pr = std::make_shared<std::promise<void>>();
+    auto fut = pr->get_future();
+
+    auto* wc = new WaitCall{ std::move(fn), pr };
+    g_main_context_invoke_full(context(), priority, &invokeWaitThunk, wc, /*notify*/ nullptr);
+
+    return (fut.wait_for(timeout) == std::future_status::ready);
+}
+
 guint GlibLoop::addBusWatch(GstBus* bus, GstBusFunc func, gpointer user_data,
     GDestroyNotify notify, int priority) {
     if (!isRunning() || !bus || !func) return 0;

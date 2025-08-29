@@ -44,6 +44,12 @@ public:
     // Non-blocking: returns immediately.
     void invoke(std::function<void()> fn, int priority = G_PRIORITY_DEFAULT);
 
+    void invokeAndWait(std::function<void()> fn, int priority = G_PRIORITY_DEFAULT);
+
+    bool invokeAndWaitFor(std::function<void()> fn,
+        std::chrono::milliseconds timeout,
+        int priority = G_PRIORITY_DEFAULT);
+
     // Convenience: attach a GstBus watch to THIS loop, from any thread.
     // Returns the source ID (0 on failure). This call blocks until attached.
     guint addBusWatch(GstBus* bus,
