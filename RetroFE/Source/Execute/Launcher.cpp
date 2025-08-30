@@ -267,7 +267,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         if (isAttractMode) {
             int timeout = 30;
             config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, timeout);
-            auto attractModeInputCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() != InputDetectionResult::NoInput; };
+            auto attractModeInputCheck = [&inputMonitor]() { return inputMonitor.checkInputEvents() != InputDetectionResult::NoInput; };
             WaitResult result = processManager->wait(timeout, attractModeInputCheck, onFrameTick);
 
             if (result == WaitResult::UserInput) {
@@ -289,7 +289,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                     config_.getProperty(OPTION_LASTPLAYEDSIZE, lastPlayedSize);
                     cib.updateLastPlayedPlaylist(currentPage->getCollection(), collectionItem, lastPlayedSize);
 
-                    auto quitCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
+                    auto quitCheck = [&inputMonitor]() { return inputMonitor.checkInputEvents() == InputDetectionResult::QuitInput; };
                     processManager->wait(0, quitCheck, onFrameTick);
                     processManager->terminate();
                 }
@@ -301,7 +301,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         }
         else { // Normal mode
             LOG_INFO("Launcher", "Waiting for launched process to complete. Press quit combo to force quit.");
-            auto quitCheck = [&inputMonitor]() { return inputMonitor.checkSdlEvents() == InputDetectionResult::QuitInput; };
+            auto quitCheck = [&inputMonitor]() { return inputMonitor.checkInputEvents() == InputDetectionResult::QuitInput; };
             WaitResult result = processManager->wait(0, quitCheck, onFrameTick);
 
             if (result == WaitResult::UserInput) {
