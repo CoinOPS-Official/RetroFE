@@ -25,6 +25,7 @@
 #include <SDL2/SDL.h>
 
 #include "SDLJoyStickScopeGuard.h"
+#include "KeyboardBackendFactory.h"
 #include "../../Database/Configuration.h" // For reading config values
 #include "../../Utility/Utils.h"         // For listToVector
 #include "../../Utility/Log.h"
@@ -51,7 +52,7 @@ public:
     // Constructor is now just a declaration. Its implementation will move to the .cpp file.
     explicit InputMonitor(Configuration& config);
 
-    InputDetectionResult checkSdlEvents();
+    InputDetectionResult checkInputEvents();            // NEW: keyboard first, then SDL joystick
 
     bool wasQuitFirstInput() const {
         return firstInputWasQuit_;
@@ -69,6 +70,14 @@ public:
 
 private:
 
+    std::unique_ptr<IKeyboardBackend> kb_;
+    std::vector<int> kbSingles_, kbCombo_;             // platform codes (evdev/VK)
+    std::unordered_set<int> kbPressed_;
+    std::unordered_map<int, int64_t> kbDownTs_;
+    static int64_t nowMs();
+    void onKbEvent_(int code, bool down);
+    InputDetectionResult pollKeyboard_();
+    InputDetectionResult pollJoystickSDL_();
     // --- UPDATED Configuration State ---
     std::set<int> singleQuitButtonIndices_; // <-- NEW: For `quit = joyButton0`
     std::vector<int> quitComboIndices_;     // <-- EXISTING: For `controls.quitCombo = ...`
