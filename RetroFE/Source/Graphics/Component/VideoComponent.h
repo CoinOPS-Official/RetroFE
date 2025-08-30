@@ -49,7 +49,7 @@ public:
     unsigned long long getCurrent( ) override;
     unsigned long long getDuration( ) override;
     bool isPaused( ) override;
-    std::string_view filePath() const;
+    std::string_view filePath();
 
 private:
     std::string videoFile_;

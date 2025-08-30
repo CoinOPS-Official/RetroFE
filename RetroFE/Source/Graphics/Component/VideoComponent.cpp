@@ -243,7 +243,7 @@ void VideoComponent::draw() {
 	}
 }
 
-std::string_view VideoComponent::filePath() const {
+std::string_view VideoComponent::filePath() {
 	return videoFile_;
 }
 
