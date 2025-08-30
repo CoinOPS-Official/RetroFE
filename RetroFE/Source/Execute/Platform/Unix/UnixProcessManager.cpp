@@ -83,7 +83,9 @@ bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::
     return true;
 }
 
-bool UnixProcessManager::launch(const std::string& executable, const std::string& args, const std::string& currentDirectory) {
+bool UnixProcessManager::launch(const std::string& executable,
+    const std::string& args,
+    const std::string& currentDirectory) {
     LOG_INFO("ProcessManager", "Attempting to launch: " + executable);
     if (!args.empty()) {
         LOG_INFO("ProcessManager", "           Arguments: " + args);
@@ -91,59 +93,119 @@ bool UnixProcessManager::launch(const std::string& executable, const std::string
     if (!currentDirectory.empty()) {
         LOG_INFO("ProcessManager", "     Working directory: " + currentDirectory);
     }
-    
+
+    // Build argv via wordexp (blocks command substitution)
     std::string commandLine = executable + " " + args;
     WordExpWrapper we;
-    // WRDE_NOCMD prevents command substitution for security.
     if (wordexp(commandLine.c_str(), &we.p, WRDE_NOCMD) != 0) {
         LOG_ERROR("ProcessManager", "Failed to parse command line: " + commandLine);
         return false;
     }
 
+    // Pipe for exec result: child writes errno on failure; on success CLOEXEC closes it.
+    int fds[2];
+#if defined(__linux__)
+    if (pipe2(fds, O_CLOEXEC) != 0) {
+        LOG_ERROR("ProcessManager", "pipe2(O_CLOEXEC) failed (errno=" + std::to_string(errno) + ")");
+        return false;
+    }
+#else
+    if (pipe(fds) != 0) {
+        LOG_ERROR("ProcessManager", "pipe() failed (errno=" + std::to_string(errno) + ")");
+        return false;
+    }
+    // Set CLOEXEC manually (best-effort)
+    fcntl(fds[0], F_SETFD, fcntl(fds[0], F_GETFD) | FD_CLOEXEC);
+    fcntl(fds[1], F_SETFD, fcntl(fds[1], F_GETFD) | FD_CLOEXEC);
+#endif
+
     pid_ = fork();
 
     if (pid_ == 0) {
-        // === CHILD PROCESS ===
+        // ---------------- CHILD ----------------
+        // Child: we will write to fds[1] if anything fails before exec.
+        // Close the read end in child.
+        close(fds[0]);
 
-        // *** The Process Group Trick for Robust Termination ***
-        // Create a new session and process group, making this process the leader.
-        // Now, signals sent to -pid_ will go to the entire group of descendants.
+        // Start a new session/process group so parent can signal -pgid_ safely.
         if (setsid() == -1) {
-            perror("launch: setsid failed");
-            _exit(EXIT_FAILURE);
+            int e = errno; (void)!write(fds[1], &e, sizeof(e)); _exit(127);
         }
 
-        if (!currentDirectory.empty()) {
-            if (chdir(currentDirectory.c_str()) != 0) {
-                perror("launch: chdir failed");
-                _exit(EXIT_FAILURE);
-            }
+        if (!currentDirectory.empty() && chdir(currentDirectory.c_str()) != 0) {
+            int e = errno; (void)!write(fds[1], &e, sizeof(e)); _exit(127);
         }
 
-        int fd = open("/dev/null", O_WRONLY);
-        if (fd != -1) {
-            dup2(fd, STDOUT_FILENO);
-            dup2(fd, STDERR_FILENO);
-            close(fd);
+        // Silence child stdout/stderr.
+        if (int devnull = open("/dev/null", O_WRONLY); devnull != -1) {
+            dup2(devnull, STDOUT_FILENO);
+            dup2(devnull, STDERR_FILENO);
+            close(devnull);
         }
 
-        // execvp requires a null-terminated array of char*
+        // Exec. On success, CLOEXEC will close fds[1] so parent sees EOF.
         execvp(we.p.we_wordv[0], we.p.we_wordv);
 
-        // If execvp returns, it's an error.
-        perror("launch: execvp failed");
-        _exit(EXIT_FAILURE);
+        // If we got here, exec failed. Send errno to parent, then exit.
+        {
+            int e = errno;
+            (void)!write(fds[1], &e, sizeof(e));
+        }
+        _exit(127);
     }
-    else if (pid_ > 0) {
-        // === PARENT PROCESS ===
-        pgid_ = pid_;  // Save the process group ID for this launched process
-        LOG_INFO("ProcessManager", "Successfully forked process with group PID: " + std::to_string(pid_));
+
+    // ---------------- PARENT ----------------
+    if (pid_ < 0) {
+        // fork failed
+        close(fds[0]); close(fds[1]);
+        LOG_ERROR("ProcessManager", "Failed to fork a new process (errno=" + std::to_string(errno) + ")");
+        pid_ = -1;
+        pgid_ = -1;
+        return false;
+    }
+
+    // Provisional pgid (valid if child succeeds)
+    pgid_ = pid_;
+
+    // Parent: close write end, read errno (if any)
+    close(fds[1]);
+
+    // Blocking read of exactly sizeof(int). EOF => success.
+    int child_errno = 0;
+    ssize_t nread = 0;
+    while (true) {
+        nread = read(fds[0], &child_errno, sizeof(child_errno));
+        if (nread >= 0) break;
+        if (errno == EINTR) continue;
+        // Read error: treat as failure conservatively
+        LOG_ERROR("ProcessManager", "Launch status read failed (errno=" + std::to_string(errno) + ")");
+        (void)waitpid(pid_, nullptr, 0);
+        close(fds[0]);
+        pid_ = -1; pgid_ = -1;
+        return false;
+    }
+    close(fds[0]);
+
+    if (nread == 0) {
+        // EOF: exec succeeded (CLOEXEC closed the fd in the child).
+        LOG_INFO("ProcessManager", "Successfully forked & exec'd; group PID: " + std::to_string(pid_));
         return true;
     }
-    else {
-        // === FORK FAILED ===
-        LOG_ERROR("ProcessManager", "Failed to fork a new process.");
-        pid_ = -1;
+
+    if (nread == sizeof(child_errno)) {
+        // Child reported exec failure. Reap and report.
+        int status = 0; (void)waitpid(pid_, &status, 0);
+        LOG_ERROR("ProcessManager",
+            "execvp failed (" + std::to_string(child_errno) + "): " + std::string(strerror(child_errno)));
+        pid_ = -1; pgid_ = -1;
+        return false;
+    }
+
+    // Short/partial read: unexpected—treat as failure.
+    {
+        int status = 0; (void)waitpid(pid_, &status, 0);
+        LOG_ERROR("ProcessManager", "Launch status unknown (short read). Treating as failure.");
+        pid_ = -1; pgid_ = -1;
         return false;
     }
 }
