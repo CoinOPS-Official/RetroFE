@@ -21,6 +21,8 @@
 #include <map>
 #include <set> 
 #include <chrono>
+#include <unordered_set>
+#include <unordered_map>
 
 #include <SDL2/SDL.h>
 
@@ -70,7 +72,7 @@ public:
 
 private:
 
-    std::unique_ptr<IKeyboardBackend> kb_;
+    IKeyboardBackend* kb_ = nullptr;
     std::vector<int> kbSingles_, kbCombo_;             // platform codes (evdev/VK)
     std::unordered_set<int> kbPressed_;
     std::unordered_map<int, int64_t> kbDownTs_;

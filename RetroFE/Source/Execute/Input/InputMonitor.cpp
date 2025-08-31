@@ -17,6 +17,11 @@
 #include "InputMonitor.h"
 #include <chrono>
 
+static IKeyboardBackend * getKeyboardBackendSingleton() {
+    static std::unique_ptr<IKeyboardBackend> s = makeKeyboardBackend();
+    return s.get();
+}
+
 static inline int64_t ms_now() {
     using namespace std::chrono;
     return duration_cast<milliseconds>(steady_clock::now().time_since_epoch()).count();
@@ -26,7 +31,7 @@ int64_t InputMonitor::nowMs() { return ms_now(); }
 
 InputMonitor::InputMonitor(Configuration& config) {
     // Create platform-specific backend for keyboard polling
-    kb_ = makeKeyboardBackend();
+    kb_ = getKeyboardBackendSingleton();
 
     // --- Helper to trim whitespace if needed ---
     auto trim = [](std::string& s) {

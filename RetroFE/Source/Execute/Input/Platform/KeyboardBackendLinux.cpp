@@ -11,6 +11,7 @@
 #include <fcntl.h>
 #include <unistd.h>
 #include <cctype>
+#include <cerrno>
 
 namespace {
     int toEvdev(std::string s) {
