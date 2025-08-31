@@ -26,7 +26,6 @@
 #include <mutex>
 #include <vector>
 #include <functional>
-#include <thread>
 
 extern "C" {
 #if (__APPLE__)
@@ -176,6 +175,7 @@ private:
 	static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
 	static GstFlowReturn on_new_preroll(GstAppSink* sink, gpointer user_data);
 	static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer user_data);
+	static GstFlowReturn on_audio_new_sample(GstAppSink* sink, gpointer user_data);
 	static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 	static void initializePlugins();
 	static gboolean on_dimensions_idle(gpointer user_data);
@@ -194,7 +194,6 @@ private:
 	// Audio bus integration
 	AudioBus::SourceId videoSourceId_{ 0 };   // ID of this video’s source in AudioBus
 	GstElement* audioSink_{ nullptr };        // GStreamer appsink for audio
-	std::thread audioThread_;               // Audio feeder thread
 	std::atomic<bool> audioRun_{ false };     // Control flag for the feeder loop
 };
 
