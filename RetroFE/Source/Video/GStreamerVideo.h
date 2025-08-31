@@ -158,6 +158,10 @@ private:
 		GStreamerVideo* self{ nullptr };
 		uint64_t session{ 0 };
 	};
+	GstAppSinkCallbacks audioCbs_{};
+	GstAppSinkCallbacks videoCbs_{};
+	SessionCtx* audioCtx_ = nullptr;    // we own and free explicitly
+	SessionCtx* videoCtx_ = nullptr;
 
 	static constexpr int kVideoRing = 3; // set to 3 if you still see the odd hitch
 	SDL_Texture* videoTexRing_[3]{ nullptr, nullptr, nullptr };

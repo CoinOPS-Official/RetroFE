@@ -372,88 +372,78 @@ bool GStreamerVideo::deInitialize() {
 	return true;
 }
 
+namespace {
+	void detachAndDrainSink(GstElement* sink, guint* probeId /*nullable*/) {
+		if (!sink || !GST_IS_APP_SINK(sink)) return;
+
+		static GstAppSinkCallbacks kEmpty{};
+		gst_app_sink_set_callbacks(GST_APP_SINK(sink), &kEmpty, nullptr, nullptr);
+
+		if (probeId && *probeId != 0) {
+			if (GstPad* pad = gst_element_get_static_pad(GST_ELEMENT(sink), "sink")) {
+				gst_pad_remove_probe(pad, *probeId);
+				gst_object_unref(pad);
+			}
+			*probeId = 0;
+		}
+
+		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 0)) gst_sample_unref(s);
+		while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(sink), 0)) gst_sample_unref(s);
+	}
+}
+
 bool GStreamerVideo::stop() {
 	const std::string currentFileForLog = currentFile_;
 	LOG_INFO("GStreamerVideo", "Stop (full cleanup) called for " +
 		(currentFileForLog.empty() ? "unspecified video" : currentFileForLog));
 
-	// Mark state as shutting down
+	// Gate our own state immediately.
 	pipeLineReady_.store(false, std::memory_order_release);
 	targetState_.store(IVideo::VideoState::None, std::memory_order_release);
 
-	// --- Helper for both audio and video sinks ---
-	auto detachAndDrainSink = [&](GstElement* sink, guint& probeId) {
-		if (!sink || !GST_IS_APP_SINK(sink)) return;
+	// Disable both sinks first so no new callbacks fire.
+	detachAndDrainSink(videoSink_, &padProbeId_);
+	guint noProbe = 0;
+	detachAndDrainSink(audioSink_, &noProbe);
 
-		// Disable callbacks
-		GstAppSinkCallbacks empty{};
-		gst_app_sink_set_callbacks(GST_APP_SINK(sink), &empty, nullptr, nullptr);
-
-		// Remove pad probe if present
-		if (probeId != 0) {
-			if (GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(sink), "sink")) {
-				gst_pad_remove_probe(sinkPad, probeId);
-				gst_object_unref(sinkPad);
-			}
-			probeId = 0;
-		}
-
-		// Drain any queued buffers (non-blocking)
-		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 0))
-			gst_sample_unref(s);
-		while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(sink), 0))
-			gst_sample_unref(s);
-		};
-
-	// --- Detach and drain both sinks ---
-	detachAndDrainSink(videoSink_, padProbeId_);
-	guint dummyProbeId = 0; // Audio doesn't use pad probes
-	detachAndDrainSink(audioSink_, dummyProbeId);
-
-	// Remove AudioBus source if allocated
+	// Remove AudioBus source now (no more callbacks will push).
 	if (videoSourceId_ != 0) {
 		AudioBus::instance().removeSource(videoSourceId_);
 		videoSourceId_ = 0;
 	}
 
-	// --- Pipeline teardown ---
+	// Pipeline teardown
 	if (pipeline_) {
 		// Stop bus delivery and remove watch
 		if (GstBus* bus = gst_element_get_bus(pipeline_)) {
 			gst_bus_set_flushing(bus, TRUE);
 			gst_object_unref(bus);
 		}
-
 		const guint id = std::exchange(busWatchId_, 0);
 		if (id != 0) {
 			GlibLoop::instance().invokeAndWait([id] {
 				if (GMainContext* ctx = g_main_context_get_thread_default()) {
-					if (GSource* src = g_main_context_find_source_by_id(ctx, id)) {
-						g_source_destroy(src);
-					}
+					if (GSource* src = g_main_context_find_source_by_id(ctx, id)) g_source_destroy(src);
 				}
 				});
 		}
 
-		// Break waits and flush data
+		// Flush, step to NULL and wait
 		gst_element_send_event(pipeline_, gst_event_new_flush_start());
-
-		// Step down safely with bounded waits
-		constexpr GstClockTime shortWait = 500 * GST_MSECOND;
-		gst_element_set_state(pipeline_, GST_STATE_READY);
-		(void)gst_element_get_state(pipeline_, nullptr, nullptr, shortWait);
-
-		gst_element_send_event(pipeline_, gst_event_new_flush_stop(TRUE));
-
 		gst_element_set_state(pipeline_, GST_STATE_NULL);
 		(void)gst_element_get_state(pipeline_, nullptr, nullptr, 2 * GST_SECOND);
+		gst_element_send_event(pipeline_, gst_event_new_flush_stop(TRUE));
 
-		// Disconnect element-setup handler if still connected
+		// Disconnect element-setup
 		if (elementSetupHandlerId_ != 0 && playbin_ &&
 			g_signal_handler_is_connected(playbin_, elementSetupHandlerId_)) {
 			g_signal_handler_disconnect(playbin_, elementSetupHandlerId_);
 			elementSetupHandlerId_ = 0;
 		}
+
+		// Now it is safe to free our callback user_data
+		if (audioCtx_) { g_free(audioCtx_); audioCtx_ = nullptr; }
+		if (videoCtx_) { g_free(videoCtx_); videoCtx_ = nullptr; }
 
 		LOG_DEBUG("GStreamerVideo::stop", "Unreffing pipeline to guarantee final cleanup.");
 		gst_object_unref(pipeline_);
@@ -469,34 +459,23 @@ bool GStreamerVideo::stop() {
 		LOG_DEBUG("GStreamerVideo", "stop(): No pipeline_ was active to stop and unref.");
 	}
 
-	// --- SDL textures and staged data ---
+	// SDL textures + staged data
 	SDL_LockMutex(SDL::getMutex());
 	texture_ = nullptr;
 	for (int i = 0; i < 3; ++i) {
-		if (videoTexRing_[i]) {
-			SDL_DestroyTexture(videoTexRing_[i]);
-			videoTexRing_[i] = nullptr;
-		}
+		if (videoTexRing_[i]) { SDL_DestroyTexture(videoTexRing_[i]); videoTexRing_[i] = nullptr; }
 	}
 	SDL_UnlockMutex(SDL::getMutex());
 
-	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel))
-		gst_sample_unref(s);
+	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) gst_sample_unref(s);
+	if (perspective_gva_) { g_value_array_free(perspective_gva_); perspective_gva_ = nullptr; }
 
-	if (perspective_gva_) {
-		g_value_array_free(perspective_gva_);
-		perspective_gva_ = nullptr;
-	}
-
-	// --- Reset member state ---
+	// Reset members
 	width_ = height_ = -1;
 	currentFile_.clear();
-	playCount_ = 0;
-	numLoops_ = 0;
+	playCount_ = 0; numLoops_ = 0;
 	volume_ = currentVolume_ = 0.0f;
-	lastSetVolume_ = -1.0f;
-	lastSetMuteState_ = true;
-	busWatchId_ = 0;
+	lastSetVolume_ = -1.0f; lastSetMuteState_ = true;
 
 	LOG_INFO("GStreamerVideo", "stop(): Instance for " +
 		(currentFileForLog.empty() ? "previous video" : currentFileForLog) +
@@ -507,10 +486,8 @@ bool GStreamerVideo::stop() {
 bool GStreamerVideo::unload() {
 	LOG_DEBUG("GStreamerVideo", "Unload (async) called for " + currentFile_);
 
-	// Already gone or idle -> nothing to do
 	if (!playbin_ || actualState_.load(std::memory_order_acquire) == IVideo::VideoState::None) {
 		actualState_.store(IVideo::VideoState::None, std::memory_order_release);
-		// NEW: one-shot notify if armed (because bus won't fire)
 		if (notifyOnNone_.exchange(false, std::memory_order_acq_rel)) {
 			std::function<void(GStreamerVideo*)> cb;
 			{ std::lock_guard<std::mutex> g(cbMutex_); cb = std::move(onBecameNone_); }
@@ -519,65 +496,39 @@ bool GStreamerVideo::unload() {
 		return true;
 	}
 
-	// 1) App-side gates first
+	// App-side gates
 	pipeLineReady_.store(false, std::memory_order_release);
-	targetState_.store(IVideo::VideoState::None, std::memory_order_release);   // bus will eventually set actualState_
+	targetState_.store(IVideo::VideoState::None, std::memory_order_release);
 	{
 		std::lock_guard<std::mutex> lk(updateFuncMutex_);
 		updateTextureFunc_ = [](SDL_Texture*, GstVideoFrame*) { return false; };
 	}
-	// Nuke the currently bound texture from the renderer
 	texture_ = nullptr;
 
-	// ---- AUDIO: stop feeder and make sure it wakes immediately ----
-	audioRun_.store(false, std::memory_order_release);
+	// Disable both sinks and drain
+	detachAndDrainSink(videoSink_, &padProbeId_);
+	guint noProbe = 0;
+	detachAndDrainSink(audioSink_, &noProbe);
 
-	// Detach audio appsink callbacks & drain queued samples
-	if (audioSink_ && GST_IS_APP_SINK(audioSink_)) {
-		GstAppSinkCallbacks empty{}; // disable callbacks
-		gst_app_sink_set_callbacks(GST_APP_SINK(audioSink_), &empty, nullptr, nullptr);
-
-		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(audioSink_), 0)) gst_sample_unref(s);
-		while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(audioSink_), 0)) gst_sample_unref(s);
-	}
-
-	// Remove (or clear) the AudioBus source so the next play() starts fresh
+	// Remove (or clear) the AudioBus source so next play() starts fresh
 	if (videoSourceId_ != 0) {
-		AudioBus::instance().removeSource(videoSourceId_);  // simplest, frees the SDL_AudioStream
+		AudioBus::instance().removeSource(videoSourceId_);
 		videoSourceId_ = 0;
-		// (If you prefer to keep it, call AudioBus::instance().clear(videoSourceId_) instead.)
 	}
 
-	// THEN safely clear callbacks
-	if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
-		GstAppSinkCallbacks empty{};
-		gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &empty, nullptr, nullptr);
-		if (padProbeId_ != 0) {
-			GstPad* sinkPad = gst_element_get_static_pad(GST_ELEMENT(videoSink_), "sink");
-			if (sinkPad) {
-				LOG_DEBUG("GStreamerVideo", "unload(): Active pad probe ID " + std::to_string(padProbeId_) + " for " + currentFile_);
-				gst_pad_remove_probe(sinkPad, padProbeId_);
-				gst_object_unref(sinkPad);
-			}
-			else {
-				LOG_WARNING("GStreamerVideo", "unload(): Could not get sink pad to remove probe for " + currentFile_);
-			}
-			padProbeId_ = 0; // Mark as no active probe from our side
-		}
-		// Drain any queued frames/preroll so draw() won’t paint stale pixels
-		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
-		while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(videoSink_), 0)) gst_sample_unref(s);
-	}
+	// Clear any staged video sample on our side
+	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) gst_sample_unref(s);
 
-	// Also clear anything we staged on our side
-	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) {
-		gst_sample_unref(s);
-	}
-
-	// 3) Drop to READY (asynchronously). We don’t block here.
+	// Drop to READY (we plan to reuse)
 	gst_element_set_state(pipeline_, GST_STATE_READY);
+	// No blocking wait necessary; bus will catch up shortly.
 
-	// 4) Local bookkeeping for the next play()
+	// Keep callback ctx pointers for the next play()?
+	// We’ll reallocate fresh ctx’s on next play(), so free them now.
+	if (audioCtx_) { g_free(audioCtx_); audioCtx_ = nullptr; }
+	if (videoCtx_) { g_free(videoCtx_); videoCtx_ = nullptr; }
+
+	// Local bookkeeping for the next play()
 	currentFile_ = "[unloading]";
 	playCount_ = 0;
 	numLoops_ = 0;
@@ -586,6 +537,8 @@ bool GStreamerVideo::unload() {
 
 	return true;
 }
+
+
 
 // Function to compute perspective transform from 4 arbitrary points
 static inline std::array<double, 9> computePerspectiveMatrixFromCorners(
@@ -697,8 +650,8 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	GstCaps* acaps = gst_caps_from_string("audio/x-raw,format=S16LE,layout=interleaved,rate=48000,channels=2");
 	gst_app_sink_set_caps(GST_APP_SINK(audioSink_), acaps);
 	gst_caps_unref(acaps);
-	
-	
+
+
 	// Force the system clock and disable auto reselection
 	GstClock* sys = gst_system_clock_obtain();
 	gst_pipeline_use_clock(GST_PIPELINE(pipeline_), sys);
@@ -790,7 +743,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		// Set the bin as the video-sink.
 		g_object_set(playbin_, "video-sink", videoBin, nullptr);
 		gst_object_unref(videoBin);
-	
+
 		GstPad* sinkPad = gst_element_get_static_pad(videoSink_, "sink");
 		if (sinkPad) {
 			if (padProbeId_ != 0) { // Remove any existing probe on this pad from this instance
@@ -814,7 +767,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			hasError_.store(true);
 			return false;
 		}
-	
+
 	}
 	else {
 		// Simple pipeline: set appsink directly as video-sink.
@@ -913,13 +866,13 @@ bool GStreamerVideo::play(const std::string& file) {
 	// VIDEO appsink cbs
 	// -------------------
 	{
-		GstAppSinkCallbacks vcb{};
-		vcb.new_preroll = &GStreamerVideo::on_new_preroll;
-		vcb.new_sample = &GStreamerVideo::on_new_sample;
-
-		auto* vctx = new SessionCtx{ this, currentPlaySessionId_.load(std::memory_order_acquire) };
-		gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &vcb, vctx,
-			[](gpointer data) { delete static_cast<SessionCtx*>(data); });
+		// video
+		videoCbs_.new_preroll = &GStreamerVideo::on_new_preroll;
+		videoCbs_.new_sample = &GStreamerVideo::on_new_sample;
+		videoCtx_ = (SessionCtx*)g_malloc0(sizeof(SessionCtx));
+		videoCtx_->self = this;
+		videoCtx_->session = currentPlaySessionId_.load(std::memory_order_acquire);
+		gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &videoCbs_, videoCtx_, nullptr);
 	}
 
 	// Ensure an AudioBus source exists before audio callback fires
@@ -931,12 +884,11 @@ bool GStreamerVideo::play(const std::string& file) {
 	// AUDIO appsink cbs
 	// -------------------
 	{
-		GstAppSinkCallbacks acb{};
-		acb.new_sample = &GStreamerVideo::on_audio_new_sample;
-
-		auto* actx = new SessionCtx{ this, currentPlaySessionId_.load(std::memory_order_acquire) };
-		gst_app_sink_set_callbacks(GST_APP_SINK(audioSink_), &acb, actx,
-			[](gpointer data) { delete static_cast<SessionCtx*>(data); });
+		audioCbs_.new_sample = &GStreamerVideo::on_audio_new_sample;
+		audioCtx_ = (SessionCtx*)g_malloc0(sizeof(SessionCtx));
+		audioCtx_->self = this;
+		audioCtx_->session = currentPlaySessionId_.load(std::memory_order_acquire);
+		gst_app_sink_set_callbacks(GST_APP_SINK(audioSink_), &audioCbs_, audioCtx_, nullptr);
 	}
 
 	// Request PAUSED (preroll) asynchronously; do not wait here
@@ -1095,8 +1047,9 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 
 GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_data) {
 	auto* ctx = static_cast<SessionCtx*>(user_data);
-	auto* self = ctx ? ctx->self : nullptr;
-	if (!self || !self->isCurrentSession(ctx->session)) return GST_FLOW_OK;
+	if (!ctx || !ctx->self) return GST_FLOW_OK;
+	auto* self = ctx->self;
+	if (!self->isCurrentSession(ctx->session)) return GST_FLOW_OK;
 
 	GstSample* preroll = gst_app_sink_try_pull_preroll(sink, 0);
 	if (!preroll) return GST_FLOW_OK;
@@ -1110,8 +1063,9 @@ GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_dat
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
 	auto* ctx = static_cast<SessionCtx*>(user_data);
+	if (!ctx || !ctx->self) return GST_FLOW_OK;
 	auto* self = ctx->self;
-	if (!self || !self->isCurrentSession(ctx->session)) return GST_FLOW_OK;
+	if (!self->isCurrentSession(ctx->session)) return GST_FLOW_OK;
 
 	if (self->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::Playing)
 		return GST_FLOW_OK;
@@ -1121,17 +1075,14 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data
 
 	if (GstSample* old = self->stagedSample_.exchange(s, std::memory_order_acq_rel))
 		gst_sample_unref(old);
-	
+
 	return GST_FLOW_OK;
 }
 
 GstFlowReturn GStreamerVideo::on_audio_new_sample(GstAppSink* sink, gpointer user_data) {
 	auto* ctx = static_cast<SessionCtx*>(user_data);
-	if (!ctx) return GST_FLOW_OK;
-	GStreamerVideo* self = ctx->self;
-	if (!self) return GST_FLOW_OK;
-
-	// Session guard: if play() has been called again or we detached, bail.
+	if (!ctx || !ctx->self) return GST_FLOW_OK;
+	auto* self = ctx->self;
 	if (!self->isCurrentSession(ctx->session)) return GST_FLOW_OK;
 
 	if (!self || self->targetState_.load(std::memory_order_acquire) == IVideo::VideoState::None)
