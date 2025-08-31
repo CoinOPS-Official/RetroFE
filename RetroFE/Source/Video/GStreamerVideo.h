@@ -26,6 +26,7 @@
 #include <mutex>
 #include <vector>
 #include <functional>
+#include <thread>
 
 extern "C" {
 #if (__APPLE__)
