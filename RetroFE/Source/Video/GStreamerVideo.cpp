@@ -1126,7 +1126,14 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data
 }
 
 GstFlowReturn GStreamerVideo::on_audio_new_sample(GstAppSink* sink, gpointer user_data) {
-	auto* self = static_cast<GStreamerVideo*>(user_data);
+	auto* ctx = static_cast<SessionCtx*>(user_data);
+	if (!ctx) return GST_FLOW_OK;
+	GStreamerVideo* self = ctx->self;
+	if (!self) return GST_FLOW_OK;
+
+	// Session guard: if play() has been called again or we detached, bail.
+	if (!self->isCurrentSession(ctx->session)) return GST_FLOW_OK;
+
 	if (!self || self->targetState_.load(std::memory_order_acquire) == IVideo::VideoState::None)
 		return GST_FLOW_OK;
 
