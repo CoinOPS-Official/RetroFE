@@ -444,6 +444,16 @@ bool GStreamerVideo::stop() {
 		LOG_DEBUG("GStreamerVideo::stop", "Unreffing pipeline to guarantee final cleanup.");
 		gst_object_unref(pipeline_);
 
+		audioRun_.store(false, std::memory_order_release);
+		if (audioThread_.joinable())
+			audioThread_.join();
+
+		if (videoSourceId_ != 0) {
+			AudioBus::instance().clear(videoSourceId_);
+			AudioBus::instance().removeSource(videoSourceId_);
+			videoSourceId_ = 0;
+		}
+
 		// 6) Clear pointers after teardown
 		pipeline_ = nullptr;
 		playbin_ = nullptr;
@@ -502,6 +512,26 @@ bool GStreamerVideo::unload() {
 	}
 	// Nuke the currently bound texture from the renderer
 	texture_ = nullptr;
+
+	// ---- AUDIO: stop feeder and make sure it wakes immediately ----
+	audioRun_.store(false, std::memory_order_release);
+	if (audioThread_.joinable()) audioThread_.join();
+
+	// Detach audio appsink callbacks & drain queued samples
+	if (audioSink_ && GST_IS_APP_SINK(audioSink_)) {
+		GstAppSinkCallbacks empty{}; // disable callbacks
+		gst_app_sink_set_callbacks(GST_APP_SINK(audioSink_), &empty, nullptr, nullptr);
+
+		while (GstSample* s = gst_app_sink_try_pull_sample(GST_APP_SINK(audioSink_), 0)) gst_sample_unref(s);
+		while (GstSample* s = gst_app_sink_try_pull_preroll(GST_APP_SINK(audioSink_), 0)) gst_sample_unref(s);
+	}
+
+	// Remove (or clear) the AudioBus source so the next play() starts fresh
+	if (videoSourceId_ != 0) {
+		AudioBus::instance().removeSource(videoSourceId_);  // simplest, frees the SDL_AudioStream
+		videoSourceId_ = 0;
+		// (If you prefer to keep it, call AudioBus::instance().clear(videoSourceId_) instead.)
+	}
 
 	// THEN safely clear callbacks
 	if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
@@ -634,7 +664,23 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		hasError_.store(true, std::memory_order_release);
 		return false;
 	}
+	audioSink_ = gst_element_factory_make("appsink", "audio_sink");
+	if (!audioSink_) {
+		LOG_ERROR("GStreamerVideo", "Could not create audio appsink");
+		hasError_.store(true, std::memory_order_release);
+		return false;
+	}
+	g_object_set(audioSink_,
+		"emit-signals", FALSE,
+		"max-buffers", 10,     // small, drop if we fall behind
+		"drop", TRUE,
+		"sync", TRUE,        // we pace via SDL device, not GST
+		"enable-last-sample", FALSE,
+		nullptr);
 
+	GstCaps* acaps = gst_caps_from_string("audio/x-raw,format=S16LE,rate=48000,channels=2");
+	gst_app_sink_set_caps(GST_APP_SINK(audioSink_), acaps);
+	gst_caps_unref(acaps);
 	// Force the system clock and disable auto reselection
 	GstClock* sys = gst_system_clock_obtain();
 	gst_pipeline_use_clock(GST_PIPELINE(pipeline_), sys);
@@ -755,6 +801,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	else {
 		// Simple pipeline: set appsink directly as video-sink.
 		g_object_set(playbin_, "video-sink", videoSink_, nullptr);
+		g_object_set(playbin_, "audio-sink", audioSink_, nullptr);
 	}
 
 	if (GstBus* bus = gst_element_get_bus(pipeline_ /* or playbin_ if that’s your top */)) {
@@ -851,6 +898,40 @@ bool GStreamerVideo::play(const std::string& file) {
 	auto* sinkCtx = new SessionCtx{ this, currentPlaySessionId_.load(std::memory_order_acquire) };
 	gst_app_sink_set_callbacks(GST_APP_SINK(videoSink_), &appsinkCallbacks, sinkCtx,
 		[](gpointer data) { delete static_cast<SessionCtx*>(data); });
+
+	if (videoSourceId_ == 0) {
+		videoSourceId_ = AudioBus::instance().addSource("video-preview", AUDIO_S16, 2, 48000);
+	}
+
+	// NEW (audio): start feeder thread if not running
+	if (!audioRun_.load(std::memory_order_acquire)) {
+		audioRun_.store(true, std::memory_order_release);
+
+		// Strong ref so the sink can't disappear while the thread is running
+		GstAppSink* sinkRef = GST_APP_SINK(gst_object_ref(audioSink_));
+
+		audioThread_ = std::thread([this, sinkRef] {
+			// Use a short timeout for responsiveness on stop
+			const guint64 timeout_ns = 10 * GST_MSECOND; // 10ms
+
+			while (audioRun_.load(std::memory_order_acquire)) {
+				GstSample* s = gst_app_sink_try_pull_sample(sinkRef, timeout_ns);
+				if (!s) continue; // timed out or EOS; loop checks audioRun_ again
+
+				if (GstBuffer* b = gst_sample_get_buffer(s)) {
+					GstMapInfo mi{};
+					if (gst_buffer_map(b, &mi, GST_MAP_READ)) {
+						AudioBus::instance().push(videoSourceId_, mi.data, (int)mi.size);
+						gst_buffer_unmap(b, &mi);
+					}
+				}
+				gst_sample_unref(s);
+			}
+
+			// No draining here: just release the ref and exit
+			gst_object_unref(sinkRef);
+			});
+	}
 
 	// Request PAUSED (preroll) asynchronously; do not wait here
 	GstStateChangeReturn scr = gst_element_set_state(pipeline_, GST_STATE_PAUSED);

@@ -19,6 +19,7 @@
 #include "../SDL.h"
 #include "../Utility/Utils.h"
 #include "../Utility/Log.h"
+#include "../Sound/AudioBus.h" 
 #include "IVideo.h"
 #include <atomic>
 #include <string>
@@ -188,5 +189,11 @@ private:
 	std::atomic<bool> notifyOnNone_{ false };
 	std::atomic<bool> unloading_{ false };
 	std::mutex cbMutex_;
+
+	// Audio bus integration
+	AudioBus::SourceId videoSourceId_{ 0 };   // ID of this video’s source in AudioBus
+	GstElement* audioSink_{ nullptr };        // GStreamer appsink for audio
+	std::thread audioThread_;               // Audio feeder thread
+	std::atomic<bool> audioRun_{ false };     // Control flag for the feeder loop
 };
 

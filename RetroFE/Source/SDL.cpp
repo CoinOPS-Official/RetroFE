@@ -19,6 +19,7 @@
 #include "Database/Configuration.h"
 #include "Database/GlobalOpts.h"
 #include "Utility/Log.h"
+#include "Sound/AudioBus.h"
 #if __has_include(<SDL2/SDL_mixer.h>)
 #include <SDL2/SDL_mixer.h>
 #elif __has_include(<SDL2_mixer/SDL_mixer.h>)
@@ -45,10 +46,10 @@ int                         SDL::screenCount_;
 
 // Initialize SDL
 bool SDL::initialize(Configuration& config) {
-	int audioRate = MIX_DEFAULT_FREQUENCY;
+	int audioRate = 48000;
 	Uint16 audioFormat = MIX_DEFAULT_FORMAT; // 16-bit stereo
 	int audioChannels = 2;
-	int audioBuffers = 4096;
+	int audioBuffers = 2048;
 	bool hideMouse;
 
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -522,6 +523,20 @@ bool SDL::initialize(Configuration& config) {
 			else {
 				LOG_INFO("SDL", "SDL_mixer decoders (MP3, OGG, etc.) initialized successfully.");
 			}
+			// --- NEW: configure AudioBus to match the device SDL_mixer opened ---
+			AudioBus::instance().configureFromMixer();
+
+			// --- NEW: single unified postmix ---
+			Mix_SetPostMix([](void* /*udata*/, Uint8* stream, int len) {
+				// 1) MUSIC-ONLY visualization: this buffer currently contains SDL_mixer’s mix
+				//VUMeter::instance().updateFromBuffer(stream, len);
+
+				// 2) Mix in any external sources (e.g., GStreamer video audio) via AudioBus
+				AudioBus::instance().mixInto(stream, len);
+
+				// 3) (Optional) Master meter AFTER video is added
+				// MasterMeter::instance().updateFromBuffer(stream, len);
+				}, nullptr);
 		}
 	}
 
