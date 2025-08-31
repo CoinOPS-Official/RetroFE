@@ -97,6 +97,7 @@ else()
     pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
     pkg_search_module(LIBUSB REQUIRED libusb-1.0)
     pkg_check_modules(LIBEVDEV REQUIRED libevdev)
+    pkg_check_modules(LIBUDEV  REQUIRED libudev)
     pkg_search_module(LIBSERIALPORT REQUIRED libserialport)
     find_package(Threads REQUIRED)
     
@@ -115,6 +116,7 @@ else()
         ${LIBUSB_INCLUDE_DIRS}
         ${LIBUSB_INCLUDE_DIR}
         ${LIBEVDEV_INCLUDE_DIRS}
+        ${LIBUDEV_INCLUDE_DIRS}
         ${LIBSERIALPORT_INCLUDE_DIRS}
     )
     
@@ -131,6 +133,7 @@ else()
         ${GLIB2_LIBRARY_DIRS}
         ${LIBUSB_LIBRARY_DIRS}
         ${LIBEVDEV_LIBRARY_DIRS}
+        ${LIBUDEV_LIBRARY_DIRS}
         ${LIBSERIALPORT_LIBRARY_DIRS}
     )
     
@@ -150,6 +153,7 @@ else()
         ${CMAKE_THREAD_LIBS_INIT}
         ${LIBUSB_LIBRARIES}
         ${LIBEVDEV_LIBRARIES}
+        ${LIBUDEV_LIBRARIES} 
         ${LIBSERIALPORT_LIBRARIES}
     )
     add_definitions(${LIBEVDEV_CFLAGS_OTHER})
