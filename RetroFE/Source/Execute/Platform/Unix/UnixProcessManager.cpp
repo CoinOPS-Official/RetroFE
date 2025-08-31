@@ -26,6 +26,8 @@
 #include <vector>
 #include <wordexp.h> // For robust shell-like word expansion
 #include <fcntl.h> // For open, O_WRONLY
+#include <cstring> // For strerror
+#include <cerrno>  // For errno
 
 #include "../../../Utility/Log.h"
 
