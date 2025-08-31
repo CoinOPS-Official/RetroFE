@@ -197,52 +197,47 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             // This is safe to run when SDL is de-initialized.
             LOG_INFO("Launcher", "unloadSDL is true. Using SDL-less frame tick for background processing.");
 
-            auto lastTickChrono = std::chrono::steady_clock::now();
-
-            onFrameTick = [this, currentPage, &lastTickChrono]() {
+            auto start = std::chrono::steady_clock::now();  // initial value captured below
+            onFrameTick = [this, currentPage, t = start]() mutable {
                 auto now = std::chrono::steady_clock::now();
-                float delta = std::chrono::duration<float>(now - lastTickChrono).count();
-                lastTickChrono = now;
+                float delta = std::chrono::duration<float>(now - t).count();
+                t = now;
 
-                if (delta > 0.1f)
-                    delta = 0.0167f;
+                if (delta > 0.1f) delta = 0.0167f;
 
-                if (currentPage) {
-                    currentPage->update(delta);
-                }
+                if (currentPage) currentPage->update(delta);
                 };
         }
         else {
             LOG_INFO("Launcher", "unloadSDL is false. Using standard frame tick for multi-monitor rendering.");
 
-            auto lastTick = SDL_GetPerformanceCounter();
-
-            onFrameTick = [this, currentPage, &lastTick]() {
+            Uint64 start = SDL_GetPerformanceCounter();     // initial value captured below
+            onFrameTick = [this, currentPage, last = start]() mutable {
                 Uint64 now = SDL_GetPerformanceCounter();
-                auto freq = static_cast<double>(SDL_GetPerformanceFrequency());
-                auto delta = static_cast<float>((static_cast<double>(now - lastTick)) / freq);
-                lastTick = now;
+                double freq = static_cast<double>(SDL_GetPerformanceFrequency());
+                float  delta = static_cast<float>((static_cast<double>(now - last)) / freq);
+                last = now;
 
-                if (delta > 0.1f)
-                    delta = 0.0167f;
+                if (delta > 0.1f) delta = 0.0167f;
 
+                if (!currentPage) return;
                 currentPage->update(delta);
+
                 bool multiple_display = SDL::getScreenCount() > 1;
                 bool animateDuringGame = true;
                 config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
-                if (animateDuringGame && multiple_display && currentPage) {
+                if (animateDuringGame && multiple_display) {
                     for (int i = 1; i < SDL::getScreenCount(); ++i) {
                         SDL_Renderer* renderer = SDL::getRenderer(i);
                         SDL_Texture* target = SDL::getRenderTarget(i);
-                        if (renderer && target) {
-                            SDL_SetRenderTarget(renderer, target);
-                            SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-                            SDL_RenderClear(renderer);
-                            currentPage->draw(i);
-                            SDL_SetRenderTarget(renderer, nullptr);
-                            SDL_RenderCopy(renderer, target, nullptr, nullptr);
-                            SDL_RenderPresent(renderer);
-                        }
+                        if (!renderer || !target) continue;
+                        SDL_SetRenderTarget(renderer, target);
+                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
+                        SDL_RenderClear(renderer);
+                        currentPage->draw(i);
+                        SDL_SetRenderTarget(renderer, nullptr);
+                        SDL_RenderCopy(renderer, target, nullptr, nullptr);
+                        SDL_RenderPresent(renderer);
                     }
                 }
                 };
