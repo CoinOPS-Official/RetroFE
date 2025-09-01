@@ -1733,15 +1733,10 @@ void PageBuilder::getAnimationEvents(const xml_node<>* node, TweenSet& tweens) {
 
 					// if in layout action has playlist="<current playlist name>" then perform action
 					std::string playlistFilter = playlist && playlist->value() ? playlist->value() : "";
-					Tween* raw_tween = TweenPool::getInstance().acquire(*optProperty, algorithm, fromValue, toValue, durationValue, playlistFilter);					if (!fromDefined)
-						if (raw_tween) {
-							if (!fromDefined) {
-								raw_tween->startDefined = false;
-							}
-							// Wrap the raw pointer from the pool in our special PooledTweenPtr
-							// and push it into the TweenSet.
-							tweens.push(PooledTweenPtr(raw_tween));
-						}
+					auto t = std::make_unique<Tween>(property, algorithm, fromValue, toValue, durationValue, playlistFilter);
+					if (!fromDefined)
+						t->startDefined = false;
+					tweens.push(std::move(t));
 				}
 				else {
 					std::stringstream ss;

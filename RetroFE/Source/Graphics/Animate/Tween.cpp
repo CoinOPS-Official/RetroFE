@@ -92,16 +92,6 @@ std::optional<TweenProperty> Tween::getTweenProperty(const std::string& name) {
     return std::nullopt;
 }
 
-void Tween::reinit(TweenProperty prop, TweenAlgorithm alg, float newStart, float newEnd, float newDuration, const std::string& playlist) {
-    this->property = prop;
-    this->type = alg;
-    this->start = newStart;
-    this->end = newEnd;
-    this->duration = newDuration;
-    this->playlistFilter = playlist;
-    this->startDefined = true; // Recycled tweens from this method are always defined
-}
-
 TweenAlgorithm Tween::getTweenType(const std::string& name) {
     std::string key = name;
     std::transform(key.begin(), key.end(), key.begin(), ::tolower);
