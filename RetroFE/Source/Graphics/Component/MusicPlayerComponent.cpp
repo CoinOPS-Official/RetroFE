@@ -1094,7 +1094,7 @@ void MusicPlayerComponent::draw() {
 		rect.y = baseViewInfo.YRelativeToOrigin();
 		rect.w = baseViewInfo.ScaledWidth();
 		rect.h = baseViewInfo.ScaledHeight();
-		SDL::renderCopyF(fftTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutWidthByMonitor(baseViewInfo.Monitor));
+		SDL::renderCopyF(fftTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
 		return;
 	}
 
@@ -1136,7 +1136,7 @@ void MusicPlayerComponent::drawVuMeterToTexture() {
 	// The target is already set to fftTexture_ by the draw() function.
 
 	// Clear with transparent background (or the configured one)
-	SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.backgroundColor.r, vuMeterConfig_.backgroundColor.g, vuMeterConfig_.backgroundColor.b, vuMeterConfig_.backgroundColor.a);
+	SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.backgroundColor.r, vuMeterConfig_.backgroundColor.g, vuMeterConfig_.backgroundColor.b, 255);
 	SDL_RenderClear(renderer_);
 	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 

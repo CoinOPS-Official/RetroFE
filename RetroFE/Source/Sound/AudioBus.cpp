@@ -184,8 +184,7 @@ static inline void mix_s16_sat(Uint8* dst_u8, const Uint8* src_u8, int bytes) {
 void AudioBus::mixInto(Uint8* dst, int len) {
     // Pull per-source converted PCM and mix additively
 
-    // Use a static buffer to avoid reallocation every callback
-    static std::vector<Uint8> tmp;
+    thread_local std::vector<Uint8> tmp;
     if ((int)tmp.size() < len) {
         tmp.resize(len);
     }

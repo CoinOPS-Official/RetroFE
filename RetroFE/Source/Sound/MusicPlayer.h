@@ -71,6 +71,8 @@ public:
         PREVIOUS
     };
 
+    void processAudioData(Uint8* stream, int len);
+
     void setPlaybackState(PlaybackState state) { playbackState_ = state; }
     PlaybackState getPlaybackState() const { return playbackState_; }
 
@@ -181,9 +183,6 @@ private:
     int getNextTrackIndex();
     static void musicFinishedCallback();
     void onMusicFinished();
-
-    static void postMixCallback(void* udata, Uint8* stream, int len);
-    void processAudioData(Uint8* stream, int len);
 
     bool hasActiveVisualizers_ = false; // Replaces hasVisualizer_ and hasGstVisualizer_
 

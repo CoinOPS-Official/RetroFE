@@ -20,6 +20,7 @@
 #include "Database/GlobalOpts.h"
 #include "Utility/Log.h"
 #include "Sound/AudioBus.h"
+#include "Sound/MusicPlayer.h"
 #if __has_include(<SDL2/SDL_mixer.h>)
 #include <SDL2/SDL_mixer.h>
 #elif __has_include(<SDL2_mixer/SDL_mixer.h>)
@@ -525,18 +526,40 @@ bool SDL::initialize(Configuration& config) {
 			}
 			// --- NEW: configure AudioBus to match the device SDL_mixer opened ---
 			AudioBus::instance().configureFromMixer();
+			// Define a tiny context
+			struct PostMixCtx {
+				MusicPlayer* mp;   // nullptr if music player disabled
+			};
 
-			// --- NEW: single unified postmix ---
-			Mix_SetPostMix([](void* /*udata*/, Uint8* stream, int len) {
-				// 1) MUSIC-ONLY visualization: this buffer currently contains SDL_mixer’s mix
-				//VUMeter::instance().updateFromBuffer(stream, len);
+			// … during init …
+			bool musicPlayerEnabled = false;
+			config.getProperty("musicPlayer.enabled", musicPlayerEnabled);
 
-				// 2) Mix in any external sources (e.g., GStreamer video audio) via AudioBus
-				AudioBus::instance().mixInto(stream, len);
+			// If enabled, ensure the instance exists *before* installing the callback
+			MusicPlayer* mp = nullptr;
+			if (musicPlayerEnabled) {
+				mp = MusicPlayer::getInstance();
+			}
 
-				// 3) (Optional) Master meter AFTER video is added
-				// MasterMeter::instance().updateFromBuffer(stream, len);
-				}, nullptr);
+			// Context must outlive the audio device; make it static or allocate it
+			static PostMixCtx g_postmix_ctx{ mp };
+
+			Mix_SetPostMix(
+				[](void* udata, Uint8* stream, int len) {
+					auto* ctx = static_cast<PostMixCtx*>(udata);
+
+					// 1) MUSIC-ONLY visualization: notify visualizers if enabled
+					if (ctx && ctx->mp) {
+						ctx->mp->processAudioData(stream, len);
+					}
+
+					// 2) Mix in external (GStreamer) audio AFTER visualizers saw music-only
+					AudioBus::instance().mixInto(stream, len);
+
+					// 3) optional: master metering on final mix goes here
+				},
+				&g_postmix_ctx
+			);
 		}
 	}
 
@@ -1359,8 +1382,13 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 	}
 
 	// Texture size for UVs (from ViewInfo)
-	const int texW = int(viewInfo.ImageWidth);
-	const int texH = int(viewInfo.ImageHeight);
+	auto texW = (int)viewInfo.ImageWidth;
+	auto texH = (int)viewInfo.ImageHeight;
+	if (texW <= 0 || texH <= 0) {
+		SDL_QueryTexture(texture, nullptr, nullptr, &texW, &texH);
+		viewInfo.ImageWidth = (float)texW;
+		viewInfo.ImageHeight = (float)texH;
+	}
 	const int rot = (rotation_[m] & 3);
 	const bool mir = mirror_[m];
 
