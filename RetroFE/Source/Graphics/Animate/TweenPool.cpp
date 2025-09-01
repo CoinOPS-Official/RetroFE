@@ -21,24 +21,21 @@ TweenPool::TweenPool(size_t initialSize) {
 
 Tween* TweenPool::acquire(TweenProperty property, TweenAlgorithm type, float start, float end, float duration, const std::string& playlistFilter) {
     if (m_available_tweens.empty()) {
-        // Expand the pool by a fixed increment (e.g., 100 more tweens)
-        constexpr size_t expansionSize = 100;
-        LOG_WARNING("TweenPool", "TweenPool exhausted! Expanding pool by " + std::to_string(expansionSize));
-
-        for (size_t i = 0; i < expansionSize; ++i) {
-            m_pool.push_back(std::make_unique<Tween>(TWEEN_PROPERTY_NOP, LINEAR, 0.0f, 0.0f, 0.0f));
-            m_available_tweens.push_back(m_pool.back().get());
-        }
+        // This should not happen if the pool is sized correctly.
+        // In a real-world app, you might expand the pool here.
+        LOG_ERROR("TweenPool", "TweenPool exhausted! Increase initialSize.");
+        return nullptr;
     }
 
+    // Get a tween from the back of the available list (very fast)
     Tween* tween = m_available_tweens.back();
     m_available_tweens.pop_back();
 
+    // Initialize it with the new properties
     tween->reinit(property, type, start, end, duration, playlistFilter);
 
     return tween;
 }
-
 
 void TweenPool::release(Tween* tween) {
     // Simply add the pointer back to the available list for reuse (very fast)
