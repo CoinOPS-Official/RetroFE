@@ -877,7 +877,7 @@ bool GStreamerVideo::play(const std::string& file) {
 
 	// Ensure an AudioBus source exists before audio callback fires
 	if (videoSourceId_ == 0) {
-		videoSourceId_ = AudioBus::instance().addSource("video-preview", AUDIO_S16, 2, 48000);
+		videoSourceId_ = AudioBus::instance().addSource("video-preview");
 	}
 
 	// -------------------
