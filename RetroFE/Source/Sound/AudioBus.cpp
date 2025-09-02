@@ -14,11 +14,7 @@ AudioBus& AudioBus::instance() {
 
 AudioBus::~AudioBus() {
     std::lock_guard<std::mutex> lk(mtx_);
-    for (auto& [_, s] : sources_) {
-        if (s.stream) SDL_FreeAudioStream(s.stream);
-        s.stream = nullptr;
-    }
-    sources_.clear();
+    sources_.clear();  // shared_ptr destructors free streams safely
 }
 
 void AudioBus::configureFromMixer() {
@@ -32,74 +28,70 @@ AudioBus::SourceId AudioBus::addSource(const char* name,
     std::lock_guard<std::mutex> lk(mtx_);
     SourceId id = nextId_++;
 
-    // Default-construct Source in-place (no copy/move of atomic)
-    auto [it, inserted] = sources_.try_emplace(id);
-    Source& s = it->second;
-
-    s.name = name ? name : "source";
-    s.stream = SDL_NewAudioStream(src_fmt, src_channels, src_rate,
+    auto sp = std::make_shared<Source>();
+    sp->name = name ? name : "source";
+    sp->stream = SDL_NewAudioStream(src_fmt, src_channels, src_rate,
         devFmt_, devChans_, devRate_);
-    s.enabled.store(true, std::memory_order_release);
+    sp->enabled.store(true, std::memory_order_release);
 
+    sources_.emplace(id, std::move(sp));
     return id;
 }
 
 void AudioBus::removeSource(SourceId id) {
     std::lock_guard<std::mutex> lk(mtx_);
-    auto it = sources_.find(id);
-    if (it == sources_.end()) return;
-
-    if (it->second.stream) {
-        SDL_FreeAudioStream(it->second.stream);
-        it->second.stream = nullptr;
-    }
-    sources_.erase(it);
+    sources_.erase(id); // freed when last ref is gone
 }
 
 void AudioBus::setEnabled(SourceId id, bool on) {
     std::lock_guard<std::mutex> lk(mtx_);
     auto it = sources_.find(id);
-    if (it != sources_.end()) it->second.enabled.store(on, std::memory_order_release);
+    if (it != sources_.end())
+        it->second->enabled.store(on, std::memory_order_release);
 }
 
 bool AudioBus::isEnabled(SourceId id) const {
     std::lock_guard<std::mutex> lk(mtx_);
     auto it = sources_.find(id);
-    return (it != sources_.end()) ? it->second.enabled.load(std::memory_order_acquire) : false;
+    return (it != sources_.end())
+        ? it->second->enabled.load(std::memory_order_acquire)
+        : false;
 }
 
 void AudioBus::push(SourceId id, const void* data, int bytes) {
-    // No global lock on the hot path: only look up the stream once.
-    SDL_AudioStream* s = nullptr;
-    {
-        std::lock_guard<std::mutex> lk(mtx_);
-        auto it = sources_.find(id);
-        if (it == sources_.end() || !it->second.enabled.load(std::memory_order_acquire)) return;
-        s = it->second.stream;
-    }
-    if (s && data && bytes > 0) {
-        (void)SDL_AudioStreamPut(s, data, bytes);
-    }
-}
+    if (!data || bytes <= 0) return;
 
-void AudioBus::clear(SourceId id) {
-    SDL_AudioStream* s = nullptr;
+    std::shared_ptr<Source> sp;
     {
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = sources_.find(id);
         if (it == sources_.end()) return;
-        s = it->second.stream;
+        sp = it->second; // keep alive outside the map lock
     }
-    if (!s) return;
+    if (!sp->enabled.load(std::memory_order_acquire) || !sp->stream) return;
 
+    std::lock_guard<std::mutex> lk(sp->streamMtx);  // serialize with Get()
+    (void)SDL_AudioStreamPut(sp->stream, data, bytes);
+}
+
+void AudioBus::clear(SourceId id) {
+    std::shared_ptr<Source> sp;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        auto it = sources_.find(id);
+        if (it == sources_.end()) return;
+        sp = it->second;
+    }
+    if (!sp || !sp->stream) return;
+
+    std::lock_guard<std::mutex> lk(sp->streamMtx);
     Uint8 scratch[4096];
-    for (;;) {
-        const int got = SDL_AudioStreamGet(s, scratch, (int)sizeof(scratch));
+    while (true) {
+        const int got = SDL_AudioStreamGet(sp->stream, scratch, (int)sizeof(scratch));
         if (got <= 0) break;
     }
 }
 
-// Your original, portable C++ implementation serves as a perfect fallback
 static inline void mix_s16_sat_scalar(int16_t* dst, const int16_t* src, int num_samples) {
     for (int i = 0; i < num_samples; ++i) {
         // Promote to int to avoid overflow before saturation
@@ -182,37 +174,43 @@ static inline void mix_s16_sat(Uint8* dst_u8, const Uint8* src_u8, int bytes) {
 }
 
 void AudioBus::mixInto(Uint8* dst, int len) {
-    // Pull per-source converted PCM and mix additively
+    if (!dst || len <= 0) return;
 
-    thread_local std::vector<Uint8> tmp;
-    if ((int)tmp.size() < len) {
-        tmp.resize(len);
-    }
+    if ((int)scratch_.size() < len) scratch_.resize(len);
 
-    // Snapshot current sources (to avoid locking during Get())
-    std::vector<SDL_AudioStream*> local;
+    // Snapshot with ownership so Sources can’t disappear mid-mix
+    std::vector<std::shared_ptr<Source>> local;
     {
         std::lock_guard<std::mutex> lk(mtx_);
         local.reserve(sources_.size());
         for (auto& kv : sources_) {
-            if (kv.second.enabled.load(std::memory_order_acquire) && kv.second.stream)
-                local.push_back(kv.second.stream);
+            const auto& sp = kv.second;
+            if (sp->enabled.load(std::memory_order_acquire) && sp->stream)
+                local.push_back(sp);   // push the shared_ptr
         }
     }
 
-    for (auto* s : local) {
-        int got = SDL_AudioStreamGet(s, tmp.data(), len);
-        if (got < 0) {
-            // Optional: log an error here for debugging
-            continue;
-        }
-        if (got == 0) continue;
+    // Compute bytes-per-frame to keep reads aligned
+    const int bps = (devFmt_ == AUDIO_F32) ? 4
+        : (devFmt_ == AUDIO_S16) ? 2
+        : (SDL_AUDIO_BITSIZE(devFmt_) / 8);
+    const int bpf = std::max(1, bps * std::max(1, devChans_));
 
-        if (devFmt_ == AUDIO_S16) {
-            mix_s16_sat(dst, tmp.data(), got);
-        }
-        else {
-            SDL_MixAudioFormat(dst, tmp.data(), devFmt_, got, SDL_MIX_MAXVOLUME);
-        }
+    // IMPORTANT: don’t memset(dst) if this is SDL_mixer’s postmix. We’re additive.
+
+    for (auto& sp : local) {
+        std::lock_guard<std::mutex> lk(sp->streamMtx);  // serialize with Put()
+        int got = SDL_AudioStreamGet(sp->stream, scratch_.data(), len);
+        if (got <= 0) continue;
+        if (got > len) got = len;
+
+        // Align to whole frames to avoid half-sample tails
+        got -= (got % bpf);
+        if (got <= 0) continue;
+
+        if (devFmt_ == AUDIO_S16)
+            mix_s16_sat(dst, scratch_.data(), got);
+        else
+            SDL_MixAudioFormat(dst, scratch_.data(), devFmt_, got, SDL_MIX_MAXVOLUME);
     }
 }

@@ -7,6 +7,7 @@
 #include <unordered_map>
 #include <vector>
 #include <string>
+#include <memory>
 
 class AudioBus {
 public:
@@ -48,16 +49,20 @@ public:
 private:
     struct Source {
         std::string       name;
-        SDL_AudioStream* stream{ nullptr };   // converts src > device spec
+        SDL_AudioStream* stream{ nullptr };      // src->device converter
         std::atomic<bool> enabled{ true };
+        mutable std::mutex streamMtx;           // protects SDL_AudioStream Put/Get
+        ~Source() { if (stream) SDL_FreeAudioStream(stream); }
     };
+
+    mutable std::mutex mtx_; // protects the map only
+    std::unordered_map<SourceId, std::shared_ptr<Source>> sources_;
+    std::vector<Uint8> scratch_;                // mixer scratch (device fmt)
 
     AudioBus() = default;
     ~AudioBus();
 
     SourceId nextId_{ 1 };
-    mutable std::mutex mtx_; // protects map only (not the streams’ internals)
-    std::unordered_map<SourceId, Source> sources_;
 
     SDL_AudioFormat devFmt_{ AUDIO_S16 };
     int             devRate_{ 48000 };
