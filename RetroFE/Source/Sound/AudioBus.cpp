@@ -7,6 +7,26 @@
 #include <arm_neon.h>
 #endif
 
+namespace {
+    // Helper to find the next power of two.
+    // e.g., next_power_of_2(257) -> 512
+    // This is essential for the SpscRing's bitmask logic to work correctly.
+    size_t next_power_of_2(size_t n) {
+        if (n == 0) return 1;
+        n--;
+        n |= n >> 1;
+        n |= n >> 2;
+        n |= n >> 4;
+        n |= n >> 8;
+        n |= n >> 16;
+#if defined(__LP64__) || defined(_WIN64)
+        n |= n >> 32; // Only on 64-bit systems
+#endif
+        n++;
+        return n;
+    }
+}
+
 AudioBus& AudioBus::instance() {
     static AudioBus bus;
     return bus;
@@ -23,18 +43,23 @@ void AudioBus::configureFromMixer() {
     devFmt_ = fmt; devRate_ = freq; devChans_ = chans;
 }
 
-AudioBus::SourceId AudioBus::addSource(const char* name,
-    SDL_AudioFormat src_fmt, int src_channels, int src_rate) {
+AudioBus::SourceId AudioBus::addSource(const char* name, size_t ring_buffer_kb) {
     std::lock_guard<std::mutex> lk(mtx_);
-    SourceId id = nextId_++;
 
-    auto sp = std::make_shared<Source>();
+    // 1. Calculate the required buffer capacity.
+    // Clamp to a reasonable minimum (e.g., 4KB) and find the next power of two.
+    const size_t requested_bytes = std::max((size_t)4, ring_buffer_kb) * 1024;
+    const size_t capacity_p2 = next_power_of_2(requested_bytes);
+
+    // 2. Create and configure the new source.
+    SourceId id = nextId_++;
+    auto sp = std::make_shared<Source>(capacity_p2);
     sp->name = name ? name : "source";
-    sp->stream = SDL_NewAudioStream(src_fmt, src_channels, src_rate,
-        devFmt_, devChans_, devRate_);
     sp->enabled.store(true, std::memory_order_release);
 
+    // 3. Add it to the map.
     sources_.emplace(id, std::move(sp));
+
     return id;
 }
 
@@ -60,18 +85,18 @@ bool AudioBus::isEnabled(SourceId id) const {
 
 void AudioBus::push(SourceId id, const void* data, int bytes) {
     if (!data || bytes <= 0) return;
-
     std::shared_ptr<Source> sp;
     {
         std::lock_guard<std::mutex> lk(mtx_);
         auto it = sources_.find(id);
         if (it == sources_.end()) return;
-        sp = it->second; // keep alive outside the map lock
+        sp = it->second;
     }
-    if (!sp->enabled.load(std::memory_order_acquire) || !sp->stream) return;
+    if (!sp->enabled.load(std::memory_order_acquire)) return;
 
-    std::lock_guard<std::mutex> lk(sp->streamMtx);  // serialize with Get()
-    (void)SDL_AudioStreamPut(sp->stream, data, bytes);
+    // Write; if ring is full, we drop tail (oldest) by clearing a bit or just accept truncation.
+    // Simple approach: write what fits (write returns actual bytes written).
+    (void)sp->ring.write(reinterpret_cast<const uint8_t*>(data), bytes);
 }
 
 void AudioBus::clear(SourceId id) {
@@ -82,14 +107,7 @@ void AudioBus::clear(SourceId id) {
         if (it == sources_.end()) return;
         sp = it->second;
     }
-    if (!sp || !sp->stream) return;
-
-    std::lock_guard<std::mutex> lk(sp->streamMtx);
-    Uint8 scratch[4096];
-    while (true) {
-        const int got = SDL_AudioStreamGet(sp->stream, scratch, (int)sizeof(scratch));
-        if (got <= 0) break;
-    }
+    sp->ring.clear();
 }
 
 static inline void mix_s16_sat_scalar(int16_t* dst, const int16_t* src, int num_samples) {
@@ -175,42 +193,31 @@ static inline void mix_s16_sat(Uint8* dst_u8, const Uint8* src_u8, int bytes) {
 
 void AudioBus::mixInto(Uint8* dst, int len) {
     if (!dst || len <= 0) return;
-
     if ((int)scratch_.size() < len) scratch_.resize(len);
 
-    // Snapshot with ownership so Sources can’t disappear mid-mix
     std::vector<std::shared_ptr<Source>> local;
     {
         std::lock_guard<std::mutex> lk(mtx_);
         local.reserve(sources_.size());
         for (auto& kv : sources_) {
             const auto& sp = kv.second;
-            if (sp->enabled.load(std::memory_order_acquire) && sp->stream)
-                local.push_back(sp);   // push the shared_ptr
+            if (sp->enabled.load(std::memory_order_acquire))
+                local.push_back(sp);
         }
     }
 
-    // Compute bytes-per-frame to keep reads aligned
-    const int bps = (devFmt_ == AUDIO_F32) ? 4
-        : (devFmt_ == AUDIO_S16) ? 2
-        : (SDL_AUDIO_BITSIZE(devFmt_) / 8);
-    const int bpf = std::max(1, bps * std::max(1, devChans_));
-
-    // IMPORTANT: don’t memset(dst) if this is SDL_mixer’s postmix. We’re additive.
+    // Device spec (we normalized to S16/48k/2ch)
+    const int bps = 2; // S16
+    const int bpf = bps * std::max(1, devChans_); // typically 4
+    // do NOT memset(dst) in postmix; we add to existing buffer
 
     for (auto& sp : local) {
-        std::lock_guard<std::mutex> lk(sp->streamMtx);  // serialize with Put()
-        int got = SDL_AudioStreamGet(sp->stream, scratch_.data(), len);
+        int got = sp->ring.read(scratch_.data(), len);
         if (got <= 0) continue;
-        if (got > len) got = len;
-
-        // Align to whole frames to avoid half-sample tails
-        got -= (got % bpf);
+        got -= (got % bpf);           // frame-align
         if (got <= 0) continue;
 
-        if (devFmt_ == AUDIO_S16)
-            mix_s16_sat(dst, scratch_.data(), got);
-        else
-            SDL_MixAudioFormat(dst, scratch_.data(), devFmt_, got, SDL_MIX_MAXVOLUME);
+        // S16 additive mix with saturation
+        mix_s16_sat(dst, scratch_.data(), got);
     }
 }
