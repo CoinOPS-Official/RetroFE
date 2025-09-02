@@ -97,21 +97,7 @@ bool VideoComponent::update(float dt) {
         return Component::update(dt);
     }
 
-    if (currentPage_->isMenuFastScrolling()) {
-        if (!inFlight &&
-            actual != IVideo::VideoState::Playing &&
-            target != IVideo::VideoState::Playing) {
-            videoInst_->resume();
-            LOG_DEBUG("VideoComponent", "Force-resume during fast scroll: " + videoFile_);
-        }
-        // No restart while flapping
-        if (baseViewInfo.Restart) {
-            baseViewInfo.Restart = false;
-        }
-        pendingRestart_ = false;   // also drop any deferred restart
-        // Early return to avoid any other state changes in this frame
-        return Component::update(dt);
-    }
+    
 
     // Visibility
     const bool visibleNow = (baseViewInfo.Alpha > 0.0f);
