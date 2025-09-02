@@ -17,6 +17,7 @@
 
 #include "Component.h"
 #include "../../Sound/MusicPlayer.h"
+#include "../../Sound/VuMeterDSP.h"
 #include "kiss_fft.h"
 #include "kiss_fftr.h"
 #include <gst/gst.h>
@@ -69,6 +70,7 @@ private:
     std::string type_; // Type of MusicPlayer component: "state", "shuffle", "loop", etc.
     MusicPlayer* musicPlayer_;
     FontManager* font_; // Font for text display
+    VUMeterDSP vuDSP_;
 
     // State tracking
     std::string lastState_;  // Tracks the last state (playing/paused/etc.)
@@ -158,8 +160,8 @@ private:
     int fftTexW_ = 0, fftTexH_ = 0;
 
     struct VuMeterConfig {
-        int barCount{ 40 };
-        float decayRate{ 10.0f };
+        int barCount{ 12 };
+        float decayRate{ 2.0f };
         float peakDecayRate{ 3.0f };
         bool isMono{ false };
         float greenThreshold{ 0.4f };
@@ -189,8 +191,15 @@ private:
     bool isoNeedsUpdate_{ false };
     std::vector<float> fftMagnitudes_;
     static constexpr int ISO_HISTORY = 20;
-    struct IsoPoint { float x, y, z; };
-    std::vector<std::vector<IsoPoint>> iso_grid_;
+    struct IsoGridRow {
+        // Each coordinate is now a contiguous array of floats.
+        std::vector<float> x;
+        std::vector<float> y;
+        std::vector<float> z;
+    };
+    std::vector<IsoGridRow> iso_grid_;
+    struct ProjectedGridRow { std::vector<float> x, y, z_amp; };
+    std::vector<ProjectedGridRow> td_grid_;
     float iso_scroll_offset_ = 0.0f;      // Progress (0.0 to 1.0) for the current scroll
     float iso_scroll_rate_ = 30.0f;        // Constant speed: 1.0 = one row scrolls by per second
     float iso_beat_pulse_ = 0.0f;

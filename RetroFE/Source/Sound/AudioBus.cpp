@@ -1,7 +1,7 @@
 #include "AudioBus.h"
 #if defined(__AVX2__)
 #include <immintrin.h>
-#elif defined(__SSE2__)
+#elif defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
 #include <emmintrin.h>
 #elif defined(__ARM_NEON)
 #include <arm_neon.h>
@@ -140,7 +140,7 @@ static inline void mix_s16_sat(Uint8* dst_u8, const Uint8* src_u8, int bytes) {
         mix_s16_sat_scalar(dst + i, src + i, num_samples - i);
     }
 
-#elif defined(__SSE2__)
+#elif defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
     // --- SSE2 Implementation (Processes 8 samples at a time) ---
     int i = 0;
     // Process the bulk of the data in 8-sample (16-byte) chunks
