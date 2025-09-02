@@ -1211,65 +1211,66 @@ bool ScrollingList::isFastScrolling() const
     return scrollPeriod_ == minScrollTime_;
 }
 
-void ScrollingList::scroll(bool forward)
-{
-    // Exit conditions: if no items or scroll points, return.
+void ScrollingList::scroll(bool forward) {
+    // Exit conditions
     if (!items_ || items_->empty() || !scrollPoints_ || scrollPoints_->empty())
         return;
 
-    // Ensure that scrollPeriod is not below the minimum.
+    // Clamp scroll speed
     if (scrollPeriod_ < minScrollTime_)
         scrollPeriod_ = minScrollTime_;
 
-    size_t itemsSize = items_->size();
-    size_t scrollPointsSize = scrollPoints_->size();
+    const size_t itemsSize = items_->size();
+    const size_t N = scrollPoints_->size();
+    const size_t f = static_cast<size_t>(forward); // 0 or 1
 
-    // Determine which component is exiting based on the logical order.
-    size_t exitIndex = forward ? 0 : scrollPoints_->size() - 1;
+    // Decide which slot exits (was: forward ? 0 : N-1)
+    const size_t exitIndex = (N <= 1) ? 0 : (N - 1) * (1 - f);
 
-    // Determine the new item to load into the exiting slot.
+    // Determine the new item to load into the exiting slot, and update itemIndex_
     Item const* itemToScroll = nullptr;
     if (forward) {
-        // Use loopIncrement to get the item that follows the currently visible block.
-        itemToScroll = (*items_)[ loopIncrement(itemIndex_, scrollPointsSize, itemsSize) ];
-        // Advance the index.
+        // item following the currently visible block
+        itemToScroll = (*items_)[loopIncrement(itemIndex_, N, itemsSize)];
         itemIndex_ = loopIncrement(itemIndex_, 1, itemsSize);
     }
     else {
-        itemToScroll = (*items_)[ loopDecrement(itemIndex_, 1, itemsSize) ];
+        itemToScroll = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
     }
 
-    // Only deallocate (i.e. reset/recycle) the component that is exiting.
+    // Rebuild only the exiting slot
     deallocateTexture(exitIndex);
-    // Then allocate new media (video or image) into that slot.
     allocateTexture(exitIndex, itemToScroll);
 
-    // Update the animations (tweening) for each visible component.
-    for (size_t index = 0; index < scrollPointsSize; ++index)
+    // Update tweens for each visible component
+    for (size_t index = 0; index < N; ++index)
     {
+        // Branchless (and modulo-free) neighbor:
+        // forward ? (index-1 mod N) : (index+1 mod N)
         size_t nextIndex;
-        if (forward) {
-            nextIndex = (index == 0) ? scrollPointsSize - 1 : index - 1;
+        if (N == 1) {
+            nextIndex = 0;
         }
         else {
-            nextIndex = (index == scrollPointsSize - 1) ? 0 : index + 1;
+            nextIndex = index + 1 + f * (N - 2);
+            nextIndex -= (nextIndex >= N) * N; // wrap once without %
         }
 
-        Component* component = components_[index];  // components_ operator[] gives the logical ordering.
-        if (component) {
-            auto& nextTweenPoint     = (*tweenPoints_)[nextIndex];
-            auto& currentScrollPoint = (*scrollPoints_)[index];
-            auto& nextScrollPoint    = (*scrollPoints_)[nextIndex];
+        Component* component = components_[index];
+        if (!component) continue;
 
-            component->allocateGraphicsMemory();
-            resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
-            component->baseViewInfo.font = nextScrollPoint->font;
-            component->triggerEvent("menuScroll");
-        }
+        auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
+        auto* currentScrollPoint = (*scrollPoints_)[index];
+        auto* nextScrollPoint = (*scrollPoints_)[nextIndex];
+
+        component->allocateGraphicsMemory();
+        resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
+        component->baseViewInfo.font = nextScrollPoint->font;
+        component->triggerEvent("menuScroll");
     }
 
-    // Rotate the RotatableView so that the logical order is updated.
+    // Rotate logical order
     components_.rotate(forward);
 }
 
