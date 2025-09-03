@@ -517,15 +517,29 @@ void ScrollingList::letterChange(bool increment) {
     itemIndex_ = newIndex;
 }
 
-size_t ScrollingList::loopIncrement(size_t currentIndex, size_t incrementAmount, size_t listSize) const {
-    if (listSize == 0) return 0;
-    return (currentIndex + incrementAmount) % listSize;
+size_t ScrollingList::loopIncrement(size_t currentIndex, size_t incrementAmount, size_t N) const {
+    if (N == 0) return 0;
+
+    if (currentIndex >= N) currentIndex -= N;
+
+    if (incrementAmount >= N) incrementAmount %= N;
+
+    size_t next = currentIndex + incrementAmount;
+    if (next >= N) next -= N;
+    return next;
 }
 
+size_t ScrollingList::loopDecrement(size_t currentIndex, size_t decrementAmount, size_t N) const {
+    if (N == 0) return 0;
 
-size_t ScrollingList::loopDecrement(size_t currentIndex, size_t decrementAmount, size_t listSize) const {
-    if (listSize == 0) return 0;
-    return (currentIndex + listSize - decrementAmount) % listSize;
+    if (currentIndex >= N) currentIndex -= N;
+
+    if (decrementAmount >= N) decrementAmount %= N;
+
+    const size_t add = N - decrementAmount;
+    size_t next = currentIndex + add;
+    if (next >= N) next -= N;
+    return next;
 }
 
 void ScrollingList::metaUp(const std::string& attribute)
