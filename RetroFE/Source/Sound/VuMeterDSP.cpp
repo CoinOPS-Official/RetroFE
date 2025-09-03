@@ -1,5 +1,5 @@
 
-#include "VUMeterDSP.h"
+#include "VuMeterDSP.h"
 #include <cmath>
 #include <algorithm>
 
