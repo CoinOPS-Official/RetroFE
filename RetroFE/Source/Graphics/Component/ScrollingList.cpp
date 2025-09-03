@@ -148,7 +148,8 @@ std::string ScrollingList::getSelectedItemName()
     if (!size)
         return "";
     
-    return (*items_)[(itemIndex_ + selectedOffsetIndex_) % static_cast<int>(size)]->name;
+    size_t idx = loopIncrement(itemIndex_, selectedOffsetIndex_, items_->size());
+    return (*items_)[idx]->name;
 }
 
 void ScrollingList::setScrollAcceleration( float value )
