@@ -28,6 +28,9 @@ public:
         return s;
     }
 
+    template<typename T>
+    std::future<T> invokeAsync(std::function<T()> fn, int priority = G_PRIORITY_DEFAULT);
+
     // Start a dedicated context + loop thread (idempotent).
     void start();
 

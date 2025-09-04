@@ -180,6 +180,7 @@ private:
 	static GstFlowReturn on_new_preroll(GstAppSink* sink, gpointer user_data);
 	static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer user_data);
 	static GstFlowReturn on_audio_new_sample(GstAppSink* sink, gpointer user_data);
+	void setupCallbacksForSession(uint64_t sessionId);
 	static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 	static void initializePlugins();
 	static gboolean on_dimensions_idle(gpointer user_data);

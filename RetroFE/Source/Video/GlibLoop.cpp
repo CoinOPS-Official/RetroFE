@@ -82,6 +82,42 @@ namespace {
         delete wc;
         return G_SOURCE_REMOVE;
     }
+
+    // Generic async call with result
+    template<typename T>
+    struct AsyncCall {
+        std::function<T()> fn;
+        std::shared_ptr<std::promise<T>> pr;
+    };
+
+    // Generic thunk for non-void types
+    template<typename T>
+    static gboolean invokeAsyncThunk(gpointer data) {
+        auto* ac = static_cast<AsyncCall<T>*>(data);
+        try {
+            T result = ac->fn();
+            ac->pr->set_value(result);
+        }
+        catch (...) {
+            ac->pr->set_exception(std::current_exception());
+        }
+        delete ac;
+        return G_SOURCE_REMOVE;
+    }
+
+    // Specialized thunk for void type
+    static gboolean invokeAsyncVoidThunk(gpointer data) {
+        auto* ac = static_cast<AsyncCall<void>*>(data);
+        try {
+            ac->fn();
+            ac->pr->set_value();  // No argument for void promise
+        }
+        catch (...) {
+            ac->pr->set_exception(std::current_exception());
+        }
+        delete ac;
+        return G_SOURCE_REMOVE;
+    }
 } // namespace
 
 void GlibLoop::invokeAndWait(std::function<void()> fn, int priority) {
@@ -91,7 +127,7 @@ void GlibLoop::invokeAndWait(std::function<void()> fn, int priority) {
         return;
     }
 
-    // If we’re already on the GLib thread, run inline to avoid deadlock.
+    // If we're already on the GLib thread, run inline to avoid deadlock.
     if (th_.joinable() && std::this_thread::get_id() == th_.get_id()) {
         fn();
         return;
@@ -128,6 +164,59 @@ bool GlibLoop::invokeAndWaitFor(std::function<void()> fn,
     return (fut.wait_for(timeout) == std::future_status::ready);
 }
 
+// Generic template method for async operations with return values
+template<typename T>
+std::future<T> GlibLoop::invokeAsync(std::function<T()> fn, int priority) {
+    auto pr = std::make_shared<std::promise<T>>();
+    auto fut = pr->get_future();
+
+    if (!isRunning()) {
+        try { pr->set_value(fn()); }
+        catch (...) { pr->set_exception(std::current_exception()); }
+        return fut;
+    }
+
+    // NEW: self-thread fast path
+    if (th_.joinable() && std::this_thread::get_id() == th_.get_id()) {
+        try { pr->set_value(fn()); }
+        catch (...) { pr->set_exception(std::current_exception()); }
+        return fut;
+    }
+
+    auto* ac = new AsyncCall<T>{ std::move(fn), pr };
+    g_main_context_invoke_full(context(), priority, &invokeAsyncThunk<T>, ac, nullptr);
+    return fut;
+}
+
+// Specialized template for void return type
+template<>
+std::future<void> GlibLoop::invokeAsync<void>(std::function<void()> fn, int priority) {
+    auto pr = std::make_shared<std::promise<void>>();
+    auto fut = pr->get_future();
+
+    if (!isRunning()) {
+        // No loop? Run inline and return immediate future
+        try {
+            fn();
+            pr->set_value();  // No argument for void promise
+        }
+        catch (...) {
+            pr->set_exception(std::current_exception());
+        }
+        return fut;
+    }
+
+    auto* ac = new AsyncCall<void>{ std::move(fn), pr };
+    g_main_context_invoke_full(context(), priority, &invokeAsyncVoidThunk, ac, /*notify*/ nullptr);
+
+    return fut;
+}
+
+// Explicit template instantiations for common types
+template std::future<bool> GlibLoop::invokeAsync<bool>(std::function<bool()>, int);
+template std::future<int> GlibLoop::invokeAsync<int>(std::function<int()>, int);
+// Note: void specialization is defined above, not instantiated
+
 guint GlibLoop::addBusWatch(GstBus* bus, GstBusFunc func, gpointer user_data,
     GDestroyNotify notify, int priority) {
     if (!isRunning() || !bus || !func) return 0;
@@ -135,7 +224,7 @@ guint GlibLoop::addBusWatch(GstBus* bus, GstBusFunc func, gpointer user_data,
     auto fut = pr.get_future();
     gst_object_ref(bus); // survive the hop
     invoke([bus, func, user_data, notify, &pr, priority]() mutable {
-        // Attaches to THIS thread’s thread-default context (set in start())
+        // Attaches to THIS thread's thread-default context (set in start())
         guint id = gst_bus_add_watch_full(bus, priority, func, user_data, notify);
         pr.set_value(id);
         gst_object_unref(bus);
