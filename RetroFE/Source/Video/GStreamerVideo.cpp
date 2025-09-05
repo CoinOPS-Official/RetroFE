@@ -1144,8 +1144,11 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data
 	auto* self = ctx->self;
 	if (!self->isCurrentSession(ctx->session)) return GST_FLOW_OK;
 
-	if (self->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::Playing)
+	if (self->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::Playing) {
+		GstSample* s = gst_app_sink_pull_sample(sink);
+		gst_sample_unref(s);
 		return GST_FLOW_OK;
+	}
 
 	GstSample* s = gst_app_sink_try_pull_sample(sink, 0);
 	if (!s) return GST_FLOW_OK;
@@ -1325,12 +1328,25 @@ void GStreamerVideo::draw() {
 
 	if (frameW != width_ || frameH != height_) {
 		width_ = frameW; height_ = frameH;
-		createSdlTexture(); // recreates ring if needed
+		createSdlTexture();
 	}
 
+	// Make a deep copy of the buffer first
+	GstBuffer* bufferCopy = gst_buffer_copy_deep(buf);
+
+	// Immediately release the original sample/buffer
+	gst_sample_unref(sample);
+
+	if (!bufferCopy) {
+		LOG_ERROR("GStreamerVideo", "Failed to create buffer copy");
+		return;
+	}
+
+	// Now map the copied buffer
 	GstVideoFrame frame;
-	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
-		gst_sample_unref(sample); return;
+	if (!gst_video_frame_map(&frame, &info, bufferCopy, GST_MAP_READ)) {
+		gst_buffer_unref(bufferCopy);
+		return;
 	}
 
 	// Snapshot the updater
@@ -1342,28 +1358,28 @@ void GStreamerVideo::draw() {
 
 	bool ok = false;
 
-	// Pick a write slot (avoid currently drawn slot if possible)
+	// Pick a write slot
 	int write = videoWriteIdx_;
 	if (write == videoDrawIdx_) write = (write + 1) % videoRingCount_;
 	SDL_Texture* t = videoTexRing_[write];
 
-	if (t && updater) ok = updater(t, &frame);
+	if (t && updater) {
+		ok = updater(t, &frame);
+	}
+
+	// Clean up the copied buffer
+	gst_video_frame_unmap(&frame);
+	gst_buffer_unref(bufferCopy);
 
 	if (ok) {
-		// Publish for this frame’s render
 		videoDrawIdx_ = write;
 		texture_ = t;
-		// Advance write for next frame
 		videoWriteIdx_ = (write + 1) % videoRingCount_;
 	}
 	else {
 		texture_ = nullptr;
 	}
-
-	gst_video_frame_unmap(&frame);
-	gst_sample_unref(sample);
 }
-
 bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) const {
 	const auto* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
 	const auto* srcU = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
