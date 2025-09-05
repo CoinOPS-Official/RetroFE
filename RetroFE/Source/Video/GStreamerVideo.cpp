@@ -345,9 +345,7 @@ void GStreamerVideo::setNumLoops(int n) {
 }
 
 SDL_Texture* GStreamerVideo::getTexture() const {
-	SDL_LockMutex(SDL::getMutex()); // Protects read of texture_
 	SDL_Texture* tex_to_render = texture_;
-	SDL_UnlockMutex(SDL::getMutex());
 	return tex_to_render;
 }
 
@@ -461,12 +459,10 @@ bool GStreamerVideo::stop() {
 	}
 
 	// SDL textures + staged data
-	SDL_LockMutex(SDL::getMutex());
 	texture_ = nullptr;
 	for (int i = 0; i < 3; ++i) {
 		if (videoTexRing_[i]) { SDL_DestroyTexture(videoTexRing_[i]); videoTexRing_[i] = nullptr; }
 	}
-	SDL_UnlockMutex(SDL::getMutex());
 
 	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) gst_sample_unref(s);
 	if (perspective_gva_) { g_value_array_free(perspective_gva_); perspective_gva_ = nullptr; }
@@ -1186,10 +1182,8 @@ GstFlowReturn GStreamerVideo::on_audio_new_sample(GstAppSink* sink, gpointer use
 }
 
 void GStreamerVideo::createSdlTexture() {
-	SDL_LockMutex(SDL::getMutex());
 
 	if (targetState_.load(std::memory_order_acquire) == IVideo::VideoState::None || !playbin_) {
-		SDL_UnlockMutex(SDL::getMutex());
 		return;
 	}
 
@@ -1199,7 +1193,6 @@ void GStreamerVideo::createSdlTexture() {
 			if (videoTexRing_[i]) { SDL_DestroyTexture(videoTexRing_[i]); videoTexRing_[i] = nullptr; }
 		}
 		videoDrawIdx_ = -1;
-		SDL_UnlockMutex(SDL::getMutex());
 		return;
 	}
 
@@ -1233,7 +1226,6 @@ void GStreamerVideo::createSdlTexture() {
 				LOG_ERROR("GStreamerVideo", std::string("SDL_CreateTexture failed: ") + SDL_GetError());
 				// Best-effort cleanup
 				for (int k = 0; k < 3; k++) { if (videoTexRing_[k]) { SDL_DestroyTexture(videoTexRing_[k]); videoTexRing_[k] = nullptr; } }
-				SDL_UnlockMutex(SDL::getMutex());
 				return;
 			}
 			// Make the texture as cheap as possible
@@ -1247,7 +1239,6 @@ void GStreamerVideo::createSdlTexture() {
 		videoDrawIdx_ = -1; // publish on first good frame
 	}
 
-	SDL_UnlockMutex(SDL::getMutex());
 }
 
 void GStreamerVideo::volumeUpdate() {
@@ -1350,7 +1341,6 @@ void GStreamerVideo::draw() {
 	}
 
 	bool ok = false;
-	SDL_LockMutex(SDL::getMutex());
 
 	// Pick a write slot (avoid currently drawn slot if possible)
 	int write = videoWriteIdx_;
@@ -1369,8 +1359,6 @@ void GStreamerVideo::draw() {
 	else {
 		texture_ = nullptr;
 	}
-
-	SDL_UnlockMutex(SDL::getMutex());
 
 	gst_video_frame_unmap(&frame);
 	gst_sample_unref(sample);

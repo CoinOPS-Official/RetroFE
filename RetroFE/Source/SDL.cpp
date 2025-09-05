@@ -33,7 +33,6 @@
 std::vector<SDL_Window*>    SDL::window_;
 std::vector<SDL_Renderer*>  SDL::renderer_;
 std::vector<SDL::MonitorRT> SDL::renderTargets_;
-SDL_mutex* SDL::mutex_ = nullptr;
 std::vector<int>            SDL::displayWidth_;
 std::vector<int>            SDL::displayHeight_;
 std::vector<int>            SDL::windowWidth_;
@@ -495,15 +494,6 @@ bool SDL::initialize(Configuration& config) {
 		SDL_SetHintWithPriority(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, minimizeOnFocusLoss ? "1" : "0", SDL_HINT_OVERRIDE);
 	}
 
-	mutex_ = SDL_CreateMutex();
-
-	if (mutex_ == nullptr)
-	{
-		std::string error = SDL_GetError();
-		LOG_ERROR("SDL", "Mutex creation failed: " + error);
-		return false;
-	}
-
 	int num_audio_devices_open = Mix_QuerySpec(nullptr, nullptr, nullptr);
 
 	if (num_audio_devices_open == 0) {
@@ -612,10 +602,6 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 		Mix_Quit();
 		SDL_Quit();
 		
-		if (mutex_) {
-			SDL_DestroyMutex(mutex_);
-			mutex_ = nullptr;
-		}
 	}
 	else
 	{
@@ -660,13 +646,6 @@ std::string SDL::getRendererBackend(int index) {
 
 	return std::string(info.name);
 }
-
-// Get the mutex
-SDL_mutex* SDL::getMutex()
-{
-	return mutex_;
-}
-
 
 // Get the window
 SDL_Window* SDL::getWindow(int index) {

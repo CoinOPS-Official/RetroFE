@@ -180,9 +180,7 @@ bool FontManager::initialize() {
         info->surface = nullptr;
     }
 
-    SDL_LockMutex(SDL::getMutex());
     texture = SDL_CreateTextureFromSurface(SDL::getRenderer(monitor_), atlasSurface);
-    SDL_UnlockMutex(SDL::getMutex());
 
     if (!texture) {
         LOG_WARNING("Font", "Failed to create texture from surface.");

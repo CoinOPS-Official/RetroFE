@@ -33,7 +33,6 @@ public:
     static bool deInitialize(bool fullShutdown = false );
     static SDL_Renderer *getRenderer( int index );
     static std::string getRendererBackend(int index);
-    static SDL_mutex *getMutex( );
     static SDL_Window *getWindow( int index );
     static SDL_Texture* getRenderTarget(int index);
     static void advanceRenderTarget(int index);
@@ -82,7 +81,6 @@ public:
 private:
     static std::vector<SDL_Window *>   window_;
     static std::vector<SDL_Renderer *> renderer_;
-    static SDL_mutex                  *mutex_;
     static std::vector<int>            displayWidth_;
     static std::vector<int>            displayHeight_;
     static std::vector<int>            windowWidth_;

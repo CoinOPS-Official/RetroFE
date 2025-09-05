@@ -223,13 +223,10 @@ void Image::draw() {
             LOG_ERROR("Image", "Current animated surface is null (frame index: " + std::to_string(currentFrame_) + ")");
             return;
         }
-        SDL_LockMutex(SDL::getMutex());
         // Rely on the cached animated texture without creating a new one.
         if (SDL_UpdateTexture(animatedTexture_, nullptr, currentSurface->pixels, currentSurface->pitch) != 0) {
             LOG_ERROR("Image", "Failed to update animated texture: " + std::string(SDL_GetError()));
-            SDL_UnlockMutex(SDL::getMutex());
         }
-        SDL_UnlockMutex(SDL::getMutex());
     }
 
     // For static images, texture_ is used; for animated images, animatedTexture_ is used.

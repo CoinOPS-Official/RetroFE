@@ -37,9 +37,7 @@ FontCache::~FontCache()
 
 void FontCache::deInitialize() {
     fontFaceMap_.clear(); // With smart pointers, no need for explicit delete calls
-    SDL_LockMutex(SDL::getMutex());
     TTF_Quit();
-    SDL_UnlockMutex(SDL::getMutex());
 }
 
 bool FontCache::initialize() const
