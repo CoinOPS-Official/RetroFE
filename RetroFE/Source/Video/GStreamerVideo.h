@@ -46,8 +46,6 @@ extern "C" {
 #endif
 }
 
-struct FrameData;
-
 class GStreamerVideo final : public IVideo {
 
 public:
@@ -107,12 +105,6 @@ public:
 	}
 
 private:
-	static bool hasSSE2();
-	static bool hasNEON();
-	void optimizedMemcpy(void* dst, const void* src, size_t size);
-	void sse2_memcpy(void* dst, const void* src, size_t size);
-	void neon_memcpy(void* dst, const void* src, size_t size);
-	
 	// === Thread-shared atomics ===
 	std::atomic<uint64_t> currentPlaySessionId_{ 0 };
 	static std::atomic<uint64_t> nextUniquePlaySessionId_;
@@ -152,11 +144,9 @@ private:
 	guint padProbeId_{ 0 };
 	GValueArray* gva_{ nullptr };
 	GValueArray* perspective_gva_{ nullptr };
+	std::function<bool(SDL_Texture*, GstVideoFrame*)> updateTextureFunc_;
 
-	std::atomic<FrameData*> stagedFrame_{ nullptr };
-	std::unique_ptr<FrameData> reusableFrame_;
-	std::mutex reusableFrameMutex_; // Protect against resize during copy
-
+	std::atomic<GstSample*> stagedSample_{ nullptr };
 
 	// === Static/shared ===
 	static bool initialized_;
@@ -187,15 +177,18 @@ private:
 
 	static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
 	static void elementSetupCallback(GstElement* playbin, GstElement* element, gpointer data);
-	FrameData* copyFrameFromSample(GstSample* sample);
 	static GstFlowReturn on_new_preroll(GstAppSink* sink, gpointer user_data);
 	static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer user_data);
 	static GstFlowReturn on_audio_new_sample(GstAppSink* sink, gpointer user_data);
 	void setupCallbacksForSession(uint64_t sessionId);
 	static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
 	static void initializePlugins();
+	static gboolean on_dimensions_idle(gpointer user_data);
 	void createSdlTexture();
 	void initializeUpdateFunction();
+	bool updateTextureFromFrameIYUV(SDL_Texture*, GstVideoFrame*) const;
+	bool updateTextureFromFrameNV12(SDL_Texture*, GstVideoFrame*) const;
+	bool updateTextureFromFrameRGBA(SDL_Texture*, GstVideoFrame*) const;
 	std::string generateDotFileName(const std::string& prefix, const std::string& videoFilePath) const;
 
 	std::function<void(GStreamerVideo*)> onBecameNone_;

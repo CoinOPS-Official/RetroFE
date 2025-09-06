@@ -44,11 +44,6 @@
 #include <algorithm>
 #include <utility>
 #include <memory>
-#if defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
-#include <emmintrin.h>
-#elif defined(__ARM_NEON)
-#include <arm_neon.h>
-#endif
 
 bool GStreamerVideo::initialized_ = false;
 bool GStreamerVideo::pluginsInitialized_ = false;
@@ -92,22 +87,6 @@ static std::array<double, 9> computePerspectiveMatrixFromCorners(
 	int height,
 	const std::array<Point2D, 4>& pts);
 
-struct FrameData {
-	std::unique_ptr<uint8_t[]> data;  // Single contiguous allocation
-	std::array<uint8_t*, 3> planes;   // Pointers into data (max 3 planes)
-	std::array<int, 3> strides;       // Fixed size arrays
-	int width, height;
-	Uint32 format;
-	size_t totalSize;
-
-	FrameData(int w, int h, Uint32 fmt, size_t size)
-		: width(w), height(h), format(fmt), totalSize(size) {
-		data.reset(new uint8_t[size]);
-		planes.fill(nullptr);
-		strides.fill(0);
-	}
-};
-
 #ifdef WIN32
 static bool IsIntelGPU() {
 	Microsoft::WRL::ComPtr<IDXGIFactory> factory;
@@ -148,139 +127,6 @@ GStreamerVideo::~GStreamerVideo() {
 		// Destructor must not throw. Optionally log the error.
 		LOG_ERROR("GStreamerVideo", "Exception in destructor during stop()");
 	}
-}
-
-bool GStreamerVideo::hasSSE2() {
-#if defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
-	static bool checked = false;
-	static bool available = false;
-	if (!checked) {
-#ifdef _MSC_VER
-		int cpuInfo[4];
-		__cpuid(cpuInfo, 1);
-		available = (cpuInfo[3] & (1 << 26)) != 0;  // Check SSE2 bit
-#else
-		available = __builtin_cpu_supports("sse2");
-#endif
-		checked = true;
-	}
-	return available;
-#else
-	return false;
-#endif
-}
-
-bool GStreamerVideo::hasNEON() {
-#if defined(__ARM_NEON) || defined(__aarch64__)
-	// NEON is standard on ARMv8/AArch64, optional on ARMv7
-#ifdef __aarch64__
-	return true;  // Always available on ARM64
-#else
-	static bool checked = false;
-	static bool available = false;
-	if (!checked) {
-		// Check /proc/cpuinfo or use compile-time detection
-		available = true;  // Assume available if compiled with NEON
-		checked = true;
-	}
-	return available;
-#endif
-#else
-	return false;
-#endif
-}
-
-// SSE2 optimized memcpy (x86/x64)
-void GStreamerVideo::sse2_memcpy(void* dst, const void* src, size_t size) {
-#if defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
-	const uint8_t* s = static_cast<const uint8_t*>(src);
-	uint8_t* d = static_cast<uint8_t*>(dst);
-
-	// Process 64 bytes at a time (4 x 16-byte SSE2 registers)
-	size_t sse_chunks = size / 64;
-	size_t remaining = size % 64;
-
-	for (size_t i = 0; i < sse_chunks; ++i) {
-		// Load 64 bytes (4 SSE2 registers)
-		__m128i reg1 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s));
-		__m128i reg2 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s + 16));
-		__m128i reg3 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s + 32));
-		__m128i reg4 = _mm_loadu_si128(reinterpret_cast<const __m128i*>(s + 48));
-
-		// Store 64 bytes
-		_mm_storeu_si128(reinterpret_cast<__m128i*>(d), reg1);
-		_mm_storeu_si128(reinterpret_cast<__m128i*>(d + 16), reg2);
-		_mm_storeu_si128(reinterpret_cast<__m128i*>(d + 32), reg3);
-		_mm_storeu_si128(reinterpret_cast<__m128i*>(d + 48), reg4);
-
-		s += 64;
-		d += 64;
-	}
-
-	// Handle remaining bytes with standard memcpy
-	if (remaining > 0) {
-		std::memcpy(d, s, remaining);
-	}
-#endif
-}
-
-// NEON optimized memcpy (ARM)
-void GStreamerVideo::neon_memcpy(void* dst, const void* src, size_t size) {
-#if defined(__ARM_NEON) || defined(__aarch64__)
-	const uint8_t* s = static_cast<const uint8_t*>(src);
-	uint8_t* d = static_cast<uint8_t*>(dst);
-
-	// Process 64 bytes at a time (4 x 16-byte NEON registers)
-	size_t neon_chunks = size / 64;
-	size_t remaining = size % 64;
-
-	for (size_t i = 0; i < neon_chunks; ++i) {
-		// Load 64 bytes (4 NEON q registers)
-		uint8x16_t reg1 = vld1q_u8(s);
-		uint8x16_t reg2 = vld1q_u8(s + 16);
-		uint8x16_t reg3 = vld1q_u8(s + 32);
-		uint8x16_t reg4 = vld1q_u8(s + 48);
-
-		// Store 64 bytes
-		vst1q_u8(d, reg1);
-		vst1q_u8(d + 16, reg2);
-		vst1q_u8(d + 32, reg3);
-		vst1q_u8(d + 48, reg4);
-
-		s += 64;
-		d += 64;
-	}
-
-	// Handle remaining bytes
-	if (remaining > 0) {
-		std::memcpy(d, s, remaining);
-	}
-#endif
-}
-
-// Smart memcpy that chooses the best implementation
-void GStreamerVideo::optimizedMemcpy(void* dst, const void* src, size_t size) {
-	// Only use SIMD for large copies to avoid overhead
-	if (size < 1024) {
-		std::memcpy(dst, src, size);
-		return;
-	}
-
-	// Choose best available implementation
-#if defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
-	if (hasSSE2()) {
-		sse2_memcpy(dst, src, size);
-		return;
-	}
-#elif defined(__ARM_NEON) || defined(__aarch64__)
-	if (hasNEON()) {
-		neon_memcpy(dst, src, size);
-		return;
-	}
-#endif
-
-	// Fallback to standard memcpy
-	std::memcpy(dst, src, size);
 }
 
 gboolean GStreamerVideo::busCallback(GstBus* bus, GstMessage* msg, gpointer user_data) {
@@ -618,12 +464,7 @@ bool GStreamerVideo::stop() {
 		if (videoTexRing_[i]) { SDL_DestroyTexture(videoTexRing_[i]); videoTexRing_[i] = nullptr; }
 	}
 
-	stagedFrame_.store(nullptr, std::memory_order_release);
-	{
-		std::lock_guard<std::mutex> lock(reusableFrameMutex_);
-		reusableFrame_.reset(); // This actually frees the memory
-		LOG_DEBUG("GStreamerVideo", "Released reusable frame buffer");
-	}
+	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) gst_sample_unref(s);
 	if (perspective_gva_) { g_value_array_free(perspective_gva_); perspective_gva_ = nullptr; }
 
 	// Reset members
@@ -659,11 +500,17 @@ bool GStreamerVideo::unload() {
 	pipeLineReady_.store(false, std::memory_order_release);
 	targetState_.store(IVideo::VideoState::None, std::memory_order_release);
 
-	
+	// Disable texture updates immediately
+	{
+		std::lock_guard<std::mutex> lk(updateFuncMutex_);
+		updateTextureFunc_ = [](SDL_Texture*, GstVideoFrame*) { return false; };
+	}
 	texture_ = nullptr;
 
 	// Clear any staged video sample immediately (thread-safe)
-	stagedFrame_.store(nullptr, std::memory_order_release);
+	if (GstSample* s = stagedSample_.exchange(nullptr, std::memory_order_acq_rel)) {
+		gst_sample_unref(s);
+	}
 
 	// Remove AudioBus source immediately (thread-safe)
 	if (videoSourceId_ != 0) {
@@ -998,6 +845,30 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	return true;
 }
 
+void GStreamerVideo::initializeUpdateFunction() {
+	const auto session = currentPlaySessionId_.load(std::memory_order_acquire);
+	const auto fmt = sdlFormat_;
+
+	auto make_guard = [this, session, fmt](auto impl) {
+		return [this, session, fmt, impl](SDL_Texture* tex, GstVideoFrame* frame) -> bool {
+			if (currentPlaySessionId_.load(std::memory_order_acquire) != session) return false;
+			if (sdlFormat_ != fmt) return false;
+			if (!tex || !frame) return false;
+			return impl(tex, frame);
+			};
+		};
+
+	std::function<bool(SDL_Texture*, GstVideoFrame*)> f;
+	switch (sdlFormat_) {
+		case SDL_PIXELFORMAT_IYUV:     f = make_guard([this](auto t, auto f) { return updateTextureFromFrameIYUV(t, f); }); break;
+		case SDL_PIXELFORMAT_NV12:     f = make_guard([this](auto t, auto f) { return updateTextureFromFrameNV12(t, f); }); break;
+		case SDL_PIXELFORMAT_ABGR8888: f = make_guard([this](auto t, auto f) { return updateTextureFromFrameRGBA(t, f); }); break;
+		default:                       f = [](auto, auto) { return false; }; break;
+	}
+	std::lock_guard<std::mutex> lk(updateFuncMutex_);
+	updateTextureFunc_ = std::move(f);
+}
+
 bool GStreamerVideo::play(const std::string& file) {
 	if (!initialized_) {
 		LOG_ERROR("GStreamerVideo", "Play called but GStreamer not initialized for file: " + file);
@@ -1044,6 +915,9 @@ bool GStreamerVideo::play(const std::string& file) {
 				hasError_.store(true, std::memory_order_release);
 				break;
 			}
+
+			// 2. Initialize texture update function
+			initializeUpdateFunction();
 
 			// 3. Convert file path to URI
 			gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
@@ -1247,116 +1121,6 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 	}
 }
 
-FrameData* GStreamerVideo::copyFrameFromSample(GstSample* sample) {
-	if (!sample) return nullptr;
-
-	GstBuffer* buf = gst_sample_get_buffer(sample);
-	const GstCaps* caps = gst_sample_get_caps(sample);
-
-	GstVideoInfo info;
-	if (!buf || !caps || !gst_video_info_from_caps(&info, caps)) {
-		return nullptr;
-	}
-
-	GstVideoFrame frame;
-	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
-		return nullptr;
-	}
-
-	int w = GST_VIDEO_FRAME_WIDTH(&frame);
-	int h = GST_VIDEO_FRAME_HEIGHT(&frame);
-
-	// Calculate total size needed - use GStreamer's stride values directly
-	size_t totalSize = 0;
-	size_t planeSizes[3] = { 0 };
-	int strides[3] = { 0 };
-	int planeCount = 0;
-
-	switch (sdlFormat_) {
-		case SDL_PIXELFORMAT_IYUV: {
-			planeCount = 3;
-			for (int i = 0; i < 3; i++) {
-				// Use GStreamer's stride directly (already aligned)
-				strides[i] = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, i);
-				int planeHeight = (i == 0) ? h : (h + 1) / 2;
-				planeSizes[i] = planeHeight * strides[i];
-				totalSize += planeSizes[i];
-			}
-			break;
-		}
-
-		case SDL_PIXELFORMAT_NV12: {
-			planeCount = 2;
-			// Use GStreamer's stride values (already optimally aligned)
-			strides[0] = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
-			planeSizes[0] = h * strides[0];
-			strides[1] = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 1);
-			planeSizes[1] = ((h + 1) / 2) * strides[1];
-			totalSize = planeSizes[0] + planeSizes[1];
-			break;
-		}
-
-		case SDL_PIXELFORMAT_RGBA32:
-		case SDL_PIXELFORMAT_BGRA32:
-		{
-			planeCount = 1;
-			// GStreamer stride for packed formats (usually width * bpp, aligned)
-			strides[0] = GST_VIDEO_FRAME_PLANE_STRIDE(&frame, 0);
-			planeSizes[0] = h * strides[0];
-			totalSize = planeSizes[0];
-			break;
-		}
-
-		default:
-		gst_video_frame_unmap(&frame);
-		return nullptr;
-	}
-
-	// Add small padding for safety (64 bytes total)
-	totalSize += 64;
-
-	// Reuse or create frame buffer
-	{
-		std::lock_guard<std::mutex> lock(reusableFrameMutex_);
-
-		// Resize if needed (rare - only when resolution changes)
-		if (!reusableFrame_ ||
-			reusableFrame_->width != w ||
-			reusableFrame_->height != h ||
-			reusableFrame_->format != sdlFormat_ ||
-			reusableFrame_->totalSize < totalSize) {
-
-			LOG_DEBUG("GStreamerVideo", "Reallocating frame buffer: " +
-				std::to_string(w) + "x" + std::to_string(h) +
-				" stride: " + std::to_string(strides[0]) +
-				" total: " + std::to_string(totalSize));
-			reusableFrame_ = std::make_unique<FrameData>(w, h, sdlFormat_, totalSize);
-		}
-
-		// Set up plane pointers - respect GStreamer's layout
-		uint8_t* dataPtr = reusableFrame_->data.get();
-		for (int i = 0; i < planeCount; i++) {
-			reusableFrame_->planes[i] = dataPtr;
-			// Use GStreamer's stride values (preserves their alignment)
-			reusableFrame_->strides[i] = strides[i];
-			dataPtr += planeSizes[i];
-		}
-
-		// Copy data preserving GStreamer's stride/alignment
-		// SIMD-optimized copy data 
-		for (int i = 0; i < planeCount; i++) {
-			// C-style cast (more common in GStreamer code)
-			const uint8_t* src = (const uint8_t*)GST_VIDEO_FRAME_PLANE_DATA(&frame, i);
-			uint8_t* dst = reusableFrame_->planes[i];
-			size_t copySize = planeSizes[i];
-
-			optimizedMemcpy(dst, src, copySize);
-		}
-	}
-
-	gst_video_frame_unmap(&frame);
-	return reusableFrame_.get(); // Return raw pointer (we keep ownership)
-}
 
 GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_data) {
 	auto* ctx = static_cast<SessionCtx*>(user_data);
@@ -1364,19 +1128,15 @@ GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_dat
 	auto* self = ctx->self;
 	if (!self->isCurrentSession(ctx->session)) return GST_FLOW_OK;
 
-	GstSample* s = gst_app_sink_pull_preroll(sink);
-	if (!s) return GST_FLOW_OK;
+	GstSample* preroll = gst_app_sink_try_pull_preroll(sink, 0);
+	if (!preroll) return GST_FLOW_OK;
 
-	FrameData* newFrame = self->copyFrameFromSample(s);
-	gst_sample_unref(s);
-
-	if (!newFrame) return GST_FLOW_OK;
-
-	// Just replace pointer - no delete needed since we own the buffer
-	self->stagedFrame_.store(newFrame, std::memory_order_release);
+	if (GstSample* old = self->stagedSample_.exchange(preroll, std::memory_order_acq_rel))
+		gst_sample_unref(old);
 
 	return GST_FLOW_OK;
 }
+
 
 GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data) {
 	auto* ctx = static_cast<SessionCtx*>(user_data);
@@ -1386,20 +1146,15 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data
 
 	if (self->targetState_.load(std::memory_order_acquire) != IVideo::VideoState::Playing) {
 		GstSample* s = gst_app_sink_pull_sample(sink);
-		if (s) gst_sample_unref(s);
+		gst_sample_unref(s);
 		return GST_FLOW_OK;
 	}
 
-	GstSample* s = gst_app_sink_pull_sample(sink);
+	GstSample* s = gst_app_sink_try_pull_sample(sink, 0);
 	if (!s) return GST_FLOW_OK;
 
-	FrameData* newFrame = self->copyFrameFromSample(s);
-	gst_sample_unref(s);
-
-	if (!newFrame) return GST_FLOW_OK;
-
-	// Just replace pointer - no delete needed since we own the buffer
-	self->stagedFrame_.store(newFrame, std::memory_order_release);
+	if (GstSample* old = self->stagedSample_.exchange(s, std::memory_order_acq_rel))
+		gst_sample_unref(old);
 
 	return GST_FLOW_OK;
 }
@@ -1557,59 +1312,65 @@ void GStreamerVideo::volumeUpdate() {
 	}
 }
 void GStreamerVideo::draw() {
-	// Get the latest frame pointer (don't delete - we own the buffer)
-	FrameData* frame = stagedFrame_.exchange(nullptr);
-	if (!frame) return;
+	GstSample* sample = stagedSample_.exchange(nullptr, std::memory_order_acq_rel);
+	if (!sample) return;
 
-	// Handle resolution changes
-	if (frame->width != width_ || frame->height != height_) {
-		width_ = frame->width;
-		height_ = frame->height;
+	GstBuffer* buf = gst_sample_get_buffer(sample);
+	const GstCaps* caps = gst_sample_get_caps(sample);
+	if (!buf || !caps) { gst_sample_unref(sample); return; }
+
+	GstVideoInfo info;
+	if (!gst_video_info_from_caps(&info, caps)) { gst_sample_unref(sample); return; }
+
+	const int frameW = GST_VIDEO_INFO_WIDTH(&info);
+	const int frameH = GST_VIDEO_INFO_HEIGHT(&info);
+	if (frameW <= 0 || frameH <= 0) { gst_sample_unref(sample); return; }
+
+	if (frameW != width_ || frameH != height_) {
+		width_ = frameW; height_ = frameH;
 		createSdlTexture();
+	}
+
+	// Make a deep copy of the buffer first
+	GstBuffer* bufferCopy = gst_buffer_copy_deep(buf);
+
+	// Immediately release the original sample/buffer
+	gst_sample_unref(sample);
+
+	if (!bufferCopy) {
+		LOG_ERROR("GStreamerVideo", "Failed to create buffer copy");
+		return;
+	}
+
+	// Now map the copied buffer
+	GstVideoFrame frame;
+	if (!gst_video_frame_map(&frame, &info, bufferCopy, GST_MAP_READ)) {
+		gst_buffer_unref(bufferCopy);
+		return;
+	}
+
+	// Snapshot the updater
+	std::function<bool(SDL_Texture*, GstVideoFrame*)> updater;
+	{
+		std::lock_guard<std::mutex> lk(updateFuncMutex_);
+		updater = updateTextureFunc_;
 	}
 
 	bool ok = false;
 
-	// Pick next texture slot for triple-buffering
+	// Pick a write slot
 	int write = videoWriteIdx_;
-	if (write == videoDrawIdx_) {
-		write = (write + 1) % videoRingCount_;
-	}
+	if (write == videoDrawIdx_) write = (write + 1) % videoRingCount_;
 	SDL_Texture* t = videoTexRing_[write];
 
-	// Upload frame data directly to SDL texture
-	if (t) {
-		switch (frame->format) {
-			case SDL_PIXELFORMAT_IYUV:
-			ok = (SDL_UpdateYUVTexture(t, nullptr,
-				frame->planes[0], frame->strides[0], // Y
-				frame->planes[1], frame->strides[1], // U  
-				frame->planes[2], frame->strides[2]) == 0); // V
-			break;
-
-			case SDL_PIXELFORMAT_NV12:
-			ok = (SDL_UpdateNVTexture(t, nullptr,
-				frame->planes[0], frame->strides[0], // Y
-				frame->planes[1], frame->strides[1]) == 0); // UV
-			break;
-
-			case SDL_PIXELFORMAT_RGBA32:
-			case SDL_PIXELFORMAT_BGRA32:
-			ok = (SDL_UpdateTexture(t, nullptr,
-				frame->planes[0], frame->strides[0]) == 0);
-			break;
-
-			default:
-			LOG_WARNING("GStreamerVideo", "Unsupported pixel format in draw(): " +
-				std::string(SDL_GetPixelFormatName(frame->format)));
-			break;
-		}
+	if (t && updater) {
+		ok = updater(t, &frame);
 	}
 
-	// NOTE: No delete here! The reusableFrame_ owns the memory
-	// The frame pointer just points to reusableFrame_->data
+	// Clean up the copied buffer
+	gst_video_frame_unmap(&frame);
+	gst_buffer_unref(bufferCopy);
 
-	// Update texture ring if upload succeeded
 	if (ok) {
 		videoDrawIdx_ = write;
 		texture_ = t;
@@ -1617,11 +1378,55 @@ void GStreamerVideo::draw() {
 	}
 	else {
 		texture_ = nullptr;
-		if (t) {
-			LOG_ERROR("GStreamerVideo", "Failed to update SDL texture: " + std::string(SDL_GetError()));
-		}
 	}
 }
+bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFrame* frame) const {
+	const auto* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+	const auto* srcU = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
+	const auto* srcV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 2));
+
+	// Stride IS the distance between rows in the source buffer
+	const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
+	const int strideU = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
+	const int strideV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 2);
+
+	if (SDL_UpdateYUVTexture(texture, nullptr, srcY, strideY, srcU, strideU, srcV, strideV) != 0) {
+		LOG_ERROR("GStreamerVideo", std::string("SDL_UpdateYUVTexture failed: ") + SDL_GetError());
+		return false;
+	}
+
+	return true;
+}
+
+bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFrame* frame) const {
+	const auto* srcY = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 0));
+	const auto* srcUV = static_cast<const uint8_t*>(GST_VIDEO_FRAME_PLANE_DATA(frame, 1));
+
+	const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
+	const int strideUV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
+
+	// Use SDL_UpdateNVTexture for NV12 format
+	if (SDL_UpdateNVTexture(texture, nullptr, srcY, strideY, srcUV, strideUV) != 0) {
+		LOG_ERROR("GStreamerVideo", std::string("SDL_UpdateNVTexture failed: ") + SDL_GetError());
+		return false;
+	}
+
+	return true;
+}
+
+bool GStreamerVideo::updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFrame* frame) const {
+
+	const void* src_pixels = GST_VIDEO_FRAME_PLANE_DATA(frame, 0);
+	const int src_pitch = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
+
+	if (SDL_UpdateTexture(texture, nullptr, src_pixels, src_pitch) != 0) {
+		LOG_ERROR("GStreamerVideo", "SDL_UpdateTexture failed: " + std::string(SDL_GetError()));
+		return false;
+	}
+
+	return true;
+}
+
 int GStreamerVideo::getHeight() {
 	return height_;
 }
