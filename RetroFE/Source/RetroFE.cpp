@@ -135,6 +135,8 @@ void RetroFE::render() {
 		if (!rr || !rt) continue;
 
 		SDL_SetRenderTarget(rr, rt);
+		SDL_SetRenderDrawColor(rr, 0, 0, 0, 255);
+		SDL_RenderClear(rr);
 
 		if (currentPage_) currentPage_->draw(i);
 
