@@ -216,6 +216,16 @@ private:
 
     size_t itemIndex_{ 0 };
     size_t selectedOffsetIndex_{ 0 };
+    struct TweenNeighbor {
+        std::shared_ptr<AnimationEvents> tween;
+        ViewInfo* cur;
+        ViewInfo* next;
+    };
+
+    std::vector<size_t> forwardMap_;
+    std::vector<size_t> backwardMap_;
+    std::vector<TweenNeighbor> forwardTween_;
+    std::vector<TweenNeighbor> backwardTween_;
 
     float scrollAcceleration_{ 0 };
     float startScrollTime_{ 0.500 };

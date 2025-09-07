@@ -318,26 +318,56 @@ void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     clearTweenPoints();
 
     scrollPoints_ = scrollPoints;
-    tweenPoints_ = tweenPoints;
+    tweenPoints_ = std::move(tweenPoints);
 
-    size_t size = (scrollPoints_) ? scrollPoints_->size() : 0;
+    const size_t N = (scrollPoints_ ? scrollPoints_->size() : 0);
 
-    // Initialize or reset the CircularBuffer
-    components_.initialize(size);
-
-    // No need to manually set to nullptr as initialize already does that
-    // Initialize all components to nullptr (redundant if initialize sets them to nullptr)
-    // for (size_t i = 0; i < size; ++i) {
-    //     components_.raw()[i] = nullptr;
-    // }
+    // Reset circular buffer (fills with nullptrs)
+    components_.initialize(N);
 
     if (items_) {
         itemIndex_ = loopDecrement(0, selectedOffsetIndex_, items_->size());
     }
 
-    // Allocate and initialize components
+    // --- Precompute neighbor index maps ---
+    forwardMap_.resize(N);
+    backwardMap_.resize(N);
+
+    for (size_t i = 0; i < N; ++i) {
+        forwardMap_[i] = (N <= 1) ? 0 : (i == 0 ? N - 1 : i - 1);
+        backwardMap_[i] = (N <= 1) ? 0 : (i + 1 == N ? 0 : i + 1);
+    }
+
+    // --- Precompute tween/view tuples (so scroll() is just lookups) ---
+    forwardTween_.resize(N);
+    backwardTween_.resize(N);
+
+    if (N > 0 && tweenPoints_ && scrollPoints_) {
+        for (size_t i = 0; i < N; ++i) {
+            const size_t jF = forwardMap_[i];
+            const size_t jB = backwardMap_[i];
+
+            forwardTween_[i] = TweenNeighbor{
+                (*tweenPoints_)[jF],
+                (*scrollPoints_)[i],
+                (*scrollPoints_)[jF]
+            };
+            backwardTween_[i] = TweenNeighbor{
+                (*tweenPoints_)[jB],
+                (*scrollPoints_)[i],
+                (*scrollPoints_)[jB]
+            };
+        }
+    }
+    else {
+        forwardTween_.clear();
+        backwardTween_.clear();
+    }
+
+    // Allocate and initialize components (your existing behavior)
     allocateSpritePoints();
 }
+
 
 size_t ScrollingList::getScrollOffsetIndex( ) const
 {
@@ -1243,9 +1273,8 @@ void ScrollingList::scroll(bool forward) {
     const size_t exitIndex = (N <= 1) ? 0 : (N - 1) * (1 - f);
 
     // Determine the new item to load into the exiting slot, and update itemIndex_
-    Item const* itemToScroll = nullptr;
+    const Item* itemToScroll = nullptr;
     if (forward) {
-        // item following the currently visible block
         itemToScroll = (*items_)[loopIncrement(itemIndex_, N, itemsSize)];
         itemIndex_ = loopIncrement(itemIndex_, 1, itemsSize);
     }
@@ -1254,35 +1283,44 @@ void ScrollingList::scroll(bool forward) {
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
     }
 
-    // Rebuild only the exiting slot
+    // Rebuild only the exiting slot (consider switching to recycle/retarget later)
     deallocateTexture(exitIndex);
     allocateTexture(exitIndex, itemToScroll);
 
-    // Update tweens for each visible component
-    for (size_t index = 0; index < N; ++index)
-    {
-        // Branchless (and modulo-free) neighbor:
-        // forward ? (index-1 mod N) : (index+1 mod N)
-        size_t nextIndex;
-        if (N == 1) {
-            nextIndex = 0;
+    // --- Use precomputed tuples ---
+    const auto& T = forward ? forwardTween_ : backwardTween_;
+    // Guard (paranoia) in case N changed without setPoints being called:
+    if (T.size() != N) {
+        // fallback to maps if ever mismatched
+        const auto& neighbor = forward ? forwardMap_ : backwardMap_;
+        for (size_t index = 0; index < N; ++index) {
+            const size_t nextIndex = neighbor[index];
+            Component* component = components_[index];
+            if (!component) continue;
+
+            auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
+            auto* currentScrollPoint = (*scrollPoints_)[index];
+            auto* nextScrollPoint = (*scrollPoints_)[nextIndex];
+
+            component->allocateGraphicsMemory();
+            resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
+            component->baseViewInfo.font = nextScrollPoint->font;
+            component->triggerEvent("menuScroll");
         }
-        else {
-            nextIndex = index + 1 + f * (N - 2);
-            nextIndex -= (nextIndex >= N) * N; // wrap once without %
+    }
+    else {
+        for (size_t index = 0; index < N; ++index) {
+            Component* component = components_[index];
+            if (!component) continue;
+
+            const TweenNeighbor& t = T[index];
+
+            component->allocateGraphicsMemory(); // consider removing per-scroll alloc later
+            resetTweens(component, t.tween, t.cur, t.next, scrollPeriod_);
+            if (component->baseViewInfo.font != t.next->font)
+                component->baseViewInfo.font = t.next->font;
+            component->triggerEvent("menuScroll");
         }
-
-        Component* component = components_[index];
-        if (!component) continue;
-
-        auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
-        auto* currentScrollPoint = (*scrollPoints_)[index];
-        auto* nextScrollPoint = (*scrollPoints_)[nextIndex];
-
-        component->allocateGraphicsMemory();
-        resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
-        component->baseViewInfo.font = nextScrollPoint->font;
-        component->triggerEvent("menuScroll");
     }
 
     // Rotate logical order
