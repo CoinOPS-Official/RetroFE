@@ -519,56 +519,30 @@ bool GStreamerVideo::unload() {
 	}
 
 	// Perform all GStreamer operations on the GLib thread
-	auto resultFuture = GlibLoop::instance().invokeAsync<bool>([this, fileForLog]() -> bool {
-		bool success = false;
+	(void)GlibLoop::instance().invokeAsync<bool>([this, fileForLog]() -> bool {
+		if (!pipeline_ || !playbin_) return true;
 
-		do {
-			// Verify pipeline still exists (could have been stopped by another thread)
-			if (!pipeline_ || !playbin_) {
-				LOG_DEBUG("GStreamerVideo", "Unload: Pipeline already cleaned up for " + fileForLog);
-				success = true;
-				break;
-			}
+		// Quiesce drains + flush (as you added)
+		detachAndDrainSink(videoSink_, &padProbeId_);
+		guint noProbe = 0;
+		detachAndDrainSink(audioSink_, &noProbe);
 
-			// 1. Detach and drain sinks to prevent new callbacks
-			detachAndDrainSink(videoSink_, &padProbeId_);
-			guint noProbe = 0;
-			detachAndDrainSink(audioSink_, &noProbe);
+		gst_element_send_event(pipeline_, gst_event_new_flush_start());
 
-			LOG_DEBUG("GStreamerVideo", "Unload: Sinks detached and drained for " + fileForLog);
+		// Drop to READY (non-blocking; returns ASYNC or SUCCESS)
+		gst_element_set_state(pipeline_, GST_STATE_READY);
+		gst_element_send_event(pipeline_, gst_event_new_flush_stop(TRUE));
 
-			// 2. Set pipeline to READY state (keeps it for reuse)
-			GstStateChangeReturn scr = gst_element_set_state(pipeline_, GST_STATE_READY);
-			if (scr == GST_STATE_CHANGE_FAILURE) {
-				LOG_WARNING("GStreamerVideo", "Unload: Failed to set READY state for " + fileForLog + ", continuing anyway");
-				// Don't fail completely, just log and continue
-			}
-			else {
-				LOG_DEBUG("GStreamerVideo", "Unload: Pipeline set to READY for " + fileForLog);
-			}
 
-			// 3. Clean up callback contexts (they'll be reallocated in next play())
-			if (audioCtx_) {
-				g_free(audioCtx_);
-				audioCtx_ = nullptr;
-				LOG_DEBUG("GStreamerVideo", "Unload: Audio context freed for " + fileForLog);
-			}
-			if (videoCtx_) {
-				g_free(videoCtx_);
-				videoCtx_ = nullptr;
-				LOG_DEBUG("GStreamerVideo", "Unload: Video context freed for " + fileForLog);
-			}
+		// Free per-session ctx
+		if (audioCtx_) { g_free(audioCtx_); audioCtx_ = nullptr; }
+		if (videoCtx_) { g_free(videoCtx_); videoCtx_ = nullptr; }
 
-			success = true;
-
-		} while (false);
-
-		return success;
-
+		// allow future play() to re-arm; keep tearingDown_ true until play() begins
+		return true;
 		}, G_PRIORITY_HIGH);
 
 	// Wait for GLib thread to complete the GStreamer operations
-	bool gstreamerSuccess = resultFuture.get();
 
 	// Perform remaining cleanup on current thread (thread-safe operations)
 	currentFile_ = "[unloading]";
@@ -577,21 +551,8 @@ bool GStreamerVideo::unload() {
 	width_ = -1;
 	height_ = -1;
 
-	// Trigger the "became none" callback if requested
-	if (notifyOnNone_.exchange(false, std::memory_order_acq_rel)) {
-		std::function<void(GStreamerVideo*)> cb;
-		{ std::lock_guard<std::mutex> g(cbMutex_); cb = std::move(onBecameNone_); }
-		if (cb) cb(this);
-	}
 
-	if (gstreamerSuccess) {
-		LOG_DEBUG("GStreamerVideo", "Unload: Successfully unloaded " + fileForLog);
-	}
-	else {
-		LOG_WARNING("GStreamerVideo", "Unload: Completed with warnings for " + fileForLog);
-	}
-
-	return gstreamerSuccess;
+	return true;
 }
 
 
@@ -876,21 +837,6 @@ bool GStreamerVideo::play(const std::string& file) {
 		return false;
 	}
 
-	// Handle pipeline synchronization on current thread if needed
-	if (pipeline_) {
-		LOG_DEBUG("GStreamerVideo", "Synchronizing pipeline state before play: " + file);
-		constexpr GstClockTime syncTimeout = 2 * GST_SECOND;
-		GstStateChangeReturn syncRet = gst_element_get_state(pipeline_, nullptr, nullptr, syncTimeout);
-
-		if (syncRet == GST_STATE_CHANGE_ASYNC || syncRet == GST_STATE_CHANGE_FAILURE) {
-			LOG_WARNING("GStreamerVideo", "Previous state change pending/failed, bouncing to READY for: " + file);
-			GlibLoop::instance().invokeAndWait([this]() {
-				gst_element_set_state(pipeline_, GST_STATE_READY);
-				});
-			(void)gst_element_get_state(pipeline_, nullptr, nullptr, GST_SECOND);
-		}
-	}
-
 	// Atomically increment and assign session ID immediately (thread-safe)
 	const uint64_t newSessionId = nextUniquePlaySessionId_++;
 	currentPlaySessionId_.store(newSessionId, std::memory_order_release);
@@ -898,89 +844,70 @@ bool GStreamerVideo::play(const std::string& file) {
 
 	LOG_DEBUG("GStreamerVideo", "Starting play for " + file + " (Session: " + std::to_string(newSessionId) + ")");
 
+	// App-side guards: we’re beginning an async load ? PAUSED (preroll)
+	pipeLineReady_.store(false, std::memory_order_release);
+	targetState_.store(IVideo::VideoState::Paused, std::memory_order_release);
+
 	// Use the new invokeAsync method
-	auto resultFuture = GlibLoop::instance().invokeAsync<bool>([this, file, newSessionId]() -> bool {
-		bool success = false;
+	(void)GlibLoop::instance().invokeAsync<bool>([this, file, newSessionId]() -> bool {
+		if (currentPlaySessionId_.load(std::memory_order_acquire) != newSessionId) {
+			LOG_DEBUG("GStreamerVideo", "Session " + std::to_string(newSessionId) + " cancelled before GLib execution");
+			return false;
+		}
 
-		do {
-			// Verify we're still the current session
-			if (currentPlaySessionId_.load(std::memory_order_acquire) != newSessionId) {
-				LOG_DEBUG("GStreamerVideo", "Session " + std::to_string(newSessionId) + " cancelled before GLib execution");
-				break;
-			}
+		if (!createPipelineIfNeeded()) {
+			LOG_ERROR("GStreamerVideo", "Failed to create pipeline for " + file);
+			hasError_.store(true, std::memory_order_release);
+			return false;
+		}
 
-			// 1. Create pipeline if needed
-			if (!createPipelineIfNeeded()) {
-				LOG_ERROR("GStreamerVideo", "Failed to create GStreamer pipeline for " + file);
-				hasError_.store(true, std::memory_order_release);
-				break;
-			}
+		// Clear any lingering async transition: quiesce/flush ? READY
+		if (gst_element_get_state(pipeline_, nullptr, nullptr, 0) == GST_STATE_CHANGE_ASYNC) {
+			LOG_WARNING("GStreamerVideo", "Previous transition ASYNC; quiesce+flush ? READY");
+			detachAndDrainSink(videoSink_, &padProbeId_);
+			guint noProbe = 0;
+			detachAndDrainSink(audioSink_, &noProbe);
+			gst_element_send_event(pipeline_, gst_event_new_flush_start());
+			gst_element_set_state(pipeline_, GST_STATE_READY);
+			gst_element_send_event(pipeline_, gst_event_new_flush_stop(TRUE));
+		}
 
-			// 2. Initialize texture update function
-			initializeUpdateFunction();
+		initializeUpdateFunction();
 
-			// 3. Convert file path to URI
-			gchar* uriFile = gst_filename_to_uri(file.c_str(), nullptr);
-			if (!uriFile) {
-				LOG_ERROR("GStreamerVideo", "Failed to convert filename to URI: " + file);
-				hasError_.store(true, std::memory_order_release);
-				break;
-			}
+		gchar* uri = gst_filename_to_uri(file.c_str(), nullptr);
+		if (!uri) {
+			LOG_ERROR("GStreamerVideo", "Failed to convert filename to URI: " + file);
+			hasError_.store(true, std::memory_order_release);
+			return false;
+		}
+		g_object_set(playbin_, "uri", uri, nullptr);
+		g_free(uri);
 
-			// 4. Set URI on playbin
-			g_object_set(playbin_, "uri", uriFile, nullptr);
-			g_free(uriFile);
+		setupCallbacksForSession(newSessionId);
+		if (videoSourceId_ == 0) videoSourceId_ = AudioBus::instance().addSource("video-preview");
 
-			// 5. Setup callbacks with current session context
-			setupCallbacksForSession(newSessionId);
 
-			// 6. Ensure AudioBus source exists
-			if (videoSourceId_ == 0) {
-				videoSourceId_ = AudioBus::instance().addSource("video-preview");
-			}
+		// Request PAUSED (preroll)
+		GstStateChangeReturn scr = gst_element_set_state(pipeline_, GST_STATE_PAUSED);
+		if (scr == GST_STATE_CHANGE_FAILURE) {
+			LOG_ERROR("GStreamerVideo", "Pipeline failed to set PAUSED for " + file);
+			hasError_.store(true, std::memory_order_release);
+			return false;
+		}
+		LOG_DEBUG("GStreamerVideo",
+			(scr == GST_STATE_CHANGE_ASYNC)
+			? "PAUSED is async (prerolling)"
+			: "PAUSED immediately");
 
-			// 7. Request PAUSED state
-			GstStateChangeReturn scr = gst_element_set_state(pipeline_, GST_STATE_PAUSED);
-			targetState_.store(IVideo::VideoState::Paused, std::memory_order_release);
+		// Start muted/0.0; unmute later in resume()
+		gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
+		gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), TRUE);
+		lastSetMuteState_ = true;
 
-			if (scr == GST_STATE_CHANGE_FAILURE) {
-				LOG_ERROR("GStreamerVideo", "Pipeline failed to set PAUSED for " + file);
-				pipeLineReady_.store(false, std::memory_order_release);
-				hasError_.store(true, std::memory_order_release);
-				break;
-			}
-
-			// 8. Set initial volume and mute state
-			gst_stream_volume_set_volume(GST_STREAM_VOLUME(playbin_), GST_STREAM_VOLUME_FORMAT_LINEAR, 0.0);
-			gst_stream_volume_set_mute(GST_STREAM_VOLUME(playbin_), true);
-			lastSetMuteState_ = true;
-
-			// Log state change result
-			if (scr == GST_STATE_CHANGE_ASYNC) {
-				LOG_DEBUG("GStreamerVideo", "PAUSED is async for " + file + " (Session: " + std::to_string(newSessionId) + ")");
-			}
-			else {
-				LOG_DEBUG("GStreamerVideo", "PAUSED immediately for " + file + " (Session: " + std::to_string(newSessionId) + ")");
-			}
-
-			success = true;
-
-		} while (false);
-
-		return success;
+		return true;
 		}, G_PRIORITY_HIGH);
 
-	// Wait for result
-	bool result = resultFuture.get();
-
-	if (result) {
-		LOG_DEBUG("GStreamerVideo", "Successfully loaded " + file + " (Session: " + std::to_string(newSessionId) + ")");
-	}
-	else {
-		LOG_ERROR("GStreamerVideo", "Failed to load " + file + " (Session: " + std::to_string(newSessionId) + ")");
-	}
-
-	return result;
+	return true;
 }
 
 void GStreamerVideo::setupCallbacksForSession(uint64_t sessionId) {
@@ -1331,21 +1258,16 @@ void GStreamerVideo::draw() {
 		createSdlTexture();
 	}
 
-	// Make a deep copy of the buffer first
-	GstBuffer* bufferCopy = gst_buffer_copy_deep(buf);
+	// Ref buffer so we can use it after unreffing sample
+	gst_buffer_ref(buf);
 
-	// Immediately release the original sample/buffer
+	// Immediately release the original sample
 	gst_sample_unref(sample);
 
-	if (!bufferCopy) {
-		LOG_ERROR("GStreamerVideo", "Failed to create buffer copy");
-		return;
-	}
-
-	// Now map the copied buffer
+	// Now map buffer
 	GstVideoFrame frame;
-	if (!gst_video_frame_map(&frame, &info, bufferCopy, GST_MAP_READ)) {
-		gst_buffer_unref(bufferCopy);
+	if (!gst_video_frame_map(&frame, &info, buf, GST_MAP_READ)) {
+		gst_buffer_unref(buf);
 		return;
 	}
 
@@ -1369,7 +1291,7 @@ void GStreamerVideo::draw() {
 
 	// Clean up the copied buffer
 	gst_video_frame_unmap(&frame);
-	gst_buffer_unref(bufferCopy);
+	gst_buffer_unref(buf);
 
 	if (ok) {
 		videoDrawIdx_ = write;
@@ -1529,7 +1451,6 @@ void GStreamerVideo::pause() {
 
 	const std::string fileForLog = currentFile_;
 	LOG_DEBUG("GStreamerVideo", "Requesting PAUSED for " + fileForLog);
-
 	// Perform state change on GLib thread
 	GlibLoop::instance().invoke([this, fileForLog]() {
 		// Double-check we still want to pause (could have changed during invoke)
@@ -1654,7 +1575,7 @@ void GStreamerVideo::loop() {
 	const std::string fileForLog = currentFile_;
 	LOG_DEBUG("GStreamerVideo", "Requesting loop (seek to 0) for " + fileForLog);
 
-	gboolean seekResult = gst_element_seek(playbin_, 1.0, GST_FORMAT_TIME,
+	gboolean seekResult = gst_element_seek(pipeline_, 1.0, GST_FORMAT_TIME,
 		GST_SEEK_FLAG_FLUSH,
 		GST_SEEK_TYPE_SET, 0,
 		GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);

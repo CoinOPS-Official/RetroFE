@@ -216,7 +216,8 @@ void VideoComponent::draw() {
 		return;
 	}
 
-	videoInst_->draw();
+	if(videoInst_->isPipelineReady())
+        videoInst_->draw();
 	
 	if (SDL_Texture* texture = videoInst_->getTexture()) {
 		SDL_FRect rect = {
