@@ -2879,6 +2879,25 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 		return RETROFE_QUIT;
 	}
 
+	auto handleInfoExitOnScroll = [&]() {
+		if (infoExitOnScroll && (gameInfo_ || collectionInfo_ || buildInfo_)) {
+			if (gameInfo_) {
+				resetInfoToggle();
+				return RETROFE_GAMEINFO_EXIT;
+			}
+			if (collectionInfo_) {
+				resetInfoToggle();
+				return RETROFE_COLLECIONINFO_EXIT;
+			}
+			if (buildInfo_) {
+				resetInfoToggle();
+				return RETROFE_BUILDINFO_EXIT;
+			}
+		}
+		return RETROFE_IDLE;
+		};
+
+
 	// Handle next/previous game inputs
 	if (page->isHorizontalScroll())
 	{
@@ -2888,10 +2907,9 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-			if (infoExitOnScroll)
-			{
-				resetInfoToggle();
-			}
+
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			return RETROFE_SCROLL_PLAYLIST_FORWARD;
 		}
 		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodeUp)) {
@@ -2899,10 +2917,9 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-			if (infoExitOnScroll)
-			{
-				resetInfoToggle();
-			}
+
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			return RETROFE_SCROLL_PLAYLIST_BACK;
 		}
 
@@ -2914,10 +2931,9 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-			if (infoExitOnScroll)
-			{
-				resetInfoToggle();
-			}
+
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			return RETROFE_SCROLL_FORWARD;
 		}
 		else if (input_.keystate(UserInput::KeyCodeLeft))
@@ -2927,10 +2943,9 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-			if (infoExitOnScroll)
-			{
-				resetInfoToggle();
-			}
+
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			return RETROFE_SCROLL_BACK;
 		}
 	}
@@ -2944,10 +2959,9 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-			if (infoExitOnScroll)
-			{
-				resetInfoToggle();
-			}
+
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			return RETROFE_SCROLL_PLAYLIST_FORWARD;
 		}
 		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodeLeft)) {
@@ -2955,10 +2969,9 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-			if (infoExitOnScroll)
-			{
-				resetInfoToggle();
-			}
+
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			return RETROFE_SCROLL_PLAYLIST_BACK;
 		}
 
@@ -2970,10 +2983,9 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-			if (infoExitOnScroll)
-			{
-				resetInfoToggle();
-			}
+
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			return RETROFE_SCROLL_FORWARD;
 		}
 		else if (input_.keystate(UserInput::KeyCodeUp))
@@ -2983,10 +2995,9 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-			if (infoExitOnScroll)
-			{
-				resetInfoToggle();
-			}
+
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			return RETROFE_SCROLL_BACK;
 		}
 	}
@@ -3597,7 +3608,6 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 
 	return state;
 }
-
 void RetroFE::handleMusicControls(UserInput::KeyCode_E input) {
 	if (!musicPlayer_) {
 		return;
