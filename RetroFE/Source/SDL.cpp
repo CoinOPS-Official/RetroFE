@@ -596,6 +596,7 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	// Step 2: Decide which subsystems to shut down.
 	if (fullShutdown)
 	{
+		SDL_ShowCursor(SDL_TRUE);
 		// This is the final application exit. Shut down everything.
 		LOG_INFO("SDL", "Performing full de-initialization of all SDL subsystems.");
 		Mix_CloseAudio();
@@ -617,8 +618,6 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	fullscreen_.clear();
 	mirror_.clear();
 	rotation_.clear();
-
-	SDL_ShowCursor(SDL_TRUE);
 
 	return true;
 }
