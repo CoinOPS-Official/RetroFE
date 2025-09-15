@@ -211,25 +211,14 @@ void ScrollingList::allocateSpritePoints() {
     size_t scrollPointsSize = scrollPoints_->size();
 
     for (size_t i = 0; i < scrollPointsSize; ++i) {
-        size_t index = loopIncrement(itemIndex_, i, itemsSize);
-        Item const* item = (*items_)[index];  // using [] instead of at()
-
-        Component* old = components_[i];  // using [] instead of at()
+        const size_t index = loopIncrement(itemIndex_, i, itemsSize);
+        const Item* item = (*items_)[index];
 
         allocateTexture(i, item);
-
-        Component* c = components_[i];  // using [] instead of at()
-        if (c) {
+        if (Component* c = components_[i]) {
             c->allocateGraphicsMemory();
-
-            ViewInfo* view = (*scrollPoints_)[i];  // using [] instead of at()
-
-            resetTweens(c, (*tweenPoints_)[i], view, view, 0);  // using [] instead of at()
-
-            if (old && !newItemSelected) {
-                c->baseViewInfo = old->baseViewInfo;
-                delete old;
-            }
+            ViewInfo* view = (*scrollPoints_)[i];
+            resetTweens(c, (*tweenPoints_)[i], view, view, 0);
         }
     }
 }

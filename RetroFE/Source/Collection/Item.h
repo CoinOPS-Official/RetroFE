@@ -46,6 +46,10 @@ public:
     std::string score;
     std::string playlist;
     std::string lastPlayed{ "0" };
+
+    std::string iscoredId;
+    std::string iscoredType;
+
     int playCount{ 0 };
     double timeSpent{ 0.0 };
     bool        isFavorite{ false };

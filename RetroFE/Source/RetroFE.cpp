@@ -24,6 +24,7 @@
 #include "Database/Configuration.h"
 #include "Database/GlobalOpts.h"
 #include "Database/HiScores.h"
+#include "Database/IScoredProvider.h"
 #include "Execute/Launcher.h"
 #include "Graphics/Component/ScrollingList.h"
 #include "Graphics/Page.h"
@@ -288,6 +289,20 @@ int RetroFE::initialize(void* context) {
 
 	HiScores::getInstance().loadHighScores(zipPath, overridePath);
 
+	HiScores::getInstance().setGlobalGameroom("Pipmick");
+
+	// 2) (Optional) Set a JSON file to persist global cache for offline fallback.
+	HiScores::getInstance().setGlobalPersistPath(Utils::combinePath(Configuration::absolutePath,
+		"hi2txt", "global_cache.json"));
+
+	// 3) (Optional) Load last-good cache first so the UI has something instantly.
+	HiScores::getInstance().loadGlobalCacheFromDisk();
+
+	// 4) Warm EVERYTHING from iScored in the background (single HTTP call).
+	//    getAllScores has no server-side max; HiScores will cap locally to GlobalScoresMax.
+	HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(10);
+
+
 	instance->initialized = true;
 	return 0;
 }
@@ -489,6 +504,7 @@ bool RetroFE::deInitialize() {
 	Image::cleanupTextureCache();
 	VideoPool::shutdown();
 	ThreadPool::getInstance().wait();
+	HiScores::getInstance().saveGlobalCacheToDisk();
 
 	// This must be called on EVERY exit to prevent a zombie singleton.
 
@@ -695,10 +711,28 @@ bool RetroFE::run() {
 	double nextFrameTime = initial_current_time_ms;
 	lastFrameTimePointMs_ = initial_current_time_ms;
 
+	constexpr double GlobalScoreFetchIntervalMs = 5 * 60 * 1000.0; // 5 minutes
+	double nextFetchTimeMs = initial_current_time_ms + GlobalScoreFetchIntervalMs;
+	std::atomic<bool> fetchInFlight{ false };
+
+	auto kickFetch = [&]() {
+		if (fetchInFlight.exchange(true)) return; // already running
+		HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(10);            // your existing URL update
+		fetchInFlight.store(false);
+		};
+
+
 	while (running)
 	{
 		uint64_t loopStart = SDL_GetPerformanceCounter();
 		double nowMs_loopStart = loopStart * 1000.0 / freq_; // freq is SDL_GetPerformanceFrequency()
+
+		if (nowMs_loopStart >= nextFetchTimeMs && !fetchInFlight.load()) {
+			// Advance by fixed steps to avoid drift if we were paused for a while
+			do { nextFetchTimeMs += GlobalScoreFetchIntervalMs; } while (nowMs_loopStart >= nextFetchTimeMs);
+
+			kickFetch();
+		}
 
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) input_.update(e);
@@ -2321,7 +2355,7 @@ bool RetroFE::run() {
 
 			// Start onMenuEnter animation
 			case RETROFE_BACK_MENU_LOAD_ART:
-			currentPage_->enterMenu();
+				currentPage_->enterMenu();
 			setState(RETROFE_BACK_MENU_ENTER);
 			break;
 

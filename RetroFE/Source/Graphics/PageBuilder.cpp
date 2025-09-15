@@ -24,6 +24,7 @@
 #include "Component/ReloadableMedia.h"
 #include "Component/ReloadableScrollingText.h"
 #include "Component/ReloadableHiscores.h"
+#include "Component/ReloadableGlobalHiscores.h"
 #include "Component/ScrollingList.h"
 #include "Component/VideoBuilder.h"
 #include "Component/MusicPlayerComponent.h"
@@ -726,6 +727,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
 	loadReloadableImages(layout, "reloadableText", page);
 	loadReloadableImages(layout, "reloadableScrollingText", page);
 	loadReloadableImages(layout, "reloadableHiscores", page);
+	loadReloadableImages(layout, "reloadableGlobalHiscores", page);
 	loadReloadableImages(layout, "musicPlayer", page);
 
 	return true;
@@ -859,6 +861,20 @@ void PageBuilder::loadReloadableImages(const xml_node<>* layout, const std::stri
 			std::string excludedColumns = excludedColumnsXml ? excludedColumnsXml->value() : "";
 
 			c = new ReloadableHiscores(config_, textFormat, *page, selectedOffset,
+				font, scrollingSpeed, startTime,
+				excludedColumns, baseColumnPadding, baseRowPadding, maxRows);
+		}
+		else if (tagName == "reloadableGlobalHiscores") {
+			FontManager* font = addFont(componentXml, nullptr, cMonitor);
+			std::string textFormat = textFormatXml ? textFormatXml->value() : "";
+			float scrollingSpeed = scrollingSpeedXml ? Utils::convertFloat(scrollingSpeedXml->value()) : 1.0f;
+			float startTime = startTimeXml ? Utils::convertFloat(startTimeXml->value()) : 0.0f;
+			float baseColumnPadding = baseColumnPaddingXml ? Utils::convertFloat(baseColumnPaddingXml->value()) : 1.5f;
+			float baseRowPadding = baseRowPaddingXml ? Utils::convertFloat(baseRowPaddingXml->value()) : 0.5f;
+			size_t maxRows = maxRowsXml ? static_cast<size_t>(Utils::convertInt(maxRowsXml->value())) : std::numeric_limits<size_t>::max(); // Default to unlimited rows
+			std::string excludedColumns = excludedColumnsXml ? excludedColumnsXml->value() : "";
+
+			c = new ReloadableGlobalHiscores(config_, textFormat, *page, selectedOffset,
 				font, scrollingSpeed, startTime,
 				excludedColumns, baseColumnPadding, baseRowPadding, maxRows);
 		}

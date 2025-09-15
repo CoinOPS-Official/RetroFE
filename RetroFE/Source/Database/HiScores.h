@@ -1,67 +1,114 @@
-/* This file is part of RetroFE.
-*
-* RetroFE is free software: you can redistribute it and/or modify
-* it under the terms of the GNU General Public License as published by
-* the Free Software Foundation, either version 3 of the License, or
-* (at your option) any later version.
-*
-* RetroFE is distributed in the hope that it will be useful,
-* but WITHOUT ANY WARRANTY; without even the implied warranty of
-* MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-* GNU General Public License for more details.
-*
-* You should have received a copy of the GNU General Public License
-* along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
-*/
 #pragma once
 
-#include <unordered_map>
 #include <string>
 #include <vector>
+#include <unordered_map>
 #include <shared_mutex>
+
+// Local utils/config (used by .cpp; harmless to keep here)
 #include "../Utility/Utils.h"
 #include "../Database/Configuration.h"
+#include "../Collection/Item.h"
 
+// ---------------- Local (hi2txt) model ----------------
 struct HighScoreTable {
-    std::string id;  // Table ID, if any
-    std::vector<std::string> columns;  // Column names
-    std::vector<std::vector<std::string>> rows;  // Rows of cell values
-	bool forceRedraw = false;  // Force redraw of high score table
+    std::string id;                                 // table/page title
+    std::vector<std::string> columns;               // column names
+    std::vector<std::vector<std::string>> rows;     // cell rows
+    bool forceRedraw = false;
 };
 
 struct HighScoreData {
-    std::vector<HighScoreTable> tables;  // All tables for a game
+    std::vector<HighScoreTable> tables;             // multi-page for a game
+};
+
+// ---------------- Global (iScored) model ----------------
+// Storage-only, minimal: gameId ? { gameName, [ {player,score,date} ] }
+struct GlobalRow {
+    std::string player;
+    std::string score;   // keep as string; interpret at render time
+    std::string date;    // "YYYY-MM-DD HH:MM:SS"
+};
+
+struct GlobalGame {
+    std::string gameId;                  // key
+    std::string gameName;                // label for UI page title
+    std::vector<GlobalRow> rows;         // flat rows from iScored
+};
+
+struct GlobalHiScoreData {
+    std::unordered_map<std::string, GlobalGame> byId;  // key = gameId
 };
 
 class HiScores {
 public:
     static HiScores& getInstance();
 
-    void deinitialize();
-
-    // Initialize by loading all high scores
+    // -------- Local (hi2txt) --------
     void loadHighScores(const std::string& zipPath, const std::string& overridePath);
-
     HighScoreData* getHighScoreTable(const std::string& gameName);
-
     bool hasHiFile(const std::string& gameName) const;
-
     bool runHi2Txt(const std::string& gameName);
-
     void runHi2TxtAsync(const std::string& gameName);
-
     bool loadFileToBuffer(const std::string& filePath, std::vector<char>& buffer);
 
+    // -------- Global (iScored) storage/IO --------
+    void setGlobalGameroom(const std::string& gameroom);         // e.g. "myArcadeRoom"
+    void setGlobalPersistPath(const std::string& path);           // e.g. "<config>/hi2txt/global_cache.json"
+    bool loadGlobalCacheFromDisk();                               // reads compact V3 schema
+    bool saveGlobalCacheToDisk() const;
+
+    HighScoreData* getGlobalHiScoreTable(Item* item) const;
+
+    // Accessors (storage-only)
+    const GlobalGame* getGlobalGameById(const std::string& gameId) const;   // nullptr if missing
+    std::vector<std::string> listGlobalIds() const;                          // convenience
+
+
+    // Update paths (network fetch -> in-memory store). limit: 0 = all rows per game, else cap.
+    void refreshGlobalAllFromSingleCallAsync(int limit);                     // /getAllScores, then group by id
+    void refreshGlobalByIdsAsync(const std::vector<std::string>& gameIds,
+        int limit);                                 // refresh a subset
+
+    // Direct upsert (if caller already has rows for an id)
+    void upsertIScoredGame(const std::string& gameId,
+        const std::string& gameName,
+        const std::vector<GlobalRow>& rows);              // replaces that id’s rows
+
+    // Shutdown cleanup (persist if you want, then clear)
+    void deinitialize();
 
 private:
     HiScores() = default;
 
-    std::string hiFilesDirectory_;
-    std::string scoresDirectory_;
-
-    std::unordered_map<std::string, HighScoreData> scoresCache_;
-    std::shared_mutex scoresCacheMutex_;
+    // -------- Local internals --------
     void loadFromZip(const std::string& zipPath);
     void loadFromFile(const std::string& gameName, const std::string& filePath, std::vector<char>& buffer);
-};
 
+    std::string hiFilesDirectory_;
+    std::string scoresDirectory_;
+    std::unordered_map<std::string, HighScoreData> scoresCache_;
+    std::shared_mutex scoresCacheMutex_;
+
+    // -------- Global internals --------
+    std::string iscoredGameroom_;
+    std::string globalPersistPath_;
+
+    GlobalHiScoreData global_;                // canonical global store (by gameId)
+    mutable std::shared_mutex globalMutex_;   // guards 'global_'
+
+    // HTTP helpers (defined in .cpp; keep header JSON-free)
+    static bool httpGet_(const std::string& url, std::string& body, std::string& err);
+    static std::string urlEncode_(const std::string& s);
+
+    // Internal ingestion helpers (parse JSON text & fill 'global_')
+    void ingestIScoredAll_(const std::string& jsonText, int capPerGame);
+    void ingestIScoredSingle_(const std::string& jsonText,
+        const std::string& expectedGameIdOrEmpty,
+        int capPerGame);
+    void ingestIScoredAllIncremental_(const std::string& jsonText,
+        int capPerGame,
+        std::vector<std::string>* changedIds = nullptr);
+    // Small utility to cap rows per game (0 = no cap)
+    static void capRows_(std::vector<GlobalRow>& rows, int limit);
+};

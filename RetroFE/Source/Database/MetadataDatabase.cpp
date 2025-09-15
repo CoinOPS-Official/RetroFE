@@ -92,6 +92,8 @@ bool MetadataDatabase::initialize()
         sql.append("buttons TEXT NOT NULL DEFAULT '',");
         sql.append("joyways TEXT NOT NULL DEFAULT '',");
         sql.append("rating TEXT NOT NULL DEFAULT '',");
+        sql.append("iscoredId TEXT NOT NULL DEFAULT '',");
+        sql.append("iscoredType TEXT NOT NULL DEFAULT '',");
         sql.append("score TEXT NOT NULL DEFAULT '');");
         sql.append("CREATE UNIQUE INDEX IF NOT EXISTS MetaUniqueId ON Meta(collectionName, name);");
 
@@ -158,7 +160,7 @@ void MetadataDatabase::injectMetadata(CollectionInfo* collection)
 
     //todo: program crashes if this query fails
     sqlite3_prepare_v2(handle,
-        "SELECT DISTINCT Meta.name, Meta.title, Meta.year, Meta.manufacturer, Meta.developer, Meta.genre, Meta.players, Meta.ctrltype, Meta.buttons, Meta.joyways, Meta.cloneOf, Meta.rating, Meta.score "
+        "SELECT DISTINCT Meta.name, Meta.title, Meta.year, Meta.manufacturer, Meta.developer, Meta.genre, Meta.players, Meta.ctrltype, Meta.buttons, Meta.joyways, Meta.cloneOf, Meta.rating, Meta.score, Meta.iscoredId, Meta.iscoredType "
         "FROM Meta WHERE collectionName=? ORDER BY title ASC;",
         -1, &stmt, nullptr);
 
@@ -180,6 +182,8 @@ void MetadataDatabase::injectMetadata(CollectionInfo* collection)
         std::string cloneOf = (const char*)sqlite3_column_text(stmt, 10);
         std::string rating = (const char*)sqlite3_column_text(stmt, 11);
         std::string score = (const char*)sqlite3_column_text(stmt, 12);
+        std::string iscoredId = (const char*)sqlite3_column_text(stmt, 13);
+        std::string iscoredType = (const char*)sqlite3_column_text(stmt, 14);
         std::string launcher;
         std::string title = fullTitle;
 
@@ -199,6 +203,8 @@ void MetadataDatabase::injectMetadata(CollectionInfo* collection)
             item->cloneof = cloneOf;
             item->rating = rating;
             item->score = score;
+			item->iscoredId = iscoredId;
+			item->iscoredType = iscoredType;
         }
         rc = sqlite3_step(stmt);
     }
@@ -275,7 +281,9 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
         sqlite3_exec(handle, "BEGIN IMMEDIATE TRANSACTION;", nullptr, nullptr, &error);
 
         sqlite3_stmt* stmt;
-        const char* sql = "INSERT OR REPLACE INTO Meta (name, title, year, manufacturer, developer, genre, players, ctrltype, buttons, joyways, cloneOf, collectionName, rating, score) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+        const char* sql =   "INSERT OR REPLACE INTO Meta "
+            "(name, title, year, manufacturer, developer, genre, players, ctrltype, buttons, joyways, cloneOf, collectionName, rating, score, iscoredId, iscoredType) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
         if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
             LOG_ERROR("Metadata", "SQL Error preparing statement");
             return false;
@@ -299,6 +307,8 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
             sqlite3_bind_text(stmt, 12, collectionName.c_str(), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 13, game->first_node("rating") ? game->first_node("rating")->value() : "", -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 14, game->first_node("score") ? game->first_node("score")->value() : "", -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 15, game->first_node("iscoredid") ? game->first_node("iscoredid")->value() : "", -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 16, game->first_node("iscoredtype") ? game->first_node("iscoredtype")->value() : "", -1, SQLITE_TRANSIENT);
 
             if (sqlite3_step(stmt) != SQLITE_DONE) {
                 LOG_ERROR("Metadata", "SQL Error executing statement");

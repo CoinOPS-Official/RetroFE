@@ -458,9 +458,8 @@ bool GStreamerVideo::stop() {
 		LOG_DEBUG("GStreamerVideo", "stop(): No pipeline_ was active to stop and unref.");
 	}
 
-	// SDL textures + staged data
 	texture_ = nullptr;
-	for (int i = 0; i < 3; ++i) {
+	for (size_t i = 0; i < std::size(videoTexRing_); ++i) {
 		if (videoTexRing_[i]) { SDL_DestroyTexture(videoTexRing_[i]); videoTexRing_[i] = nullptr; }
 	}
 
@@ -1112,23 +1111,28 @@ GstFlowReturn GStreamerVideo::on_audio_new_sample(GstAppSink* sink, gpointer use
 }
 
 void GStreamerVideo::createSdlTexture() {
-
 	if (targetState_.load(std::memory_order_acquire) == IVideo::VideoState::None || !playbin_) {
 		return;
 	}
 
-	if (width_ <= 0 || height_ <= 0) {
-		// destroy any existing ring textures
-		for (int i = 0; i < 3; i++) {
+	const int cap = static_cast<int>(std::size(videoTexRing_));       // actual capacity (3)
+	int n = std::min(videoRingCount_, cap);                           // clamp requested ring count
+
+	auto destroy_all = [&]() {
+		for (int i = 0; i < cap; ++i) {
 			if (videoTexRing_[i]) { SDL_DestroyTexture(videoTexRing_[i]); videoTexRing_[i] = nullptr; }
 		}
 		videoDrawIdx_ = -1;
+		};
+
+	if (width_ <= 0 || height_ <= 0) {
+		destroy_all();
 		return;
 	}
 
 	// Check if any slot mismatches expected size/format
 	bool needsRecreate = false;
-	for (int i = 0; i < videoRingCount_; ++i) {
+	for (int i = 0; i < n; ++i) {
 		if (!videoTexRing_[i]) { needsRecreate = true; break; }
 		int texW = 0, texH = 0, access = 0; Uint32 fmt = 0;
 		if (SDL_QueryTexture(videoTexRing_[i], &fmt, &access, &texW, &texH) != 0 ||
@@ -1137,38 +1141,37 @@ void GStreamerVideo::createSdlTexture() {
 		}
 	}
 
-	if (needsRecreate) {
-		// Destroy old
-		for (int i = 0; i < 3; i++) {
-			if (videoTexRing_[i]) { SDL_DestroyTexture(videoTexRing_[i]); videoTexRing_[i] = nullptr; }
-		}
+	if (!needsRecreate) return;
 
-		LOG_INFO("GStreamerVideo", "Creating/recreating SDL video texture RING: " +
-			std::to_string(width_) + "x" + std::to_string(height_) +
-			" fmt=" + std::string(SDL_GetPixelFormatName(sdlFormat_)) +
-			" slots=" + std::to_string(videoRingCount_));
+	// Destroy old
+	destroy_all();
 
-		// Create ring
-		for (int i = 0; i < videoRingCount_; ++i) {
-			SDL_Texture* t = SDL_CreateTexture(
-				SDL::getRenderer(monitor_), sdlFormat_, SDL_TEXTUREACCESS_STREAMING, width_, height_);
-			if (!t) {
-				LOG_ERROR("GStreamerVideo", std::string("SDL_CreateTexture failed: ") + SDL_GetError());
-				// Best-effort cleanup
-				for (int k = 0; k < 3; k++) { if (videoTexRing_[k]) { SDL_DestroyTexture(videoTexRing_[k]); videoTexRing_[k] = nullptr; } }
-				return;
-			}
-			// Make the texture as cheap as possible
-			SDL_SetTextureBlendMode(t, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
-			SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
-
-			videoTexRing_[i] = t;
-		}
-
-		videoWriteIdx_ = 0;
-		videoDrawIdx_ = -1; // publish on first good frame
+	if (videoRingCount_ > cap) {
+		LOG_WARNING("GStreamerVideo", "Requested ring slots (" + std::to_string(videoRingCount_) +
+			") exceed capacity (" + std::to_string(cap) + "); clamping.");
 	}
 
+	LOG_INFO("GStreamerVideo", "Creating/recreating SDL video texture RING: " +
+		std::to_string(width_) + "x" + std::to_string(height_) +
+		" fmt=" + std::string(SDL_GetPixelFormatName(sdlFormat_)) +
+		" slots=" + std::to_string(n));
+
+	// Create ring
+	for (int i = 0; i < n; ++i) {
+		SDL_Texture* t = SDL_CreateTexture(
+			SDL::getRenderer(monitor_), sdlFormat_, SDL_TEXTUREACCESS_STREAMING, width_, height_);
+		if (!t) {
+			LOG_ERROR("GStreamerVideo", std::string("SDL_CreateTexture failed: ") + SDL_GetError());
+			destroy_all();
+			return;
+		}
+		SDL_SetTextureBlendMode(t, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
+		SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+		videoTexRing_[i] = t;
+	}
+
+	videoWriteIdx_ = 0;
+	videoDrawIdx_ = -1; // publish on first good frame
 }
 
 void GStreamerVideo::volumeUpdate() {
