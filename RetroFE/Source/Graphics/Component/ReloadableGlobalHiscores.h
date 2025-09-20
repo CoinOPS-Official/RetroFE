@@ -17,86 +17,88 @@
 
 #include <vector>
 #include <string>
-#include <filesystem>
-#include <unordered_set>
-
 #include <SDL2/SDL.h>
+#include <SDL_image.h>
 
 #include "Component.h"
 #include "../../Collection/Item.h"
 #include "../../Database/HiScores.h"
 
+ // fwd-declare to avoid pulling the whole font header here (optional)
+class FontManager;
+
 class ReloadableGlobalHiscores : public Component {
 public:
-    ReloadableGlobalHiscores(Configuration& config, std::string textFormat, Page& p, int displayOffset,
-        FontManager* font, float scrollingSpeed, float startTime,
-        std::string excludedColumns, float baseColumnPadding,
-        float baseRowPadding, size_t maxRows);
-    ~ReloadableGlobalHiscores() override;
+	// Simplified ctor: drop scrolling/startTime
+	ReloadableGlobalHiscores(Configuration& config, std::string textFormat,
+		Page& p, int displayOffset,
+		FontManager* font,
+		float baseColumnPadding, float baseRowPadding);
+	~ReloadableGlobalHiscores() override;
 
-    bool  update(float dt) override;
-    void  draw() override;
-    void  allocateGraphicsMemory() override;
-    void  freeGraphicsMemory() override;
-    void  deInitializeFonts() override;
-    void  initializeFonts() override;
+	bool  update(float dt) override;
+	void  draw() override;
+	void  allocateGraphicsMemory() override;
+	void  freeGraphicsMemory() override;
+	void  deInitializeFonts() override;
+	void  initializeFonts() override;
 
 private:
-    void  reloadTexture(bool resetScroll = true);
-    float computeTableScaleAndWidths(FontManager* font, const HighScoreTable& table,
-        float& outDrawableHeight, float& outRowPadding,
-        float& outPaddingBetweenColumns,
-        std::vector<float>& outColumnWidths,
-        float& outTotalTableWidth, float widthConstraint);
-    void  updateVisibleColumns(const HighScoreTable& table);
-    void  renderHeaderTexture(FontManager* font, const HighScoreTable& table, float scale,
-        float drawableHeight, float rowPadding,
-        float paddingBetweenColumns, float totalTableWidth);
-    void  renderTableRowsTexture(FontManager* font, const HighScoreTable& table, float scale,
-        float drawableHeight, float rowPadding,
-        float paddingBetweenColumns, float totalTableWidth);
 
-    // Configuration Parameters
-    FontManager* fontInst_;
-    std::string             textFormat_;
-    std::string             excludedColumns_;
-    std::unordered_set<std::string> excludedColumnsSet_;
-    float                   baseColumnPadding_;
-    float                   baseRowPadding_;
-    int                     displayOffset_;
-    size_t                  maxRows_;
+	enum class QrPlacement {
+		TopCentered, TopRight, TopLeft, BottomRight, BottomLeft, BottomCenter, RightMiddle, LeftMiddle,
+	};
 
-    // State Variables
-    float                   scrollingSpeed_;
-    float                   currentPosition_;
-    float                   startTime_;
-    float                   waitStartTime_;
-    float                   waitEndTime_;
-    size_t                  currentTableIndex_;
-    float                   tableDisplayTimer_;
-    float                   currentTableDisplayTime_;
-    float                   displayTime_;
-    bool                    needsRedraw_;
+	struct QrEntry {
+		SDL_Texture* tex = nullptr;
+		int w = 0;
+		int h = 0;
+		bool ok = false;
+	};
 
-    // Cached Data
-    float                   lastScale_;
-    float                   lastPaddingBetweenColumns_;
-    bool                    cacheValid_;
-    size_t                  cachedTableIndex_;
-    std::vector<float>      cachedColumnWidths_;
-    float                   cachedTotalTableWidth_;
-    std::vector<size_t>     visibleColumnIndices_;
-    float                   cachedViewWidth_;
-    float                   cachedBaseFontSize_;
-    float                   lastComputedDrawableHeight_;
-    float                   lastComputedRowPadding_;
+	// --- QR config/state ---
+	QrPlacement qrPlacement_ = QrPlacement::TopLeft;
+	int qrMarginPx_ = 6;                  // fixed pixel gap between panel and QR
+	std::vector<QrEntry> qrByTable_;      // one per table (aligned with tables)
 
-    // Resources
-    Item* lastSelectedItem_;
-    HighScoreData* highScoreTable_;
-    SDL_Texture* intermediateTexture_;
-    SDL_Texture* headerTexture_;
-    SDL_Texture* tableRowsTexture_;
-    int                     tableRowsTextureHeight_;
-    int                     headerTextureHeight_;
+	// --- Helpers (implemented in .cpp) ---
+	void destroyAllQr_();
+
+	struct PlannedDraw {
+		SDL_FRect dst{}; // precomputed destination within the component rect
+		float headerTopLocal = 0.0f; // local Y of header top (for QR placement)
+	};
+	std::vector<PlannedDraw> planned_;
+
+	void reloadTexture(bool reset = true);
+
+	// --- Config ---
+	FontManager* fontInst_;
+	std::string  textFormat_;
+	float        baseColumnPadding_;
+	float        baseRowPadding_;
+	int          displayOffset_;
+
+	// --- State/Resources ---
+	bool            needsRedraw_ = true;
+	Item* lastSelectedItem_ = nullptr;
+	HighScoreData* highScoreTable_ = nullptr;
+	SDL_Texture* intermediateTexture_ = nullptr;
+
+	// --- Grid rendering ---
+	static constexpr int kRowsPerPage = 10;
+
+	struct PageTex {
+		SDL_Texture* tex = nullptr;
+		int w = 0;
+		int h = 0;
+	};
+	std::vector<PageTex> tablePanels_;   // one texture per hiscore table
+
+	// Grid hints (can be wired to XML later)
+	int   gridColsHint_ = 0;     // 0 = auto near-square
+	float cellSpacingH_ = 0.02f; // fraction of width
+	float cellSpacingV_ = 0.02f; // fraction of height
+
+
 };

@@ -48,10 +48,12 @@ public:
     bool getRect(unsigned int charCode, GlyphInfo &glyph);
     int getHeight() const;
     int getWidth(const std::string& text);
+    int getKerning(Uint16 prevChar, Uint16 curChar) const;
     int getAtlasW() const;
 	int getAtlasH() const;
     int getFontSize() const;
     int getAscent() const;
+    SDL_Color getColor() const;
     int getDescent() const;
 
 private:

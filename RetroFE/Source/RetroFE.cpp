@@ -293,14 +293,14 @@ int RetroFE::initialize(void* context) {
 
 	// 2) (Optional) Set a JSON file to persist global cache for offline fallback.
 	HiScores::getInstance().setGlobalPersistPath(Utils::combinePath(Configuration::absolutePath,
-		"hi2txt", "global_cache.json"));
+		"iScored", "global_cache.json"));
 
 	// 3) (Optional) Load last-good cache first so the UI has something instantly.
 	HiScores::getInstance().loadGlobalCacheFromDisk();
 
 	// 4) Warm EVERYTHING from iScored in the background (single HTTP call).
 	//    getAllScores has no server-side max; HiScores will cap locally to GlobalScoresMax.
-	HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(10);
+	HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(0);
 
 
 	instance->initialized = true;
@@ -717,7 +717,7 @@ bool RetroFE::run() {
 
 	auto kickFetch = [&]() {
 		if (fetchInFlight.exchange(true)) return; // already running
-		HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(10);            // your existing URL update
+		HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(0);            // your existing URL update
 		fetchInFlight.store(false);
 		};
 

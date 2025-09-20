@@ -38,6 +38,7 @@ FontManager::FontManager(std::string fontPath, int fontSize, SDL_Color color, in
     , fontSize_(fontSize)
     , color_(color)
     , monitor_(monitor)
+	, font_(nullptr)
 {
 }
 
@@ -58,13 +59,23 @@ int FontManager::getHeight() const
 
 int FontManager::getWidth(const std::string& text) {
     int width = 0;
-    for (char c : text) {
+    Uint16 prevChar = 0;
+
+    for (unsigned char uc : text) {
+        Uint16 ch = (Uint16)uc;
         GlyphInfo glyph;
-        if (getRect(c, glyph)) {  // If glyph is found in the atlas
-            width += glyph.advance;  // Accumulate advance width for each character
+        if (getRect(ch, glyph)) {
+            width += getKerning(prevChar, ch);  // use helper
+            width += glyph.advance;
+            prevChar = ch;
         }
     }
     return width;
+}
+
+int FontManager::getKerning(Uint16 prevChar, Uint16 curChar) const {
+    if (!font_ || prevChar == 0 || curChar == 0) return 0;
+    return TTF_GetFontKerningSizeGlyphs(font_, prevChar, curChar);
 }
 
 int  FontManager::getAtlasW() const 
@@ -92,6 +103,11 @@ int FontManager::getAscent() const
     return ascent;
 }
 
+SDL_Color FontManager::getColor() const
+{
+    return color_;
+}
+
 bool FontManager::getRect(unsigned int charCode, GlyphInfo& glyph) {
     auto it = atlas.find(charCode); // Iterator type automatically adjusted
 
@@ -104,33 +120,35 @@ bool FontManager::getRect(unsigned int charCode, GlyphInfo& glyph) {
 }
 
 bool FontManager::initialize() {
-    TTF_Font* font = TTF_OpenFont(fontPath_.c_str(), fontSize_);
-    if (!font) {
+    font_ = TTF_OpenFont(fontPath_.c_str(), fontSize_);
+    if (!font_) {
         LOG_WARNING("Font", "Failed to open font: " + std::string(TTF_GetError()));
         return false;
     }
-
+    TTF_SetFontKerning(font_, 1);  // enable kerning
+    TTF_SetFontHinting(font_, TTF_HINTING_NORMAL);
     const int GLYPH_SPACING = fontSize_ / 16; // Scale spacing with font size
 
     int x = 0, y = 0;
     int atlasHeight = 0;
     int atlasWidth = std::min(1024, fontSize_ * 16); // Dynamic width with max limit
 
-    height = TTF_FontHeight(font);
-    ascent = TTF_FontAscent(font);
-    descent = TTF_FontDescent(font); // Capture descent
+    height = TTF_FontHeight(font_);
+    ascent = TTF_FontAscent(font_);
+    descent = TTF_FontDescent(font_); // Capture descent
 
-    for (unsigned short int i = 32; i < 128; ++i) {
+    for (Uint16 i = 32; i < 128; ++i) {
         GlyphInfoBuild* info = new GlyphInfoBuild;
 
         color_.a = 255;
-        info->surface = TTF_RenderGlyph_Blended(font, i, color_);
+        info->surface = TTF_RenderGlyph_Blended(font_, i, color_);
         if (!info->surface) {
             delete info;
             continue;
         }
+        SDL_SetSurfaceBlendMode(info->surface, SDL_BLENDMODE_NONE);
 
-        TTF_GlyphMetrics(font, i, &info->glyph.minX, &info->glyph.maxX, &info->glyph.minY, &info->glyph.maxY, &info->glyph.advance);
+        TTF_GlyphMetrics(font_, i, &info->glyph.minX, &info->glyph.maxX, &info->glyph.minY, &info->glyph.maxY, &info->glyph.advance);
 
         // Check width limit and wrap to a new row if needed
         if (x + info->surface->w + GLYPH_SPACING > atlasWidth) { // Add spacing to width check
@@ -168,13 +186,14 @@ bool FontManager::initialize() {
     SDL_Surface* atlasSurface = SDL_CreateRGBSurface(0, atlasWidth, atlasHeight, 32, rmask, gmask, bmask, amask);
     if (!atlasSurface) {
         LOG_WARNING("Font", "Failed to create atlas surface.");
-        TTF_CloseFont(font);
+        TTF_CloseFont(font_);
         return false;
     }
 
     // Blit each glyph onto the atlas surface
     for (const auto& pair : atlas) {
         GlyphInfoBuild* info = pair.second;
+        SDL_SetSurfaceBlendMode(info->surface, SDL_BLENDMODE_NONE);
         SDL_BlitSurface(info->surface, nullptr, atlasSurface, &info->glyph.rect);
         SDL_FreeSurface(info->surface);
         info->surface = nullptr;
@@ -185,7 +204,7 @@ bool FontManager::initialize() {
     if (!texture) {
         LOG_WARNING("Font", "Failed to create texture from surface.");
         SDL_FreeSurface(atlasSurface);
-        TTF_CloseFont(font);
+        TTF_CloseFont(font_);
         return false;
     }
 
@@ -194,24 +213,18 @@ bool FontManager::initialize() {
 
     SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
     SDL_FreeSurface(atlasSurface);
-    TTF_CloseFont(font);
 
     return true;
 }
 
 void FontManager::deInitialize() {
-    // Destroy the atlas texture if it exists
-    if (texture) {
-        SDL_DestroyTexture(texture);
-        texture = nullptr;
-    }
-
-    // Iterate over the glyph cache (atlas) and free each GlyphInfoBuild
-    for (auto& pair : atlas) {
-        delete pair.second; // Free each GlyphInfoBuild object
-    }
-    atlasW = 0;
-    atlasH = 0;
-    // Clear the atlas to release all keys and pointers
+    if (texture) { SDL_DestroyTexture(texture); texture = nullptr; }
+    for (auto& pair : atlas) delete pair.second;
     atlas.clear();
+    atlasW = atlasH = 0;
+
+    if (font_) {                 // <-- close here, not in initialize()
+        TTF_CloseFont(font_);
+        font_ = nullptr;
+    }
 }

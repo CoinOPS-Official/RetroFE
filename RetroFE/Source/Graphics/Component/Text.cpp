@@ -140,43 +140,51 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
     cachedPositions_.clear();
     cachedPositions_.reserve(textData_.size());
 
-    float currentWidth = 0.0f;
-    int baseAscent = font->getAscent();
+    const int ascent = font->getAscent();
 
-    for (char c : textData_) {
-        FontManager::GlyphInfo glyph;
-        if (!font->getRect(c, glyph) || glyph.rect.h <= 0) continue;
+    float penX_px = 0.0f;
+    Uint16 prev = 0;
+    int minYOffset = INT_MAX;
 
-        // Adjust currentWidth by glyph.minX if minX < 0, unscaled
-        if (glyph.minX < 0) {
-            currentWidth += glyph.minX;
-        }
+    struct PosTmp {
+        SDL_Rect src;
+        int xOff, yOff;
+        float advance_px;
+    };
+    std::vector<PosTmp> tmp; tmp.reserve(textData_.size());
 
-        // Check if adding the glyph exceeds maxWidth
-        float scaledCurrentWidth = currentWidth * scale;
-        float scaledAdvance = glyph.advance * scale;
+    for (unsigned char uc : textData_) {
+        Uint16 ch = (Uint16)uc;
+        FontManager::GlyphInfo g;
+        if (!font->getRect(ch, g) || g.rect.h <= 0) { prev = 0; continue; }
 
-        if ((scaledCurrentWidth + scaledAdvance) > maxWidth) break;
+        int kern_fp = font->getKerning(prev, ch);
+        float kern_px = kern_fp * scale;
 
-        // Calculate xOffset
-        int xOffset = static_cast<int>(scaledCurrentWidth);
-        if (glyph.minX < 0) {
-            xOffset += static_cast<int>(glyph.minX * scale);
-        }
+        float gx = penX_px + kern_px + g.minX * scale;
+        float gy = (ascent - g.maxY) * scale;
 
-        int yOffset = baseAscent < glyph.maxY ? static_cast<int>((baseAscent - glyph.maxY) * scale) : 0;
+        int xOffset = (int)std::lround(gx);
+        int yOffset = (int)std::lround(gy);
 
-        cachedPositions_.push_back({
-            glyph.rect,
-            xOffset,
-            yOffset,
-            scaledAdvance
-            });
+        float nextPen_px = penX_px + (g.advance * scale) + kern_px;
+        if (maxWidth > 0.f && (nextPen_px > maxWidth)) break;
 
-        // Increment currentWidth by glyph.advance, unscaled
-        currentWidth += glyph.advance;
+        tmp.push_back({ g.rect, xOffset, yOffset, (g.advance * scale) + kern_px });
+        if (yOffset < minYOffset) minYOffset = yOffset;
+
+        penX_px = nextPen_px;
+        prev = ch;
     }
 
-    cachedWidth_ = currentWidth * scale;
+    // Normalize Y so tallest glyph top = 0 (matches legacy visual)
+    if (minYOffset != INT_MAX && minYOffset != 0) {
+        for (auto& t : tmp) t.yOff -= minYOffset;
+    }
+
+    cachedPositions_.reserve(tmp.size());
+    for (auto& t : tmp) cachedPositions_.push_back({ t.src, t.xOff, t.yOff, t.advance_px });
+
+    cachedWidth_ = penX_px;
     cachedHeight_ = baseViewInfo.FontSize;
 }

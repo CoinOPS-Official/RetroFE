@@ -1,3 +1,4 @@
+#define NOMINMAX
 #ifdef WIN32
     #include <Windows.h>
 #else
@@ -9,7 +10,10 @@
 #include "../Utility/Utils.h"
 #include "../Utility/Log.h"
 #include "../Collection/Item.h" 
+#include "SDL2/SDL.h"
+#include "SDL_image.h"
 #include "minizip/unzip.h"
+#include "qrcodegen.hpp"
 #include "rapidxml.hpp"
 #include "rapidxml_utils.hpp"
 #include <sstream>
@@ -20,13 +24,240 @@
 #include <algorithm>
 #include <mutex>
 #include <thread>
+#include <random>
 
 #include <numeric>
 #include <climits>
+#include <locale>
+#include <ctime>
+#include <iterator>
 
 #include <nlohmann/json.hpp> // single-header JSON
 #include <curl/curl.h>       // libcurl (replace if you have your own HTTP)
 using json = nlohmann::json;
+using qrcodegen::QrCode;
+
+// --- Single-flight guard so we don't run multiple QR passes concurrently ---
+static std::atomic<bool> gQrEnsureRunning{ false };
+
+
+// ---------- QR + Shortener helpers (local to this .cpp) --------------------
+static inline bool startsWithErr_(const std::string& s) {
+    return s.rfind("Error:", 0) == 0;
+}
+
+static size_t curlWriteToString_(char* ptr, size_t size, size_t nmemb, void* userdata) {
+    auto* out = static_cast<std::string*>(userdata);
+    out->append(ptr, size * nmemb);
+    return size * nmemb;
+}
+
+static std::string curlEscape_(CURL* curl, const std::string& s) {
+    char* esc = curl_easy_escape(curl, s.c_str(), (int)s.size());
+    std::string out = esc ? esc : "";
+    if (esc) curl_free(esc);
+    return out;
+}
+
+// One-time init for PNG codec in SDL_image
+static void ensureImgPngInit_() {
+    static std::once_flag once;
+    std::call_once(once, []() {
+        if ((IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG) == 0) {
+            LOG_WARNING("HiScores", std::string("IMG_Init PNG failed: ") + IMG_GetError());
+        }
+        });
+}
+
+// Build a crisp QR surface (integer scale, border in modules). EC=M, bg=#DDDDDD by default.
+static SDL_Surface* buildQrSurface_(const std::string& data,
+    int requested_px = 58,
+    int border_modules = 2,
+    Uint8 bgR = 0xDD, Uint8 bgG = 0xDD, Uint8 bgB = 0xDD,
+    Uint8 fgR = 0x00, Uint8 fgG = 0x00, Uint8 fgB = 0x00) {
+    using qrcodegen::QrCode;
+    QrCode qr = QrCode::encodeText(data.c_str(), QrCode::Ecc::MEDIUM);
+    const int n = qr.getSize();
+    const int total = n + 2 * border_modules;
+    int scale = requested_px / total;
+    if (scale < 1) scale = 1;
+    const int W = total * scale;
+
+    SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, W, W, 32, SDL_PIXELFORMAT_ARGB8888);
+    if (!surf) return nullptr;
+
+    Uint32 bg = SDL_MapRGBA(surf->format, bgR, bgG, bgB, 255);
+    Uint32 fg = SDL_MapRGBA(surf->format, fgR, fgG, fgB, 255);
+    SDL_FillRect(surf, nullptr, bg);
+
+    // Draw modules as filled rects
+    const int off = border_modules * scale;
+    SDL_Rect r{ 0,0,scale,scale };
+    for (int y = 0; y < n; ++y) {
+        for (int x = 0; x < n; ++x) {
+            if (!qr.getModule(x, y)) continue;
+            r.x = off + x * scale;
+            r.y = off + y * scale;
+            SDL_FillRect(surf, &r, fg);
+        }
+    }
+    return surf;
+}
+
+// Take whatever is.gd gives us; ignore gameId.
+static bool isgdShorten_(const std::string& longUrl, const std::string& /*gameId*/, std::string& outShort) {
+    // Global throttle: ~1 req/sec
+    static std::mutex throttleMtx;
+    static std::chrono::steady_clock::time_point lastCall;
+    auto throttle = [&]() {
+        std::lock_guard<std::mutex> lk(throttleMtx);
+        auto now = std::chrono::steady_clock::now();
+        if (lastCall.time_since_epoch().count() != 0) {
+            auto due = lastCall + std::chrono::milliseconds(1100);
+            if (now < due) std::this_thread::sleep_until(due);
+        }
+        lastCall = std::chrono::steady_clock::now();
+        };
+
+    CURL* curl = curl_easy_init();
+    if (!curl) return false;
+
+    // Build POST body: format=simple&url=<url-encoded longUrl>
+    char* enc = curl_easy_escape(curl, longUrl.c_str(), (int)longUrl.size());
+    if (!enc) { curl_easy_cleanup(curl); return false; }
+    std::string post = std::string("format=simple&url=") + enc;
+    curl_free(enc);
+
+    std::string body;
+    long http = 0;
+    int sleepSec = 60; // per docs: wait ~1 minute on rate limit
+
+    auto perform = [&]() {
+        body.clear();
+        curl_easy_setopt(curl, CURLOPT_URL, "https://is.gd/create.php");
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "RetroFE-QR/1.0");
+        curl_easy_setopt(curl, CURLOPT_POST, 1L);
+        curl_easy_setopt(curl, CURLOPT_POSTFIELDS, post.c_str());
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, curlWriteToString_);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &body);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT, 20L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L); // safer in multithreaded apps
+        CURLcode rc = curl_easy_perform(curl);
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http);
+        return rc == CURLE_OK;
+        };
+
+    auto trim = [](std::string& s) {
+        auto isws = [](unsigned char c) { return std::isspace(c) != 0; };
+        while (!s.empty() && isws((unsigned char)s.front())) s.erase(s.begin());
+        while (!s.empty() && isws((unsigned char)s.back()))  s.pop_back();
+        };
+
+    for (int attempts = 0; attempts < 8; ++attempts) {
+        throttle();
+        if (!perform()) { std::this_thread::sleep_for(std::chrono::seconds(5)); continue; }
+
+        trim(body);
+
+        // Success path: HTTP 200 and not "Error: ..."
+        if (http == 200 && body.rfind("Error:", 0) != 0 && body.find("is.gd/") != std::string::npos) {
+            outShort = body;
+            curl_easy_cleanup(curl);
+            return true;
+        }
+
+        // Handle documented statuses
+        if (http == 502 || http == 503) {               // rate limit / service busy
+            std::this_thread::sleep_for(std::chrono::seconds(sleepSec));
+            continue;
+        }
+        if (http == 400 || http == 406) {               // bad long URL or (if used) bad custom slug
+            curl_easy_cleanup(curl);
+            return false;
+        }
+
+        // If body starts with "Error:" but status was 200 (some modes do this),
+        // check for rate wording and back off, else give up.
+        if (body.rfind("Error:", 0) == 0) {
+            std::string low = body;
+            std::transform(low.begin(), low.end(), low.begin(), ::tolower);
+            if (low.find("rate") != std::string::npos || low.find("wait") != std::string::npos) {
+                std::this_thread::sleep_for(std::chrono::seconds(sleepSec));
+                continue;
+            }
+            curl_easy_cleanup(curl);
+            return false;
+        }
+
+        // Unknown hiccup: short nap then retry
+        std::this_thread::sleep_for(std::chrono::seconds(5));
+    }
+
+    curl_easy_cleanup(curl);
+    return false;
+}
+
+static void ensureAllQrPngsAsync_(std::vector<std::string> ids) {
+    if (gQrEnsureRunning.exchange(true)) {
+        LOG_INFO("HiScores", "QR ensure already running; skip new request.");
+        return;
+    }
+    std::thread([ids = std::move(ids)]() {
+        try {
+            namespace fs = std::filesystem;
+            ensureImgPngInit_();
+
+            const std::string qrDir = Utils::combinePath(Configuration::absolutePath, "iScored", "qr");
+            std::error_code fec;
+            fs::create_directories(qrDir, fec);
+
+            int made = 0, skipped = 0, failed = 0;
+            for (const auto& gid : ids) {
+                const std::string outPath = Utils::combinePath(qrDir, gid + ".png");
+                if (fs::exists(outPath)) { ++skipped; continue; }
+
+                const std::string longUrl = "https://www.iScored.info/?mode=public&user=Pipmick&game=" + gid;
+                std::string shortUrl;
+                if (!isgdShorten_(longUrl, gid, shortUrl)) {
+                    ++failed;
+                    LOG_WARNING("HiScores", "QR: shorten failed for " + gid);
+                    continue;
+                }
+
+                SDL_Surface* surf = buildQrSurface_(shortUrl, /*px*/58, /*border*/2,
+                    /*bg*/0xFF, 0xFF, 0xFF, /*fg*/0x00, 0x00, 0x00);
+                if (!surf) {
+                    ++failed;
+                    LOG_WARNING("HiScores", "QR: surface build failed for " + gid);
+                    continue;
+                }
+                if (IMG_SavePNG(surf, outPath.c_str()) != 0) {
+                    ++failed;
+                    LOG_WARNING("HiScores", std::string("QR: IMG_SavePNG failed for ")
+                        + gid + " : " + IMG_GetError());
+                    SDL_FreeSurface(surf);
+                    continue;
+                }
+                SDL_FreeSurface(surf);
+                ++made;
+            }
+            LOG_INFO("HiScores", "QR ensure: made=" + std::to_string(made) +
+                " skipped=" + std::to_string(skipped) +
+                " failed=" + std::to_string(failed));
+        }
+        catch (const std::exception& e) {
+            LOG_ERROR("HiScores", std::string("QR ensure exception: ") + e.what());
+        }
+        gQrEnsureRunning.store(false);
+        }).detach();
+}
+
+
+
+
+
+
+
 
 // --- small helpers local to this .cpp ---
 // stringify any JSON scalar
@@ -455,15 +686,100 @@ void HiScores::refreshGlobalAllFromSingleCallAsync(int limit) {
     }
     std::thread([this, limit]() {
         try {
+            // --- Step 1: Fetch the Authoritative Catalog of All Games ---
+            // This list is our single source of truth for which games should exist.
+            std::vector<std::pair<std::string, std::string>> allIds;
+            std::string errIndex;
+            if (!fetchAllGameIds_(allIds, errIndex)) {
+                LOG_WARNING("HiScores", "Aborting refresh: failed to fetch the authoritative game catalog: " + errIndex);
+                return; // Cannot proceed without the master list.
+            }
+
+            // --- Step 2: Synchronize Local Cache with the Authoritative Catalog ---
+            // Make our 'global_.byId' map perfectly mirror the structure of the server.
+            // This adds new empty games, removes games that no longer exist, and updates names.
+            {
+                std::unique_lock<std::shared_mutex> lk(globalMutex_);
+                std::unordered_set<std::string> authoritativeIdSet;
+                authoritativeIdSet.reserve(allIds.size());
+                for (const auto& pair : allIds) {
+                    authoritativeIdSet.insert(pair.first);
+                }
+
+                // Prune: Remove games from our cache that are not in the authoritative list.
+                for (auto it = global_.byId.begin(); it != global_.byId.end(); ) {
+                    if (authoritativeIdSet.find(it->first) == authoritativeIdSet.end()) {
+                        it = global_.byId.erase(it);
+                    }
+                    else {
+                        ++it;
+                    }
+                }
+
+                // Add & Update: Ensure every game from the catalog exists in our cache and has the correct name.
+                for (const auto& pair : allIds) {
+                    const std::string& gid = pair.first;
+                    const std::string& gname = pair.second;
+                    auto it = global_.byId.find(gid);
+                    if (it == global_.byId.end()) {
+                        // Add new game, scores will be populated later.
+                        global_.byId[gid] = GlobalGame{ gid, gname, {} };
+                    }
+                    else if (!gname.empty() && it->second.gameName != gname) {
+                        // Update existing game's name.
+                        it->second.gameName = gname;
+                    }
+                }
+            } // Lock released
+
+            // --- Step 3: Fetch the Score Report ---
+            // This payload only contains games with at least one score.
             const std::string url = "https://www.iscored.info/api/" + iscoredGameroom_ + "/getAllScores";
             std::string body, err;
             if (!httpGet_(url, body, err)) {
-                LOG_WARNING("HiScores", "getAllScores HTTP failed: " + err);
-                return;
+                LOG_WARNING("HiScores", "Could not fetch score payload: " + err + ". Game list is correct, but scores may be stale.");
+                // We don't return here; having a correct game list is still a success.
             }
-            std::vector<std::string> changed;
-            ingestIScoredAllIncremental_(body, limit, &changed);
-            LOG_INFO("HiScores", "Global update: " + std::to_string(changed.size()) + " games changed.");
+            else {
+                // --- Step 4: Populate the Synced Cache with Scores ---
+                // We can use the 'ingestIScoredAll_' logic, which just parses and builds a temporary map.
+                // It doesn't need to do any pruning.
+                ingestIScoredAll_(body, limit); // This function populates the 'global_' structure internally.
+            }
+
+
+            // --- Step 5: Persist Snapshot of the Correct Cache to Disk ---
+            if (!saveGlobalCacheToDisk()) {
+                LOG_WARNING("HiScores", "saveGlobalCacheToDisk failed after global update.");
+            }
+
+            // --- Step 6: Generate Missing QR Codes ---
+            // This now runs on a perfectly correct and synchronized list of games.
+            try {
+                namespace fs = std::filesystem;
+                const std::string qrDir = Utils::combinePath(Configuration::absolutePath, "iScored", "qr");
+                std::error_code fec;
+                fs::create_directories(qrDir, fec);
+
+                std::vector<std::string> missing;
+                {
+                    std::shared_lock<std::shared_mutex> lk(globalMutex_);
+                    missing.reserve(global_.byId.size());
+                    for (const auto& kv : global_.byId) {
+                        const std::string outPath = Utils::combinePath(qrDir, kv.first + ".png");
+                        if (!fs::exists(outPath)) missing.push_back(kv.first);
+                    }
+                }
+                if (!missing.empty()) {
+                    ensureAllQrPngsAsync_(std::move(missing));
+                }
+                else {
+                    LOG_INFO("HiScores", "QR ensure: nothing missing.");
+                }
+            }
+            catch (const std::exception& e) {
+                LOG_ERROR("HiScores", std::string("QR ensure exception: ") + e.what());
+            }
         }
         catch (const std::exception& e) {
             LOG_ERROR("HiScores", std::string("refreshGlobalAllFromSingleCallAsync exception: ") + e.what());
@@ -474,133 +790,106 @@ void HiScores::refreshGlobalAllFromSingleCallAsync(int limit) {
         }).detach();
 }
 
-void HiScores::ingestIScoredAllIncremental_(const std::string& jsonText,
-    int capPerGame,
-    std::vector<std::string>* changedIds) {
-    using nlohmann::json;
+bool HiScores::fetchAllGameIds_(std::vector<std::pair<std::string,std::string>>& out, std::string& err) {
+    out.clear();
+    if (iscoredGameroom_.empty()) { err = "gameroom not set"; return false; }
 
-    // 1) Parse and group incoming payload by gameId (in a temp map)
-    struct TmpGame { std::string name; std::vector<GlobalRow> rows; };
-    std::unordered_map<std::string, TmpGame> incoming;
+    const std::string url = "https://www.iscored.info/api/" + iscoredGameroom_;
+    std::string body;
+    if (!httpGet_(url, body, err)) return false;
 
-    auto ensure = [&](const std::string& gid, const std::string& gname) -> TmpGame& {
-        auto& tg = incoming[gid];
-        if (tg.name.empty() && !gname.empty()) tg.name = gname;
-        return tg;
-        };
-    auto pushRow = [&](const std::string& gid, const std::string& gname, const json& s) {
-        TmpGame& tg = ensure(gid, gname);
-        GlobalRow r;
-        r.player = s.value("name", "");
-        r.score = s.contains("score") ? j2s(s["score"]) : "";
-        r.date = s.value("date", "");
-        tg.rows.push_back(std::move(r));
-        };
+    auto strish = [](const nlohmann::json& v) -> std::string {
+        if (v.is_string()) return v.get<std::string>();
+        if (v.is_number_integer())   return std::to_string(v.get<long long>());
+        if (v.is_number_unsigned())  return std::to_string(v.get<unsigned long long>());
+        if (v.is_number_float())     return std::to_string(v.get<double>());
+        return {};
+    };
 
-    json j;
-    try { j = json::parse(jsonText); }
-    catch (const std::exception& e) {
-        LOG_ERROR("HiScores", std::string("ingestIScoredAllIncremental_: JSON parse error: ") + e.what());
-        return;
-    }
+    try {
+        nlohmann::json j = nlohmann::json::parse(body);
 
-    // Shape A: { "games": [ { gameId, gameName, scores:[...] }, ... ] }
-    if (j.is_object() && j.contains("games") && j["games"].is_array()) {
-        for (const auto& g : j["games"]) {
-            const std::string gid = g.contains("gameId") ? j2s(g["gameId"]) : "";
-            const std::string gname = g.contains("gameName") ? j2s(g["gameName"]) : "";
-            if (gid.empty()) continue;
-            if (g.contains("scores") && g["scores"].is_array()) {
-                for (const auto& s : g["scores"]) pushRow(gid, gname, s);
+        // primary shape you showed: top-level array of objects
+        if (j.is_array()) {
+            out.reserve(j.size());
+            std::unordered_set<std::string> seen;
+            for (const auto& g : j) {
+                if (!g.is_object()) continue;
+
+                // accept a few id/name variants; no other fields matter here
+                std::string gid;
+                if (g.contains("gameID")) gid = strish(g["gameID"]);
+                else if (g.contains("gameId")) gid = strish(g["gameId"]);
+                else if (g.contains("game"))   gid = strish(g["game"]);
+                else if (g.contains("id"))     gid = strish(g["id"]);
+                if (gid.empty() || seen.count(gid)) continue;
+
+                std::string gname;
+                if (g.contains("gameName")) gname = strish(g["gameName"]);
+                else if (g.contains("name")) gname = strish(g["name"]);
+
+                out.emplace_back(std::move(gid), std::move(gname));
+                seen.insert(out.back().first);
             }
+            return !out.empty();
+        }
+
+        // tolerant fallbacks (in case the API returns different shapes sometimes)
+        if (j.is_object() && j.contains("games") && j["games"].is_array()) {
+            for (const auto& g : j["games"]) {
+                if (!g.is_object()) continue;
+                std::string gid;
+                if (g.contains("gameID")) gid = strish(g["gameID"]);
+                else if (g.contains("gameId")) gid = strish(g["gameId"]);
+                else if (g.contains("game"))   gid = strish(g["game"]);
+                else if (g.contains("id"))     gid = strish(g["id"]);
+                if (gid.empty()) continue;
+                std::string gname = g.contains("gameName") ? strish(g["gameName"])
+                                  : (g.contains("name") ? strish(g["name"]) : "");
+                out.emplace_back(std::move(gid), std::move(gname));
+            }
+            return !out.empty();
+        }
+
+        // object mapping id -> object (synthesize id)
+        if (j.is_object()) {
+            for (auto it = j.begin(); it != j.end(); ++it) {
+                if (!it.value().is_object()) continue;
+                std::string gid = it.key();
+                std::string gname;
+                const auto& obj = it.value();
+                if (obj.contains("gameName")) gname = strish(obj["gameName"]);
+                else if (obj.contains("name")) gname = strish(obj["name"]);
+                if (!gid.empty()) out.emplace_back(std::move(gid), std::move(gname));
+            }
+            return !out.empty();
+        }
+
+        err = "unrecognized JSON shape for game index";
+        return false;
+    } catch (const std::exception& e) {
+        err = std::string("parse error: ") + e.what();
+        return false;
+    }
+}
+
+// Ensure entries exist for all ids (even with zero rows).
+void HiScores::ensureEmptyGames_(const std::vector<std::pair<std::string, std::string>>& all) {
+    std::unique_lock<std::shared_mutex> lk(globalMutex_);
+    for (const auto& kv : all) {
+        const std::string& gid = kv.first;
+        const std::string& gname = kv.second;
+        auto it = global_.byId.find(gid);
+        if (it == global_.byId.end()) {
+            GlobalGame gg;
+            gg.gameId = gid;
+            gg.gameName = gname;
+            global_.byId.emplace(gid, std::move(gg));
+        }
+        else if (!gname.empty() && it->second.gameName != gname) {
+            it->second.gameName = gname;
         }
     }
-    ///// Shape B: { "scores": [ { game, gameName, name, score, date }, ... ] }
-    else if (j.is_object() && j.contains("scores") && j["scores"].is_array()) {
-        for (const auto& s : j["scores"]) {
-            const std::string gid = s.contains("game") ? j2s(s["game"]) : "";
-            const std::string gname = s.contains("gameName") ? j2s(s["gameName"]) : "";
-            if (gid.empty()) continue;
-            pushRow(gid, gname, s);
-        }
-    }
-    // Shape C: top-level array of rows
-    else if (j.is_array()) {
-        for (const auto& s : j) {
-            if (!s.is_object()) continue;
-            const std::string gid = s.contains("game") ? j2s(s["game"]) : "";
-            const std::string gname = s.contains("gameName") ? j2s(s["gameName"]) : "";
-            if (gid.empty()) continue;
-            pushRow(gid, gname, s);
-        }
-    }
-    // Shape D: mapping { "<gameId>": [rows...] } or { "<gameId>": { gameName, scores:[...] } }
-    else if (j.is_object()) {
-        for (auto it = j.begin(); it != j.end(); ++it) {
-            const std::string gid = it.key();
-            const json& v = it.value();
-            if (v.is_array()) {
-                for (const auto& s : v) pushRow(gid, "", s);
-            }
-            else if (v.is_object() && v.contains("scores") && v["scores"].is_array()) {
-                const std::string gname = v.contains("gameName") ? j2s(v["gameName"]) : "";
-                for (const auto& s : v["scores"]) pushRow(gid, gname, s);
-            }
-        }
-    }
-    else {
-        LOG_WARNING("HiScores", "ingestIScoredAllIncremental_: Unrecognized JSON shape");
-    }
-
-    // Cap rows per game (order as received)
-    if (capPerGame > 0) {
-        for (auto& kv : incoming) {
-            auto& rows = kv.second.rows;
-            if (rows.size() > static_cast<size_t>(capPerGame))
-                rows.resize(static_cast<size_t>(capPerGame));
-        }
-    }
-
-    // 2) Diff against current store and update only changed gameIds
-    std::vector<std::string> localChanged;
-    {
-        std::unique_lock<std::shared_mutex> lk(globalMutex_);
-        for (auto& kv : incoming) {
-            const std::string& gid = kv.first;
-            TmpGame& tg = kv.second;
-
-            auto it = global_.byId.find(gid);
-            if (it == global_.byId.end()) {
-                // New gameId ? insert
-                GlobalGame gg;
-                gg.gameId = gid;
-                gg.gameName = tg.name;
-                gg.rows = std::move(tg.rows);
-                global_.byId.emplace(gid, std::move(gg));
-                localChanged.push_back(gid);
-                continue;
-            }
-
-            GlobalGame& existing = it->second;
-            // Name update if provided
-            if (!tg.name.empty() && tg.name != existing.gameName) {
-                existing.gameName = tg.name;
-                // fall through to row compare; treat as change if rows differ
-            }
-
-            // Rows equal (as sets)? Then skip.
-            if (rowsEqualAsSets_(existing.rows, tg.rows)) {
-                continue;
-            }
-
-            // Replace rows
-            existing.rows = std::move(tg.rows);
-            localChanged.push_back(gid);
-        }
-        // NOTE: we do NOT prune gameIds missing from incoming (keeps offline data). Add a "prune" flag if you want.
-    }
-
-    if (changedIds) *changedIds = std::move(localChanged);
 }
 
 void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
@@ -615,18 +904,31 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
         return;
     }
 
-    GlobalHiScoreData tmp;  // build off-thread, swap in atomically at the end
+    // --- MODIFICATION ---
+    // We will now work directly on the 'global_' object.
+    // Lock the mutex for the entire duration of the score population.
+    std::unique_lock<std::shared_mutex> lk(globalMutex_);
 
-    auto ensureGame = [&](const std::string& gid, const std::string& gname) -> GlobalGame& {
-        GlobalGame& gg = tmp.byId[gid];
-        gg.gameId = gid;
-        if (!gname.empty() && gg.gameName.empty()) gg.gameName = gname;
-        return gg;
-        };
+    // Before we begin, it's safer to clear the scores of all games in the cache.
+    // This handles cases where a game's last score was removed, making it empty.
+    for (auto& pair : global_.byId) {
+        pair.second.rows.clear();
+    }
 
+    // Helper function to find a game and push a score row to it.
+    // It will only operate on games that are already in our 'global_.byId' map.
     auto pushRow = [&](const std::string& gid, const std::string& gname,
         const json& s) {
-            GlobalGame& gg = ensureGame(gid, gname);
+            auto it = global_.byId.find(gid);
+            if (it == global_.byId.end()) {
+                // This shouldn't happen with the new refresh logic, but is a good safeguard.
+                return;
+            }
+
+            GlobalGame& gg = it->second;
+            // Optionally update the game name if the scores payload has a more current one.
+            if (!gname.empty() && gg.gameName.empty()) gg.gameName = gname;
+
             GlobalRow r;
             r.player = s.value("name", "");
             r.score = s.contains("score") ? j2s(s["score"]) : "";
@@ -640,7 +942,9 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
             for (const auto& s : arr) pushRow(gid, gname, s);
         };
 
-    // --- Shape A: { "games": [ { "gameId":..., "gameName":..., "scores":[...] }, ... ] }
+    // --- Parsing logic is the same, but now calls the modified 'pushRow' ---
+
+    // Shape A: { "games": [ { "gameId":..., "gameName":..., "scores":[...] }, ... ] }
     if (j.is_object() && j.contains("games") && j["games"].is_array()) {
         for (const auto& g : j["games"]) {
             const std::string gid = g.contains("gameId") ? j2s(g["gameId"]) : "";
@@ -649,7 +953,7 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
             if (g.contains("scores")) parseScoresArray(gid, gname, g["scores"]);
         }
     }
-    // --- Shape B: { "scores": [ { "game":..., "gameName":..., "name":..., "score":..., "date":... }, ... ] }
+    // Shape B: { "scores": [ { "game":..., "gameName":..., "name":..., "score":..., "date":... }, ... ] }
     else if (j.is_object() && j.contains("scores") && j["scores"].is_array()) {
         for (const auto& s : j["scores"]) {
             const std::string gid = s.contains("game") ? j2s(s["game"]) : "";
@@ -658,7 +962,7 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
             pushRow(gid, gname, s);
         }
     }
-    // --- Shape C: top-level array of rows with { game, gameName, ... }
+    // ... (other JSON shapes C and D follow the same pattern) ...
     else if (j.is_array()) {
         for (const auto& s : j) {
             if (!s.is_object()) continue;
@@ -668,7 +972,6 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
             pushRow(gid, gname, s);
         }
     }
-    // --- Shape D: object mapping (gameId -> array) or (gameId -> {scores:[...]})
     else if (j.is_object()) {
         for (auto it = j.begin(); it != j.end(); ++it) {
             const std::string key = it.key();
@@ -687,17 +990,14 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
     }
 
     // Cap rows per game if requested
-    for (auto& kv : tmp.byId) {
+    for (auto& kv : global_.byId) {
         capRows_(kv.second.rows, capPerGame);
     }
 
-    // Atomic install
-    {
-        std::unique_lock<std::shared_mutex> lk(globalMutex_);
-        global_ = std::move(tmp);
-    }
+    // --- MODIFICATION ---
+    // The destructive 'global_ = std::move(tmp)' is removed. The lock will be released
+    // automatically when the function ends.
 }
-
 bool HiScores::loadGlobalCacheFromDisk() {
     if (globalPersistPath_.empty()) return false;
 
@@ -804,6 +1104,8 @@ bool HiScores::saveGlobalCacheToDisk() const {
 
 // Helpers (local to this .cpp)
 
+// Optional: normalize player names for dedupe (case/space tolerant).
+
 static inline std::string formatThousands_(const std::string& s) {
     if (s.empty()) return s;
 
@@ -856,6 +1158,16 @@ static inline std::string trim_(std::string s) {
     return s;
 }
 
+// Normalize player names for dedupe & display: trim + ALL CAPS
+static inline std::string normName_(std::string s) {
+    s = trim_(s);
+    std::transform(s.begin(), s.end(), s.begin(),
+        [](unsigned char c) { return (char)std::toupper(c); });
+    return s;
+}
+
+
+
 // strict integer parse (±digits only)
 static inline bool parseLongLongStrict_(const std::string& s, long long& out) {
     if (s.empty()) return false;
@@ -871,11 +1183,12 @@ static inline bool parseLongLongStrict_(const std::string& s, long long& out) {
 static inline std::string formatMs_(long long ms) {
     if (ms < 0) ms = -ms;
     long long totalSec = ms / 1000;
-    int msec = (int)(ms % 1000);
+    int msec = static_cast<int>(ms % 1000);
     long long minutes = totalSec / 60;
-    int seconds = (int)(totalSec % 60);
+    int seconds = static_cast<int>(totalSec % 60);
+
     std::ostringstream oss;
-    oss << std::setw(2) << std::setfill('0') << minutes
+    oss << minutes  // no padding here
         << ":" << std::setw(2) << std::setfill('0') << seconds
         << ":" << std::setw(3) << std::setfill('0') << msec;
     return oss.str();
@@ -900,6 +1213,62 @@ static inline GlobalSort parseSort_(std::string s) {
     if (s == "moneydescending" || s == "money-descending" || s == "moneydesc" || s == "money-desc") return GlobalSort::MoneyDesc;
     return GlobalSort::ScoreDesc; // default
 }
+static inline bool parseNumber_(const std::string& s, double& out) {
+    if (s.empty()) return false;
+    char* end = nullptr;
+    out = std::strtod(s.c_str(), &end);
+    return end && *end == '\0';
+}
+
+// Decide if 'a' is better than 'b' for a given sort mode.
+// Returns true if 'a' should replace 'b' as the best row for a name.
+static inline bool isBetterForMode_(GlobalSort sortKind,
+    const GlobalRow& a,
+    const GlobalRow& b) {
+    switch (sortKind) {
+        case GlobalSort::ScoreAsc:
+        case GlobalSort::ScoreDesc: {
+            double na, nb;
+            bool ha = parseNumber_(a.score, na);
+            bool hb = parseNumber_(b.score, nb);
+            if (ha && hb) {
+                return (sortKind == GlobalSort::ScoreAsc) ? (na < nb) : (na > nb);
+            }
+            if (ha != hb) return ha; // numeric beats non-numeric
+            // Tie-breaker: lexicographic score, then earlier date (so older wins, tweak if desired)
+            int c = a.score.compare(b.score);
+            if (c != 0) return c < 0;
+            return a.date < b.date;
+        }
+        case GlobalSort::TimeAsc:
+        case GlobalSort::TimeDesc: {
+            long long ta, tb;
+            bool ha = parseLongLongStrict_(a.score, ta);
+            bool hb = parseLongLongStrict_(b.score, tb);
+            if (ha && hb) {
+                return (sortKind == GlobalSort::TimeAsc) ? (ta < tb) : (ta > tb);
+            }
+            if (ha != hb) return ha; // numeric beats non-numeric
+            int c = a.score.compare(b.score);
+            if (c != 0) return c < 0;
+            return a.date < b.date;
+        }
+        case GlobalSort::MoneyAsc:
+        case GlobalSort::MoneyDesc: {
+            long long va, vb;
+            bool ha = parseLongLongStrict_(a.score, va);
+            bool hb = parseLongLongStrict_(b.score, vb);
+            if (ha && hb) {
+                return (sortKind == GlobalSort::MoneyAsc) ? (va < vb) : (va > vb);
+            }
+            if (ha != hb) return ha; // numeric beats non-numeric
+            int c = a.score.compare(b.score);
+            if (c != 0) return c < 0;
+            return a.date < b.date;
+        }
+    }
+    return false;
+}
 
 static inline std::vector<std::string> splitCSV_(const std::string& csv) {
     std::vector<std::string> out;
@@ -911,6 +1280,7 @@ static inline std::vector<std::string> splitCSV_(const std::string& csv) {
     cur = trim_(cur); if (!cur.empty()) out.push_back(cur);
     return out;
 }
+
 static inline std::string ordinal_(size_t n) {
     size_t x = n % 100;
     if (x >= 11 && x <= 13) return std::to_string(n) + "th";
@@ -940,12 +1310,7 @@ static inline std::string prettyDate_(const std::string& ymd_hms) {
     if (mon.empty() || d <= 0) return ymd_hms;
     return mon + " " + ordinal_(static_cast<size_t>(d)) + ", " + std::to_string(y);
 }
-static inline bool parseNumber_(const std::string& s, double& out) {
-    if (s.empty()) return false;
-    char* end = nullptr;
-    out = std::strtod(s.c_str(), &end);
-    return end && *end == '\0';
-}
+
 static inline std::string modeFromGameName_(const std::string& gameName) {
     // Return suffix after last '_' if present, else full string
     auto pos = gameName.rfind('_');
@@ -953,19 +1318,136 @@ static inline std::string modeFromGameName_(const std::string& gameName) {
     return gameName.substr(pos + 1);
 }
 
+// --- Locale-aware numeric date ("6.7.2024" vs "7.6.2024" vs "2024.7.6") ---
+
+enum class DateOrder_ { MDY, DMY, YMD, Unknown };
+
+static DateOrder_ detectDateOrderLocale_() {
+    // 22 July 2004 (day > 12 disambiguates MDY vs DMY)
+    std::tm tmRef{};
+    tmRef.tm_year = 2004 - 1900;
+    tmRef.tm_mon = 6;   // July (0-based)
+    tmRef.tm_mday = 22;
+
+    std::locale loc;
+    try { loc = std::locale(""); }
+    catch (...) { /* fall back to "C" */ }
+
+    // SAFER: use the single-char 'x' overload instead of ("%x", "%x"+2)
+    std::ostringstream os;
+    os.imbue(loc);
+    const auto& tp = std::use_facet<std::time_put<char>>(loc);
+    std::ostreambuf_iterator<char> it(os);
+    tp.put(it, os, os.fill(), &tmRef, 'x');   // formats per locale date (%x)
+    const std::string s = os.str();
+
+    // Parse first three integer tokens
+    int nums[3] = { -1, -1, -1 };
+    int idx = 0;
+    for (size_t i = 0; i < s.size() && idx < 3; ) {
+        while (i < s.size() && !std::isdigit((unsigned char)s[i])) ++i;
+        if (i >= s.size()) break;
+        int v = 0;
+        while (i < s.size() && std::isdigit((unsigned char)s[i])) {
+            v = v * 10 + (s[i] - '0');
+            ++i;
+        }
+        nums[idx++] = v;
+    }
+    if (idx < 3) return DateOrder_::Unknown;
+
+    int a = nums[0], b = nums[1], c = nums[2];
+    auto isYear = [](int v) { return v >= 100; }; // four-digit year = definitely year
+
+    // Year-first?
+    if (isYear(a)) return DateOrder_::YMD;
+
+    // Year-last? (most locales)
+    if (isYear(c)) {
+        // decide MDY vs DMY from 7 vs 22
+        if (a == 7 && b == 22) return DateOrder_::MDY; // 07/22/2004
+        if (a == 22 && b == 7) return DateOrder_::DMY; // 22/07/2004
+        // use ranges as fallback
+        if (a <= 12 && b >= 13) return DateOrder_::MDY;
+        if (a >= 13 && b <= 12) return DateOrder_::DMY;
+        return DateOrder_::DMY; // ambiguous -> DMY default
+    }
+
+    // Rare: year in the middle (two-digit year)
+    if (isYear(b)) {
+        if (a == 7 && c == 22) return DateOrder_::MDY;
+        if (a == 22 && c == 7) return DateOrder_::DMY;
+        return DateOrder_::Unknown;
+    }
+
+    // All two-digit components: find "04" (year) position
+    if (a == 4) return DateOrder_::YMD;  // 04/07/22
+    if (c == 4) {
+        if (a == 7 && b == 22) return DateOrder_::MDY;
+        if (a == 22 && b == 7)  return DateOrder_::DMY;
+        if (a <= 12 && b >= 13) return DateOrder_::MDY;
+        if (a >= 13 && b <= 12) return DateOrder_::DMY;
+        return DateOrder_::DMY;
+    }
+    if (b == 4) {
+        if (a == 7 && c == 22) return DateOrder_::MDY;
+        if (a == 22 && c == 7)  return DateOrder_::DMY;
+        return DateOrder_::Unknown;
+    }
+
+    return DateOrder_::Unknown;
+}
+static inline DateOrder_ cachedDateOrder_() {
+    static std::once_flag once;
+    static DateOrder_ cached = DateOrder_::Unknown;
+    std::call_once(once, [] { cached = detectDateOrderLocale_(); });
+    return cached;
+}
+
+static inline std::string two_(int v) {
+    std::ostringstream oss;
+    oss << std::setw(2) << std::setfill('0') << v;
+    return oss.str();
+}
+
+static inline std::string formatDateDotsLocale_(int y, int m, int d) {
+    auto ord = cachedDateOrder_();
+    switch (ord) {
+        case DateOrder_::MDY: return two_(m) + "." + two_(d) + "." + std::to_string(y); // 05.23.2024
+        case DateOrder_::DMY: return two_(d) + "." + two_(m) + "." + std::to_string(y); // 23.05.2024
+        case DateOrder_::YMD: return std::to_string(y) + "." + two_(m) + "." + two_(d); // 2024.05.23
+        default:               return two_(d) + "." + two_(m) + "." + std::to_string(y); // fallback
+    }
+}
+
+static inline std::string prettyDateNumericDots_(const std::string& ymd_hms) {
+    // Expect "YYYY-MM-DD HH:MM:SS" (time part optional); be forgiving.
+    if (ymd_hms.size() < 10) return ymd_hms;
+    int y = 0, m = 0, d = 0;
+    try {
+        y = std::stoi(ymd_hms.substr(0, 4));
+        m = std::stoi(ymd_hms.substr(5, 2));
+        d = std::stoi(ymd_hms.substr(8, 2));
+    }
+    catch (...) {
+        return ymd_hms; // fallback to raw if parsing fails
+    }
+    return formatDateDotsLocale_(y, m, d);
+}
+
+
 HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
     static thread_local HighScoreData scratch;
     scratch.tables.clear();
     if (!item) return &scratch;
 
-    std::string idsCsv = item->iscoredId;             // comma-separated ids
-    std::string sortTag = item->iscoredType;      // ascending/descending/time.../money...
-    auto sortKind = parseSort_(sortTag);
+    const std::string idsCsv = item->iscoredId;
+    const std::string sortTag = item->iscoredType;
+    const auto sortKind = parseSort_(sortTag);
 
-    auto ids = splitCSV_(idsCsv);
+    const auto ids = splitCSV_(idsCsv);
     if (ids.empty()) return &scratch;
 
-    // Snapshot pages for those ids
     struct Page { std::string title; std::vector<GlobalRow> rows; };
     std::vector<Page> pages;
     {
@@ -983,40 +1465,65 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
     }
     if (pages.empty()) return &scratch;
 
-    // Sorting lambdas
-    auto cmpScore = [sortKind](const GlobalRow& a, const GlobalRow& b) {
+    const auto cmpScore = [sortKind](const GlobalRow& a, const GlobalRow& b) {
         double na, nb;
-        bool ha = parseNumber_(a.score, na);
-        bool hb = parseNumber_(b.score, nb);
+        const bool ha = parseNumber_(a.score, na);
+        const bool hb = parseNumber_(b.score, nb);
         if (ha && hb) return (sortKind == GlobalSort::ScoreAsc) ? (na < nb) : (na > nb);
-        if (ha != hb) return (sortKind == GlobalSort::ScoreAsc) ? ha : hb; // numeric first
-        int c = a.score.compare(b.score);
+        if (ha != hb)   return (sortKind == GlobalSort::ScoreAsc) ? ha : hb;
+        const int c = a.score.compare(b.score);
         return (sortKind == GlobalSort::ScoreAsc) ? (c < 0) : (c > 0);
         };
-    auto cmpTime = [sortKind](const GlobalRow& a, const GlobalRow& b) {
+    const auto cmpTime = [sortKind](const GlobalRow& a, const GlobalRow& b) {
         long long ta, tb;
-        bool ha = parseLongLongStrict_(a.score, ta);
-        bool hb = parseLongLongStrict_(b.score, tb);
+        const bool ha = parseLongLongStrict_(a.score, ta);
+        const bool hb = parseLongLongStrict_(b.score, tb);
         if (ha && hb) return (sortKind == GlobalSort::TimeAsc) ? (ta < tb) : (ta > tb);
-        if (ha != hb) return (sortKind == GlobalSort::TimeAsc) ? ha : hb; // numeric first
-        int c = a.score.compare(b.score);
+        if (ha != hb) return (sortKind == GlobalSort::TimeAsc) ? ha : hb;
+        const int c = a.score.compare(b.score);
         return (sortKind == GlobalSort::TimeAsc) ? (c < 0) : (c > 0);
         };
-    auto cmpMoney = [sortKind](const GlobalRow& a, const GlobalRow& b) {
+    const auto cmpMoney = [sortKind](const GlobalRow& a, const GlobalRow& b) {
         long long va, vb;
-        bool ha = parseLongLongStrict_(a.score, va);
-        bool hb = parseLongLongStrict_(b.score, vb);
+        const bool ha = parseLongLongStrict_(a.score, va);
+        const bool hb = parseLongLongStrict_(b.score, vb);
         if (ha && hb) return (sortKind == GlobalSort::MoneyAsc) ? (va < vb) : (va > vb);
-        if (ha != hb) return (sortKind == GlobalSort::MoneyAsc) ? ha : hb; // numeric first
-        int c = a.score.compare(b.score);
+        if (ha != hb) return (sortKind == GlobalSort::MoneyAsc) ? ha : hb;
+        const int c = a.score.compare(b.score);
         return (sortKind == GlobalSort::MoneyAsc) ? (c < 0) : (c > 0);
         };
 
     const bool isTime = (sortKind == GlobalSort::TimeAsc || sortKind == GlobalSort::TimeDesc);
     const bool isMoney = (sortKind == GlobalSort::MoneyAsc || sortKind == GlobalSort::MoneyDesc);
-    const char* scoreHeader = isTime ? "Time" : "Score";
+    const char* scoreHeader = isTime ? "Time" : (isMoney ? "Cash" : "Score");
+
+    const std::string phName = "-";
+    const std::string phDate = "-";
+    const std::string phScore = isTime ? "--:--:---" : (isMoney ? "$-" : "-");
 
     for (auto& pg : pages) {
+        // 1) Deduplicate: best row per PLAYER (keyed by ALL-CAPS name)
+        std::unordered_map<std::string, GlobalRow> bestByName;
+        bestByName.reserve(pg.rows.size());
+        for (const auto& rRaw : pg.rows) {
+            GlobalRow r = rRaw;
+            r.player = normName_(r.player);            // force ALL CAPS for dedupe & display
+            if (r.player.empty()) continue;            // skip nameless in dedupe
+            auto it = bestByName.find(r.player);
+            if (it == bestByName.end()) {
+                bestByName.emplace(r.player, std::move(r));
+            }
+            else if (isBetterForMode_(sortKind, r, it->second)) {
+                it->second = std::move(r);
+            }
+        }
+
+        // Rebuild deduped rows
+        pg.rows.clear();
+        pg.rows.reserve(bestByName.size());
+        for (auto& kv : bestByName) pg.rows.push_back(std::move(kv.second));
+
+        // 2) Sort by chosen mode
         switch (sortKind) {
             case GlobalSort::ScoreAsc:
             case GlobalSort::ScoreDesc:
@@ -1032,16 +1539,20 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
             break;
         }
 
+        // 3) Emit top 10 with formatting and placeholders
         HighScoreTable t;
-        t.id = pg.title; // empty if single-id
-        t.columns = { "Rank","Name", scoreHeader, "Date" };
-        t.rows.reserve(pg.rows.size());
+        t.id = pg.title;
+        t.columns = { "Rank", "Name", scoreHeader, "Date" };
+
+        constexpr size_t kRowsPerTable = 10;
+        t.rows.reserve(kRowsPerTable);
 
         size_t rank = 1;
         for (const auto& r : pg.rows) {
-            std::string datePretty = prettyDate_(r.date);
-            std::string scorePretty;
+            if (rank > kRowsPerTable) break;
 
+            const std::string datePretty = prettyDateNumericDots_(r.date);
+            std::string scorePretty;
             if (isTime) {
                 long long ms;
                 scorePretty = parseLongLongStrict_(r.score, ms) ? formatMs_(ms) : r.score;
@@ -1053,7 +1564,16 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
                 scorePretty = formatThousands_(r.score);
             }
 
-            t.rows.push_back({ ordinal_(rank++), r.player, scorePretty, datePretty });
+            t.rows.push_back({
+                ordinal_(rank++),
+                r.player.empty() ? phName : r.player,     // already ALL CAPS from normName_
+                scorePretty.empty() ? phScore : scorePretty,
+                datePretty.empty() ? phDate : datePretty
+                });
+        }
+
+        for (; rank <= kRowsPerTable; ++rank) {
+            t.rows.push_back({ ordinal_(rank), phName, phScore, phDate });
         }
 
         t.forceRedraw = true;
@@ -1062,3 +1582,5 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
 
     return &scratch;
 }
+
+

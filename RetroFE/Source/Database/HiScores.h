@@ -101,14 +101,14 @@ private:
     static bool httpGet_(const std::string& url, std::string& body, std::string& err);
     static std::string urlEncode_(const std::string& s);
 
+    void ensureEmptyGames_(const std::vector<std::pair<std::string, std::string>>& all);
+
     // Internal ingestion helpers (parse JSON text & fill 'global_')
     void ingestIScoredAll_(const std::string& jsonText, int capPerGame);
     void ingestIScoredSingle_(const std::string& jsonText,
         const std::string& expectedGameIdOrEmpty,
         int capPerGame);
-    void ingestIScoredAllIncremental_(const std::string& jsonText,
-        int capPerGame,
-        std::vector<std::string>* changedIds = nullptr);
+    bool fetchAllGameIds_(std::vector<std::pair<std::string, std::string>>& out, std::string& err);
     // Small utility to cap rows per game (0 = no cap)
     static void capRows_(std::vector<GlobalRow>& rows, int limit);
 };
