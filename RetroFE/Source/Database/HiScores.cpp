@@ -41,6 +41,27 @@ using qrcodegen::QrCode;
 static std::atomic<bool> gQrEnsureRunning{ false };
 
 
+enum class GlobalSort {
+    ScoreDesc, ScoreAsc, TimeAsc, TimeDesc, MoneyDesc, MoneyAsc,
+
+    // distance (ascending/descending)
+    DistanceCmAsc, DistanceCmDesc,
+    DistanceMAsc, DistanceMDesc,
+    DistanceKmAsc, DistanceKmDesc,
+    DistanceMilesAsc, DistanceMilesDesc,
+    DistanceCmMAsc, DistanceCmMDesc,           // input=cm, display "Xm Ycm"
+    DistanceInAsc, DistanceInDesc,
+    DistanceFtAsc, DistanceFtDesc,
+    DistanceFtInAsc, DistanceFtInDesc,         // input=in, display "Xft Yin"
+    DistanceYdAsc, DistanceYdDesc,
+
+    // weight
+    WeightGAsc, WeightGDesc,
+    WeightKgAsc, WeightKgDesc,
+    WeightKgGAsc, WeightKgGDesc                // input=g, display "Xkg Yg"
+};
+
+
 // ---------- QR + Shortener helpers (local to this .cpp) --------------------
 static inline bool startsWithErr_(const std::string& s) {
     return s.rfind("Error:", 0) == 0;
@@ -1179,6 +1200,169 @@ static inline bool parseLongLongStrict_(const std::string& s, long long& out) {
     return true;
 }
 
+// ---- canonical units (integers) for comparison ----
+// distances:
+//   cm   base = centimeters
+//   m    base = centimeters (m * 100)
+//   km   base = centimeters (km * 100000)
+//   in   base = inches
+//   ft   base = inches (ft * 12)
+//   yd   base = inches (yd * 36)
+//   miles base = inches (mi * 63360)
+//
+// weights:
+//   g    base = grams
+//   kg   base = grams (kg * 1000)
+
+static inline bool toCanonicalDistance_(GlobalSort mode, const std::string& s, long long& out) {
+    long long v;
+    if (!parseLongLongStrict_(s, v)) return false;
+
+    switch (mode) {
+        case GlobalSort::DistanceCmAsc:
+        case GlobalSort::DistanceCmDesc:
+        case GlobalSort::DistanceCmMAsc:
+        case GlobalSort::DistanceCmMDesc:
+        out = v; // already cm
+        return true;
+
+        case GlobalSort::DistanceMAsc:
+        case GlobalSort::DistanceMDesc:
+        out = v * 100; // m -> cm
+        return true;
+
+        case GlobalSort::DistanceKmAsc:
+        case GlobalSort::DistanceKmDesc:
+        out = v * 100000; // km -> cm
+        return true;
+
+        case GlobalSort::DistanceInAsc:
+        case GlobalSort::DistanceInDesc:
+        case GlobalSort::DistanceFtInAsc:
+        case GlobalSort::DistanceFtInDesc:
+        out = v; // already inches
+        return true;
+
+        case GlobalSort::DistanceFtAsc:
+        case GlobalSort::DistanceFtDesc:
+        out = v * 12; // ft -> in
+        return true;
+
+        case GlobalSort::DistanceYdAsc:
+        case GlobalSort::DistanceYdDesc:
+        out = v * 36; // yd -> in
+        return true;
+
+        case GlobalSort::DistanceMilesAsc:
+        case GlobalSort::DistanceMilesDesc:
+        out = v * 63360; // miles -> in
+        return true;
+
+        default: return false;
+    }
+}
+
+static inline bool toCanonicalWeight_(GlobalSort mode, const std::string& s, long long& out) {
+    long long v;
+    if (!parseLongLongStrict_(s, v)) return false;
+
+    switch (mode) {
+        case GlobalSort::WeightGAsc:
+        case GlobalSort::WeightGDesc:
+        case GlobalSort::WeightKgGAsc:
+        case GlobalSort::WeightKgGDesc:
+        out = v; // g
+        return true;
+
+        case GlobalSort::WeightKgAsc:
+        case GlobalSort::WeightKgDesc:
+        out = v * 1000; // kg -> g
+        return true;
+
+        default: return false;
+    }
+}
+
+// ---- pretty formatting ----
+static inline std::string fmtDistance_(GlobalSort mode, long long canonical) {
+    switch (mode) {
+        case GlobalSort::DistanceCmAsc:
+        case GlobalSort::DistanceCmDesc:
+        return formatThousands_(std::to_string(canonical)) + " cm";
+
+        case GlobalSort::DistanceMAsc:
+        case GlobalSort::DistanceMDesc:
+        return formatThousands_(std::to_string(canonical / 100)) + " m";
+
+        case GlobalSort::DistanceKmAsc:
+        case GlobalSort::DistanceKmDesc:
+        return formatThousands_(std::to_string(canonical / 100000)) + " km";
+
+        case GlobalSort::DistanceMilesAsc:
+        case GlobalSort::DistanceMilesDesc: {
+            // canonical=inches; display "X miles"
+            long long miles = canonical / 63360;
+            return formatThousands_(std::to_string(miles)) + " miles";
+        }
+
+        case GlobalSort::DistanceCmMAsc:
+        case GlobalSort::DistanceCmMDesc: {
+            // canonical=cm; display "Xm Ycm"
+            long long m = canonical / 100;
+            int cm = (int)(canonical % 100);
+            return formatThousands_(std::to_string(m)) + " m " + std::to_string(cm) + " cm";
+        }
+
+        case GlobalSort::DistanceInAsc:
+        case GlobalSort::DistanceInDesc:
+        return formatThousands_(std::to_string(canonical)) + " in";
+
+        case GlobalSort::DistanceFtAsc:
+        case GlobalSort::DistanceFtDesc: {
+            long long ft = canonical / 12; // canonical=in
+            return formatThousands_(std::to_string(ft)) + " ft";
+        }
+
+        case GlobalSort::DistanceFtInAsc:
+        case GlobalSort::DistanceFtInDesc: {
+            long long ft = canonical / 12;
+            int in = (int)(canonical % 12);
+            return formatThousands_(std::to_string(ft)) + " ft " + std::to_string(in) + " in";
+        }
+
+        case GlobalSort::DistanceYdAsc:
+        case GlobalSort::DistanceYdDesc: {
+            long long yd = canonical / 36; // canonical=in
+            return formatThousands_(std::to_string(yd)) + " yds";
+        }
+
+        default: return "-";
+    }
+}
+
+static inline std::string fmtWeight_(GlobalSort mode, long long canonical) {
+    switch (mode) {
+        case GlobalSort::WeightGAsc:
+        case GlobalSort::WeightGDesc:
+        return formatThousands_(std::to_string(canonical)) + " g";
+
+        case GlobalSort::WeightKgAsc:
+        case GlobalSort::WeightKgDesc: {
+            long long kg = canonical / 1000;
+            return formatThousands_(std::to_string(kg)) + " kg";
+        }
+
+        case GlobalSort::WeightKgGAsc:
+        case GlobalSort::WeightKgGDesc: {
+            long long kg = canonical / 1000;
+            int g = (int)(canonical % 1000);
+            return formatThousands_(std::to_string(kg)) + " kg " + std::to_string(g) + " g";
+        }
+
+        default: return "-";
+    }
+}
+
 // mm:ss:ms formatter (zero-padded, ms = 3 digits)
 static inline std::string formatMs_(long long ms) {
     if (ms < 0) ms = -ms;
@@ -1202,17 +1386,63 @@ static inline std::string formatMoney_(const std::string& s) {
     return v < 0 ? ("-$" + core) : ("$" + core);
 }
 
-enum class GlobalSort { ScoreDesc, ScoreAsc, TimeAsc, TimeDesc, MoneyDesc, MoneyAsc };
-
 static inline GlobalSort parseSort_(std::string s) {
     s = Utils::toLower(trim_(s));
+
+    // existing
     if (s == "ascending" || s == "asc") return GlobalSort::ScoreAsc;
     if (s == "timeascending" || s == "time-ascending" || s == "timeasc" || s == "time-asc") return GlobalSort::TimeAsc;
     if (s == "timedescending" || s == "time-descending" || s == "timedesc" || s == "time-desc") return GlobalSort::TimeDesc;
     if (s == "moneyascending" || s == "money-ascending" || s == "moneyasc" || s == "money-asc") return GlobalSort::MoneyAsc;
     if (s == "moneydescending" || s == "money-descending" || s == "moneydesc" || s == "money-desc") return GlobalSort::MoneyDesc;
+
+    // distance (accept both UK/US spelling "metres/meters" and "kilometers/kilometres")
+    if (s == "distancecmascending")       return GlobalSort::DistanceCmAsc;
+    if (s == "distancecmdescending")      return GlobalSort::DistanceCmDesc;
+
+    if (s == "distancemetresascending" || s == "distancemetersascending")
+        return GlobalSort::DistanceMAsc;
+    if (s == "distancemetresdescending" || s == "distancemetersdescending")
+        return GlobalSort::DistanceMDesc;
+
+    if (s == "distancekmascending" || s == "distancekilometersascending" || s == "distancekilometresascending")
+        return GlobalSort::DistanceKmAsc;
+    if (s == "distancekmdescending" || s == "distancekilometersdescending" || s == "distancekilometresdescending")
+        return GlobalSort::DistanceKmDesc;
+
+    if (s == "distancemilesascending")    return GlobalSort::DistanceMilesAsc;
+    if (s == "distancemilesdescending")   return GlobalSort::DistanceMilesDesc;
+
+    if (s == "distancecmandmetresascending" || s == "distancecmandmetersascending")
+        return GlobalSort::DistanceCmMAsc;
+    if (s == "distancecmandmetresdescending" || s == "distancecmandmetersdescending")
+        return GlobalSort::DistanceCmMDesc;
+
+    if (s == "distanceinchesascending")   return GlobalSort::DistanceInAsc;
+    if (s == "distanceinchesdescending")  return GlobalSort::DistanceInDesc;
+
+    if (s == "distancefeetascending")     return GlobalSort::DistanceFtAsc;
+    if (s == "distancefeetdescending")    return GlobalSort::DistanceFtDesc;
+
+    if (s == "distancefeetinchesascending")  return GlobalSort::DistanceFtInAsc;
+    if (s == "distancefeetinchesdescending") return GlobalSort::DistanceFtInDesc;
+
+    if (s == "distanceyardsascending")    return GlobalSort::DistanceYdAsc;
+    if (s == "distanceyardsdescending")   return GlobalSort::DistanceYdDesc;
+
+    // weight
+    if (s == "weightgramsascending")      return GlobalSort::WeightGAsc;
+    if (s == "weightgramsdescending")     return GlobalSort::WeightGDesc;
+
+    if (s == "weightkilogramsascending")  return GlobalSort::WeightKgAsc;
+    if (s == "weightkilogramsdescending") return GlobalSort::WeightKgDesc;
+
+    if (s == "weightkilogramsandgramsascending")  return GlobalSort::WeightKgGAsc;
+    if (s == "weightkilogramsandgramsdescending") return GlobalSort::WeightKgGDesc;
+
     return GlobalSort::ScoreDesc; // default
 }
+
 static inline bool parseNumber_(const std::string& s, double& out) {
     if (s.empty()) return false;
     char* end = nullptr;
@@ -1311,11 +1541,16 @@ static inline std::string prettyDate_(const std::string& ymd_hms) {
     return mon + " " + ordinal_(static_cast<size_t>(d)) + ", " + std::to_string(y);
 }
 
-static inline std::string modeFromGameName_(const std::string& gameName) {
-    // Return suffix after last '_' if present, else full string
+static inline std::string titleFromGameName_(const std::string& gameName) {
     auto pos = gameName.rfind('_');
-    if (pos == std::string::npos || pos + 1 >= gameName.size()) return gameName;
-    return gameName.substr(pos + 1);
+    if (pos == std::string::npos || pos + 1 >= gameName.size()) return std::string();
+    // keep everything after the last '_'
+    std::string s = gameName.substr(pos + 1);
+    // optional: trim leading/trailing spaces
+    auto isws = [](unsigned char c) { return std::isspace(c) != 0; };
+    while (!s.empty() && isws((unsigned char)s.front())) s.erase(s.begin());
+    while (!s.empty() && isws((unsigned char)s.back()))  s.pop_back();
+    return s;
 }
 
 // --- Locale-aware numeric date ("6.7.2024" vs "7.6.2024" vs "2024.7.6") ---
@@ -1459,7 +1694,7 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
             const GlobalGame& gg = it->second;
             Page p;
             p.rows = gg.rows;
-            p.title = (ids.size() > 1) ? modeFromGameName_(gg.gameName) : std::string();
+            p.title = titleFromGameName_(gg.gameName);
             pages.push_back(std::move(p));
         }
     }
@@ -1495,11 +1730,72 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
 
     const bool isTime = (sortKind == GlobalSort::TimeAsc || sortKind == GlobalSort::TimeDesc);
     const bool isMoney = (sortKind == GlobalSort::MoneyAsc || sortKind == GlobalSort::MoneyDesc);
-    const char* scoreHeader = isTime ? "Time" : (isMoney ? "Cash" : "Score");
+    const bool isDist =
+        sortKind == GlobalSort::DistanceCmAsc || sortKind == GlobalSort::DistanceCmDesc ||
+        sortKind == GlobalSort::DistanceMAsc || sortKind == GlobalSort::DistanceMDesc ||
+        sortKind == GlobalSort::DistanceKmAsc || sortKind == GlobalSort::DistanceKmDesc ||
+        sortKind == GlobalSort::DistanceMilesAsc || sortKind == GlobalSort::DistanceMilesDesc ||
+        sortKind == GlobalSort::DistanceCmMAsc || sortKind == GlobalSort::DistanceCmMDesc ||
+        sortKind == GlobalSort::DistanceInAsc || sortKind == GlobalSort::DistanceInDesc ||
+        sortKind == GlobalSort::DistanceFtAsc || sortKind == GlobalSort::DistanceFtDesc ||
+        sortKind == GlobalSort::DistanceFtInAsc || sortKind == GlobalSort::DistanceFtInDesc ||
+        sortKind == GlobalSort::DistanceYdAsc || sortKind == GlobalSort::DistanceYdDesc;
+
+    const bool isWeight =
+        sortKind == GlobalSort::WeightGAsc || sortKind == GlobalSort::WeightGDesc ||
+        sortKind == GlobalSort::WeightKgAsc || sortKind == GlobalSort::WeightKgDesc ||
+        sortKind == GlobalSort::WeightKgGAsc || sortKind == GlobalSort::WeightKgGDesc;
+    const char* scoreHeader =
+        isTime ? "Time" :
+        isMoney ? "Cash" :
+        isDist ? "Distance" :
+        isWeight ? "Weight" : "Score";
+
+    const std::string phScore =
+        isTime ? "--:--:---" :
+        isMoney ? "$-" :
+        isDist ? "-" :
+        isWeight ? "-" : "-";
 
     const std::string phName = "-";
     const std::string phDate = "-";
-    const std::string phScore = isTime ? "--:--:---" : (isMoney ? "$-" : "-");
+
+    const auto cmpDist = [sortKind](const GlobalRow& a, const GlobalRow& b) {
+        long long ca, cb;
+        bool ha = toCanonicalDistance_(sortKind, a.score, ca);
+        bool hb = toCanonicalDistance_(sortKind, b.score, cb);
+        if (ha && hb) {
+            const bool asc = (sortKind == GlobalSort::DistanceCmAsc || sortKind == GlobalSort::DistanceMAsc ||
+                sortKind == GlobalSort::DistanceKmAsc || sortKind == GlobalSort::DistanceMilesAsc ||
+                sortKind == GlobalSort::DistanceCmMAsc || sortKind == GlobalSort::DistanceInAsc ||
+                sortKind == GlobalSort::DistanceFtAsc || sortKind == GlobalSort::DistanceFtInAsc ||
+                sortKind == GlobalSort::DistanceYdAsc);
+            return asc ? (ca < cb) : (ca > cb);
+        }
+        if (ha != hb) return ha; // numeric beats non-numeric
+        int c = a.score.compare(b.score);
+        // preserve ascending/descending for tie fallback
+        const bool asc = (sortKind == GlobalSort::DistanceCmAsc || sortKind == GlobalSort::DistanceMAsc ||
+            sortKind == GlobalSort::DistanceKmAsc || sortKind == GlobalSort::DistanceMilesAsc ||
+            sortKind == GlobalSort::DistanceCmMAsc || sortKind == GlobalSort::DistanceInAsc ||
+            sortKind == GlobalSort::DistanceFtAsc || sortKind == GlobalSort::DistanceFtInAsc ||
+            sortKind == GlobalSort::DistanceYdAsc);
+        return asc ? (c < 0) : (c > 0);
+        };
+
+    const auto cmpWeight = [sortKind](const GlobalRow& a, const GlobalRow& b) {
+        long long ca, cb;
+        bool ha = toCanonicalWeight_(sortKind, a.score, ca);
+        bool hb = toCanonicalWeight_(sortKind, b.score, cb);
+        if (ha && hb) {
+            const bool asc = (sortKind == GlobalSort::WeightGAsc || sortKind == GlobalSort::WeightKgAsc || sortKind == GlobalSort::WeightKgGAsc);
+            return asc ? (ca < cb) : (ca > cb);
+        }
+        if (ha != hb) return ha; // numeric beats non-numeric
+        int c = a.score.compare(b.score);
+        const bool asc = (sortKind == GlobalSort::WeightGAsc || sortKind == GlobalSort::WeightKgAsc || sortKind == GlobalSort::WeightKgGAsc);
+        return asc ? (c < 0) : (c > 0);
+        };
 
     for (auto& pg : pages) {
         // 1) Deduplicate: best row per PLAYER (keyed by ALL-CAPS name)
@@ -1537,6 +1833,12 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
             case GlobalSort::MoneyDesc:
             std::stable_sort(pg.rows.begin(), pg.rows.end(), cmpMoney);
             break;
+
+            // NEW:
+            default:
+            if (isDist)   std::stable_sort(pg.rows.begin(), pg.rows.end(), cmpDist);
+            else if (isWeight) std::stable_sort(pg.rows.begin(), pg.rows.end(), cmpWeight);
+            break;
         }
 
         // 3) Emit top 10 with formatting and placeholders
@@ -1559,6 +1861,20 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
             }
             else if (isMoney) {
                 scorePretty = formatMoney_(r.score);
+            }
+            else if (isDist) {
+                long long canon;
+                if (toCanonicalDistance_(sortKind, r.score, canon))
+                    scorePretty = fmtDistance_(sortKind, canon);
+                else
+                    scorePretty = r.score;
+            }
+            else if (isWeight) {
+                long long canon;
+                if (toCanonicalWeight_(sortKind, r.score, canon))
+                    scorePretty = fmtWeight_(sortKind, canon);
+                else
+                    scorePretty = r.score;
             }
             else {
                 scorePretty = formatThousands_(r.score);
