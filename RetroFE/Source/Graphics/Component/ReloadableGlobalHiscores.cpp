@@ -427,14 +427,50 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         tablePanels_[t] = pt;
 
         // Center the panel (QR positioning is handled later; doesn't affect centering)
+// --- NEW: compute QR padding (extras) for combined centering ---
+        int extraL = 0, extraR = 0, extraT = 0, extraB = 0;
+        if (t < (int)qrByTable_.size() && qrByTable_[t].ok) {
+            const auto& q = qrByTable_[t];
+            switch (qrPlacement_) {
+                case QrPlacement::TopCentered:
+                extraT = qrMarginPx_ + q.h; break;
+                case QrPlacement::BottomCenter:
+                extraB = qrMarginPx_ + q.h; break;
+                case QrPlacement::TopRight:
+                case QrPlacement::RightMiddle:
+                extraR = qrMarginPx_ + q.w; break;
+                case QrPlacement::TopLeft:
+                case QrPlacement::LeftMiddle:
+                extraL = qrMarginPx_ + q.w; break;
+                case QrPlacement::BottomRight:
+                extraR = qrMarginPx_ + q.w;
+                extraB = qrMarginPx_ + q.h; break;
+                case QrPlacement::BottomLeft:
+                extraL = qrMarginPx_ + q.w;
+                extraB = qrMarginPx_ + q.h; break;
+                default: break;
+            }
+        }
+
+        // --- Build the anchor (panel+QR) and center THAT in the cell ---
         const float xCell = (t % cols) * (cellW + spacingH);
         const float yCell = (t / cols) * (cellH + spacingV);
+
+        const float anchorW = (float)pt.w + (float)(extraL + extraR);
+        const float anchorH = (float)pt.h + (float)(extraT + extraB);
+
+        // keep your existing top alignment vertically; if you prefer vertical centering, use:
+        // const float anchorY = std::round(yCell + (cellH - anchorH) * 0.5f);
+        const float anchorX = std::round(xCell + (cellW - anchorW) * 0.5f);
+        const float anchorY = std::round(yCell);
+
+        // Panel lives inside the anchor, offset by extras
         planned_[t].dst = {
-            std::round(xCell + (cellW - (float)pt.w) * 0.5f),
-            std::round(yCell),
+            anchorX + (float)extraL,
+            anchorY + (float)extraT,
             (float)pt.w, (float)pt.h
         };
-		planned_[t].headerTopLocal = titleH; // relative to panel top
+        planned_[t].headerTopLocal = titleH; // keep
 }
 
     needsRedraw_ = true;
