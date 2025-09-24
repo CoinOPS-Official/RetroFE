@@ -16,32 +16,47 @@
 #pragma once
 
 #include <string>
-#include <vector>
-#include <map>
 #include <filesystem>
 
 class DB;
 class Configuration;
 class CollectionInfo;
-class Item;
 
-class MetadataDatabase
-{
+class MetadataDatabase {
 public:
-    MetadataDatabase(DB &db, Configuration &c);
+    MetadataDatabase(DB& db, Configuration& c);
     virtual ~MetadataDatabase();
+
+    // Creates schema if needed, always syncs remotes (merge-on-update),
+    // then imports when necessary.
     bool initialize();
+
+    // Drops & recreates schema, then initialize() again.
     bool resetDatabase();
 
-    void injectMetadata(CollectionInfo *collection);
+    // Import a single HyperList file into the Meta table.
     bool importHyperlist(const std::string& hyperlistFile, const std::string& collectionName);
-    bool importMamelist(const std::string& filename, const std::string& collectionName);
-    bool importEmuArclist(const std::string& filename);
+
+    // Optional: one-shot fetch+merge for a single file, then import it.
+    // Returns true if the local XML changed on disk.
+    bool updateAndImportHyperlist(const std::string& remoteRawUrl,
+        const std::string& localXmlPath,
+        const std::string& collectionName);
+
+    // Copies DB metadata into a collection’s items.
+    void injectMetadata(CollectionInfo* collection);
 
 private:
-    bool importDirectory();
     bool needsRefresh();
     std::filesystem::file_time_type timeDir(const std::string& path);
-    Configuration &config_;
-    DB &db_;
+
+    // Scan meta/hyperlist for *.xml, read optional .remote sidecar,
+    // fetch+merge if remote newer. Returns true if any local file changed.
+    bool syncAllHyperlistRemotes_();
+
+    // Import all local *.xml (no network).
+    bool importAllHyperlists_();
+
+    Configuration& config_;
+    DB& db_;
 };
