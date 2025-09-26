@@ -56,6 +56,8 @@ private:
     SDL_Color fontColor_;
     std::string fontName_;
     int fontSize_{ 24 };
+	bool fontGradient_{ false };
+	int fontOutline_{ 0 };
     FontCache *fontCache_;
     bool isMenu_;
 

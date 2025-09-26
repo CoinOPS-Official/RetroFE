@@ -26,13 +26,13 @@ public:
     FontCache();
     bool initialize() const;
     void deInitialize();
-    bool loadFont(std::string font, int fontSize, SDL_Color color, int monitor);
-    FontManager* getFont(const std::string& fontPath, int fontSize, SDL_Color color, int monitor);
+    bool loadFont(std::string font, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
+    FontManager* getFont(const std::string& fontPath, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
 
     virtual ~FontCache();
 private:
     std::unordered_map<std::string, std::unique_ptr<FontManager>> fontFaceMap_;
-    std::string buildFontKey(std::string font, int fontSize, SDL_Color color, int monitor);
+    std::string buildFontKey(std::string font, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
 
 };
 

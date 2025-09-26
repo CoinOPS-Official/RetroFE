@@ -216,6 +216,8 @@ Page* PageBuilder::buildPage(const std::string& collectionName, bool defaultToCu
 			xml_attribute<> const* fontXml = root->first_attribute("font");
 			xml_attribute<> const* fontColorXml = root->first_attribute("fontColor");
 			xml_attribute<> const* fontSizeXml = root->first_attribute("loadFontSize");
+			xml_attribute<> const* fontGradientXml = root->first_attribute("fontGradient");
+			xml_attribute<> const* fontOutlineXml = root->first_attribute("fontOutline");
 			xml_attribute<> const* minShowTimeXml = root->first_attribute("minShowTime");
 			xml_attribute<> const* controls = root->first_attribute("controls");
 			xml_attribute<> const* layoutMonitorXml = root->first_attribute("monitor");
@@ -252,6 +254,15 @@ Page* PageBuilder::buildPage(const std::string& collectionName, bool defaultToCu
 			// Process font size
 			if (fontSizeXml) {
 				fontSize_ = Utils::convertInt(fontSizeXml->value());
+			}
+
+			if (fontGradientXml) {
+				std::string val = Utils::toLower(fontGradientXml->value());
+				fontGradient_ = (val == "true" || val == "yes");
+			}
+
+			if (fontOutlineXml) {
+				fontOutline_ = Utils::convertInt(fontOutlineXml->value());
 			}
 
 			// Process layout dimensions
@@ -933,6 +944,8 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 	xml_attribute<> const* fontXml = component->first_attribute("font");
 	xml_attribute<> const* fontColorXml = component->first_attribute("fontColor");
 	xml_attribute<> const* fontSizeXml = component->first_attribute("loadFontSize");
+	xml_attribute<> const* fontGradientXml = component->first_attribute("fontGradient");
+	xml_attribute<> const* fontOutlineXml = component->first_attribute("fontOutline");
 
 	if (defaults) {
 		if (!fontXml && defaults->first_attribute("font")) {
@@ -946,6 +959,13 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 		if (!fontSizeXml && defaults->first_attribute("loadFontSize")) {
 			fontSizeXml = defaults->first_attribute("loadFontSize");
 		}
+
+		if(!fontGradientXml && defaults->first_attribute("fontGradient")) {
+			fontGradientXml = defaults->first_attribute("fontGradient");
+		}
+		if (!fontOutlineXml && defaults->first_attribute("fontOutline")) {
+			fontOutlineXml = defaults->first_attribute("fontOutline");
+		}
 	}
 
 
@@ -953,6 +973,9 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 	std::string fontName = fontName_;
 	SDL_Color fontColor = fontColor_;
 	int fontSize = fontSize_;
+	bool fontGradient = fontGradient_;
+	int fontOutline = fontOutline_;
+
 
 	if (fontXml) {
 		fontName = Configuration::convertToAbsolutePath(
@@ -978,8 +1001,16 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 		fontSize = Utils::convertInt(fontSizeXml->value());
 	}
 
-	fontCache_->loadFont(fontName, fontSize, fontColor, monitor);
-	return fontCache_->getFont(fontName, fontSize, fontColor, monitor);
+	if (fontGradientXml) {
+		fontGradient = Utils::toLower(fontGradientXml->value()) == "true" || Utils::toLower(fontGradientXml->value()) == "yes";
+	}
+
+	if (fontOutlineXml) {
+		fontOutline = Utils::convertInt(fontOutlineXml->value());
+	}
+
+	fontCache_->loadFont(fontName, fontSize, fontColor, fontGradient, fontOutline, monitor);
+	return fontCache_->getFont(fontName, fontSize, fontColor, fontGradient, fontOutline, monitor);
 }
 
 void PageBuilder::loadTweens(Component* c, xml_node<>* componentXml) {

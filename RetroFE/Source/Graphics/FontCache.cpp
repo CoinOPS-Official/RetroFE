@@ -53,8 +53,8 @@ bool FontCache::initialize() const
     }
 }
 
-FontManager* FontCache::getFont(const std::string& fontPath, int fontSize, SDL_Color color, int monitor) {
-    std::string key = buildFontKey(fontPath, fontSize, color, monitor);
+FontManager* FontCache::getFont(const std::string& fontPath, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor) {
+    std::string key = buildFontKey(fontPath, fontSize, color, gradient, outlinePx, monitor);
     auto it = fontFaceMap_.find(key);
 
     if (it != fontFaceMap_.end()) {
@@ -65,18 +65,20 @@ FontManager* FontCache::getFont(const std::string& fontPath, int fontSize, SDL_C
 }
 
 
-std::string FontCache::buildFontKey(std::string font, int fontSize, SDL_Color color, int monitor)
+std::string FontCache::buildFontKey(std::string font, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor)
 {
     std::stringstream ss;
     ss << font << "_SIZE=" << fontSize << " RGB=" << color.r << "." << color.g << "." << color.b;
     ss << "_MONITOR=" << monitor;
+	ss << (gradient ? "_GRADIENT" : "");
+	ss << "_OUTLINE=" << outlinePx;
     return ss.str();
 }
 
-bool FontCache::loadFont(std::string fontPath, int fontSize, SDL_Color color, int monitor) {
-    std::string key = buildFontKey(fontPath, fontSize, color, monitor);
+bool FontCache::loadFont(std::string fontPath, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor) {
+    std::string key = buildFontKey(fontPath, fontSize, color, gradient, outlinePx, monitor);
     if (fontFaceMap_.find(key) == fontFaceMap_.end()) {
-        auto font = std::make_unique<FontManager>(fontPath, fontSize, color, monitor);
+        auto font = std::make_unique<FontManager>(fontPath, fontSize, color, gradient, outlinePx, monitor);
         if (font->initialize()) {
             fontFaceMap_[key] = std::move(font);
         } else {
