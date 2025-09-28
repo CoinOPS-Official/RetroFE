@@ -692,8 +692,8 @@ void ReloadableGlobalHiscores::draw() {
         }
         SDL_Texture* oldRT = SDL_GetRenderTarget(renderer);
         SDL_SetRenderTarget(renderer, prevCompositeTexture_);
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-        SDL_RenderClear(renderer);
+        //SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        //SDL_RenderClear(renderer);
         if (intermediateTexture_) {
             SDL_RenderCopy(renderer, intermediateTexture_, nullptr, nullptr);
         }
