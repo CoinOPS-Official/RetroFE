@@ -82,7 +82,7 @@ bool ReloadableGlobalHiscores::update(float dt) {
     const bool dataChanged = (epochNow != lastEpochSeen_);
 
     // Reset paging and rebuild on any geometry/selection/data change
-    if (geomChanged || !highScoreTable_ || newItemSelected || (newScrollItemSelected && getMenuScrollReload()) || dataChanged) {
+    if (geomChanged || !highScoreTable_ || (newScrollItemSelected && getMenuScrollReload()) || dataChanged) {
         gridPageIndex_ = 0;
         gridTimerSec_ = 0.0f;
         gridBaselineValid_ = false;   // <— invalidate baseline so it re-computes

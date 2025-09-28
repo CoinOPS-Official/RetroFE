@@ -755,9 +755,13 @@ void Page::letterScroll(ScrollDirection direction) {
 		if (menu && !menu->isPlaylist()) {
 			if (direction == ScrollDirectionForward) {
 				menu->letterDown();
+				onNewScrollItemSelected();
+
 			}
 			if (direction == ScrollDirectionBack) {
 				menu->letterUp();
+				onNewScrollItemSelected();
+
 			}
 		}
 	}
@@ -772,9 +776,11 @@ void Page::metaScroll(ScrollDirection direction, std::string attribute) {
 		if (menu && !menu->isPlaylist()) {
 			if (direction == ScrollDirectionForward) {
 				menu->metaDown(attribute);
+				onNewScrollItemSelected();
 			}
 			if (direction == ScrollDirectionBack) {
 				menu->metaUp(attribute);
+				onNewScrollItemSelected();
 			}
 		}
 	}
@@ -787,9 +793,11 @@ void Page::cfwLetterSubScroll(ScrollDirection direction) {
 		if (menu && !menu->isPlaylist()) {
 			if (direction == ScrollDirectionForward) {
 				menu->cfwLetterSubDown();
+				onNewScrollItemSelected();
 			}
 			if (direction == ScrollDirectionBack) {
 				menu->cfwLetterSubUp();
+				onNewScrollItemSelected();
 			}
 		}
 	}
