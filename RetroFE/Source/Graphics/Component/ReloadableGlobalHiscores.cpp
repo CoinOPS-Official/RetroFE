@@ -73,7 +73,20 @@ bool ReloadableGlobalHiscores::update(float dt) {
     if (!std::isfinite(dt)) dt = 0.f;
     dt = std::max(0.f, std::min(dt, 0.25f));
 
-    // Tick the debounce timer
+    // Drive crossfade timer
+    if (fadeActive_) {
+        fadeT_ += dt;
+        if (fadeT_ >= fadeDurationSec_) {
+            fadeT_ = fadeDurationSec_;
+            fadeActive_ = false;
+            if (prevCompositeTexture_) {
+                SDL_DestroyTexture(prevCompositeTexture_);
+                prevCompositeTexture_ = nullptr;
+            }
+        }
+    }
+
+    // Debounce timer for selection/scroll reloads
     if (reloadDebounceTimer_ > 0.0f) {
         reloadDebounceTimer_ = std::max(0.0f, reloadDebounceTimer_ - dt);
     }
@@ -86,71 +99,81 @@ bool ReloadableGlobalHiscores::update(float dt) {
     const uint64_t epochNow = HiScores::getInstance().getGlobalEpoch();
     const bool dataChanged = (epochNow != lastEpochSeen_);
 
-    // Gather triggers
+    // SELECTION/SCROLL flags (same as before)
+    const bool selChange = newItemSelected || (newScrollItemSelected && getMenuScrollReload());
+
+    // This represents “we are about to load a different table set”
+    const bool tableContextChanged = (!highScoreTable_) || selChange || dataChanged;
+
+    // If we are switching to a new table context, don't fade this first show
+    if (tableContextChanged) {
+        hasShownOnce_ = false;   // first paint of the new table should not fade
+        fadeActive_ = false;   // nuke any running fade
+        fadeStartPending_ = false;
+        fadeT_ = 0.0f;
+    }
+
     const bool needHardReload = geomChanged || !highScoreTable_ || dataChanged;
-    const bool needSelReload = newItemSelected || (newScrollItemSelected && getMenuScrollReload());
+    const bool needSelReload = selChange;
 
-    bool didReload = false;
-
-    // 1) Hard triggers: never debounced
+    // Hard triggers: never debounced, no fade on first show
     if (needHardReload) {
         gridPageIndex_ = 0;
         gridTimerSec_ = 0.0f;
-        gridBaselineValid_ = false;          // recompute baseline
+        gridBaselineValid_ = false;
         reloadTexture(true);
-        didReload = true;
 
-        // housekeeping
         newItemSelected = false;
         newScrollItemSelected = false;
-        prevW = widthNow; prevH = heightNow; prevFont = baseViewInfo.FontSize;
+        prevW = widthNow;
+        prevH = heightNow;
+        prevFont = baseViewInfo.FontSize;
         lastEpochSeen_ = epochNow;
 
-        // Also protect against an immediate follow-up selection-trigger next tick
         reloadDebounceTimer_ = reloadDebounceSec_;
+        return Component::update(dt);
     }
-    // 2) Selection/scroll triggers: debounce to avoid back-to-back reloads
-    else if (needSelReload) {
+
+    // Selection/scroll triggers: debounce; skip fade on first show of new table
+    if (needSelReload) {
         if (reloadDebounceTimer_ <= 0.0f) {
+            // hasShownOnce_ is already false from the tableContextChanged block above,
+            // so we do NOT arm a fade here.
             gridPageIndex_ = 0;
             gridTimerSec_ = 0.0f;
             gridBaselineValid_ = false;
             reloadTexture(true);
-            didReload = true;
-
-            // start debounce window
             reloadDebounceTimer_ = reloadDebounceSec_;
         }
-
-        // Consume the flags either way so the duplicate on the next tick doesn't pile up
         newItemSelected = false;
         newScrollItemSelected = false;
-
-        // keep prevW/prevH/prevFont only when geom actually changed
-        // epoch stamp only after dataChanged, which is handled above
+        return Component::update(dt);
     }
-    // 3) No immediate reload => handle page rotation
-    else {
-        if (highScoreTable_ && !highScoreTable_->tables.empty()) {
-            const int totalTables = (int)highScoreTable_->tables.size();
-            const int pageSize = std::max(1, gridPageSize_);
-            const int pageCount = std::max(1, (totalTables + pageSize - 1) / pageSize);
-            if (pageCount > 1) {
-                gridTimerSec_ += dt;
-                if (gridTimerSec_ >= gridRotatePeriodSec_) {
-                    gridTimerSec_ = 0.0f;
-                    gridPageIndex_ = (gridPageIndex_ + 1) % pageCount;
-                    reloadTexture(true);  // rebuild just the new slice
-                    didReload = true;
 
-                    // protect against selection flags that may appear right after flip
-                    reloadDebounceTimer_ = reloadDebounceSec_;
-                }
-            }
-            else {
+    // Normal page rotation (same table context) — fades are allowed
+    if (highScoreTable_ && !highScoreTable_->tables.empty()) {
+        const int totalTables = (int)highScoreTable_->tables.size();
+        const int pageSize = std::max(1, gridPageSize_);
+        const int pageCount = std::max(1, (totalTables + pageSize - 1) / pageSize);
+
+        if (pageCount > 1) {
+            gridTimerSec_ += dt;
+            if (gridTimerSec_ >= gridRotatePeriodSec_) {
                 gridTimerSec_ = 0.0f;
-                gridPageIndex_ = 0;
+                gridPageIndex_ = (gridPageIndex_ + 1) % pageCount;
+
+                // This is a flip within the same table context — fade is ok
+                fadeStartPending_ = true;
+                fadeActive_ = true;
+                fadeT_ = 0.0f;
+
+                reloadTexture(true);
+                reloadDebounceTimer_ = reloadDebounceSec_;
             }
+        }
+        else {
+            gridTimerSec_ = 0.0f;
+            gridPageIndex_ = 0;
         }
     }
 
@@ -655,6 +678,27 @@ void ReloadableGlobalHiscores::draw() {
         SDL_SetTextureBlendMode(intermediateTexture_, SDL_BLENDMODE_BLEND);
         prevW = compositeW; prevH = compositeH;
         needsRedraw_ = true;
+
+        // Invalidate previous snapshot at new size
+        if (prevCompositeTexture_) { SDL_DestroyTexture(prevCompositeTexture_); prevCompositeTexture_ = nullptr; }
+    }
+
+    // If a crossfade was armed, snapshot the CURRENT page before repainting it
+    if (fadeStartPending_) {
+        if (!prevCompositeTexture_) {
+            prevCompositeTexture_ = SDL_CreateTexture(
+                renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, compositeW, compositeH);
+            SDL_SetTextureBlendMode(prevCompositeTexture_, SDL_BLENDMODE_BLEND);
+        }
+        SDL_Texture* oldRT = SDL_GetRenderTarget(renderer);
+        SDL_SetRenderTarget(renderer, prevCompositeTexture_);
+        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+        SDL_RenderClear(renderer);
+        if (intermediateTexture_) {
+            SDL_RenderCopy(renderer, intermediateTexture_, nullptr, nullptr);
+        }
+        SDL_SetRenderTarget(renderer, oldRT);
+        fadeStartPending_ = false; // snapshot captured
     }
 
     if (needsRedraw_) {
@@ -747,16 +791,35 @@ void ReloadableGlobalHiscores::draw() {
         needsRedraw_ = false;
     }
 
-    // Final blit with component transform
+    // Final composite: either crossfade or normal draw
     SDL_FRect rect = {
         baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
         baseViewInfo.ScaledWidth(),       baseViewInfo.ScaledHeight()
     };
-    SDL::renderCopyF(
-        intermediateTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
-        page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-        page.getLayoutHeightByMonitor(baseViewInfo.Monitor)
-    );
+
+    if (fadeActive_ && prevCompositeTexture_) {
+        const float A = baseViewInfo.Alpha;
+        float t = (fadeDurationSec_ > 0.f) ? (fadeT_ / fadeDurationSec_) : 1.f;
+        if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
+        // Optional easing:
+        // t = t * t * (3.f - 2.f * t); // smoothstep
+
+        // Old page fades out
+        SDL::renderCopyF(prevCompositeTexture_, A * (1.0f - t), nullptr, &rect, baseViewInfo,
+            page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+            page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+
+        // New page fades in
+        SDL::renderCopyF(intermediateTexture_, A * t, nullptr, &rect, baseViewInfo,
+            page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+            page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+    }
+    else {
+        SDL::renderCopyF(
+            intermediateTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
+            page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+            page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+    }
 }
 
 

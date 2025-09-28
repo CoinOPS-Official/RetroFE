@@ -131,5 +131,6 @@ private:
 	bool  fadeStartPending_ = false;            // capture old page on next draw
 	float fadeT_ = 0.0f;             // elapsed fade time (sec)
 	float fadeDurationSec_ = 1.0f;             // 1s crossfade (tune)
+	bool hasShownOnce_ = false;
 
 };
