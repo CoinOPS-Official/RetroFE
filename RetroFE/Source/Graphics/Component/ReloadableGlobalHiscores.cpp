@@ -73,6 +73,11 @@ bool ReloadableGlobalHiscores::update(float dt) {
     if (!std::isfinite(dt)) dt = 0.f;
     dt = std::max(0.f, std::min(dt, 0.25f));
 
+    // Tick the debounce timer
+    if (reloadDebounceTimer_ > 0.0f) {
+        reloadDebounceTimer_ = std::max(0.0f, reloadDebounceTimer_ - dt);
+    }
+
     const float widthNow = baseViewInfo.Width;
     const float heightNow = baseViewInfo.Height;
     static float prevW = -1.f, prevH = -1.f, prevFont = -1.f;
@@ -81,19 +86,51 @@ bool ReloadableGlobalHiscores::update(float dt) {
     const uint64_t epochNow = HiScores::getInstance().getGlobalEpoch();
     const bool dataChanged = (epochNow != lastEpochSeen_);
 
-    // Reset paging and rebuild on any geometry/selection/data change
-    if (geomChanged || !highScoreTable_ || (newScrollItemSelected && getMenuScrollReload()) || dataChanged) {
+    // Gather triggers
+    const bool needHardReload = geomChanged || !highScoreTable_ || dataChanged;
+    const bool needSelReload = newItemSelected || (newScrollItemSelected && getMenuScrollReload());
+
+    bool didReload = false;
+
+    // 1) Hard triggers: never debounced
+    if (needHardReload) {
         gridPageIndex_ = 0;
         gridTimerSec_ = 0.0f;
-        gridBaselineValid_ = false;   // <— invalidate baseline so it re-computes
+        gridBaselineValid_ = false;          // recompute baseline
         reloadTexture(true);
+        didReload = true;
+
+        // housekeeping
         newItemSelected = false;
         newScrollItemSelected = false;
         prevW = widthNow; prevH = heightNow; prevFont = baseViewInfo.FontSize;
         lastEpochSeen_ = epochNow;
+
+        // Also protect against an immediate follow-up selection-trigger next tick
+        reloadDebounceTimer_ = reloadDebounceSec_;
     }
+    // 2) Selection/scroll triggers: debounce to avoid back-to-back reloads
+    else if (needSelReload) {
+        if (reloadDebounceTimer_ <= 0.0f) {
+            gridPageIndex_ = 0;
+            gridTimerSec_ = 0.0f;
+            gridBaselineValid_ = false;
+            reloadTexture(true);
+            didReload = true;
+
+            // start debounce window
+            reloadDebounceTimer_ = reloadDebounceSec_;
+        }
+
+        // Consume the flags either way so the duplicate on the next tick doesn't pile up
+        newItemSelected = false;
+        newScrollItemSelected = false;
+
+        // keep prevW/prevH/prevFont only when geom actually changed
+        // epoch stamp only after dataChanged, which is handled above
+    }
+    // 3) No immediate reload => handle page rotation
     else {
-        // Drive rotation by dt only if we actually have multiple pages
         if (highScoreTable_ && !highScoreTable_->tables.empty()) {
             const int totalTables = (int)highScoreTable_->tables.size();
             const int pageSize = std::max(1, gridPageSize_);
@@ -103,7 +140,11 @@ bool ReloadableGlobalHiscores::update(float dt) {
                 if (gridTimerSec_ >= gridRotatePeriodSec_) {
                     gridTimerSec_ = 0.0f;
                     gridPageIndex_ = (gridPageIndex_ + 1) % pageCount;
-                    reloadTexture(true); // rebuild just the new slice
+                    reloadTexture(true);  // rebuild just the new slice
+                    didReload = true;
+
+                    // protect against selection flags that may appear right after flip
+                    reloadDebounceTimer_ = reloadDebounceSec_;
                 }
             }
             else {
@@ -223,6 +264,7 @@ void ReloadableGlobalHiscores::initializeFonts() {
 }
 
 void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
+    // ---- text render helpers (unchanged) ------------------------------------
     auto renderTextWithKerning = [&](SDL_Renderer* r, FontManager* font,
         const std::string& s, float x, float y, float scale) {
             float cx = std::round(x);
@@ -264,28 +306,20 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
             renderTextWithKerning(r, f, s, x, y, scale);
         };
 
-    // Center-align placeholders like "-", "--:--:---", "$-"
+    // ---- placeholder helper --------------------------------------------------
     auto isPlaceholderCell = [](const std::string& s) -> bool {
-        // trim ASCII spaces/tabs
         size_t l = s.find_first_not_of(" \t");
         if (l == std::string::npos) return false;
         size_t r = s.find_last_not_of(" \t");
         const std::string v = s.substr(l, r - l + 1);
-
-        // Fast-path for exact forms we know HiScores emits
         if (v == "-" || v == "$-" || v == "--:--:---") return true;
-
-        // Generic: treat as placeholder if it contains ONLY these symbols
-        // and at least one dash; avoids catching real values.
         bool hasDash = false;
         for (unsigned char uc : v) {
             char c = (char)uc;
             if (c == '-') { hasDash = true; continue; }
             if (c == ':' || c == '.' || c == '$' || c == ' ') continue;
-            // any letter/digit/other -> not a placeholder
             if ((c >= '0' && c <= '9') || (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z'))
                 return false;
-            // any other symbol -> bail out (conservative)
             return false;
         }
         return hasDash;
@@ -310,15 +344,14 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         return x;
         };
 
+    // ---- setup / clear -------------------------------------------------------
     SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
 
-    // clear old textures
     for (auto& p : tablePanels_) if (p.tex) { SDL_DestroyTexture(p.tex); p.tex = nullptr; }
     tablePanels_.clear();
     for (auto& q : qrByTable_) if (q.tex) SDL_DestroyTexture(q.tex);
     qrByTable_.clear();
 
-    // fetch selected & table
     Item* selectedItem = page.getSelectedItem(displayOffset_);
     if (!selectedItem || !renderer) { highScoreTable_ = nullptr; needsRedraw_ = true; return; }
     highScoreTable_ = HiScores::getInstance().getGlobalHiScoreTable(selectedItem);
@@ -326,32 +359,42 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
 
     const int totalTables = (int)highScoreTable_->tables.size();
 
-    // Component size, font info
     const float compW = baseViewInfo.Width;
     const float compH = baseViewInfo.Height;
 
     FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
     if (!font) { needsRedraw_ = true; return; }
+
     const float baseScale = baseViewInfo.FontSize / (float)font->getHeight();
     const float asc = (float)font->getAscent();
+    const float drawableH0 = asc * baseScale;
+    const float lineH0 = drawableH0 * (1.0f + baseRowPadding_);
+    const float colPad0 = baseColumnPadding_ * drawableH0;
 
-    // Baseline: compute once when invalidated
+    // Baseline grid geometry (unchanged)
     if (!gridBaselineValid_) {
         computeGridBaseline_(renderer, font, totalTables, compW, compH, baseScale, asc);
     }
+    const int   cols = gridBaselineCols_;
+    const int   rows = gridBaselineRows_;
+    const float cellW = gridBaselineCellW_;
+    const float cellH = gridBaselineCellH_;
+    const float spacingH = cellSpacingH_ * compW;
+    const float spacingV = cellSpacingV_ * compH;
 
-    // Visible slice indices (but grid stays fixed by baseline)
-    const auto [startIdx, Nvisible] = computeVisibleRange(totalTables, gridPageIndex_, std::max(1, gridPageSize_));
+    // Visible slice
+    const auto [startIdx, Nvisible] =
+        computeVisibleRange(totalTables, gridPageIndex_, std::max(1, gridPageSize_));
     if (Nvisible <= 0) { needsRedraw_ = true; return; }
 
-    // Load QRs only for the visible set
+    // ---- Load QRs for visible set -------------------------------------------
     std::vector<std::string> gameIds;
     if (!selectedItem->iscoredId.empty()) Utils::listToVector(selectedItem->iscoredId, gameIds, ',');
     qrByTable_.assign(Nvisible, {});
     for (int t = 0; t < Nvisible; ++t) {
-        const int globalIdx = startIdx + t;
-        if (globalIdx < (int)gameIds.size() && !gameIds[globalIdx].empty()) {
-            std::string path = Configuration::absolutePath + "/iScored/qr/" + gameIds[globalIdx] + ".png";
+        const int gi = startIdx + t;
+        if (gi < (int)gameIds.size() && !gameIds[gi].empty()) {
+            std::string path = Configuration::absolutePath + "/iScored/qr/" + gameIds[gi] + ".png";
             if (SDL_Texture* tex = IMG_LoadTexture(renderer, path.c_str())) {
                 int w = 0, h = 0; SDL_QueryTexture(tex, nullptr, nullptr, &w, &h);
                 SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
@@ -360,48 +403,122 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         }
     }
 
-    // Use fixed (baseline) grid for geometry + per-row scale
-    const int   cols = gridBaselineCols_;
-    const int   rows = gridBaselineRows_;
-    const float cellW = gridBaselineCellW_;
-    const float cellH = gridBaselineCellH_;
-    const float spacingH = cellSpacingH_ * compW;
-    const float spacingV = cellSpacingV_ * compH;
+    // ========================================================================
+    // NEW: Build a SHARED column layout for this page (visible slice only).
+    // ========================================================================
 
-    auto quantize = [](float s) { const float q = 64.f; return std::max(0.f, std::round(s * q) / q); };
+    // 1) Find max column count in the visible set
+    size_t maxCols = 0;
+    for (int t = 0; t < Nvisible; ++t) {
+        const int gi = startIdx + t;
+        maxCols = std::max(maxCols, highScoreTable_->tables[gi].columns.size());
+    }
+    if (maxCols == 0) { needsRedraw_ = true; return; }
 
+    // 2) Per-column max width at baseScale, and max title width (baseScale)
+    std::vector<float> maxColW0(maxCols, 0.0f);
+    float maxTitleW0 = 0.0f;
+
+    // Also keep per-table heights (for sH)
+    std::vector<float> height0(Nvisible, lineH0 * (1 + kRowsPerPage)); // init safely
+
+    for (int t = 0; t < Nvisible; ++t) {
+        const auto& table = highScoreTable_->tables[startIdx + t];
+
+        // columns: use header + all rows (like you were doing)
+        for (size_t c = 0; c < maxCols; ++c) {
+            float w = 0.0f;
+            if (c < table.columns.size()) {
+                w = (float)font->getWidth(table.columns[c]) * baseScale;
+                for (const auto& row : table.rows)
+                    if (c < row.size())
+                        w = std::max(w, (float)font->getWidth(row[c]) * baseScale);
+            }
+            maxColW0[c] = std::max(maxColW0[c], w);
+        }
+
+        // title
+        if (!table.id.empty()) {
+            maxTitleW0 = std::max(maxTitleW0, (float)font->getWidth(table.id) * baseScale);
+        }
+
+        // height for this table (title + header + data) at baseScale
+        float h = lineH0;                    // header
+        if (!table.id.empty()) h += lineH0;  // title
+        h += lineH0 * kRowsPerPage;          // rows
+        height0[t] = h;
+        // (QR height reservations are handled by anchor; if you want them in scale,
+        //  add the same logic you had earlier here.)
+    }
+
+    // 3) Shared total width at baseScale: sum(maxColW0) + pads, then ensure title fits
+    float sumCols0 = 0.0f;
+    for (float w : maxColW0) sumCols0 += w;
+
+    float sharedPad0 = colPad0;
+    float sharedW0 = sumCols0 + (float)(std::max<size_t>(1, maxCols) - 1) * sharedPad0;
+    if (sharedW0 < maxTitleW0) {
+        const int gaps = (int)std::max<size_t>(1, maxCols - 1);
+        const float grow0 = maxTitleW0 - sharedW0;
+        sharedPad0 = colPad0 + grow0 / (float)gaps;
+        sharedW0 = maxTitleW0; // now title fits exactly
+    }
+
+    // 4) Compute per-slot scale need: width uses sharedW0; height uses each table's height0
+    std::vector<float> needScale(Nvisible, 1.0f);
+    for (int t = 0; t < Nvisible; ++t) {
+        const float sW = sharedW0 > 0 ? (cellW / sharedW0) : 1.0f;
+        const float sH = height0[t] > 0 ? (cellH / height0[t]) : 1.0f;
+        needScale[t] = std::min({ 1.0f, sW, sH });
+    }
+
+    // 5) Row-wise minimum (like before), but using the "visible" page
+    std::vector<float> rowMinVis(rows, 1.0f);
+    for (int r = 0; r < rows; ++r) {
+        float s = 1.0f;
+        for (int c = 0; c < cols; ++c) {
+            int i = r * cols + c; if (i >= Nvisible) break;
+            s = std::min(s, needScale[i]);
+        }
+        rowMinVis[r] = s;
+    }
+
+    auto quantize = [](float s) {
+        const float q = 64.f; return std::max(0.f, std::round(s * q) / q);
+        };
+
+    // ---- plan, build textures ------------------------------------------------
     planned_.assign(Nvisible, {});
     tablePanels_.resize(Nvisible);
 
     for (int t = 0; t < Nvisible; ++t) {
-        const int globalIdx = startIdx + t;
-        const auto& table = highScoreTable_->tables[globalIdx];
+        const int gi = startIdx + t;
+        const auto& table = highScoreTable_->tables[gi];
 
-        const int slotRow = (t / cols);                     // row within the fixed grid
-        float finalScale = quantize(baseScale * gridBaselineRowMin_[std::min(slotRow, rows - 1)]);
+        // scale for this row (shared width -> same scale horizontally)
+        const int slotRow = (t / cols);
+        float finalScale = quantize(baseScale * rowMinVis[std::min(slotRow, rows - 1)]);
+        const float scaleRatio = (baseScale > 0.f) ? (finalScale / baseScale) : 1.0f;
 
         const float drawableH = asc * finalScale;
         const float lineH = drawableH * (1.0f + baseRowPadding_);
-        const float colPad = baseColumnPadding_ * drawableH;
+        const float colPad = sharedPad0 * scaleRatio;
 
-        // Measure columns at the now-fixed finalScale
-        std::vector<float> colW(table.columns.size(), 0.0f);
+        // Shared per-column widths at finalScale
+        std::vector<float> colW(maxCols, 0.0f);
         float totalWCols = 0.0f;
-        for (size_t c = 0; c < table.columns.size(); ++c) {
-            float w = (float)font->getWidth(table.columns[c]) * finalScale;
-            for (const auto& rowV : table.rows)
-                if (c < rowV.size()) w = std::max(w, (float)font->getWidth(rowV[c]) * finalScale);
-            colW[c] = w;
-            totalWCols += w;
-            if (c + 1 < table.columns.size()) totalWCols += colPad;
+        for (size_t c = 0; c < maxCols; ++c) {
+            colW[c] = maxColW0[c] * scaleRatio;
+            totalWCols += colW[c];
+            if (c + 1 < maxCols) totalWCols += colPad;
         }
 
+        // heights
         float titleH = table.id.empty() ? 0.0f : lineH;
         float headerH = lineH;
         float dataH = lineH * kRowsPerPage;
         const float textBlockHeight = titleH + headerH + dataH;
 
-        // Make the panel texture
         int pageW = std::max(1, (int)std::ceil(totalWCols));
         int pageH = std::max(1, (int)std::ceil(textBlockHeight));
 
@@ -417,7 +534,7 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
 
         float y = 0.0f;
 
-        // Title centered
+        // ---- Title (centered over shared width) -----------------------------
         if (!table.id.empty()) {
             int titleWpx = (int)std::lround(font->getWidth(table.id) * finalScale);
             int totalWpx = (int)std::lround(totalWCols);
@@ -426,53 +543,41 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
             y += lineH;
         }
 
-        // Headers centered within each column
+        // ---- Headers (centered inside shared column widths) -----------------
         {
             float x = 0.0f;
-            for (size_t c = 0; c < table.columns.size(); ++c) {
-                const std::string& header = table.columns[c];
-                float hw = (float)font->getWidth(header) * finalScale;
-                int   hwpx = (int)std::lround(hw);
-                int   colWpx = (int)std::lround(colW[c]);
-                float xAligned = std::round(x + (colWpx - hwpx) * 0.5f);
-                renderTextOutlined(renderer, font, header, xAligned, y, finalScale);
+            for (size_t c = 0; c < maxCols; ++c) {
+                if (c < table.columns.size()) {
+                    const std::string& header = table.columns[c];
+                    float hw = (float)font->getWidth(header) * finalScale;
+                    float xAligned = std::round(x + (colW[c] - hw) * 0.5f);
+                    renderTextOutlined(renderer, font, header, xAligned, y, finalScale);
+                }
                 x += colW[c];
-                if (c + 1 < table.columns.size()) x += colPad;
+                if (c + 1 < maxCols) x += colPad;
             }
             y += lineH;
         }
 
-        // Rows
-        auto colAlignFor = [](size_t idx, size_t nCols) {
-            if (nCols >= 4) {
-                if (idx == 0) return ColAlign::Left;
-                if (idx == 1) return ColAlign::Left;
-                if (idx == 2) return ColAlign::Right;
-                if (idx == 3) return ColAlign::Right;
-            }
-            return ColAlign::Center;
-            };
-        auto alignX = [](float x, float colW, float textW, ColAlign a) -> float {
-            switch (a) {
-                case ColAlign::Left:   return x;
-                case ColAlign::Center: return x + (colW - textW) * 0.5f;
-                case ColAlign::Right:  return x + (colW - textW);
-            }
-            return x;
-            };
-
+        // ---- Rows (align per column policy; placeholders centered) ----------
         for (int r = 0; r < kRowsPerPage; ++r) {
             float x = 0.0f;
             const auto& rowV = table.rows[(size_t)r];
-            for (size_t c = 0; c < table.columns.size(); ++c) {
-                const std::string cell = (c < rowV.size()) ? rowV[c] : std::string();
-                const float cw = (float)font->getWidth(cell) * finalScale;
-                const bool ph = isPlaceholderCell(cell);
-                const ColAlign a = ph ? ColAlign::Center : colAlignFor(c, table.columns.size());
-                const float xAligned = alignX(x, colW[c], cw, a);
-                renderTextOutlined(renderer, font, cell, xAligned, y, finalScale);
+            for (size_t c = 0; c < maxCols; ++c) {
+                std::string cell;
+                if (c < rowV.size()) cell = rowV[c]; // else empty
+
+                const float textW = (float)font->getWidth(cell) * finalScale;
+                const bool  ph = isPlaceholderCell(cell);
+                const ColAlign a = ph ? ColAlign::Center : colAlignFor(c, maxCols);
+                const float xAligned = alignX(x, colW[c], textW, a);
+
+                if (!cell.empty()) {
+                    renderTextOutlined(renderer, font, cell, xAligned, y, finalScale);
+                }
+
                 x += colW[c];
-                if (c + 1 < table.columns.size()) x += colPad;
+                if (c + 1 < maxCols) x += colPad;
             }
             y += lineH;
         }
@@ -485,7 +590,7 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         SDL_SetRenderTarget(renderer, old);
         tablePanels_[t] = pt;
 
-        // --- anchor inside fixed grid cell (same positions as page 0) ---
+        // ---- Anchor inside fixed grid cell (same positions across page) ----
         int extraL = 0, extraR = 0, extraT = 0, extraB = 0;
         if (t < (int)qrByTable_.size() && qrByTable_[t].ok) {
             const auto& q = qrByTable_[t];
@@ -508,11 +613,11 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         const float anchorW = (float)pt.w + (float)(extraL + extraR);
         const float anchorH = (float)pt.h + (float)(extraT + extraB);
 
-        auto clamp = [](float v, float lo, float hi) { return std::max(lo, std::min(v, hi)); };
+        auto clampf = [](float v, float lo, float hi) { return std::max(lo, std::min(v, hi)); };
         float anchorX = xCell + (cellW - anchorW) * 0.5f;
         float anchorY = yCell;
-        anchorX = std::round(clamp(anchorX, xCell, xCell + cellW - anchorW));
-        anchorY = std::round(clamp(anchorY, yCell, yCell + cellH - anchorH));
+        anchorX = std::round(clampf(anchorX, xCell, xCell + cellW - anchorW));
+        anchorY = std::round(clampf(anchorY, yCell, yCell + cellH - anchorH));
 
         PlannedDraw pd;
         pd.dst = { anchorX + (float)extraL, anchorY + (float)extraT, (float)pt.w, (float)pt.h };

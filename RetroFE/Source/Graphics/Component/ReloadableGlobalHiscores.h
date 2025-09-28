@@ -122,4 +122,14 @@ private:
 	std::vector<float> gridBaselineRowMin_;   // per-row min scale (already multiplied into baseScale later)
 	bool  gridBaselineValid_ = false;
 
+	float reloadDebounceTimer_ = 0.0f;   // counts down
+	float reloadDebounceSec_ = 0.08f;  // ~80ms feels good; tune as needed
+
+	// New fade state
+	SDL_Texture* prevCompositeTexture_ = nullptr; // snapshot of last page
+	bool  fadeActive_ = false;            // are we crossfading?
+	bool  fadeStartPending_ = false;            // capture old page on next draw
+	float fadeT_ = 0.0f;             // elapsed fade time (sec)
+	float fadeDurationSec_ = 1.0f;             // 1s crossfade (tune)
+
 };
