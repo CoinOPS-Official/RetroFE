@@ -61,13 +61,14 @@ const std::string& Text::getText() const {
 void Text::draw() {
     Component::draw();
 
-    // --- 1. Setup and Texture Acquisition (Unchanged) ---
     FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
-    SDL_Texture* texture = font ? font->getTexture() : nullptr;
-    if (!texture || textData_.empty()) return;
+    if (!font || textData_.empty()) return;
 
-    // --- 2. Glyph Position Caching (Unchanged) ---
-    // This section correctly caches the relative positions of glyphs.
+    SDL_Texture* fillTex = font->getTexture();         // fill atlas (tinted)
+    SDL_Texture* outlineTex = font->getOutlineTexture();  // may be nullptr
+    if (!fillTex) return;
+
+    // --- caching unchanged ---
     const float imageHeight = float(font->getHeight());
     const float scale = (imageHeight > 0.f) ? (baseViewInfo.FontSize / imageHeight) : 1.f;
     const float maxW =
@@ -80,58 +81,96 @@ void Text::draw() {
         lastScale_ = scale;
         lastMaxWidth_ = maxW;
     }
+    if (cachedPositions_.empty()) return;
 
-    // --- 3. Calculate Text Block Origin & Prepare ViewInfo (Mostly Unchanged) ---
-    // We must temporarily modify the ViewInfo to calculate the origin of the entire
-    // text block and to pass the atlas dimensions to the renderer.
+    // --- compute origin (unchanged) ---
     const float oldW = baseViewInfo.Width;
     const float oldH = baseViewInfo.Height;
     const float oldIW = baseViewInfo.ImageWidth;
     const float oldIH = baseViewInfo.ImageHeight;
 
-    // Set the text's computed size to find its top-left origin point.
     baseViewInfo.Width = cachedWidth_;
     baseViewInfo.Height = baseViewInfo.FontSize;
-
     baseViewInfo.ImageWidth = float(font->getAtlasW());
     baseViewInfo.ImageHeight = float(font->getAtlasH());
 
     const float xOrigin = baseViewInfo.XRelativeToOrigin();
     const float yOrigin = baseViewInfo.YRelativeToOrigin();
 
-    // Restore layout-related sizes immediately after use.
     baseViewInfo.Width = oldW;
     baseViewInfo.Height = oldH;
 
-    // --- 4. Get Layout Dimensions (Simplified) ---
-    const int m = baseViewInfo.Monitor;
-    const int layoutW = page.getLayoutWidthByMonitor(m);
-    const int layoutH = page.getLayoutHeightByMonitor(m);
+    const int layoutW = page.getLayoutWidthByMonitor(baseViewInfo.Monitor);
+    const int layoutH = page.getLayoutHeightByMonitor(baseViewInfo.Monitor);
 
-    SDL_FRect destRect; // Re-used for each glyph
-    for (const auto& pos : cachedPositions_) {
-        // Construct the LOGICAL destination rectangle for this single glyph.
-        // It's the text block's origin plus the glyph's relative offset.
-        destRect.x = xOrigin + pos.xOffset;
-        destRect.y = yOrigin + pos.yOffset;
-        destRect.w = pos.sourceRect.w * scale;
-        destRect.h = pos.sourceRect.h * scale;
+    // --- PASS 1: OUTLINE — anchor by subtracting fill offset ---
+    if (outlineTex) {
+        SDL_FRect dst;
+        size_t i = 0;
+        for (unsigned char uc : textData_) {
+            if (i >= cachedPositions_.size()) break;
+            const auto& pos = cachedPositions_[i++];
+            Uint16 ch = (Uint16)uc;
 
-        // Call the master renderer for each glyph. It will handle scaling,
-        // rotation, mirroring, and final drawing.
-        SDL::renderCopyF(
-            texture,
-            baseViewInfo.Alpha,
-            &pos.sourceRect, // The glyph's rect in the atlas (Source)
-            &destRect,       // The glyph's logical position on screen (Destination)
-            baseViewInfo,    // Contains alpha, angle, and atlas dimensions
-            layoutW,
-            layoutH
-        );
+            FontManager::GlyphInfo g;
+            if (!font->getRect(ch, g)) continue;
+
+            // packed (outline) source
+            const SDL_Rect& srcOutline = g.rect;
+
+            // destination: start from fill top-left, then shift back by fill offset
+            dst.x = xOrigin + pos.xOffset - g.fillX * scale;
+            dst.y = yOrigin + pos.yOffset - g.fillY * scale;
+            dst.w = srcOutline.w * scale;
+            dst.h = srcOutline.h * scale;
+
+            SDL::renderCopyF(
+                outlineTex,
+                baseViewInfo.Alpha,
+                &srcOutline,
+                &dst,
+                baseViewInfo,
+                layoutW, layoutH
+            );
+        }
     }
 
-    // --- 6. Restore ViewInfo (Unchanged) ---
-    // Restore the original ImageWidth/Height so we don't affect other components.
+    // --- PASS 2: FILL — anchor directly at fill top-left (no extra +fillX/+fillY) ---
+    {
+        SDL_FRect dst;
+        size_t i = 0;
+        for (unsigned char uc : textData_) {
+            if (i >= cachedPositions_.size()) break;
+            const auto& pos = cachedPositions_[i++];
+            Uint16 ch = (Uint16)uc;
+
+            FontManager::GlyphInfo g;
+            if (!font->getRect(ch, g)) continue;
+
+            SDL_Rect srcFill{
+                g.rect.x + g.fillX,
+                g.rect.y + g.fillY,
+                g.fillW,
+                g.fillH
+            };
+
+            // Position is already the fill's top-left
+            dst.x = xOrigin + pos.xOffset;
+            dst.y = yOrigin + pos.yOffset;
+            dst.w = g.fillW * scale;
+            dst.h = g.fillH * scale;
+
+            SDL::renderCopyF(
+                fillTex,
+                baseViewInfo.Alpha,
+                &srcFill,
+                &dst,
+                baseViewInfo,
+                layoutW, layoutH
+            );
+        }
+    }
+
     baseViewInfo.ImageWidth = oldIW;
     baseViewInfo.ImageHeight = oldIH;
 }

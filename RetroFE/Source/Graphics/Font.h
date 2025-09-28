@@ -30,12 +30,18 @@
 class FontManager {
 public:
     struct GlyphInfo {
-        int minX = 0;
-        int maxX = 0;
-        int minY = 0;
-        int maxY = 0;
+        int minX = 0, maxX = 0, minY = 0, maxY = 0;
         int advance = 0;
-        SDL_Rect rect{ 0,0,0,0 };   // location in atlas texture
+
+        // Packed rect in atlas (outline box if outlinePx_ > 0)
+        SDL_Rect rect{ 0,0,0,0 };
+
+        // NEW: fill sub-rect relative to 'rect' (so src = rect + {fillX,fillY,fillW,fillH})
+        // When no outline is baked, these will be {0,0,rect.w,rect.h}.
+        int fillX = 0;
+        int fillY = 0;
+        int fillW = 0;
+        int fillH = 0;
     };
 
     FontManager(std::string fontPath, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
@@ -52,6 +58,7 @@ public:
 
     // Queries
     SDL_Texture* getTexture() { return texture_; }
+    SDL_Texture* getOutlineTexture() const { return outlineTexture_; }
     bool getRect(unsigned int charCode, GlyphInfo& glyph);
     int  getHeight()   const { return height_; }
     int  getDescent()  const { return descent_; }
@@ -64,6 +71,8 @@ public:
     // Metrics
     int  getKerning(Uint16 prevChar, Uint16 curChar) const;
     int  getWidth(const std::string& text);
+
+    int getOutlinePx() const;
 
 private:
     struct GlyphInfoBuild {
@@ -84,6 +93,7 @@ private:
     // Runtime
     TTF_Font* font_ = nullptr;
     SDL_Texture* texture_ = nullptr;
+    SDL_Texture* outlineTexture_ = nullptr; // NEW: outline-only atlas
     int height_ = 0, descent_ = 0, ascent_ = 0;
     int atlasW_ = 0, atlasH_ = 0;
 

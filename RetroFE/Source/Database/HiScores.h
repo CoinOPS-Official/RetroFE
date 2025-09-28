@@ -4,6 +4,7 @@
 #include <vector>
 #include <unordered_map>
 #include <shared_mutex>
+#include <functional>
 
 // Local utils/config (used by .cpp; harmless to keep here)
 #include "../Utility/Utils.h"
@@ -66,7 +67,7 @@ public:
 
 
     // Update paths (network fetch -> in-memory store). limit: 0 = all rows per game, else cap.
-    void refreshGlobalAllFromSingleCallAsync(int limit);                     // /getAllScores, then group by id
+    void refreshGlobalAllFromSingleCallAsync(int limit, std::function<void()> onFinish);                     // /getAllScores, then group by id
     void refreshGlobalByIdsAsync(const std::vector<std::string>& gameIds,
         int limit);                                 // refresh a subset
 
@@ -77,6 +78,9 @@ public:
 
     // Shutdown cleanup (persist if you want, then clear)
     void deinitialize();
+
+    std::atomic<uint64_t> globalEpoch_{ 0 };
+    uint64_t getGlobalEpoch() const noexcept { return globalEpoch_.load(std::memory_order_acquire); }
 
 private:
     HiScores() = default;
@@ -93,6 +97,7 @@ private:
     // -------- Global internals --------
     std::string iscoredGameroom_;
     std::string globalPersistPath_;
+    std::atomic<bool> globalRefreshInFlight_{ false };
 
     GlobalHiScoreData global_;                // canonical global store (by gameId)
     mutable std::shared_mutex globalMutex_;   // guards 'global_'

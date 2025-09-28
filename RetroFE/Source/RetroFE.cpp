@@ -300,7 +300,11 @@ int RetroFE::initialize(void* context) {
 
 	// 4) Warm EVERYTHING from iScored in the background (single HTTP call).
 	//    getAllScores has no server-side max; HiScores will cap locally to GlobalScoresMax.
-	HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(0);
+	HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(
+		/*limit=*/0
+		// Optional finish hook:
+		, []() { LOG_INFO("HiScores", "Global refresh completed."); }
+	);
 
 
 	instance->initialized = true;
@@ -716,9 +720,11 @@ bool RetroFE::run() {
 	std::atomic<bool> fetchInFlight{ false };
 
 	auto kickFetch = [&]() {
-		if (fetchInFlight.exchange(true)) return; // already running
-		HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(0);            // your existing URL update
-		fetchInFlight.store(false);
+		HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(
+			/*limit=*/0
+			// Optional finish hook:
+			, []() { LOG_INFO("HiScores", "Global refresh completed."); }
+		);
 		};
 
 
@@ -727,7 +733,7 @@ bool RetroFE::run() {
 		uint64_t loopStart = SDL_GetPerformanceCounter();
 		double nowMs_loopStart = loopStart * 1000.0 / freq_; // freq is SDL_GetPerformanceFrequency()
 
-		if (nowMs_loopStart >= nextFetchTimeMs && !fetchInFlight.load()) {
+		if (nowMs_loopStart >= nextFetchTimeMs) {
 			// Advance by fixed steps to avoid drift if we were paused for a while
 			do { nextFetchTimeMs += GlobalScoreFetchIntervalMs; } while (nowMs_loopStart >= nextFetchTimeMs);
 
@@ -2355,7 +2361,7 @@ bool RetroFE::run() {
 
 			// Start onMenuEnter animation
 			case RETROFE_BACK_MENU_LOAD_ART:
-				currentPage_->enterMenu();
+			currentPage_->enterMenu();
 			setState(RETROFE_BACK_MENU_ENTER);
 			break;
 

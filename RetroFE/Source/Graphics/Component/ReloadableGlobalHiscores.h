@@ -37,6 +37,7 @@ public:
 	~ReloadableGlobalHiscores() override;
 
 	bool  update(float dt) override;
+	void  computeGridBaseline_(SDL_Renderer* renderer, FontManager* font, int totalTables, float compW, float compH, float baseScale, float asc);
 	void  draw() override;
 	void  allocateGraphicsMemory() override;
 	void  freeGraphicsMemory() override;
@@ -67,6 +68,9 @@ private:
 	struct PlannedDraw {
 		SDL_FRect dst{}; // precomputed destination within the component rect
 		float headerTopLocal = 0.0f; // local Y of header top (for QR placement)
+		float anchorX = 0.f, anchorY = 0.f; // top-left of panel+QR anchor
+		float anchorW = 0.f, anchorH = 0.f; // full anchor size
+		int   extraL = 0, extraR = 0, extraT = 0, extraB = 0; // QR margins
 	};
 	std::vector<PlannedDraw> planned_;
 
@@ -84,6 +88,9 @@ private:
 	Item* lastSelectedItem_ = nullptr;
 	HighScoreData* highScoreTable_ = nullptr;
 	SDL_Texture* intermediateTexture_ = nullptr;
+	float cachedViewW_;
+	float cachedViewH_;
+	uint64_t lastEpochSeen_ = 0;
 
 	// --- Grid rendering ---
 	static constexpr int kRowsPerPage = 10;
@@ -100,5 +107,19 @@ private:
 	float cellSpacingH_ = 0.02f; // fraction of width
 	float cellSpacingV_ = 0.02f; // fraction of height
 
+	// Grid rotation (paging) state
+	int   gridPageSize_ = 6;     // show up to 6 tables at once
+	float gridRotatePeriodSec_ = 8.0f;  // seconds before flipping to next page
+	float gridTimerSec_ = 0.0f;
+	int   gridPageIndex_ = 0;     // which slice we are showing (0-based)
+
+	// Grid layout & scale baseline (applies across pages until geometry/data changes)
+	int   gridBaselineSlots_ = 0;           // number of slots on a page (e.g., 6 or totalTables if < 6)
+	int   gridBaselineCols_ = 0;
+	int   gridBaselineRows_ = 0;
+	float gridBaselineCellW_ = 0.f;
+	float gridBaselineCellH_ = 0.f;
+	std::vector<float> gridBaselineRowMin_;   // per-row min scale (already multiplied into baseScale later)
+	bool  gridBaselineValid_ = false;
 
 };

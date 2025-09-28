@@ -862,103 +862,80 @@ void HiScores::setGlobalPersistPath(const std::string& path) {
 }
 
 
-void HiScores::refreshGlobalAllFromSingleCallAsync(int limit) {
-	if (iscoredGameroom_.empty()) {
-		LOG_WARNING("HiScores", "refreshGlobalAllFromSingleCallAsync: gameroom not set");
+void HiScores::refreshGlobalAllFromSingleCallAsync(int limit, std::function<void()> onFinish) {
+	// Single-flight guard
+	if (globalRefreshInFlight_.exchange(true)) {
+		LOG_INFO("HiScores", "Global refresh already running; skipping.");
 		return;
 	}
-	std::thread([this, limit]() {
+
+	// If HiScores is a true process-lifetime singleton, you can keep using std::thread.
+	// If it's reference-counted, prefer shared_from_this() (enable_shared_from_this) and capture a shared_ptr.
+	std::thread([this, limit, onFinish]() {
+		// Always clear the flag when we leave this scope
+		struct Reset {
+			std::atomic<bool>& f; std::function<void()> cb;
+			~Reset() { f.store(false, std::memory_order_release); if (cb) cb(); }
+		} reset{ globalRefreshInFlight_, onFinish };
+
 		try {
-			// --- Step 1: Fetch the Authoritative Catalog of All Games ---
-			// This list is our single source of truth for which games should exist.
+			// --- Step 1: authoritative game catalog ---
 			std::vector<std::pair<std::string, std::string>> allIds;
 			std::string errIndex;
 			if (!fetchAllGameIds_(allIds, errIndex)) {
-				LOG_WARNING("HiScores", "Aborting refresh: failed to fetch the authoritative game catalog: " + errIndex);
-				return; // Cannot proceed without the master list.
+				LOG_WARNING("HiScores", "Aborting refresh: failed to fetch catalog: " + errIndex);
+				return;
 			}
 
-			// --- Step 2: Synchronize Local Cache with the Authoritative Catalog ---
-			// Make our 'global_.byId' map perfectly mirror the structure of the server.
-			// This adds new empty games, removes games that no longer exist, and updates names.
+			// --- Step 2: sync cache structure to catalog ---
 			{
 				std::unique_lock<std::shared_mutex> lk(globalMutex_);
-				std::unordered_set<std::string> authoritativeIdSet;
-				authoritativeIdSet.reserve(allIds.size());
-				for (const auto& pair : allIds) {
-					authoritativeIdSet.insert(pair.first);
-				}
+				std::unordered_set<std::string> auth(allIds.size());
+				for (auto& p : allIds) auth.insert(p.first);
 
-				// Prune: Remove games from our cache that are not in the authoritative list.
 				for (auto it = global_.byId.begin(); it != global_.byId.end(); ) {
-					if (authoritativeIdSet.find(it->first) == authoritativeIdSet.end()) {
-						it = global_.byId.erase(it);
-					}
-					else {
-						++it;
-					}
+					it = (auth.find(it->first) == auth.end()) ? global_.byId.erase(it) : std::next(it);
 				}
-
-				// Add & Update: Ensure every game from the catalog exists in our cache and has the correct name.
-				for (const auto& pair : allIds) {
-					const std::string& gid = pair.first;
-					const std::string& gname = pair.second;
-					auto it = global_.byId.find(gid);
-					if (it == global_.byId.end()) {
-						// Add new game, scores will be populated later.
-						global_.byId[gid] = GlobalGame{ gid, gname, {} };
-					}
-					else if (!gname.empty() && it->second.gameName != gname) {
-						// Update existing game's name.
-						it->second.gameName = gname;
-					}
+				for (auto& [gid, gname] : allIds) {
+					auto& gg = global_.byId[gid]; // inserts if missing
+					gg.gameId = gid;
+					if (!gname.empty()) gg.gameName = gname;
 				}
-			} // Lock released
+			} // unlock
 
-			// --- Step 3: Fetch the Score Report ---
-			// This payload only contains games with at least one score.
+			// --- Step 3: fetch scores (best-effort) ---
 			const std::string url = "https://www.iscored.info/api/" + iscoredGameroom_ + "/getAllScores";
 			std::string body, err;
-			if (!httpGet_(url, body, err)) {
-				LOG_WARNING("HiScores", "Could not fetch score payload: " + err + ". Game list is correct, but scores may be stale.");
-				// We don't return here; having a correct game list is still a success.
+			if (httpGet_(url, body, err)) {
+				ingestIScoredAll_(body, limit); // updates global_ internally with proper locking
 			}
 			else {
-				// --- Step 4: Populate the Synced Cache with Scores ---
-				// We can use the 'ingestIScoredAll_' logic, which just parses and builds a temporary map.
-				// It doesn't need to do any pruning.
-				ingestIScoredAll_(body, limit); // This function populates the 'global_' structure internally.
+				LOG_WARNING("HiScores", "Scores fetch failed: " + err + " (catalog still synced).");
 			}
 
-
-			// --- Step 5: Persist Snapshot of the Correct Cache to Disk ---
+			// --- Step 5: persist ---
 			if (!saveGlobalCacheToDisk()) {
 				LOG_WARNING("HiScores", "saveGlobalCacheToDisk failed after global update.");
 			}
 
-			// --- Step 6: Generate Missing QR Codes ---
-			// This now runs on a perfectly correct and synchronized list of games.
+			// --- Step 6: QR ensure (async fan-out) ---
 			try {
 				namespace fs = std::filesystem;
 				const std::string qrDir = Utils::combinePath(Configuration::absolutePath, "iScored", "qr");
-				std::error_code fec;
-				fs::create_directories(qrDir, fec);
+				std::error_code ec;
+				fs::create_directories(qrDir, ec);
 
 				std::vector<std::string> missing;
 				{
 					std::shared_lock<std::shared_mutex> lk(globalMutex_);
 					missing.reserve(global_.byId.size());
 					for (const auto& kv : global_.byId) {
-						const std::string outPath = Utils::combinePath(qrDir, kv.first + ".png");
-						if (!fs::exists(outPath)) missing.push_back(kv.first);
+						const std::string out = Utils::combinePath(qrDir, kv.first + ".png");
+						if (!fs::exists(out, ec)) missing.push_back(kv.first);
 					}
 				}
-				if (!missing.empty()) {
-					ensureAllQrPngsAsync_(std::move(missing));
-				}
-				else {
-					LOG_INFO("HiScores", "QR ensure: nothing missing.");
-				}
+				if (!missing.empty()) ensureAllQrPngsAsync_(std::move(missing));
+				else LOG_INFO("HiScores", "QR ensure: nothing missing.");
 			}
 			catch (const std::exception& e) {
 				LOG_ERROR("HiScores", std::string("QR ensure exception: ") + e.what());
@@ -1178,6 +1155,7 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
 		capRows_(kv.second.rows, capPerGame);
 	}
 
+	globalEpoch_.fetch_add(1, std::memory_order_acq_rel);
 	// --- MODIFICATION ---
 	// The destructive 'global_ = std::move(tmp)' is removed. The lock will be released
 	// automatically when the function ends.
