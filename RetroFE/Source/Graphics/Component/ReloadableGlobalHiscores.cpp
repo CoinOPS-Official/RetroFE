@@ -427,10 +427,43 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
     }
 
     // ========================================================================
-    // NEW: Build a SHARED column layout for this page (visible slice only).
+    // QR reservation for scale budgeting (so panel+QR fits in cell)
     // ========================================================================
+    std::vector<float> qrExtraW(Nvisible, 0.0f);
+    std::vector<float> qrExtraH(Nvisible, 0.0f);
+    for (int t = 0; t < Nvisible; ++t) {
+        if (t < (int)qrByTable_.size() && qrByTable_[t].ok) {
+            const auto& q = qrByTable_[t];
+            // Horizontal reservation
+            switch (qrPlacement_) {
+                case QrPlacement::TopLeft:
+                case QrPlacement::LeftMiddle:
+                case QrPlacement::BottomLeft:
+                qrExtraW[t] += (float)qrMarginPx_ + (float)q.w; break;
+                case QrPlacement::TopRight:
+                case QrPlacement::RightMiddle:
+                case QrPlacement::BottomRight:
+                qrExtraW[t] += (float)qrMarginPx_ + (float)q.w; break;
+                default: break;
+            }
+            // Vertical reservation
+            switch (qrPlacement_) {
+                case QrPlacement::TopCentered:
+                case QrPlacement::TopLeft:
+                case QrPlacement::TopRight:
+                qrExtraH[t] += (float)qrMarginPx_ + (float)q.h; break;
+                case QrPlacement::BottomCenter:
+                case QrPlacement::BottomLeft:
+                case QrPlacement::BottomRight:
+                qrExtraH[t] += (float)qrMarginPx_ + (float)q.h; break;
+                default: break;
+            }
+        }
+    }
 
-    // 1) Find max column count in the visible set
+    // ========================================================================
+    // Shared column layout for this page (visible slice only)
+    // ========================================================================
     size_t maxCols = 0;
     for (int t = 0; t < Nvisible; ++t) {
         const int gi = startIdx + t;
@@ -438,17 +471,14 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
     }
     if (maxCols == 0) { needsRedraw_ = true; return; }
 
-    // 2) Per-column max width at baseScale, and max title width (baseScale)
     std::vector<float> maxColW0(maxCols, 0.0f);
     float maxTitleW0 = 0.0f;
-
-    // Also keep per-table heights (for sH)
-    std::vector<float> height0(Nvisible, lineH0 * (1 + kRowsPerPage)); // init safely
+    std::vector<float> height0(Nvisible, lineH0 * (1 + kRowsPerPage)); // safety init
 
     for (int t = 0; t < Nvisible; ++t) {
         const auto& table = highScoreTable_->tables[startIdx + t];
 
-        // columns: use header + all rows (like you were doing)
+        // per-column max width across header+rows (baseScale)
         for (size_t c = 0; c < maxCols; ++c) {
             float w = 0.0f;
             if (c < table.columns.size()) {
@@ -460,21 +490,19 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
             maxColW0[c] = std::max(maxColW0[c], w);
         }
 
-        // title
+        // max title width (baseScale)
         if (!table.id.empty()) {
             maxTitleW0 = std::max(maxTitleW0, (float)font->getWidth(table.id) * baseScale);
         }
 
-        // height for this table (title + header + data) at baseScale
+        // content height (baseScale): title + header + rows (QR handled via reservation)
         float h = lineH0;                    // header
         if (!table.id.empty()) h += lineH0;  // title
         h += lineH0 * kRowsPerPage;          // rows
         height0[t] = h;
-        // (QR height reservations are handled by anchor; if you want them in scale,
-        //  add the same logic you had earlier here.)
     }
 
-    // 3) Shared total width at baseScale: sum(maxColW0) + pads, then ensure title fits
+    // sum(max column widths) + padding; ensure the longest title fits by distributing extra into pads
     float sumCols0 = 0.0f;
     for (float w : maxColW0) sumCols0 += w;
 
@@ -484,18 +512,24 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         const int gaps = (int)std::max<size_t>(1, maxCols - 1);
         const float grow0 = maxTitleW0 - sharedW0;
         sharedPad0 = colPad0 + grow0 / (float)gaps;
-        sharedW0 = maxTitleW0; // now title fits exactly
+        sharedW0 = maxTitleW0; // title fits exactly now
     }
 
-    // 4) Compute per-slot scale need: width uses sharedW0; height uses each table's height0
+    // Per-slot scale need with QR reservations baked in
     std::vector<float> needScale(Nvisible, 1.0f);
+    constexpr float fitEps = 0.5f; // guards tiny rounding clips at edges
     for (int t = 0; t < Nvisible; ++t) {
-        const float sW = sharedW0 > 0 ? (cellW / sharedW0) : 1.0f;
-        const float sH = height0[t] > 0 ? (cellH / height0[t]) : 1.0f;
-        needScale[t] = std::min({ 1.0f, sW, sH });
+        const float availW = std::max(0.0f, cellW - qrExtraW[t] - fitEps);
+        const float availH = std::max(0.0f, cellH - qrExtraH[t] - fitEps);
+
+        float sW = (sharedW0 > 0.0f) ? (availW / sharedW0) : 1.0f;
+        float sH = (height0[t] > 0.0f) ? (availH / height0[t]) : 1.0f;
+        sW = std::min(1.0f, std::max(0.0f, sW));
+        sH = std::min(1.0f, std::max(0.0f, sH));
+        needScale[t] = std::min(sW, sH);
     }
 
-    // 5) Row-wise minimum (like before), but using the "visible" page
+    // Row-wise minimum scale (visible page only)
     std::vector<float> rowMinVis(rows, 1.0f);
     for (int r = 0; r < rows; ++r) {
         float s = 1.0f;
@@ -518,7 +552,6 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         const int gi = startIdx + t;
         const auto& table = highScoreTable_->tables[gi];
 
-        // scale for this row (shared width -> same scale horizontally)
         const int slotRow = (t / cols);
         float finalScale = quantize(baseScale * rowMinVis[std::min(slotRow, rows - 1)]);
         const float scaleRatio = (baseScale > 0.f) ? (finalScale / baseScale) : 1.0f;
@@ -588,7 +621,7 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
             const auto& rowV = table.rows[(size_t)r];
             for (size_t c = 0; c < maxCols; ++c) {
                 std::string cell;
-                if (c < rowV.size()) cell = rowV[c]; // else empty
+                if (c < rowV.size()) cell = rowV[c];
 
                 const float textW = (float)font->getWidth(cell) * finalScale;
                 const bool  ph = isPlaceholderCell(cell);
@@ -641,6 +674,13 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         float anchorY = yCell;
         anchorX = std::round(clampf(anchorX, xCell, xCell + cellW - anchorW));
         anchorY = std::round(clampf(anchorY, yCell, yCell + cellH - anchorH));
+
+#ifndef NDEBUG
+        if (anchorW > cellW + 0.01f || anchorH > cellH + 0.01f) {
+            LOG_WARNING("ReloadableGlobalHiscores", "Anchor overflow (row=%d): W=%.2f/%.2f H=%.2f/%.2f",
+                (t / cols), anchorW, cellW, anchorH, cellH);
+        }
+#endif
 
         PlannedDraw pd;
         pd.dst = { anchorX + (float)extraL, anchorY + (float)extraT, (float)pt.w, (float)pt.h };
