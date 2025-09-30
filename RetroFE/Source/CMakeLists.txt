@@ -26,6 +26,9 @@ include_directories("${CMAKE_BINARY_DIR}/autogen")
 ##############################################################
 
 set(SQLITE3_ROOT "${RETROFE_THIRD_PARTY_DIR}/sqlite3")
+set(QRCODEGEN_ROOT "${RETROFE_THIRD_PARTY_DIR}/qrcodegen")
+set(CURL_ROOT "${RETROFE_THIRD_PARTY_DIR}/curl_x64-windows")
+set(JSON_ROOT "${RETROFE_THIRD_PARTY_DIR}/json/single_include")
 set(RAPIDXML_ROOT "${RETROFE_THIRD_PARTY_DIR}/rapidxml-1.13")
 set(KISSFFT_ROOT "${RETROFE_THIRD_PARTY_DIR}/kissfft-131.1.0")
 
@@ -99,6 +102,7 @@ else()
     pkg_check_modules(LIBEVDEV REQUIRED libevdev)
     pkg_check_modules(LIBUDEV  REQUIRED libudev)
     pkg_search_module(LIBSERIALPORT REQUIRED libserialport)
+    pkg_search_module(LIBCURL REQUIRED libcurl)
     find_package(Threads REQUIRED)
     
     # Include directories for all found libraries
@@ -118,6 +122,7 @@ else()
         ${LIBEVDEV_INCLUDE_DIRS}
         ${LIBUDEV_INCLUDE_DIRS}
         ${LIBSERIALPORT_INCLUDE_DIRS}
+        ${LIBCURL_INCLUDE_DIRS}
     )
     
     # Link directories (optional, mostly handled by pkg-config)
@@ -135,6 +140,7 @@ else()
         ${LIBEVDEV_LIBRARY_DIRS}
         ${LIBUDEV_LIBRARY_DIRS}
         ${LIBSERIALPORT_LIBRARY_DIRS}
+        ${LIBCURL_LIBRARY_DIRS}
     )
     
     # Append the necessary libraries to be linked
@@ -155,6 +161,7 @@ else()
         ${LIBEVDEV_LIBRARIES}
         ${LIBUDEV_LIBRARIES} 
         ${LIBSERIALPORT_LIBRARIES}
+        ${LIBCURL_LIBRARIES}
     )
     add_definitions(${LIBEVDEV_CFLAGS_OTHER})
     endif()
@@ -168,6 +175,9 @@ set(RETROFE_INCLUDE_DIRS
     "${SDL2_TTF_INCLUDE_DIRS}"
     "${ZLIB_INCLUDE_DIRS}"
     "${WEBP_INCLUDE_DIRS}"
+    "${QRCODEGEN_ROOT}"
+    "${JSON_ROOT}"
+    "${CURL_ROOT}/include"
     "${SQLITE3_ROOT}"
     "${RAPIDXML_ROOT}"
     "${PACDRIVE_ROOT}"
@@ -195,6 +205,7 @@ if(WIN32)
         "${ZLIB_ROOT}/lib/minizip.lib"
         "${LIBSERIALPORT_ROOT}/lib/libserialport.lib"
         "dxgi.lib"
+        "${CURL_ROOT}/lib/libcurl.lib"
     )
 endif()
 
@@ -247,6 +258,7 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Graphics/Component/ImageBuilder.h"
 	"${RETROFE_DIR}/Source/Graphics/Component/MusicPlayerComponent.h"
     "${RETROFE_DIR}/Source/Graphics/Component/ReloadableHiscores.h"
+    "${RETROFE_DIR}/Source/Graphics/Component/ReloadableGlobalHiscores.h"
 	"${RETROFE_DIR}/Source/Graphics/Component/ReloadableMedia.h"
 	"${RETROFE_DIR}/Source/Graphics/Component/ReloadableText.h"
 	"${RETROFE_DIR}/Source/Graphics/Component/ReloadableScrollingText.h"
@@ -326,6 +338,7 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Graphics/Component/ImageBuilder.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Component/MusicPlayerComponent.cpp"
     "${RETROFE_DIR}/Source/Graphics/Component/ReloadableHiscores.cpp"
+    "${RETROFE_DIR}/Source/Graphics/Component/ReloadableGlobalHiscores.cpp"
   	"${RETROFE_DIR}/Source/Graphics/Component/Text.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Component/ReloadableMedia.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Component/ReloadableText.cpp"
@@ -348,6 +361,7 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Main.cpp"
 	"${RETROFE_DIR}/Source/RetroFE.cpp"
 	"${RETROFE_DIR}/Source/SDL.cpp"
+    "${QRCODEGEN_ROOT}/qrcodegen.cpp"
     "${SQLITE3_ROOT}/sqlite3.c"
     "${KISSFFT_ROOT}/kiss_fft.c"
     "${KISSFFT_ROOT}/kiss_fftr.c"
