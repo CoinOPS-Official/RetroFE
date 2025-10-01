@@ -22,271 +22,260 @@
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
+#include "SDL_image.h"
 #include "../Font.h"
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
-
 
 ReloadableGlobalHiscores::ReloadableGlobalHiscores(Configuration& /*config*/, std::string textFormat,
-    Page& p, int displayOffset,
-    FontManager* font,
-    float baseColumnPadding, float baseRowPadding)
-    : Component(p)
-    , fontInst_(font)
-    , textFormat_(std::move(textFormat))
-    , baseColumnPadding_(baseColumnPadding)
-    , baseRowPadding_(baseRowPadding)
-    , displayOffset_(displayOffset)
-    , needsRedraw_(true)
-    , lastSelectedItem_(nullptr)
-    , highScoreTable_(nullptr)
-    , intermediateTexture_(nullptr) {
-    // Grid defaults (can be wired to XML later)
-    gridColsHint_ = 0;      // auto near-square
-    cellSpacingH_ = 0.02f;  // 2% of width
-    cellSpacingV_ = 0.02f;  // 2% of height
+	Page& p, int displayOffset,
+	FontManager* font,
+	float baseColumnPadding, float baseRowPadding)
+	: Component(p)
+	, fontInst_(font)
+	, textFormat_(std::move(textFormat))
+	, baseColumnPadding_(baseColumnPadding)
+	, baseRowPadding_(baseRowPadding)
+	, displayOffset_(displayOffset)
+	, needsRedraw_(true)
+	, highScoreTable_(nullptr)
+	, intermediateTexture_(nullptr) {
+	// Grid defaults (can be wired to XML later)
+	gridColsHint_ = 0;      // auto near-square
+	cellSpacingH_ = 0.02f;  // 2% of width
+	cellSpacingV_ = 0.02f;  // 2% of height
 
-    //allocateGraphicsMemory();
+	//allocateGraphicsMemory();
 }
 
 // Returns {startIndex, count} for the current page.
 // Guarantees count >= 0 and loops page index safely.
 static inline std::pair<int, int> computeVisibleRange(
-    int totalTables, int pageIndex, int pageSize) {
-    if (pageSize <= 0) pageSize = 6;                  // safety default
-    if (totalTables <= 0) return { 0, 0 };
-    const int pageCount = std::max(1, (totalTables + pageSize - 1) / pageSize);
-    const int safePage = (pageIndex % pageCount + pageCount) % pageCount; // modulo for safety
-    const int start = safePage * pageSize;
-    const int count = std::min(pageSize, totalTables - start);
-    return { start, count };
+	int totalTables, int pageIndex, int pageSize) {
+	if (pageSize <= 0) pageSize = 6;                  // safety default
+	if (totalTables <= 0) return { 0, 0 };
+	const int pageCount = std::max(1, (totalTables + pageSize - 1) / pageSize);
+	const int safePage = (pageIndex % pageCount + pageCount) % pageCount; // modulo for safety
+	const int start = safePage * pageSize;
+	const int count = std::min(pageSize, totalTables - start);
+	return { start, count };
 }
 
 ReloadableGlobalHiscores::~ReloadableGlobalHiscores() {
-    freeGraphicsMemory();
+	freeGraphicsMemory();
 }
 
 bool ReloadableGlobalHiscores::update(float dt) {
-    // Clamp weird dt spikes/NaNs
-    if (!std::isfinite(dt)) dt = 0.f;
-    dt = std::max(0.f, std::min(dt, 0.25f));
+	// Clamp weird dt spikes/NaNs
+	if (!std::isfinite(dt)) dt = 0.f;
+	dt = std::max(0.f, std::min(dt, 0.25f));
 
-    // Drive crossfade timer
-    if (fadeActive_) {
-        fadeT_ += dt;
-        if (fadeT_ >= fadeDurationSec_) {
-            fadeT_ = fadeDurationSec_;
-            fadeActive_ = false;
-            if (prevCompositeTexture_) {
-                SDL_DestroyTexture(prevCompositeTexture_);
-                prevCompositeTexture_ = nullptr;
-            }
-        }
-    }
+	// Drive crossfade timer
+	if (fadeActive_) {
+		fadeT_ += dt;
+		if (fadeT_ >= fadeDurationSec_) {
+			fadeT_ = fadeDurationSec_;
+			fadeActive_ = false;
+			if (prevCompositeTexture_) {
+				SDL_DestroyTexture(prevCompositeTexture_);
+				prevCompositeTexture_ = nullptr;
+			}
+		}
+	}
 
-    // Debounce timer for selection/scroll reloads
-    if (reloadDebounceTimer_ > 0.0f) {
-        reloadDebounceTimer_ = std::max(0.0f, reloadDebounceTimer_ - dt);
-    }
+	// Debounce timer for selection/scroll reloads
+	if (reloadDebounceTimer_ > 0.0f) {
+		reloadDebounceTimer_ = std::max(0.0f, reloadDebounceTimer_ - dt);
+	}
 
-    const float widthNow = baseViewInfo.Width;
-    const float heightNow = baseViewInfo.Height;
-    static float prevW = -1.f, prevH = -1.f, prevFont = -1.f;
+	const float widthNow = baseViewInfo.Width;
+	const float heightNow = baseViewInfo.Height;
+	const bool geomChanged = (prevGeomW_ != widthNow || prevGeomH_ != heightNow || prevGeomFont_ != baseViewInfo.FontSize);
+	const uint64_t epochNow = HiScores::getInstance().getGlobalEpoch();
+	const bool dataChanged = (epochNow != lastEpochSeen_);
 
-    const bool geomChanged = (prevW != widthNow || prevH != heightNow || prevFont != baseViewInfo.FontSize);
-    const uint64_t epochNow = HiScores::getInstance().getGlobalEpoch();
-    const bool dataChanged = (epochNow != lastEpochSeen_);
+	const bool selChange = newItemSelected || (newScrollItemSelected && getMenuScrollReload());
 
-    // SELECTION/SCROLL flags (same as before)
-    const bool selChange = newItemSelected || (newScrollItemSelected && getMenuScrollReload());
+	// This represents “we are about to load a different table set”
+	const bool tableContextChanged = (!highScoreTable_) || selChange || dataChanged;
 
-    // This represents “we are about to load a different table set”
-    const bool tableContextChanged = (!highScoreTable_) || selChange || dataChanged;
+	// If we are switching to a new table context, don't fade this first show
+	if (tableContextChanged) {
+		hasShownOnce_ = false;   // first paint of the new table should not fade
+		fadeActive_ = false;   // nuke any running fade
+		fadeStartPending_ = false;
+		fadeT_ = 0.0f;
+	}
 
-    // If we are switching to a new table context, don't fade this first show
-    if (tableContextChanged) {
-        hasShownOnce_ = false;   // first paint of the new table should not fade
-        fadeActive_ = false;   // nuke any running fade
-        fadeStartPending_ = false;
-        fadeT_ = 0.0f;
-    }
+	const bool needHardReload = geomChanged || !highScoreTable_ || dataChanged;
+	const bool needSelReload = selChange;
 
-    const bool needHardReload = geomChanged || !highScoreTable_ || dataChanged;
-    const bool needSelReload = selChange;
+	// Hard triggers: never debounced, no fade on first show
+	if (needHardReload) {
+		gridPageIndex_ = 0;
+		gridTimerSec_ = 0.0f;
+		gridBaselineValid_ = false;
+		reloadTexture();
 
-    // Hard triggers: never debounced, no fade on first show
-    if (needHardReload) {
-        gridPageIndex_ = 0;
-        gridTimerSec_ = 0.0f;
-        gridBaselineValid_ = false;
-        reloadTexture(true);
+		newItemSelected = false;
+		newScrollItemSelected = false;
+		prevGeomW_ = widthNow; prevGeomH_ = heightNow; prevGeomFont_ = baseViewInfo.FontSize;
+		lastEpochSeen_ = epochNow;
 
-        newItemSelected = false;
-        newScrollItemSelected = false;
-        prevW = widthNow;
-        prevH = heightNow;
-        prevFont = baseViewInfo.FontSize;
-        lastEpochSeen_ = epochNow;
+		reloadDebounceTimer_ = reloadDebounceSec_;
+		return Component::update(dt);
+	}
 
-        reloadDebounceTimer_ = reloadDebounceSec_;
-        return Component::update(dt);
-    }
+	// Selection/scroll triggers: debounce; skip fade on first show of new table
+	if (needSelReload) {
+		if (reloadDebounceTimer_ <= 0.0f) {
+			// hasShownOnce_ is already false from the tableContextChanged block above,
+			// so we do NOT arm a fade here.
+			gridPageIndex_ = 0;
+			gridTimerSec_ = 0.0f;
+			gridBaselineValid_ = false;
+			reloadTexture();
+			reloadDebounceTimer_ = reloadDebounceSec_;
+		}
+		newItemSelected = false;
+		newScrollItemSelected = false;
+		return Component::update(dt);
+	}
 
-    // Selection/scroll triggers: debounce; skip fade on first show of new table
-    if (needSelReload) {
-        if (reloadDebounceTimer_ <= 0.0f) {
-            // hasShownOnce_ is already false from the tableContextChanged block above,
-            // so we do NOT arm a fade here.
-            gridPageIndex_ = 0;
-            gridTimerSec_ = 0.0f;
-            gridBaselineValid_ = false;
-            reloadTexture(true);
-            reloadDebounceTimer_ = reloadDebounceSec_;
-        }
-        newItemSelected = false;
-        newScrollItemSelected = false;
-        return Component::update(dt);
-    }
+	// Normal page rotation (same table context) — fades are allowed
+	if (highScoreTable_ && !highScoreTable_->tables.empty()) {
+		const int totalTables = (int)highScoreTable_->tables.size();
+		const int pageSize = std::max(1, gridPageSize_);
+		const int pageCount = std::max(1, (totalTables + pageSize - 1) / pageSize);
 
-    // Normal page rotation (same table context) — fades are allowed
-    if (highScoreTable_ && !highScoreTable_->tables.empty()) {
-        const int totalTables = (int)highScoreTable_->tables.size();
-        const int pageSize = std::max(1, gridPageSize_);
-        const int pageCount = std::max(1, (totalTables + pageSize - 1) / pageSize);
+		if (pageCount > 1) {
+			gridTimerSec_ += dt;
+			if (gridTimerSec_ >= gridRotatePeriodSec_) {
+				gridTimerSec_ = 0.0f;
+				gridPageIndex_ = (gridPageIndex_ + 1) % pageCount;
 
-        if (pageCount > 1) {
-            gridTimerSec_ += dt;
-            if (gridTimerSec_ >= gridRotatePeriodSec_) {
-                gridTimerSec_ = 0.0f;
-                gridPageIndex_ = (gridPageIndex_ + 1) % pageCount;
+				// This is a flip within the same table context — fade is ok
+				fadeStartPending_ = true;
+				fadeActive_ = true;
+				fadeT_ = 0.0f;
 
-                // This is a flip within the same table context — fade is ok
-                fadeStartPending_ = true;
-                fadeActive_ = true;
-                fadeT_ = 0.0f;
+				reloadTexture();
+				reloadDebounceTimer_ = reloadDebounceSec_;
+			}
+		}
+		else {
+			gridTimerSec_ = 0.0f;
+			gridPageIndex_ = 0;
+		}
+	}
 
-                reloadTexture(true);
-                reloadDebounceTimer_ = reloadDebounceSec_;
-            }
-        }
-        else {
-            gridTimerSec_ = 0.0f;
-            gridPageIndex_ = 0;
-        }
-    }
-
-    return Component::update(dt);
+	return Component::update(dt);
 }
 
 void ReloadableGlobalHiscores::computeGridBaseline_(
-    SDL_Renderer* renderer, FontManager* font,
-    int totalTables, float compW, float compH,
-    float baseScale, float asc) {
-    // Decide number of slots in the grid: 6 if we have ?6 tables, else totalTables
-    const int slots = (totalTables >= gridPageSize_) ? gridPageSize_ : totalTables;
+	SDL_Renderer* renderer, FontManager* font,
+	int totalTables, float compW, float compH,
+	float baseScale, float asc) {
+	// Decide number of slots in the grid: 6 if we have ?6 tables, else totalTables
+	const int slots = (totalTables >= gridPageSize_) ? gridPageSize_ : totalTables;
 
-    // Geometry from fixed 'slots' (NOT from how many are visible on this page)
-    int cols = gridColsHint_ > 0 ? gridColsHint_ : (int)std::ceil(std::sqrt((double)slots));
-    cols = std::max(1, cols);
-    int rows = (slots + cols - 1) / cols;
+	// Geometry from fixed 'slots' (NOT from how many are visible on this page)
+	int cols = gridColsHint_ > 0 ? gridColsHint_ : (int)std::ceil(std::sqrt((double)slots));
+	cols = std::max(1, cols);
+	int rows = (slots + cols - 1) / cols;
 
-    const float spacingH = cellSpacingH_ * compW;
-    const float spacingV = cellSpacingV_ * compH;
-    const float totalW = compW - spacingH * (cols - 1);
-    const float totalH = compH - spacingV * (rows - 1);
-    const float cellW = totalW / cols;
-    const float cellH = totalH / rows;
+	const float spacingH = cellSpacingH_ * compW;
+	const float spacingV = cellSpacingV_ * compH;
+	const float totalW = compW - spacingH * (cols - 1);
+	const float totalH = compH - spacingV * (rows - 1);
+	const float cellW = totalW / cols;
+	const float cellH = totalH / rows;
 
-    // Measure first page (startIdx=0) to produce per-row min scale
-    const int firstPageCount = std::min(slots, totalTables);
+	// Measure first page (startIdx=0) to produce per-row min scale
+	const int firstPageCount = std::min(slots, totalTables);
 
-    std::vector<float> needScale(firstPageCount, 1.0f);
-    const float drawableH0 = asc * baseScale;
+	std::vector<float> needScale(firstPageCount, 1.0f);
+	const float drawableH0 = asc * baseScale;
 
-    for (int t = 0; t < firstPageCount; ++t) {
-        const auto& table = highScoreTable_->tables[t];
+	for (int t = 0; t < firstPageCount; ++t) {
+		const auto& table = highScoreTable_->tables[t];
 
-        const float lineH0 = drawableH0 * (1.0f + baseRowPadding_);
-        const float colPad0 = baseColumnPadding_ * drawableH0;
+		const float lineH0 = drawableH0 * (1.0f + baseRowPadding_);
+		const float colPad0 = baseColumnPadding_ * drawableH0;
 
-        float width0 = 0.0f;
-        for (size_t c = 0; c < table.columns.size(); ++c) {
-            float w = (float)font->getWidth(table.columns[c]) * baseScale;
-            for (const auto& row : table.rows)
-                if (c < row.size()) w = std::max(w, (float)font->getWidth(row[c]) * baseScale);
-            width0 += w;
-            if (c + 1 < table.columns.size()) width0 += colPad0;
-        }
-        if (!table.id.empty()) {
-            width0 = std::max(width0, (float)font->getWidth(table.id) * baseScale);
-        }
+		float width0 = 0.0f;
+		for (size_t c = 0; c < table.columns.size(); ++c) {
+			float w = (float)font->getWidth(table.columns[c]) * baseScale;
+			for (const auto& row : table.rows)
+				if (c < row.size()) w = std::max(w, (float)font->getWidth(row[c]) * baseScale);
+			width0 += w;
+			if (c + 1 < table.columns.size()) width0 += colPad0;
+		}
+		if (!table.id.empty()) {
+			width0 = std::max(width0, (float)font->getWidth(table.id) * baseScale);
+		}
 
-        float height0 = lineH0;                    // header
-        if (!table.id.empty()) height0 += lineH0;  // title
-        height0 += lineH0 * kRowsPerPage;          // rows
+		float height0 = lineH0;                    // header
+		if (!table.id.empty()) height0 += lineH0;  // title
+		height0 += lineH0 * kRowsPerPage;          // rows
 
-        // NOTE: we ignore QR in baseline; if you want to include it, load sizes here.
+		// NOTE: we ignore QR in baseline; if you want to include it, load sizes here.
 
-        const float sW = width0 > 0 ? (cellW / width0) : 1.0f;
-        const float sH = height0 > 0 ? (cellH / height0) : 1.0f;
-        needScale[t] = std::min({ 1.0f, sW, sH });
-    }
+		const float sW = width0 > 0 ? (cellW / width0) : 1.0f;
+		const float sH = height0 > 0 ? (cellH / height0) : 1.0f;
+		needScale[t] = std::min({ 1.0f, sW, sH });
+	}
 
-    // Per-row minimum over the first-page items
-    std::vector<float> rowMin(rows, 1.0f);
-    for (int r = 0; r < rows; ++r) {
-        float s = 1.0f;
-        for (int c = 0; c < cols; ++c) {
-            int i = r * cols + c; if (i >= firstPageCount) break;
-            s = std::min(s, needScale[i]);
-        }
-        rowMin[r] = s;
-    }
+	// Per-row minimum over the first-page items
+	std::vector<float> rowMin(rows, 1.0f);
+	for (int r = 0; r < rows; ++r) {
+		float s = 1.0f;
+		for (int c = 0; c < cols; ++c) {
+			int i = r * cols + c; if (i >= firstPageCount) break;
+			s = std::min(s, needScale[i]);
+		}
+		rowMin[r] = s;
+	}
 
-    // Save as baseline
-    gridBaselineSlots_ = slots;
-    gridBaselineCols_ = cols;
-    gridBaselineRows_ = rows;
-    gridBaselineCellW_ = cellW;
-    gridBaselineCellH_ = cellH;
-    gridBaselineRowMin_ = std::move(rowMin);
-    gridBaselineValid_ = true;
+	// Save as baseline
+	gridBaselineSlots_ = slots;
+	gridBaselineCols_ = cols;
+	gridBaselineRows_ = rows;
+	gridBaselineCellW_ = cellW;
+	gridBaselineCellH_ = cellH;
+	gridBaselineRowMin_ = std::move(rowMin);
+	gridBaselineValid_ = true;
 }
 
 
 void ReloadableGlobalHiscores::allocateGraphicsMemory() {
-    Component::allocateGraphicsMemory();
-    reloadTexture(true);
+	Component::allocateGraphicsMemory();
+	reloadTexture();
 }
 
 void ReloadableGlobalHiscores::freeGraphicsMemory() {
-    Component::freeGraphicsMemory();
+	Component::freeGraphicsMemory();
 
-    for (auto& p : tablePanels_) {
-        if (p.tex) { SDL_DestroyTexture(p.tex); p.tex = nullptr; }
-    }
-    tablePanels_.clear();
+	if (intermediateTexture_) {
+		SDL_DestroyTexture(intermediateTexture_);
+		intermediateTexture_ = nullptr;
+	}
+	if (prevCompositeTexture_) { SDL_DestroyTexture(prevCompositeTexture_); prevCompositeTexture_ = nullptr; }
 
-    if (intermediateTexture_) {
-        SDL_DestroyTexture(intermediateTexture_);
-        intermediateTexture_ = nullptr;
-    }
-
-    destroyAllQr_(); // <— add this
+	destroyAllQr_();
 }
 
 
 void ReloadableGlobalHiscores::deInitializeFonts() {
-    if (fontInst_) fontInst_->deInitialize();
+	if (fontInst_) fontInst_->deInitialize();
 }
 
 void ReloadableGlobalHiscores::initializeFonts() {
-    if (fontInst_) fontInst_->initialize();
+	if (fontInst_) fontInst_->initialize();
 }
 
-void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
+void ReloadableGlobalHiscores::reloadTexture() {
     // ---- text render helpers (unchanged) ------------------------------------
     auto renderTextWithKerning = [&](SDL_Renderer* r, FontManager* font,
         const std::string& s, float x, float y, float scale) {
@@ -366,22 +355,21 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         }
         return x;
         };
+    auto clampf = [](float v, float lo, float hi) { return std::max(lo, std::min(v, hi)); };
 
     // ---- setup / clear -------------------------------------------------------
     SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
 
-    for (auto& p : tablePanels_) if (p.tex) { SDL_DestroyTexture(p.tex); p.tex = nullptr; }
-    tablePanels_.clear();
-    for (auto& q : qrByTable_) if (q.tex) SDL_DestroyTexture(q.tex);
-    qrByTable_.clear();
+    // We no longer keep per-panel textures; just clear QRs from last frame.
+    destroyAllQr_();
 
     Item* selectedItem = page.getSelectedItem(displayOffset_);
     if (!selectedItem || !renderer) { highScoreTable_ = nullptr; needsRedraw_ = true; return; }
+
     highScoreTable_ = HiScores::getInstance().getGlobalHiScoreTable(selectedItem);
     if (!highScoreTable_ || highScoreTable_->tables.empty()) { needsRedraw_ = true; return; }
 
     const int totalTables = (int)highScoreTable_->tables.size();
-
     const float compW = baseViewInfo.Width;
     const float compH = baseViewInfo.Height;
 
@@ -393,6 +381,21 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
     const float drawableH0 = asc * baseScale;
     const float lineH0 = drawableH0 * (1.0f + baseRowPadding_);
     const float colPad0 = baseColumnPadding_ * drawableH0;
+
+    // Ensure full-bounds composite RT exists (ABGR8888 everywhere to avoid conversion)
+    const int compositeW = (int)std::lround(compW);
+    const int compositeH = (int)std::lround(compH);
+    if (!intermediateTexture_ || compW_ != compositeW || compH_ != compositeH) {
+        if (intermediateTexture_) SDL_DestroyTexture(intermediateTexture_);
+        intermediateTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+            SDL_TEXTUREACCESS_TARGET, compositeW, compositeH);
+        if (!intermediateTexture_) { needsRedraw_ = true; return; }
+        SDL_SetTextureBlendMode(intermediateTexture_, SDL_BLENDMODE_BLEND);
+        compW_ = compositeW; compH_ = compositeH;
+
+        // New size invalidates previous snapshot
+        if (prevCompositeTexture_) { SDL_DestroyTexture(prevCompositeTexture_); prevCompositeTexture_ = nullptr; }
+    }
 
     // Baseline grid geometry (unchanged)
     if (!gridBaselineValid_) {
@@ -412,7 +415,9 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
 
     // ---- Load QRs for visible set -------------------------------------------
     std::vector<std::string> gameIds;
-    if (!selectedItem->iscoredId.empty()) Utils::listToVector(selectedItem->iscoredId, gameIds, ',');
+    if (!selectedItem->iscoredId.empty())
+        Utils::listToVector(selectedItem->iscoredId, gameIds, ',');
+
     qrByTable_.assign(Nvisible, {});
     for (int t = 0; t < Nvisible; ++t) {
         const int gi = startIdx + t;
@@ -439,7 +444,6 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
                 case QrPlacement::TopLeft:
                 case QrPlacement::LeftMiddle:
                 case QrPlacement::BottomLeft:
-                qrExtraW[t] += (float)qrMarginPx_ + (float)q.w; break;
                 case QrPlacement::TopRight:
                 case QrPlacement::RightMiddle:
                 case QrPlacement::BottomRight:
@@ -451,7 +455,6 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
                 case QrPlacement::TopCentered:
                 case QrPlacement::TopLeft:
                 case QrPlacement::TopRight:
-                qrExtraH[t] += (float)qrMarginPx_ + (float)q.h; break;
                 case QrPlacement::BottomCenter:
                 case QrPlacement::BottomLeft:
                 case QrPlacement::BottomRight:
@@ -544,15 +547,39 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
         const float q = 64.f; return std::max(0.f, std::round(s * q) / q);
         };
 
-    // ---- plan, build textures ------------------------------------------------
-    planned_.assign(Nvisible, {});
-    tablePanels_.resize(Nvisible);
+    // If a same-context page flip is coming, snapshot the current composite BEFORE repaint
+    if (fadeStartPending_) {
+        if (!prevCompositeTexture_) {
+            prevCompositeTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                SDL_TEXTUREACCESS_TARGET, compositeW, compositeH);
+            SDL_SetTextureBlendMode(prevCompositeTexture_, SDL_BLENDMODE_BLEND);
+        }
+        SDL_Texture* oldRT = SDL_GetRenderTarget(renderer);
+        SDL_SetRenderTarget(renderer, prevCompositeTexture_);
+        if (intermediateTexture_)
+            SDL_RenderCopy(renderer, intermediateTexture_, nullptr, nullptr);
+        SDL_SetRenderTarget(renderer, oldRT);
+        fadeStartPending_ = false; // snapshot captured
+    }
 
+    // ==== Paint EVERYTHING directly to the composite ====
+    SDL_Texture* old = SDL_GetRenderTarget(renderer);
+    SDL_SetRenderTarget(renderer, intermediateTexture_);
+    SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
+    SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+    SDL_RenderClear(renderer);
+
+    // Draw each visible table into its cell region on the composite
     for (int t = 0; t < Nvisible; ++t) {
         const int gi = startIdx + t;
         const auto& table = highScoreTable_->tables[gi];
 
+        const int slotCol = (t % cols);
         const int slotRow = (t / cols);
+
+        const float xCell = slotCol * (cellW + spacingH);
+        const float yCell = slotRow * (cellH + spacingV);
+
         float finalScale = quantize(baseScale * rowMinVis[std::min(slotRow, rows - 1)]);
         const float scaleRatio = (baseScale > 0.f) ? (finalScale / baseScale) : 1.0f;
 
@@ -569,84 +596,14 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
             if (c + 1 < maxCols) totalWCols += colPad;
         }
 
-        // heights
-        float titleH = table.id.empty() ? 0.0f : lineH;
-        float headerH = lineH;
-        float dataH = lineH * kRowsPerPage;
+        // Text block height at finalScale
+        const float titleH = table.id.empty() ? 0.0f : lineH;
+        const float headerH = lineH;
+        const float dataH = lineH * kRowsPerPage;
         const float textBlockHeight = titleH + headerH + dataH;
 
-        int pageW = std::max(1, (int)std::ceil(totalWCols));
-        int pageH = std::max(1, (int)std::ceil(textBlockHeight));
-
-        PageTex pt;
-        pt.tex = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, pageW, pageH);
-        pt.w = pageW; pt.h = pageH;
-        SDL_SetTextureBlendMode(pt.tex, SDL_BLENDMODE_BLEND);
-
-        SDL_Texture* old = SDL_GetRenderTarget(renderer);
-        SDL_SetRenderTarget(renderer, pt.tex);
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-        SDL_RenderClear(renderer);
-
-        float y = 0.0f;
-
-        // ---- Title (centered over shared width) -----------------------------
-        if (!table.id.empty()) {
-            int titleWpx = (int)std::lround(font->getWidth(table.id) * finalScale);
-            int totalWpx = (int)std::lround(totalWCols);
-            float x = std::round((float)((totalWpx - titleWpx) / 2));
-            renderTextOutlined(renderer, font, table.id, x, y, finalScale);
-            y += lineH;
-        }
-
-        // ---- Headers (centered inside shared column widths) -----------------
-        {
-            float x = 0.0f;
-            for (size_t c = 0; c < maxCols; ++c) {
-                if (c < table.columns.size()) {
-                    const std::string& header = table.columns[c];
-                    float hw = (float)font->getWidth(header) * finalScale;
-                    float xAligned = std::round(x + (colW[c] - hw) * 0.5f);
-                    renderTextOutlined(renderer, font, header, xAligned, y, finalScale);
-                }
-                x += colW[c];
-                if (c + 1 < maxCols) x += colPad;
-            }
-            y += lineH;
-        }
-
-        // ---- Rows (align per column policy; placeholders centered) ----------
-        for (int r = 0; r < kRowsPerPage; ++r) {
-            float x = 0.0f;
-            const auto& rowV = table.rows[(size_t)r];
-            for (size_t c = 0; c < maxCols; ++c) {
-                std::string cell;
-                if (c < rowV.size()) cell = rowV[c];
-
-                const float textW = (float)font->getWidth(cell) * finalScale;
-                const bool  ph = isPlaceholderCell(cell);
-                const ColAlign a = ph ? ColAlign::Center : colAlignFor(c, maxCols);
-                const float xAligned = alignX(x, colW[c], textW, a);
-
-                if (!cell.empty()) {
-                    renderTextOutlined(renderer, font, cell, xAligned, y, finalScale);
-                }
-
-                x += colW[c];
-                if (c + 1 < maxCols) x += colPad;
-            }
-            y += lineH;
-        }
-
-#ifndef NDEBUG
-        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
-        SDL_Rect outline = { 0, 0, pt.w, pt.h };
-        SDL_RenderDrawRect(renderer, &outline);
-#endif
-        SDL_SetRenderTarget(renderer, old);
-        tablePanels_[t] = pt;
-
-        // ---- Anchor inside fixed grid cell (same positions across page) ----
+        // Compute "panel" placement inside the fixed cell (same logic as before)
+        // First compute the space the QR will reserve on each side for anchoring
         int extraL = 0, extraR = 0, extraT = 0, extraB = 0;
         if (t < (int)qrByTable_.size() && qrByTable_[t].ok) {
             const auto& q = qrByTable_[t];
@@ -663,198 +620,196 @@ void ReloadableGlobalHiscores::reloadTexture(bool /*reset*/) {
             }
         }
 
-        const float xCell = (t % cols) * (cellW + spacingH);
-        const float yCell = (t / cols) * (cellH + spacingV);
+        const float panelW = (float)std::ceil(totalWCols);
+        const float panelH = (float)std::ceil(textBlockHeight);
 
-        const float anchorW = (float)pt.w + (float)(extraL + extraR);
-        const float anchorH = (float)pt.h + (float)(extraT + extraB);
+        float anchorW = panelW + (float)(extraL + extraR);
+        float anchorH = panelH + (float)(extraT + extraB);
 
-        auto clampf = [](float v, float lo, float hi) { return std::max(lo, std::min(v, hi)); };
         float anchorX = xCell + (cellW - anchorW) * 0.5f;
         float anchorY = yCell;
         anchorX = std::round(clampf(anchorX, xCell, xCell + cellW - anchorW));
         anchorY = std::round(clampf(anchorY, yCell, yCell + cellH - anchorH));
 
-#ifndef NDEBUG
-        if (anchorW > cellW + 0.01f || anchorH > cellH + 0.01f) {
-            LOG_WARNING("ReloadableGlobalHiscores", "Anchor overflow (row=%d): W=%.2f/%.2f H=%.2f/%.2f",
-                (t / cols), anchorW, cellW, anchorH, cellH);
+        // Local top-left where we actually start drawing text
+        const float drawX0 = anchorX + (float)extraL;
+        float y = anchorY + (float)extraT;
+
+        // ---- Title (centered over shared width) -----------------------------
+        if (!table.id.empty()) {
+            int titleWpx = (int)std::lround(font->getWidth(table.id) * finalScale);
+            int totalWpx = (int)std::lround(totalWCols);
+            float x = std::round((float)((totalWpx - titleWpx) / 2));
+            renderTextOutlined(renderer, font, table.id, drawX0 + x, y, finalScale);
+            y += lineH;
         }
+
+        // ---- Headers (centered inside shared column widths) -----------------
+        {
+            float x = 0.0f;
+            for (size_t c = 0; c < maxCols; ++c) {
+                if (c < table.columns.size()) {
+                    const std::string& header = table.columns[c];
+                    float hw = (float)font->getWidth(header) * finalScale;
+                    float xAligned = std::round(drawX0 + x + (colW[c] - hw) * 0.5f);
+                    renderTextOutlined(renderer, font, header, xAligned, y, finalScale);
+                }
+                x += colW[c];
+                if (c + 1 < maxCols) x += colPad;
+            }
+            y += lineH;
+        }
+
+        // ---- Rows (align per column policy; placeholders centered) ----------
+        for (int r = 0; r < kRowsPerPage; ++r) {
+            float x = 0.0f;
+            const auto* rowV = (r < (int)table.rows.size()) ? &table.rows[r] : nullptr;
+            for (size_t c = 0; c < maxCols; ++c) {
+                std::string cell;
+                if (rowV && c < rowV->size()) cell = (*rowV)[c];
+
+                const float textW = (float)font->getWidth(cell) * finalScale;
+                const bool  ph = isPlaceholderCell(cell);
+                const ColAlign a = ph ? ColAlign::Center : colAlignFor(c, maxCols);
+                const float xAligned = alignX(drawX0 + x, colW[c], textW, a);
+
+                if (!cell.empty()) {
+                    renderTextOutlined(renderer, font, cell, std::round(xAligned), y, finalScale);
+                }
+
+                x += colW[c];
+                if (c + 1 < maxCols) x += colPad;
+            }
+            y += lineH;
+        }
+
+#ifndef NDEBUG
+        // Panel outline (debug)
+        SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
+        SDL_Rect outline = { (int)std::lround(drawX0), (int)std::lround(anchorY + (float)extraT),
+                             (int)std::lround(panelW), (int)std::lround(panelH) };
+        SDL_RenderDrawRect(renderer, &outline);
 #endif
 
-        PlannedDraw pd;
-        pd.dst = { anchorX + (float)extraL, anchorY + (float)extraT, (float)pt.w, (float)pt.h };
-        pd.headerTopLocal = titleH;
-        pd.anchorX = anchorX; pd.anchorY = anchorY;
-        pd.anchorW = anchorW; pd.anchorH = anchorH;
-        pd.extraL = extraL; pd.extraR = extraR; pd.extraT = extraT; pd.extraB = extraB;
-        planned_[t] = pd;
+        // ---- QR draw relative to panel rect --------------------------------
+        if (t < (int)qrByTable_.size() && qrByTable_[t].ok) {
+            const QrEntry& q = qrByTable_[t];
+
+            // Base panel rect
+            SDL_FRect panel = { drawX0, anchorY + (float)extraT, panelW, panelH };
+
+            float qrX = 0.f, qrY = 0.f;
+            switch (qrPlacement_) {
+                case QrPlacement::TopCentered:
+                qrX = panel.x + (panel.w - (float)q.w) * 0.5f;
+                qrY = panel.y - (float)qrMarginPx_ - (float)q.h;
+                break;
+                case QrPlacement::BottomCenter:
+                qrX = panel.x + (panel.w - (float)q.w) * 0.5f;
+                qrY = panel.y + panel.h + (float)qrMarginPx_;
+                break;
+                case QrPlacement::TopRight:
+                qrX = panel.x + panel.w + (float)qrMarginPx_;
+                qrY = panel.y + (float)qrMarginPx_;
+                break;
+                case QrPlacement::TopLeft:
+                qrX = panel.x - (float)qrMarginPx_ - (float)q.w;
+                qrY = panel.y + (float)qrMarginPx_;
+                break;
+                case QrPlacement::BottomRight:
+                qrX = panel.x + panel.w + (float)qrMarginPx_;
+                qrY = panel.y + panel.h - (float)q.h - (float)qrMarginPx_;
+                break;
+                case QrPlacement::BottomLeft:
+                qrX = panel.x - (float)qrMarginPx_ - (float)q.w;
+                qrY = panel.y + panel.h - (float)q.h - (float)qrMarginPx_;
+                break;
+                case QrPlacement::RightMiddle:
+                qrX = panel.x + panel.w + (float)qrMarginPx_;
+                qrY = panel.y + (panel.h - (float)q.h) * 0.5f;
+                break;
+                case QrPlacement::LeftMiddle:
+                qrX = panel.x - (float)qrMarginPx_ - (float)q.w;
+                qrY = panel.y + (panel.h - (float)q.h) * 0.5f;
+                break;
+                default:
+                qrX = panel.x + (panel.w - (float)q.w) * 0.5f;
+                qrY = panel.y + panel.h + (float)qrMarginPx_;
+                break;
+            }
+
+            FontManager* useFont = font; // this is the active font you computed above
+            if (useFont) {
+                const SDL_Color c = useFont->getColor();
+                Uint8 maxCh = std::max({ c.r, c.g, c.b });
+                SDL_SetTextureColorMod(q.tex, maxCh, maxCh, maxCh);
+                SDL_SetTextureAlphaMod(q.tex, c.a);
+                SDL_SetTextureBlendMode(q.tex, SDL_BLENDMODE_BLEND);
+            }
+
+            SDL_FRect qrDst = { qrX, qrY, (float)q.w, (float)q.h };
+            SDL_RenderCopyF(renderer, q.tex, nullptr, &qrDst);
+        }
     }
 
-    needsRedraw_ = true;
+#ifndef NDEBUG
+    // Composite bounds outline (debug)
+    SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
+    SDL_Rect outlineRect = { 0, 0, compositeW - 1, compositeH - 1 };
+    SDL_RenderDrawRect(renderer, &outlineRect);
+#endif
+
+    SDL_SetRenderTarget(renderer, old);
+
+    // We fully painted the composite
+    hasShownOnce_ = true;
+    needsRedraw_ = false;
 }
 
 void ReloadableGlobalHiscores::draw() {
     Component::draw();
 
+    // Basic guards
     if (baseViewInfo.Alpha <= 0.0f) return;
     if (!(highScoreTable_ && !highScoreTable_->tables.empty())) return;
-    if (tablePanels_.empty() || planned_.empty()) return;
 
     SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
     if (!renderer) return;
 
-    const int compositeW = (int)std::lround(baseViewInfo.Width);
-    const int compositeH = (int)std::lround(baseViewInfo.Height);
-    if (compositeW <= 0 || compositeH <= 0) return;
+    // We rely on reloadTexture() to size/paint intermediateTexture_
+    if (!intermediateTexture_) return;
 
-    static int prevW = 0, prevH = 0;
-    const bool sizeChanged = (!intermediateTexture_) || prevW != compositeW || prevH != compositeH;
-    if (sizeChanged) {
-        if (intermediateTexture_) SDL_DestroyTexture(intermediateTexture_);
-        intermediateTexture_ = SDL_CreateTexture(
-            renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, compositeW, compositeH);
-        if (!intermediateTexture_) return;
-        SDL_SetTextureBlendMode(intermediateTexture_, SDL_BLENDMODE_BLEND);
-        prevW = compositeW; prevH = compositeH;
-        needsRedraw_ = true;
+    // Nothing to repaint here. If something got dirty, update() should have called reloadTexture().
+    // (If you still use needsRedraw_, you could early-return if it's true, but typically
+    //  reloadTexture() will have set needsRedraw_ = false by now.)
 
-        // Invalidate previous snapshot at new size
-        if (prevCompositeTexture_) { SDL_DestroyTexture(prevCompositeTexture_); prevCompositeTexture_ = nullptr; }
-    }
-
-    // If a crossfade was armed, snapshot the CURRENT page before repainting it
-    if (fadeStartPending_) {
-        if (!prevCompositeTexture_) {
-            prevCompositeTexture_ = SDL_CreateTexture(
-                renderer, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_TARGET, compositeW, compositeH);
-            SDL_SetTextureBlendMode(prevCompositeTexture_, SDL_BLENDMODE_BLEND);
-        }
-        SDL_Texture* oldRT = SDL_GetRenderTarget(renderer);
-        SDL_SetRenderTarget(renderer, prevCompositeTexture_);
-        //SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-        //SDL_RenderClear(renderer);
-        if (intermediateTexture_) {
-            SDL_RenderCopy(renderer, intermediateTexture_, nullptr, nullptr);
-        }
-        SDL_SetRenderTarget(renderer, oldRT);
-        fadeStartPending_ = false; // snapshot captured
-    }
-
-    if (needsRedraw_) {
-        SDL_Texture* oldTarget = SDL_GetRenderTarget(renderer);
-        SDL_SetRenderTarget(renderer, intermediateTexture_);
-
-        SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
-        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
-        SDL_RenderClear(renderer);
-
-        const int Nvisible = (int)std::min(tablePanels_.size(), planned_.size());
-
-        // 1) Panels
-        for (int i = 0; i < Nvisible; ++i) {
-            const PageTex& pt = tablePanels_[i];
-            if (!pt.tex) continue;
-            const SDL_FRect& dst = planned_[i].dst;
-            SDL_RenderCopyF(renderer, pt.tex, nullptr, &dst);
-        }
-
-        // 2) QRs (positioned relative to each panel rect)
-        if (!qrByTable_.empty() && Nvisible > 0) {
-            const int Mqr = (int)std::min({ qrByTable_.size(), tablePanels_.size(), planned_.size() });
-            for (int i = 0; i < Mqr; ++i) {
-                const QrEntry& q = qrByTable_[i];
-                if (!q.ok || !q.tex) continue;
-
-                const SDL_FRect& panel = planned_[i].dst;
-                float qrX = 0.f, qrY = 0.f;
-
-                switch (qrPlacement_) {
-                    case QrPlacement::TopCentered:
-                    qrX = panel.x + (panel.w - (float)q.w) * 0.5f;
-                    qrY = panel.y - (float)qrMarginPx_ - (float)q.h;
-                    break;
-                    case QrPlacement::BottomCenter:
-                    qrX = panel.x + (panel.w - (float)q.w) * 0.5f;
-                    qrY = panel.y + panel.h + (float)qrMarginPx_;
-                    break;
-                    case QrPlacement::TopRight:
-                    qrX = panel.x + panel.w + (float)qrMarginPx_;
-                    qrY = panel.y + (float)qrMarginPx_;
-                    break;
-                    case QrPlacement::TopLeft:
-                    qrX = panel.x - (float)qrMarginPx_ - (float)q.w;
-                    qrY = panel.y + planned_[i].headerTopLocal + (float)qrMarginPx_;
-                    break;
-                    case QrPlacement::BottomRight:
-                    qrX = panel.x + panel.w + (float)qrMarginPx_;
-                    qrY = panel.y + panel.h - (float)q.h - (float)qrMarginPx_;
-                    break;
-                    case QrPlacement::BottomLeft:
-                    qrX = panel.x - (float)qrMarginPx_ - (float)q.w;
-                    qrY = panel.y + panel.h - (float)q.h - (float)qrMarginPx_;
-                    break;
-                    case QrPlacement::RightMiddle:
-                    qrX = panel.x + panel.w + (float)qrMarginPx_;
-                    qrY = panel.y + (panel.h - (float)q.h) * 0.5f;
-                    break;
-                    case QrPlacement::LeftMiddle:
-                    qrX = panel.x - (float)qrMarginPx_ - (float)q.w;
-                    qrY = panel.y + (panel.h - (float)q.h) * 0.5f;
-                    break;
-                    default: // BottomCenter
-                    qrX = panel.x + (panel.w - (float)q.w) * 0.5f;
-                    qrY = panel.y + panel.h + (float)qrMarginPx_;
-                    break;
-                }
-
-                if (fontInst_) {
-                    const SDL_Color c = fontInst_->getColor();
-                    Uint8 maxCh = std::max({ c.r, c.g, c.b });
-                    SDL_SetTextureColorMod(q.tex, maxCh, maxCh, maxCh);
-                    SDL_SetTextureAlphaMod(q.tex, c.a);
-                    SDL_SetTextureBlendMode(q.tex, SDL_BLENDMODE_BLEND);
-                }
-
-                SDL_FRect qrDst = { qrX, qrY, (float)q.w, (float)q.h };
-                SDL_RenderCopyF(renderer, q.tex, nullptr, &qrDst);
-            }
-        }
-
-#ifndef NDEBUG
-        SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
-        SDL_Rect outlineRect = { 0, 0, compositeW - 1, compositeH - 1 };
-        SDL_RenderDrawRect(renderer, &outlineRect);
-#endif
-
-        SDL_SetRenderTarget(renderer, oldTarget);
-        needsRedraw_ = false;
-    }
-
-    // Final composite: either crossfade or normal draw
+    // Final composite: either crossfade or normal draw to the layout rect
     SDL_FRect rect = {
         baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
         baseViewInfo.ScaledWidth(),       baseViewInfo.ScaledHeight()
     };
 
     if (fadeActive_ && prevCompositeTexture_) {
-        const float A = baseViewInfo.Alpha;
+        // clamp t
         float t = (fadeDurationSec_ > 0.f) ? (fadeT_ / fadeDurationSec_) : 1.f;
         if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
-        // Optional easing:
-        // t = t * t * (3.f - 2.f * t); // smoothstep
+
+        const float A = baseViewInfo.Alpha;
 
         // Old page fades out
-        SDL::renderCopyF(prevCompositeTexture_, A * (1.0f - t), nullptr, &rect, baseViewInfo,
+        SDL::renderCopyF(
+            prevCompositeTexture_, A * (1.0f - t), nullptr, &rect, baseViewInfo,
             page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
             page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
 
         // New page fades in
-        SDL::renderCopyF(intermediateTexture_, A * t, nullptr, &rect, baseViewInfo,
+        SDL::renderCopyF(
+            intermediateTexture_, A * t, nullptr, &rect, baseViewInfo,
             page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
             page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
     }
     else {
+        // Normal draw
         SDL::renderCopyF(
             intermediateTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
             page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
@@ -864,9 +819,9 @@ void ReloadableGlobalHiscores::draw() {
 
 
 void ReloadableGlobalHiscores::destroyAllQr_() {
-    for (auto& q : qrByTable_) {
-        if (q.tex) SDL_DestroyTexture(q.tex);
-        q = {};
-    }
-    qrByTable_.clear();
+	for (auto& q : qrByTable_) {
+		if (q.tex) SDL_DestroyTexture(q.tex);
+		q = {};
+	}
+	qrByTable_.clear();
 }

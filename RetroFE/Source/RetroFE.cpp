@@ -1253,7 +1253,6 @@ bool RetroFE::run() {
 
 
 
-				currentPage_->onNewItemSelected();
 
 				currentPage_->reallocateMenuSpritePoints(); // update playlist menu
 				currentPage_->playlistEnter();
@@ -1265,6 +1264,9 @@ bool RetroFE::run() {
 			case RETROFE_PLAYLIST_ENTER:
 			if (currentPage_ && currentPage_->isIdle())
 			{
+
+				currentPage_->onNewItemSelected();
+
 				setState(RETROFE_IDLE);
 			}
 			break;
@@ -3255,6 +3257,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 		{
 			resetInfoToggle();
 			attract_.reset();
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			if (currentPage_->getPlaylistName() != "lastplayed")
 			{
 				// if playlist same name as meta sort value then support meta jump
@@ -3279,6 +3283,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 		{
 			resetInfoToggle();
 			attract_.reset();
+			if (RETROFE_STATE exitState = handleInfoExitOnScroll(); exitState != RETROFE_IDLE) return exitState;
+
 			if (currentPage_->getPlaylistName() != "lastplayed")
 			{
 				if (Item::validSortType(page->getPlaylistName()))

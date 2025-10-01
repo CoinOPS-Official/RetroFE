@@ -18,13 +18,13 @@
 #include <vector>
 #include <string>
 #include <SDL2/SDL.h>
-#include <SDL_image.h>
 
 #include "Component.h"
 #include "../../Collection/Item.h"
 #include "../../Database/HiScores.h"
 
  // fwd-declare to avoid pulling the whole font header here (optional)
+class Configuration;
 class FontManager;
 
 class ReloadableGlobalHiscores : public Component {
@@ -37,7 +37,6 @@ public:
 	~ReloadableGlobalHiscores() override;
 
 	bool  update(float dt) override;
-	void  computeGridBaseline_(SDL_Renderer* renderer, FontManager* font, int totalTables, float compW, float compH, float baseScale, float asc);
 	void  draw() override;
 	void  allocateGraphicsMemory() override;
 	void  freeGraphicsMemory() override;
@@ -45,92 +44,83 @@ public:
 	void  initializeFonts() override;
 
 private:
+    void  reloadTexture(); // full-bounds composite repaint
 
-	enum class QrPlacement {
-		TopCentered, TopRight, TopLeft, BottomRight, BottomLeft, BottomCenter, RightMiddle, LeftMiddle,
-	};
+    // ----- QR handling -----
+    enum class QrPlacement {
+        TopCentered, TopRight, TopLeft, BottomRight, BottomLeft, BottomCenter, RightMiddle, LeftMiddle,
+    };
+    struct QrEntry {
+        SDL_Texture* tex = nullptr;
+        int w = 0;
+        int h = 0;
+        bool ok = false;
+    };
+    void destroyAllQr_();
 
-	struct QrEntry {
-		SDL_Texture* tex = nullptr;
-		int w = 0;
-		int h = 0;
-		bool ok = false;
-	};
+    // ----- Grid baseline (computed per-geometry) -----
+    void computeGridBaseline_(SDL_Renderer* renderer, FontManager* font,
+        int totalTables, float compW, float compH,
+        float baseScale, float asc);
 
-	// --- QR config/state ---
-	QrPlacement qrPlacement_ = QrPlacement::TopLeft;
-	int qrMarginPx_ = 6;                  // fixed pixel gap between panel and QR
-	std::vector<QrEntry> qrByTable_;      // one per table (aligned with tables)
+    // ----- Config -----
+    FontManager* fontInst_;
+    std::string  textFormat_;
+    float        baseColumnPadding_;
+    float        baseRowPadding_;
+    int          displayOffset_;
 
-	// --- Helpers (implemented in .cpp) ---
-	void destroyAllQr_();
+    // ----- State / Resources -----
+    bool           needsRedraw_ = true;
+    HighScoreData* highScoreTable_ = nullptr;
 
-	struct PlannedDraw {
-		SDL_FRect dst{}; // precomputed destination within the component rect
-		float headerTopLocal = 0.0f; // local Y of header top (for QR placement)
-		float anchorX = 0.f, anchorY = 0.f; // top-left of panel+QR anchor
-		float anchorW = 0.f, anchorH = 0.f; // full anchor size
-		int   extraL = 0, extraR = 0, extraT = 0, extraB = 0; // QR margins
-	};
-	std::vector<PlannedDraw> planned_;
+    // Single full-bounds composite and previous snapshot for crossfade
+    SDL_Texture* intermediateTexture_ = nullptr;
+    SDL_Texture* prevCompositeTexture_ = nullptr;
 
-	void reloadTexture(bool reset = true);
+    // Geometry caches (per-instance; replace old statics)
+    float prevGeomW_ = -1.f, prevGeomH_ = -1.f, prevGeomFont_ = -1.f;
+    int   compW_ = 0, compH_ = 0;
 
-	// --- Config ---
-	FontManager* fontInst_;
-	std::string  textFormat_;
-	float        baseColumnPadding_;
-	float        baseRowPadding_;
-	int          displayOffset_;
+    // Data freshness
+    uint64_t lastEpochSeen_ = 0;
 
-	// --- State/Resources ---
-	bool            needsRedraw_ = true;
-	Item* lastSelectedItem_ = nullptr;
-	HighScoreData* highScoreTable_ = nullptr;
-	SDL_Texture* intermediateTexture_ = nullptr;
-	float cachedViewW_;
-	float cachedViewH_;
-	uint64_t lastEpochSeen_ = 0;
+    // ----- Grid rendering -----
+    static constexpr int kRowsPerPage = 10;
 
-	// --- Grid rendering ---
-	static constexpr int kRowsPerPage = 10;
+    // Grid hints (can be wired to XML later)
+    int   gridColsHint_ = 0;     // 0 = auto near-square
+    float cellSpacingH_ = 0.02f; // fraction of width
+    float cellSpacingV_ = 0.02f; // fraction of height
 
-	struct PageTex {
-		SDL_Texture* tex = nullptr;
-		int w = 0;
-		int h = 0;
-	};
-	std::vector<PageTex> tablePanels_;   // one texture per hiscore table
+    // Grid rotation (paging) state
+    int   gridPageSize_ = 6;     // show up to 6 tables at once
+    float gridRotatePeriodSec_ = 8.0f;  // seconds before flipping to next page
+    float gridTimerSec_ = 0.0f;
+    int   gridPageIndex_ = 0;     // which slice we are showing (0-based)
 
-	// Grid hints (can be wired to XML later)
-	int   gridColsHint_ = 0;     // 0 = auto near-square
-	float cellSpacingH_ = 0.02f; // fraction of width
-	float cellSpacingV_ = 0.02f; // fraction of height
+    // Grid layout & scale baseline (applies across pages until geometry/data changes)
+    int                 gridBaselineSlots_ = 0;    // slots per page (<=6 or totalTables if <6)
+    int                 gridBaselineCols_ = 0;
+    int                 gridBaselineRows_ = 0;
+    float               gridBaselineCellW_ = 0.f;
+    float               gridBaselineCellH_ = 0.f;
+    std::vector<float>  gridBaselineRowMin_;        // per-row min scale
+    bool                gridBaselineValid_ = false;
 
-	// Grid rotation (paging) state
-	int   gridPageSize_ = 6;     // show up to 6 tables at once
-	float gridRotatePeriodSec_ = 8.0f;  // seconds before flipping to next page
-	float gridTimerSec_ = 0.0f;
-	int   gridPageIndex_ = 0;     // which slice we are showing (0-based)
+    // Debounce
+    float reloadDebounceTimer_ = 0.0f;   // counts down
+    float reloadDebounceSec_ = 0.08f;  // ~80ms; tune as needed
 
-	// Grid layout & scale baseline (applies across pages until geometry/data changes)
-	int   gridBaselineSlots_ = 0;           // number of slots on a page (e.g., 6 or totalTables if < 6)
-	int   gridBaselineCols_ = 0;
-	int   gridBaselineRows_ = 0;
-	float gridBaselineCellW_ = 0.f;
-	float gridBaselineCellH_ = 0.f;
-	std::vector<float> gridBaselineRowMin_;   // per-row min scale (already multiplied into baseScale later)
-	bool  gridBaselineValid_ = false;
+    // Fade state
+    bool  fadeActive_ = false;   // are we crossfading?
+    bool  fadeStartPending_ = false;   // capture old page in reloadTexture()
+    float fadeT_ = 0.0f;    // elapsed fade time (sec)
+    float fadeDurationSec_ = 1.0f;    // 1s crossfade (tune)
+    bool  hasShownOnce_ = false;
 
-	float reloadDebounceTimer_ = 0.0f;   // counts down
-	float reloadDebounceSec_ = 0.08f;  // ~80ms feels good; tune as needed
-
-	// New fade state
-	SDL_Texture* prevCompositeTexture_ = nullptr; // snapshot of last page
-	bool  fadeActive_ = false;            // are we crossfading?
-	bool  fadeStartPending_ = false;            // capture old page on next draw
-	float fadeT_ = 0.0f;             // elapsed fade time (sec)
-	float fadeDurationSec_ = 1.0f;             // 1s crossfade (tune)
-	bool hasShownOnce_ = false;
-
+    // QR config/state (aligned to visible tables per page)
+    QrPlacement              qrPlacement_ = QrPlacement::TopLeft;
+    int                      qrMarginPx_ = 6;         // fixed gap between panel and QR
+    std::vector<QrEntry>     qrByTable_;               // one per visible table
 };
