@@ -77,10 +77,6 @@ bool ReloadableGlobalHiscores::update(float dt) {
 		if (fadeT_ >= fadeDurationSec_) {
 			fadeT_ = fadeDurationSec_;
 			fadeActive_ = false;
-			if (prevCompositeTexture_) {
-				SDL_DestroyTexture(prevCompositeTexture_);
-				prevCompositeTexture_ = nullptr;
-			}
 		}
 	}
 
@@ -116,7 +112,7 @@ bool ReloadableGlobalHiscores::update(float dt) {
 		gridPageIndex_ = 0;
 		gridTimerSec_ = 0.0f;
 		gridBaselineValid_ = false;
-		reloadTexture();
+        needsRedraw_ = true;
 
 		newItemSelected = false;
 		newScrollItemSelected = false;
@@ -135,8 +131,8 @@ bool ReloadableGlobalHiscores::update(float dt) {
 			gridPageIndex_ = 0;
 			gridTimerSec_ = 0.0f;
 			gridBaselineValid_ = false;
-			reloadTexture();
-			reloadDebounceTimer_ = reloadDebounceSec_;
+            needsRedraw_ = true;
+            reloadDebounceTimer_ = reloadDebounceSec_;
 		}
 		newItemSelected = false;
 		newScrollItemSelected = false;
@@ -160,8 +156,8 @@ bool ReloadableGlobalHiscores::update(float dt) {
 				fadeActive_ = true;
 				fadeT_ = 0.0f;
 
-				reloadTexture();
-				reloadDebounceTimer_ = reloadDebounceSec_;
+                needsRedraw_ = true;
+                reloadDebounceTimer_ = reloadDebounceSec_;
 			}
 		}
 		else {
@@ -337,6 +333,16 @@ void ReloadableGlobalHiscores::reloadTexture() {
         return hasDash;
         };
 
+    auto clearComposite = [&](SDL_Renderer* r) {
+        if (!intermediateTexture_) return;
+        SDL_Texture* old = SDL_GetRenderTarget(r);
+        SDL_SetRenderTarget(r, intermediateTexture_);
+        SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+        SDL_SetRenderDrawColor(r, 0, 0, 0, 0);
+        SDL_RenderClear(r);
+        SDL_SetRenderTarget(r, old);
+        };
+
     enum class ColAlign { Left, Center, Right };
     auto colAlignFor = [](size_t idx, size_t nCols) -> ColAlign {
         if (nCols >= 4) {
@@ -364,10 +370,21 @@ void ReloadableGlobalHiscores::reloadTexture() {
     destroyAllQr_();
 
     Item* selectedItem = page.getSelectedItem(displayOffset_);
-    if (!selectedItem || !renderer) { highScoreTable_ = nullptr; needsRedraw_ = true; return; }
+    if (!selectedItem || !renderer) {
+        highScoreTable_ = nullptr;
+        clearComposite(renderer);
+        hasShownOnce_ = true;      // we "painted" an empty frame
+        needsRedraw_ = false;
+        return;
+    }
 
     highScoreTable_ = HiScores::getInstance().getGlobalHiScoreTable(selectedItem);
-    if (!highScoreTable_ || highScoreTable_->tables.empty()) { needsRedraw_ = true; return; }
+    if (!highScoreTable_ || highScoreTable_->tables.empty()) {
+        clearComposite(renderer);
+        hasShownOnce_ = true;
+        needsRedraw_ = false;
+        return;
+    }
 
     const int totalTables = (int)highScoreTable_->tables.size();
     const float compW = baseViewInfo.Width;
@@ -769,31 +786,27 @@ void ReloadableGlobalHiscores::reloadTexture() {
 void ReloadableGlobalHiscores::draw() {
     Component::draw();
 
-    // Basic guards
     if (baseViewInfo.Alpha <= 0.0f) return;
-    if (!(highScoreTable_ && !highScoreTable_->tables.empty())) return;
+
+    // Make sure the composite is current (this may size RTs, snapshot for fade, and paint)
+    if (needsRedraw_) {
+        reloadTexture();               // sets needsRedraw_ = false (or clears to blank if no data)
+    }
 
     SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
     if (!renderer) return;
 
-    // We rely on reloadTexture() to size/paint intermediateTexture_
+    // If we don't have a composite, nothing to present
     if (!intermediateTexture_) return;
 
-    // Nothing to repaint here. If something got dirty, update() should have called reloadTexture().
-    // (If you still use needsRedraw_, you could early-return if it's true, but typically
-    //  reloadTexture() will have set needsRedraw_ = false by now.)
-
-    // Final composite: either crossfade or normal draw to the layout rect
     SDL_FRect rect = {
         baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
         baseViewInfo.ScaledWidth(),       baseViewInfo.ScaledHeight()
     };
 
     if (fadeActive_ && prevCompositeTexture_) {
-        // clamp t
         float t = (fadeDurationSec_ > 0.f) ? (fadeT_ / fadeDurationSec_) : 1.f;
         if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
-
         const float A = baseViewInfo.Alpha;
 
         // Old page fades out
@@ -814,6 +827,12 @@ void ReloadableGlobalHiscores::draw() {
             intermediateTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
             page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
             page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+    }
+
+    // If the fade has completed (update() turned fadeActive_ off), release the snapshot here.
+    if (!fadeActive_ && prevCompositeTexture_) {
+        SDL_DestroyTexture(prevCompositeTexture_);
+        prevCompositeTexture_ = nullptr;
     }
 }
 
