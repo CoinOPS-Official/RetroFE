@@ -272,49 +272,83 @@ void ReloadableGlobalHiscores::initializeFonts() {
 }
 
 void ReloadableGlobalHiscores::reloadTexture() {
-    // ---- text render helpers (unchanged) ------------------------------------
-    auto renderTextWithKerning = [&](SDL_Renderer* r, FontManager* font,
-        const std::string& s, float x, float y, float scale) {
+    // ---- MODIFIED: The text rendering lambda is completely replaced to handle mipmapping ----
+    auto renderTextOutlined = [&](SDL_Renderer* r, FontManager* f,
+        const std::string& s, float x, float y, float finalScale) {
+            if (s.empty()) return;
+
+            // 1. Calculate the target pixel height for this specific render call.
+            const float targetPixelHeight = finalScale * f->getMaxHeight();
+
+            // 2. Select the best mip-level for this target size.
+            const FontManager::MipLevel* mip = f->getMipLevelForSize(static_cast<int>(targetPixelHeight));
+            if (!mip || !mip->fillTexture) return;
+
+            // 3. Calculate a new scale relative to the chosen mip's font size.
+            const float mipRelativeScale = (mip->height > 0) ? (targetPixelHeight / mip->height) : 1.0f;
+
+            SDL_Texture* fillTex = mip->fillTexture;
+            SDL_Texture* outlineTex = mip->outlineTexture;
+
             float cx = std::round(x);
-            const float ySnap = std::round(y);
+            const float ySnap = std::round(y); // This is the correct baseline y for the entire row.
+
+            // --- PASS 1: OUTLINE (if available) ---
+            if (outlineTex) {
+                float penX = cx;
+                Uint16 prev = 0;
+                for (unsigned char uc : s) {
+                    Uint16 ch = (Uint16)uc;
+                    penX += f->getKerning(prev, ch) * finalScale; // Kerning advance in screen pixels
+
+                    auto it = mip->glyphs.find(ch);
+                    if (it != mip->glyphs.end()) {
+                        const auto& g = it->second;
+                        const SDL_Rect& src = g.rect;
+
+                        // CORRECTED: The destination rect for the outline is positioned relative to the
+                        // fill's position (penX, ySnap). We shift it up and left by the fill offset.
+                        SDL_FRect dst = {
+                            penX - (g.fillX * mipRelativeScale),
+                            ySnap - (g.fillY * mipRelativeScale),
+                            src.w * mipRelativeScale,
+                            src.h * mipRelativeScale
+                        };
+                        SDL_RenderCopyF(r, outlineTex, &src, &dst);
+                        penX += g.advance * mipRelativeScale;
+                    }
+                    prev = ch;
+                }
+            }
+
+            // --- PASS 2: FILL ---
+            float penX = cx;
             Uint16 prev = 0;
             for (unsigned char uc : s) {
                 Uint16 ch = (Uint16)uc;
-                cx += font->getKerning(prev, ch) * scale;
-                FontManager::GlyphInfo g;
-                if (font->getRect(ch, g)) {
-                    SDL_Rect  src = g.rect;
-                    SDL_FRect dst = { cx, ySnap, g.rect.w * scale, g.rect.h * scale };
-                    SDL_RenderCopyF(r, font->getTexture(), &src, &dst);
-                    cx += g.advance * scale;
+                penX += f->getKerning(prev, ch) * finalScale; // Kerning advance
+
+                auto it = mip->glyphs.find(ch);
+                if (it != mip->glyphs.end()) {
+                    const auto& g = it->second;
+                    SDL_Rect srcFill = { g.rect.x + g.fillX, g.rect.y + g.fillY, g.fillW, g.fillH };
+
+                    // CORRECTED: The destination rect for the fill is drawn directly at the
+                    // baseline (penX, ySnap) without any extra vertical adjustment.
+                    SDL_FRect dst = {
+                        penX,
+                        ySnap,
+                        g.fillW * mipRelativeScale,
+                        g.fillH * mipRelativeScale
+                    };
+                    SDL_RenderCopyF(r, fillTex, &srcFill, &dst);
+                    penX += g.advance * mipRelativeScale;
                 }
                 prev = ch;
             }
         };
 
-    auto renderTextOutlined = [&](SDL_Renderer* r, FontManager* f,
-        const std::string& s, float x, float y, float scale) {
-            if (SDL_Texture* outline = f->getOutlineTexture()) {
-                float cx = std::round(x);
-                const float ySnap = std::round(y);
-                Uint16 prev = 0;
-                for (unsigned char uc : s) {
-                    Uint16 ch = (Uint16)uc;
-                    cx += f->getKerning(prev, ch) * scale;
-                    FontManager::GlyphInfo g;
-                    if (f->getRect(ch, g)) {
-                        SDL_Rect  src = g.rect;
-                        SDL_FRect dst = { cx, ySnap, g.rect.w * scale, g.rect.h * scale };
-                        SDL_RenderCopyF(r, outline, &src, &dst);
-                        cx += g.advance * scale;
-                    }
-                    prev = ch;
-                }
-            }
-            renderTextWithKerning(r, f, s, x, y, scale);
-        };
-
-    // ---- placeholder helper --------------------------------------------------
+    // ---- placeholder helper (unchanged) --------------------------------------------------
     auto isPlaceholderCell = [](const std::string& s) -> bool {
         size_t l = s.find_first_not_of(" \t");
         if (l == std::string::npos) return false;
@@ -363,17 +397,16 @@ void ReloadableGlobalHiscores::reloadTexture() {
         };
     auto clampf = [](float v, float lo, float hi) { return std::max(lo, std::min(v, hi)); };
 
-    // ---- setup / clear -------------------------------------------------------
+    // ---- setup / clear (unchanged) -------------------------------------------------------
     SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
 
-    // We no longer keep per-panel textures; just clear QRs from last frame.
     destroyAllQr_();
 
     Item* selectedItem = page.getSelectedItem(displayOffset_);
     if (!selectedItem || !renderer) {
         highScoreTable_ = nullptr;
         clearComposite(renderer);
-        hasShownOnce_ = true;      // we "painted" an empty frame
+        hasShownOnce_ = true;
         needsRedraw_ = false;
         return;
     }
@@ -393,13 +426,14 @@ void ReloadableGlobalHiscores::reloadTexture() {
     FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
     if (!font) { needsRedraw_ = true; return; }
 
-    const float baseScale = baseViewInfo.FontSize / (float)font->getHeight();
-    const float asc = (float)font->getAscent();
+    // --- MODIFIED: All base measurements use the new max-resolution metrics ---
+    const float baseScale = baseViewInfo.FontSize / (float)font->getMaxHeight();
+    const float asc = (float)font->getMaxAscent();
+
     const float drawableH0 = asc * baseScale;
     const float lineH0 = drawableH0 * (1.0f + baseRowPadding_);
     const float colPad0 = baseColumnPadding_ * drawableH0;
 
-    // Ensure full-bounds composite RT exists (ABGR8888 everywhere to avoid conversion)
     const int compositeW = (int)std::lround(compW);
     const int compositeH = (int)std::lround(compH);
     if (!intermediateTexture_ || compW_ != compositeW || compH_ != compositeH) {
@@ -409,12 +443,9 @@ void ReloadableGlobalHiscores::reloadTexture() {
         if (!intermediateTexture_) { needsRedraw_ = true; return; }
         SDL_SetTextureBlendMode(intermediateTexture_, SDL_BLENDMODE_BLEND);
         compW_ = compositeW; compH_ = compositeH;
-
-        // New size invalidates previous snapshot
         if (prevCompositeTexture_) { SDL_DestroyTexture(prevCompositeTexture_); prevCompositeTexture_ = nullptr; }
     }
 
-    // Baseline grid geometry (unchanged)
     if (!gridBaselineValid_) {
         computeGridBaseline_(renderer, font, totalTables, compW, compH, baseScale, asc);
     }
@@ -425,7 +456,6 @@ void ReloadableGlobalHiscores::reloadTexture() {
     const float spacingH = cellSpacingH_ * compW;
     const float spacingV = cellSpacingV_ * compH;
 
-    // Visible slice
     const auto [startIdx, Nvisible] =
         computeVisibleRange(totalTables, gridPageIndex_, std::max(1, gridPageSize_));
     if (Nvisible <= 0) { needsRedraw_ = true; return; }
@@ -449,36 +479,61 @@ void ReloadableGlobalHiscores::reloadTexture() {
     }
 
     // ========================================================================
-    // QR reservation for scale budgeting (so panel+QR fits in cell)
+    // QR reservation for scale budgeting (refactored)
     // ========================================================================
+    struct Margins { float L = 0, R = 0, T = 0, B = 0; };
+    std::vector<Margins> qrReserve(Nvisible);
+
+    // Policy knobs: tweak or hoist to config
+    const bool reserveVerticalForCorners = false;  // corners do NOT consume height
+    const bool reserveHorizontalForSides = true;   // sides/corners reserve width
+
+    for (int t = 0; t < Nvisible; ++t) {
+        if (t >= (int)qrByTable_.size() || !qrByTable_[t].ok) continue;
+        const auto& q = qrByTable_[t];
+        auto& m = qrReserve[t];
+
+        switch (qrPlacement_) {
+            case QrPlacement::TopCentered:
+            m.T = (float)qrMarginPx_ + (float)q.h;
+            break;
+            case QrPlacement::BottomCenter:
+            m.B = (float)qrMarginPx_ + (float)q.h;
+            break;
+
+            case QrPlacement::LeftMiddle:
+            if (reserveHorizontalForSides) m.L = (float)qrMarginPx_ + (float)q.w;
+            break;
+            case QrPlacement::RightMiddle:
+            if (reserveHorizontalForSides) m.R = (float)qrMarginPx_ + (float)q.w;
+            break;
+
+            case QrPlacement::TopLeft:
+            if (reserveHorizontalForSides) m.L = (float)qrMarginPx_ + (float)q.w;
+            if (reserveVerticalForCorners)  m.T = (float)qrMarginPx_ + (float)q.h;
+            break;
+            case QrPlacement::TopRight:
+            if (reserveHorizontalForSides) m.R = (float)qrMarginPx_ + (float)q.w;
+            if (reserveVerticalForCorners)  m.T = (float)qrMarginPx_ + (float)q.h;
+            break;
+            case QrPlacement::BottomLeft:
+            if (reserveHorizontalForSides) m.L = (float)qrMarginPx_ + (float)q.w;
+            if (reserveVerticalForCorners)  m.B = (float)qrMarginPx_ + (float)q.h;
+            break;
+            case QrPlacement::BottomRight:
+            if (reserveHorizontalForSides) m.R = (float)qrMarginPx_ + (float)q.w;
+            if (reserveVerticalForCorners)  m.B = (float)qrMarginPx_ + (float)q.h;
+            break;
+
+            default: break;
+        }
+    }
+
     std::vector<float> qrExtraW(Nvisible, 0.0f);
     std::vector<float> qrExtraH(Nvisible, 0.0f);
     for (int t = 0; t < Nvisible; ++t) {
-        if (t < (int)qrByTable_.size() && qrByTable_[t].ok) {
-            const auto& q = qrByTable_[t];
-            // Horizontal reservation
-            switch (qrPlacement_) {
-                case QrPlacement::TopLeft:
-                case QrPlacement::LeftMiddle:
-                case QrPlacement::BottomLeft:
-                case QrPlacement::TopRight:
-                case QrPlacement::RightMiddle:
-                case QrPlacement::BottomRight:
-                qrExtraW[t] += (float)qrMarginPx_ + (float)q.w; break;
-                default: break;
-            }
-            // Vertical reservation
-            switch (qrPlacement_) {
-                case QrPlacement::TopCentered:
-                case QrPlacement::TopLeft:
-                case QrPlacement::TopRight:
-                case QrPlacement::BottomCenter:
-                case QrPlacement::BottomLeft:
-                case QrPlacement::BottomRight:
-                qrExtraH[t] += (float)qrMarginPx_ + (float)q.h; break;
-                default: break;
-            }
-        }
+        qrExtraW[t] = qrReserve[t].L + qrReserve[t].R;
+        qrExtraH[t] = qrReserve[t].T + qrReserve[t].B;
     }
 
     // ========================================================================
@@ -619,23 +674,12 @@ void ReloadableGlobalHiscores::reloadTexture() {
         const float dataH = lineH * kRowsPerPage;
         const float textBlockHeight = titleH + headerH + dataH;
 
-        // Compute "panel" placement inside the fixed cell (same logic as before)
-        // First compute the space the QR will reserve on each side for anchoring
-        int extraL = 0, extraR = 0, extraT = 0, extraB = 0;
-        if (t < (int)qrByTable_.size() && qrByTable_[t].ok) {
-            const auto& q = qrByTable_[t];
-            switch (qrPlacement_) {
-                case QrPlacement::TopCentered:   extraT = qrMarginPx_ + q.h; break;
-                case QrPlacement::BottomCenter:  extraB = qrMarginPx_ + q.h; break;
-                case QrPlacement::TopRight:
-                case QrPlacement::RightMiddle:   extraR = qrMarginPx_ + q.w; break;
-                case QrPlacement::TopLeft:
-                case QrPlacement::LeftMiddle:    extraL = qrMarginPx_ + q.w; break;
-                case QrPlacement::BottomRight:   extraR = qrMarginPx_ + q.w; extraB = qrMarginPx_ + q.h; break;
-                case QrPlacement::BottomLeft:    extraL = qrMarginPx_ + q.w; extraB = qrMarginPx_ + q.h; break;
-                default: break;
-            }
-        }
+        // Compute "panel" placement inside the fixed cell
+        // Use the *same* margins we reserved earlier so geometry matches
+        int extraL = (int)std::lround(qrReserve[t].L);
+        int extraR = (int)std::lround(qrReserve[t].R);
+        int extraT = (int)std::lround(qrReserve[t].T);
+        int extraB = (int)std::lround(qrReserve[t].B);
 
         const float panelW = (float)std::ceil(totalWCols);
         const float panelH = (float)std::ceil(textBlockHeight);
@@ -644,7 +688,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
         float anchorH = panelH + (float)(extraT + extraB);
 
         float anchorX = xCell + (cellW - anchorW) * 0.5f;
-        float anchorY = yCell;
+        float anchorY = yCell; // top-align (unchanged)
         anchorX = std::round(clampf(anchorX, xCell, xCell + cellW - anchorW));
         anchorY = std::round(clampf(anchorY, yCell, yCell + cellH - anchorH));
 

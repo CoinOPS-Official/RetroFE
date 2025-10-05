@@ -64,18 +64,29 @@ void Text::draw() {
     FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
     if (!font || textData_.empty()) return;
 
-    SDL_Texture* fillTex = font->getTexture();         // fill atlas (tinted)
-    SDL_Texture* outlineTex = font->getOutlineTexture();  // may be nullptr
-    if (!fillTex) return;
+    // --- NEW: Select the best MipLevel for the current render size ---
+    const int targetFontSize = static_cast<int>(baseViewInfo.FontSize);
+    const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
+    if (!mip || !mip->fillTexture) {
+        // If no suitable mip is found, we cannot draw.
+        return;
+    }
 
-    // --- caching unchanged ---
-    const float imageHeight = float(font->getHeight());
-    const float scale = (imageHeight > 0.f) ? (baseViewInfo.FontSize / imageHeight) : 1.f;
+    // MODIFIED: Get textures from the selected mip level.
+    SDL_Texture* fillTex = mip->fillTexture;
+    SDL_Texture* outlineTex = mip->outlineTexture;
+
+    // MODIFIED: The scale is now calculated relative to the chosen mip's height,
+    // which results in a much higher quality downscale.
+    const float mipImageHeight = float(mip->height);
+    const float scale = (mipImageHeight > 0.f) ? (baseViewInfo.FontSize / mipImageHeight) : 1.f;
+
     const float maxW =
         (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
         ? baseViewInfo.Width : baseViewInfo.MaxWidth;
 
     if (needsUpdate_ || lastScale_ != scale || lastMaxWidth_ != maxW) {
+        // Pass the new mip-relative scale to the update function.
         updateGlyphPositions(font, scale, maxW);
         needsUpdate_ = false;
         lastScale_ = scale;
@@ -91,8 +102,8 @@ void Text::draw() {
 
     baseViewInfo.Width = cachedWidth_;
     baseViewInfo.Height = baseViewInfo.FontSize;
-    baseViewInfo.ImageWidth = float(font->getAtlasW());
-    baseViewInfo.ImageHeight = float(font->getAtlasH());
+    baseViewInfo.ImageWidth = float(mip->atlasW);  // MODIFIED: use mip's atlas size
+    baseViewInfo.ImageHeight = float(mip->atlasH); // MODIFIED: use mip's atlas size
 
     const float xOrigin = baseViewInfo.XRelativeToOrigin();
     const float yOrigin = baseViewInfo.YRelativeToOrigin();
@@ -112,8 +123,10 @@ void Text::draw() {
             const auto& pos = cachedPositions_[i++];
             Uint16 ch = (Uint16)uc;
 
-            FontManager::GlyphInfo g;
-            if (!font->getRect(ch, g)) continue;
+            // MODIFIED: Get glyph info from the mip level's map.
+            auto it = mip->glyphs.find(ch);
+            if (it == mip->glyphs.end()) continue;
+            const FontManager::GlyphInfo& g = it->second;
 
             // packed (outline) source
             const SDL_Rect& srcOutline = g.rect;
@@ -144,8 +157,10 @@ void Text::draw() {
             const auto& pos = cachedPositions_[i++];
             Uint16 ch = (Uint16)uc;
 
-            FontManager::GlyphInfo g;
-            if (!font->getRect(ch, g)) continue;
+            // MODIFIED: Get glyph info from the mip level's map.
+            auto it = mip->glyphs.find(ch);
+            if (it == mip->glyphs.end()) continue;
+            const FontManager::GlyphInfo& g = it->second;
 
             SDL_Rect srcFill{
                 g.rect.x + g.fillX,
@@ -179,7 +194,18 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
     cachedPositions_.clear();
     cachedPositions_.reserve(textData_.size());
 
-    const int ascent = font->getAscent();
+    // --- NEW: Select the correct MipLevel to get its specific metrics ---
+    const int targetFontSize = static_cast<int>(baseViewInfo.FontSize);
+    const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
+    if (!mip) return;
+
+    // MODIFIED: Use ascent from the chosen mip for accurate vertical alignment.
+    const int ascent = mip->ascent;
+
+    // MODIFIED: Kerning is now fetched from the high-res font and must be scaled
+    // to the target font size for accurate placement calculations.
+    const float kerningScale = (font->getMaxFontSize() > 0) ?
+        static_cast<float>(targetFontSize) / font->getMaxFontSize() : 1.0f;
 
     float penX_px = 0.0f;
     Uint16 prev = 0;
@@ -194,22 +220,29 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
 
     for (unsigned char uc : textData_) {
         Uint16 ch = (Uint16)uc;
-        FontManager::GlyphInfo g;
-        if (!font->getRect(ch, g) || g.rect.h <= 0) { prev = 0; continue; }
 
+        // MODIFIED: Get glyph info from the mip's map.
+        auto it = mip->glyphs.find(ch);
+        if (it == mip->glyphs.end() || it->second.rect.h <= 0) { prev = 0; continue; }
+        const FontManager::GlyphInfo& g = it->second;
+
+        // MODIFIED: Fetch high-res kerning and scale it to the target size.
         int kern_fp = font->getKerning(prev, ch);
-        float kern_px = kern_fp * scale;
+        float kern_px_at_target_size = kern_fp * kerningScale;
 
-        float gx = penX_px + kern_px + g.minX * scale;
+        // The final render scale `scale` converts from mip-space to screen-space.
+        float gx = penX_px + (kern_px_at_target_size)+g.minX * scale;
         float gy = (ascent - g.maxY) * scale;
 
         int xOffset = (int)std::lround(gx);
         int yOffset = (int)std::lround(gy);
 
-        float nextPen_px = penX_px + (g.advance * scale) + kern_px;
+        // Pen advances by the glyph's advance (in mip units) scaled to the screen,
+        // plus the kerning (already scaled to target size).
+        float nextPen_px = penX_px + (g.advance * scale) + (kern_px_at_target_size);
         if (maxWidth > 0.f && (nextPen_px > maxWidth)) break;
 
-        tmp.push_back({ g.rect, xOffset, yOffset, (g.advance * scale) + kern_px });
+        tmp.push_back({ g.rect, xOffset, yOffset, (g.advance * scale) + kern_px_at_target_size });
         if (yOffset < minYOffset) minYOffset = yOffset;
 
         penX_px = nextPen_px;

@@ -20,19 +20,21 @@
 #include <unordered_map>
 #include <memory>
 
-class FontCache
-{
+class FontCache {
 public:
     FontCache();
+    virtual ~FontCache(); // Good practice to have a virtual destructor
+
     bool initialize() const;
     void deInitialize();
-    bool loadFont(std::string font, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
-    FontManager* getFont(const std::string& fontPath, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
 
-    virtual ~FontCache();
+    // MODIFIED: Parameter renamed to reflect it's the maximum size for the mipmap chain.
+    bool loadFont(std::string fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
+    FontManager* getFont(const std::string& fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
+
 private:
     std::unordered_map<std::string, std::unique_ptr<FontManager>> fontFaceMap_;
-    std::string buildFontKey(std::string font, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
 
+    // MODIFIED: Parameter renamed for clarity.
+    std::string buildFontKey(std::string font, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
 };
-

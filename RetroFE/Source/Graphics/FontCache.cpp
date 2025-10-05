@@ -30,8 +30,7 @@
 
 FontCache::FontCache() = default;
 
-FontCache::~FontCache()
-{
+FontCache::~FontCache() {
     deInitialize();
 }
 
@@ -40,8 +39,7 @@ void FontCache::deInitialize() {
     TTF_Quit();
 }
 
-bool FontCache::initialize() const
-{
+bool FontCache::initialize() const {
     if (TTF_Init() == 0)
     {
         return true;
@@ -53,8 +51,10 @@ bool FontCache::initialize() const
     }
 }
 
-FontManager* FontCache::getFont(const std::string& fontPath, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor) {
-    std::string key = buildFontKey(fontPath, fontSize, color, gradient, outlinePx, monitor);
+// MODIFIED: Parameter renamed to maxFontSize.
+FontManager* FontCache::getFont(const std::string& fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor) {
+    // MODIFIED: Call buildFontKey with maxFontSize.
+    std::string key = buildFontKey(fontPath, maxFontSize, color, gradient, outlinePx, monitor);
     auto it = fontFaceMap_.find(key);
 
     if (it != fontFaceMap_.end()) {
@@ -65,23 +65,28 @@ FontManager* FontCache::getFont(const std::string& fontPath, int fontSize, SDL_C
 }
 
 
-std::string FontCache::buildFontKey(std::string font, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor)
-{
+// MODIFIED: Parameter renamed to maxFontSize.
+std::string FontCache::buildFontKey(std::string font, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor) {
     std::stringstream ss;
-    ss << font << "_SIZE=" << fontSize << " RGB=" << color.r << "." << color.g << "." << color.b;
+    // MODIFIED: The key now uses the maxFontSize to ensure uniqueness for different mipmap chains.
+    ss << font << "_SIZE=" << maxFontSize << " RGB=" << color.r << "." << color.g << "." << color.b;
     ss << "_MONITOR=" << monitor;
-	ss << (gradient ? "_GRADIENT" : "");
-	ss << "_OUTLINE=" << outlinePx;
+    ss << (gradient ? "_GRADIENT" : "");
+    ss << "_OUTLINE=" << outlinePx;
     return ss.str();
 }
 
-bool FontCache::loadFont(std::string fontPath, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor) {
-    std::string key = buildFontKey(fontPath, fontSize, color, gradient, outlinePx, monitor);
+// MODIFIED: Parameter renamed to maxFontSize.
+bool FontCache::loadFont(std::string fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor) {
+    // MODIFIED: Call buildFontKey with maxFontSize.
+    std::string key = buildFontKey(fontPath, maxFontSize, color, gradient, outlinePx, monitor);
     if (fontFaceMap_.find(key) == fontFaceMap_.end()) {
-        auto font = std::make_unique<FontManager>(fontPath, fontSize, color, gradient, outlinePx, monitor);
+        // MODIFIED: Construct FontManager with maxFontSize.
+        auto font = std::make_unique<FontManager>(fontPath, maxFontSize, color, gradient, outlinePx, monitor);
         if (font->initialize()) {
             fontFaceMap_[key] = std::move(font);
-        } else {
+        }
+        else {
             return false;
         }
     }

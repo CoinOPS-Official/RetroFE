@@ -906,19 +906,21 @@ void HiScores::refreshGlobalAllFromSingleCallAsync(int limit, std::function<void
 			// --- Step 3: fetch scores (best-effort) ---
 			const std::string url = "https://www.iscored.info/api/" + iscoredGameroom_ + "/getAllScores";
 			std::string body, err;
-			if (httpGet_(url, body, err)) {
-				ingestIScoredAll_(body, limit); // updates global_ internally with proper locking
+			bool scoresFetched = httpGet_(url, body, err);
+			if (scoresFetched) {
+				// Only ingest and persist when we actually fetched scores successfully.
+				ingestIScoredAll_(body, limit);  // bumps globalEpoch_ internally
+				// --- Step 5: persist (only after successful ingest) ---
+				if (!saveGlobalCacheToDisk()) {
+					LOG_WARNING("HiScores", "saveGlobalCacheToDisk failed after global update.");
+				}
 			}
 			else {
 				LOG_WARNING("HiScores", "Scores fetch failed: " + err + " (catalog still synced).");
+				// IMPORTANT: Do NOT save here. We might have empty rows in memory on a cold start.
 			}
 
-			// --- Step 5: persist ---
-			if (!saveGlobalCacheToDisk()) {
-				LOG_WARNING("HiScores", "saveGlobalCacheToDisk failed after global update.");
-			}
-
-			// --- Step 6: QR ensure (async fan-out) ---
+			// --- Step 4: QR ensure (async fan-out) ---
 			try {
 				namespace fs = std::filesystem;
 				const std::string qrDir = Utils::combinePath(Configuration::absolutePath, "iScored", "qr");

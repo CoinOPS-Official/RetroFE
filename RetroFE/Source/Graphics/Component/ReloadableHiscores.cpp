@@ -499,6 +499,7 @@ void ReloadableHiscores::draw() {
 
 
 // Returns final scale and updates column widths and total width
+// Returns final scale and updates column widths and total width
 float ReloadableHiscores::computeTableScaleAndWidths(
 	FontManager* font,
 	const HighScoreTable& table,
@@ -508,12 +509,14 @@ float ReloadableHiscores::computeTableScaleAndWidths(
 	std::vector<float>& outColumnWidths,
 	float& outTotalTableWidth,
 	float widthConstraint) {
-	float initialScale = baseViewInfo.FontSize / static_cast<float>(font->getHeight());
-	float drawableHeight = font->getAscent() * initialScale;
+
+	// MODIFIED: Use max-resolution metrics for a stable, high-precision baseline.
+	float initialScale = baseViewInfo.FontSize / static_cast<float>(font->getMaxHeight());
+	float drawableHeight = font->getMaxAscent() * initialScale;
 	float rowPadding = baseRowPadding_ * drawableHeight;
 	float paddingBetweenColumns = baseColumnPadding_ * drawableHeight;
 
-	// Use your cacheColumnWidths logic but for this context
+	// Measure column widths using the high-res font data (font->getWidth now does this automatically)
 	outColumnWidths.clear();
 	outTotalTableWidth = 0.0f;
 	for (size_t visibleIndex = 0; visibleIndex < visibleColumnIndices_.size(); ++visibleIndex) {
@@ -533,14 +536,14 @@ float ReloadableHiscores::computeTableScaleAndWidths(
 	if (!outColumnWidths.empty())
 		outTotalTableWidth -= paddingBetweenColumns; // Remove last extra padding
 
-	// If too wide, downscale
+	// If the table is too wide, calculate a downscale factor
 	float scale = initialScale;
-	if (outTotalTableWidth > widthConstraint) {
+	if (outTotalTableWidth > widthConstraint && outTotalTableWidth > 0) {
 		float downScaleFactor = widthConstraint / outTotalTableWidth;
 		scale = initialScale * downScaleFactor;
 
-		// Redo everything at downscaled size
-		drawableHeight = font->getAscent() * scale;
+		// Re-calculate all metrics using the final, downscaled value
+		drawableHeight = font->getMaxAscent() * scale; // MODIFIED: Use getMaxAscent
 		rowPadding = baseRowPadding_ * drawableHeight;
 		paddingBetweenColumns = baseColumnPadding_ * drawableHeight;
 		outColumnWidths.clear();
@@ -561,6 +564,7 @@ float ReloadableHiscores::computeTableScaleAndWidths(
 			outTotalTableWidth -= paddingBetweenColumns;
 	}
 
+	// Output the final calculated values
 	outDrawableHeight = drawableHeight;
 	outRowPadding = rowPadding;
 	outPaddingBetweenColumns = paddingBetweenColumns;
@@ -598,6 +602,7 @@ void ReloadableHiscores::renderHeaderTexture(
 	int headerTexHeight = 0;
 	if (!table.id.empty()) headerTexHeight += static_cast<int>(drawableHeight + rowPadding);
 	headerTexHeight += static_cast<int>(drawableHeight + rowPadding);
+	if (headerTexHeight <= 0) headerTexHeight = 1; // Safety for 0-height texture
 	headerTextureHeight_ = headerTexHeight;
 
 	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
@@ -610,46 +615,62 @@ void ReloadableHiscores::renderHeaderTexture(
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
 	SDL_RenderClear(renderer);
 
-	float xOrigin = 0.0f;
-	float y = 0.0f;
+	// Mipmapping Setup
+	const float targetPixelHeight = scale * font->getMaxHeight();
+	const FontManager::MipLevel* mip = font->getMipLevelForSize(static_cast<int>(targetPixelHeight));
+	if (!mip) {
+		SDL_SetRenderTarget(renderer, oldTarget);
+		return;
+	}
+	const float mipRelativeScale = (mip->height > 0) ? (targetPixelHeight / mip->height) : 1.0f;
+	SDL_Texture* tex = mip->fillTexture;
+
+	float y = 0.0f; // This is the baseline y for the current row.
 
 	// Title
 	if (!table.id.empty()) {
 		float titleWidth = static_cast<float>(font->getWidth(table.id)) * scale;
 		float titleX = (totalTableWidth - titleWidth) / 2.0f;
+		float penX = titleX;
 		for (char c : table.id) {
-			FontManager::GlyphInfo glyph;
-			if (font->getRect(c, glyph)) {
-				SDL_Rect src = glyph.rect;
-				SDL_FRect dst = { titleX, y, glyph.rect.w * scale, glyph.rect.h * scale };
-				SDL_RenderCopyF(renderer, font->getTexture(), &src, &dst);
-				titleX += static_cast<float>(glyph.advance) * scale;
+			auto it = mip->glyphs.find(c);
+			if (it != mip->glyphs.end()) {
+				const auto& g = it->second;
+				SDL_Rect src = g.rect;
+				// CORRECTED: Use the row's 'y' directly. Do not recalculate per-glyph vertical alignment.
+				SDL_FRect dst = { penX, y, g.rect.w * mipRelativeScale, g.rect.h * mipRelativeScale };
+				SDL_RenderCopyF(renderer, tex, &src, &dst);
+				penX += g.advance * mipRelativeScale;
 			}
 		}
 		y += drawableHeight + rowPadding;
 	}
+
 	// Headers
-	float x = xOrigin;
+	float x = 0.0f;
 	for (size_t i = 0; i < visibleColumnIndices_.size(); ++i) {
 		size_t colIndex = visibleColumnIndices_[i];
 		const std::string& header = table.columns[colIndex];
 		float headerWidth = static_cast<float>(font->getWidth(header)) * scale;
 		float xAligned = x + (cachedColumnWidths_[i] - headerWidth) / 2.0f;
-		float charX = xAligned;
+		float penX = xAligned;
 		for (char c : header) {
-			FontManager::GlyphInfo glyph;
-			if (font->getRect(c, glyph)) {
-				SDL_Rect src = glyph.rect;
-				SDL_FRect dst = { charX, y, glyph.rect.w * scale, glyph.rect.h * scale };
-				SDL_RenderCopyF(renderer, font->getTexture(), &src, &dst);
-				charX += static_cast<float>(glyph.advance) * scale;
+			auto it = mip->glyphs.find(c);
+			if (it != mip->glyphs.end()) {
+				const auto& g = it->second;
+				SDL_Rect src = g.rect;
+				// CORRECTED: Use the row's 'y' directly.
+				SDL_FRect dst = { penX, y, g.rect.w * mipRelativeScale, g.rect.h * mipRelativeScale };
+				SDL_RenderCopyF(renderer, tex, &src, &dst);
+				penX += g.advance * mipRelativeScale;
 			}
 		}
 		x += cachedColumnWidths_[i] + paddingBetweenColumns;
 	}
+
 #ifndef NDEBUG
 	SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red, opaque
-	SDL_Rect outlineRect = { 0, 0, static_cast<int>(totalTableWidth), headerTextureHeight_ };
+	SDL_Rect outlineRect = { 0, 0, static_cast<int>(totalTableWidth) - 1, headerTextureHeight_ - 1 };
 	SDL_RenderDrawRect(renderer, &outlineRect);
 #endif
 	SDL_SetRenderTarget(renderer, oldTarget);
@@ -676,24 +697,38 @@ void ReloadableHiscores::renderTableRowsTexture(
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
 	SDL_RenderClear(renderer);
 
-	float xOrigin = 0.0f;
+	// Mipmapping Setup
+	const float targetPixelHeight = scale * font->getMaxHeight();
+	const FontManager::MipLevel* mip = font->getMipLevelForSize(static_cast<int>(targetPixelHeight));
+	if (!mip) {
+		SDL_SetRenderTarget(renderer, oldTarget);
+		return;
+	}
+	const float mipRelativeScale = (mip->height > 0) ? (targetPixelHeight / mip->height) : 1.0f;
+	SDL_Texture* tex = mip->fillTexture;
+
 	for (int rowIndex = 0; rowIndex < rowsToActuallyRender; ++rowIndex) {
-		float y = (drawableHeight + rowPadding) * rowIndex;
-		float x = xOrigin;
+		float y = (drawableHeight + rowPadding) * rowIndex; // This is the baseline y for this row.
+		float x = 0.0f;
 		for (size_t i = 0; i < visibleColumnIndices_.size(); ++i) {
 			size_t colIndex = visibleColumnIndices_[i];
-			if (colIndex >= table.rows[rowIndex].size()) continue;
+			if (colIndex >= table.rows[rowIndex].size()) {
+				x += cachedColumnWidths_[i] + paddingBetweenColumns;
+				continue;
+			}
 			const std::string& cell = table.rows[rowIndex][colIndex];
 			float cellWidth = static_cast<float>(font->getWidth(cell)) * scale;
 			float xAligned = x + (cachedColumnWidths_[i] - cellWidth) / 2.0f;
-			float charX = xAligned;
+			float penX = xAligned;
 			for (char c : cell) {
-				FontManager::GlyphInfo glyph;
-				if (font->getRect(c, glyph)) {
-					SDL_Rect src = glyph.rect;
-					SDL_FRect dst = { charX, y, glyph.rect.w * scale, glyph.rect.h * scale };
-					SDL_RenderCopyF(renderer, font->getTexture(), &src, &dst);
-					charX += static_cast<float>(glyph.advance) * scale;
+				auto it = mip->glyphs.find(c);
+				if (it != mip->glyphs.end()) {
+					const auto& g = it->second;
+					SDL_Rect src = g.rect;
+					// CORRECTED: Use the row's 'y' directly. Do not recalculate per-glyph vertical alignment.
+					SDL_FRect dst = { penX, y, g.rect.w * mipRelativeScale, g.rect.h * mipRelativeScale };
+					SDL_RenderCopyF(renderer, tex, &src, &dst);
+					penX += g.advance * mipRelativeScale;
 				}
 			}
 			x += cachedColumnWidths_[i] + paddingBetweenColumns;
@@ -701,7 +736,7 @@ void ReloadableHiscores::renderTableRowsTexture(
 	}
 #ifndef NDEBUG
 	SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red, opaque
-	SDL_Rect outlineRect = { 0, 0, static_cast<int>(totalTableWidth), tableRowsTextureHeight_ };
+	SDL_Rect outlineRect = { 0, 0, static_cast<int>(totalTableWidth) - 1, tableRowsTextureHeight_ - 1 };
 	SDL_RenderDrawRect(renderer, &outlineRect);
 #endif
 	SDL_SetRenderTarget(renderer, oldTarget);

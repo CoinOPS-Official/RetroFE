@@ -1,18 +1,5 @@
-/* This file is part of RetroFE.
- *
- * RetroFE is free software: you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, either version 3 of the License, or
- * (at your option) any later version.
- *
- * RetroFE is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
- */
+// Font.h
+
 #pragma once
 
 #include <SDL2/SDL.h>
@@ -26,80 +13,81 @@
 
 #include <string>
 #include <unordered_map>
+#include <map> // NEW: For storing mip levels in sorted order.
 
 class FontManager {
 public:
     struct GlyphInfo {
         int minX = 0, maxX = 0, minY = 0, maxY = 0;
         int advance = 0;
-
-        // Packed rect in atlas (outline box if outlinePx_ > 0)
         SDL_Rect rect{ 0,0,0,0 };
-
-        // NEW: fill sub-rect relative to 'rect' (so src = rect + {fillX,fillY,fillW,fillH})
-        // When no outline is baked, these will be {0,0,rect.w,rect.h}.
-        int fillX = 0;
-        int fillY = 0;
-        int fillW = 0;
-        int fillH = 0;
+        int fillX = 0, fillY = 0, fillW = 0, fillH = 0;
     };
 
-    FontManager(std::string fontPath, int fontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
+    // NEW: A structure to hold all data for a single mipmap level.
+    // Each MipLevel corresponds to a specific font size.
+    struct MipLevel {
+        ~MipLevel(); // Destructor to clean up textures.
+
+        int fontSize = 0;
+        SDL_Texture* fillTexture = nullptr;
+        SDL_Texture* outlineTexture = nullptr;
+        int height = 0, descent = 0, ascent = 0;
+        int atlasW = 0, atlasH = 0;
+        std::unordered_map<unsigned int, GlyphInfo> glyphs;
+    };
+
+    // MODIFIED: The constructor now takes a maximum font size.
+    FontManager(std::string fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
     ~FontManager();
 
-    // Lifetime
+    // Lifetime methods
     bool initialize();
     void deInitialize();
 
-    // Styling knobs
-    void setGradientEnabled(bool on) { gradient_ = on; }
+    // Styling knobs (mostly unchanged)
     void setOutline(int px, SDL_Color color) { outlinePx_ = (px < 0 ? 0 : px); outlineColor_ = color; }
-    void setColor(SDL_Color c);   // updates SDL_SetTextureColorMod
+    void setColor(SDL_Color c); // Will now apply color to all mip levels.
 
-    // Queries
-    SDL_Texture* getTexture() { return texture_; }
-    SDL_Texture* getOutlineTexture() const { return outlineTexture_; }
-    bool getRect(unsigned int charCode, GlyphInfo& glyph);
-    int  getHeight()   const { return height_; }
-    int  getDescent()  const { return descent_; }
-    int  getAscent()   const { return ascent_; }
-    int  getFontSize() const { return fontSize_; }
-    int  getAtlasW()   const { return atlasW_; }
-    int  getAtlasH()   const { return atlasH_; }
-    SDL_Color getColor() const { return color_; }
+    // --- NEW AND MODIFIED QUERIES ---
 
-    // Metrics
-    int  getKerning(Uint16 prevChar, Uint16 curChar) const;
-    int  getWidth(const std::string& text);
+    // NEW: The primary method to get font data for rendering.
+    // Given a target render size, it returns the most appropriate pre-generated atlas.
+    const MipLevel* getMipLevelForSize(int targetSize) const;
 
+    // MODIFIED: These now return metrics for the highest-resolution atlas,
+    // which are needed for stable layout calculations.
+    int       getMaxHeight()   const { return max_height_; }
+    int       getMaxAscent()   const { return max_ascent_; }
+    int       getMaxFontSize() const { return maxFontSize_; }
+    SDL_Color getColor()       const { return color_; }
+
+    // Metrics will now use the highest-resolution font for maximum precision.
+    int getKerning(Uint16 prevChar, Uint16 curChar) const;
+    int getWidth(const std::string& text);
     int getOutlinePx() const;
 
 private:
-    struct GlyphInfoBuild {
-        GlyphInfo glyph;
-        SDL_Surface* surface = nullptr;   // temp surface before upload
-    };
-
     // Config
     std::string fontPath_;
-    int fontSize_ = 0;
+    int maxFontSize_ = 0; // MODIFIED: Renamed from fontSize_
     SDL_Color color_{ 255,255,255,255 };
     int monitor_ = 0;
+    bool gradient_;
+    int outlinePx_;
+    SDL_Color outlineColor_{ 0,0,0,255 };
 
-    bool gradient_;                // bake gray gradient (dark->light) into atlas
-    int  outlinePx_;                  // 0 = no outline
-    SDL_Color outlineColor_{ 0,0,0,255 };   // outline color
+    // --- MODIFIED RUNTIME MEMBERS ---
 
-    // Runtime
-    TTF_Font* font_ = nullptr;
-    SDL_Texture* texture_ = nullptr;
-    SDL_Texture* outlineTexture_ = nullptr; // NEW: outline-only atlas
-    int height_ = 0, descent_ = 0, ascent_ = 0;
-    int atlasW_ = 0, atlasH_ = 0;
+    // We only keep the TTF_Font handle for the largest size open for metrics.
+    TTF_Font* max_font_ = nullptr;
+    int max_height_ = 0, max_descent_ = 0, max_ascent_ = 0;
 
-    std::unordered_map<unsigned int, GlyphInfoBuild*> atlas_; // ASCII map
+    // NEW: A map storing font size -> MipLevel data.
+    // std::map keeps the sizes sorted, which makes finding the best fit easy.
+    std::map<int, MipLevel*> mipLevels_;
 
     // Internal helpers
+    void clearMips(); // Replaces clearAtlas()
     static SDL_Surface* applyVerticalGrayGradient(SDL_Surface* s, Uint8 topGray = 255, Uint8 bottomGray = 64);
-    void clearAtlas();
 };
