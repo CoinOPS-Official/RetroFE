@@ -21,7 +21,6 @@
 #include "../Font.h"
 #include <sstream>
 
-
 Text::Text( const std::string& text, Page &p, FontManager *font, int monitor )
     : Component(p)
     , textData_(text)
@@ -194,69 +193,56 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
     cachedPositions_.clear();
     cachedPositions_.reserve(textData_.size());
 
-    // --- NEW: Select the correct MipLevel to get its specific metrics ---
     const int targetFontSize = static_cast<int>(baseViewInfo.FontSize);
     const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
     if (!mip) return;
 
-    // MODIFIED: Use ascent from the chosen mip for accurate vertical alignment.
-    const int ascent = mip->ascent;
+    const float ascent_f = static_cast<float>(mip->ascent);
 
-    // MODIFIED: Kerning is now fetched from the high-res font and must be scaled
-    // to the target font size for accurate placement calculations.
-    const float kerningScale = (font->getMaxFontSize() > 0) ?
-        static_cast<float>(targetFontSize) / font->getMaxFontSize() : 1.0f;
+    const float kerningScale =
+        (font->getMaxFontSize() > 0)
+        ? static_cast<float>(targetFontSize) / static_cast<float>(font->getMaxFontSize())
+        : 1.0f;
 
-    float penX_px = 0.0f;
+    // Use double for running math to reduce accumulation error
+    double penX = 0.0;
     Uint16 prev = 0;
-    int minYOffset = INT_MAX;
 
-    struct PosTmp {
-        SDL_Rect src;
-        int xOff, yOff;
-        float advance_px;
-    };
+    struct PosTmp { SDL_Rect src; float xOff, yOff, advance_px; };
     std::vector<PosTmp> tmp; tmp.reserve(textData_.size());
 
     for (unsigned char uc : textData_) {
-        Uint16 ch = (Uint16)uc;
+        const Uint16 ch = static_cast<Uint16>(uc);
 
-        // MODIFIED: Get glyph info from the mip's map.
         auto it = mip->glyphs.find(ch);
         if (it == mip->glyphs.end() || it->second.rect.h <= 0) { prev = 0; continue; }
-        const FontManager::GlyphInfo& g = it->second;
+        const auto& g = it->second;
 
-        // MODIFIED: Fetch high-res kerning and scale it to the target size.
-        int kern_fp = font->getKerning(prev, ch);
-        float kern_px_at_target_size = kern_fp * kerningScale;
+        // kerning from max-res (int) -> screen px
+        const int   kern_fp = font->getKerning(prev, ch);
+        const float kern_px = static_cast<float>(kern_fp) * kerningScale;
 
-        // The final render scale `scale` converts from mip-space to screen-space.
-        float gx = penX_px + (kern_px_at_target_size)+g.minX * scale;
-        float gy = (ascent - g.maxY) * scale;
+        // positions in screen px (explicit casts for clarity)
+        const float minX_px = static_cast<float>(g.minX) * scale;
+        const float maxY_px = static_cast<float>(g.maxY) * scale;
 
-        int xOffset = (int)std::lround(gx);
-        int yOffset = (int)std::lround(gy);
+        const float gx = static_cast<float>(penX) + kern_px + minX_px;
+        const float gy = (ascent_f * scale) - maxY_px;
 
-        // Pen advances by the glyph's advance (in mip units) scaled to the screen,
-        // plus the kerning (already scaled to target size).
-        float nextPen_px = penX_px + (g.advance * scale) + (kern_px_at_target_size);
-        if (maxWidth > 0.f && (nextPen_px > maxWidth)) break;
+        const float adv_px = static_cast<float>(g.advance) * scale + kern_px;
+        const double nextPen = penX + static_cast<double>(adv_px);
 
-        tmp.push_back({ g.rect, xOffset, yOffset, (g.advance * scale) + kern_px_at_target_size });
-        if (yOffset < minYOffset) minYOffset = yOffset;
+        if (maxWidth > 0.0f && static_cast<float>(nextPen) > maxWidth) break;
 
-        penX_px = nextPen_px;
+        tmp.push_back({ g.rect, gx, gy, adv_px });
+        penX = nextPen;
         prev = ch;
     }
 
-    // Normalize Y so tallest glyph top = 0 (matches legacy visual)
-    if (minYOffset != INT_MAX && minYOffset != 0) {
-        for (auto& t : tmp) t.yOff -= minYOffset;
-    }
-
+    // Commit
     cachedPositions_.reserve(tmp.size());
     for (auto& t : tmp) cachedPositions_.push_back({ t.src, t.xOff, t.yOff, t.advance_px });
 
-    cachedWidth_ = penX_px;
+    cachedWidth_ = static_cast<float>(penX);
     cachedHeight_ = baseViewInfo.FontSize;
 }

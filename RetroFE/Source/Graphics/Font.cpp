@@ -202,35 +202,34 @@ void FontManager::clearMips() {
 bool FontManager::initialize() {
     clearMips();
 
-    // --- Fine-tuned Mipmapping Constants (Hardcoded) ---
-    // This is the single place to adjust the mipmapping strategy.
-    const int MIN_FONT_SIZE = 8;
-    const float DENSE_FACTOR = 0.85f;        // Creates smaller gaps for larger font sizes.
-    const float SPARSE_FACTOR = 0.60f;       // Creates larger gaps for smaller font sizes.
-    const int SWITCH_THRESHOLD = 40;       // The font size at which we switch from dense to sparse.
+    // --- Mipmapping knobs ---
+    const int   MIN_FONT_SIZE = 8;
+    const float DENSE_FACTOR = 0.85f; // step when sizes are large
+    const float SPARSE_FACTOR = 0.60f; // step when sizes are small
+    const int   SWITCH_THRESHOLD = 40;
 
-    // This temporary struct is used during the generation of a single mip level.
     struct GlyphInfoBuild {
-        GlyphInfo glyph;
-        SDL_Surface* surface = nullptr; // Not used, but kept for structural consistency.
+        GlyphInfo   glyph;
+        SDL_Surface* surface = nullptr; // unused, kept for symmetry
     };
 
-    // The main loop iterates through each mip size to be generated.
     for (int currentSize = maxFontSize_; currentSize >= MIN_FONT_SIZE; ) {
         TTF_Font* font = TTF_OpenFont(fontPath_.c_str(), currentSize);
         if (!font) {
-            LOG_WARNING("Font", "Failed to open font '" + fontPath_ + "' at size " + std::to_string(currentSize) + ": " + std::string(TTF_GetError()));
-            // Calculate next size and continue loop
+            LOG_WARNING("Font", "Failed to open font '" + fontPath_ + "' at size " +
+                std::to_string(currentSize) + ": " + std::string(TTF_GetError()));
             float factor = (currentSize > SWITCH_THRESHOLD) ? DENSE_FACTOR : SPARSE_FACTOR;
-            int nextSize = static_cast<int>(std::round(static_cast<float>(currentSize) * factor));
+            int   nextSize = (int)std::round(currentSize * factor);
             if (nextSize >= currentSize) break;
             currentSize = nextSize;
             continue;
         }
-        TTF_SetFontKerning(font, 1);
-        TTF_SetFontHinting(font, TTF_HINTING_NORMAL);
 
-        // This is the full atlas generation logic, scoped to this single mip level.
+        // Gentler hinting reduces y-snapping that murders thin horizontals like '-'
+        TTF_SetFontKerning(font, 1);
+        TTF_SetFontHinting(font, TTF_HINTING_LIGHT); // <— key tweak :contentReference[oaicite:1]{index=1}
+
+        // Build one mip level
         MipLevel* mip = new MipLevel();
         mip->fontSize = currentSize;
         mip->height = TTF_FontHeight(font);
@@ -252,18 +251,17 @@ bool FontManager::initialize() {
         struct TmpGlyph {
             SDL_Surface* fill = nullptr;
             SDL_Surface* outline = nullptr;
-            int dx = 0, dy = 0;
+            int              dx = 0, dy = 0;
             GlyphInfoBuild* info = nullptr;
         };
-        std::vector<TmpGlyph> tmp;
-        tmp.reserve(128 - 32);
-
-        std::unordered_map<unsigned int, GlyphInfoBuild*> temp_atlas_build;
+        std::vector<TmpGlyph> tmp; tmp.reserve(128 - 32);
+        std::unordered_map<unsigned int, GlyphInfoBuild*> temp_build;
 
         for (Uint16 ch = 32; ch < 128; ++ch) {
             int minx, maxx, miny, maxy, adv;
             if (TTF_GlyphMetrics(font, ch, &minx, &maxx, &miny, &maxy, &adv) != 0) continue;
 
+            // Render fill
             TTF_SetFontOutline(font, 0);
             SDL_Color white{ 255,255,255,255 };
             SDL_Surface* fill = TTF_RenderGlyph_Blended(font, ch, white);
@@ -280,6 +278,7 @@ bool FontManager::initialize() {
                 if (!fill) continue;
             }
 
+            // Optional outline
             SDL_Surface* outline = nullptr;
             int dx = 0, dy = 0;
             if (outlinePx_ > 0) {
@@ -306,8 +305,21 @@ bool FontManager::initialize() {
                 }
             }
 
+            // --- SYNTHETIC VERTICAL METRICS ---
+            // SDL_ttf metrics (miny/maxy) are relative to baseline and in *pixels* at this size.
+            // Bitmap height may differ due to hinting. To keep layout consistent, force:
+            //   newHeight = fill->h
+            //   keep centerline = (maxy + miny)/2
+            // so that "top = ascent - maxY" places the bitmap exactly where metrics expect.
+            const float metricsCenter = 0.5f * float(maxy + miny);
+            const float halfBitmapH = 0.5f * float(fill->h);
+            // Choose integer new minY/maxY that preserve center and match bitmap height.
+            int newMinY = int(std::floor(metricsCenter - halfBitmapH + 0.5f));
+            int newMaxY = newMinY + fill->h;
+
             const int packedW = outline ? outline->w : fill->w;
             const int packedH = outline ? outline->h : fill->h;
+
             if (x + packedW + GLYPH_SPACING > atlasWidth) {
                 atlasHeight += y + GLYPH_SPACING;
                 x = 0; y = 0;
@@ -316,20 +328,25 @@ bool FontManager::initialize() {
             auto* info = new GlyphInfoBuild;
             info->surface = nullptr;
             info->glyph.advance = adv;
-            info->glyph.minX = minx; info->glyph.maxX = maxx;
-            info->glyph.minY = miny; info->glyph.maxY = maxy;
+            info->glyph.minX = minx;
+            info->glyph.maxX = maxx;
+            // Use synthetic vertical metrics (fixes hyphen/underscore misplacement)
+            info->glyph.minY = newMinY;
+            info->glyph.maxY = newMaxY;
             info->glyph.rect = { x, atlasHeight, packedW, packedH };
+
             if (outline) {
                 info->glyph.fillX = dx; info->glyph.fillY = dy;
                 info->glyph.fillW = fill->w; info->glyph.fillH = fill->h;
             }
             else {
-                info->glyph.fillX = 0; info->glyph.fillY = 0;
+                info->glyph.fillX = 0;  info->glyph.fillY = 0;
                 info->glyph.fillW = packedW; info->glyph.fillH = packedH;
             }
 
-            temp_atlas_build[ch] = info;
+            temp_build[ch] = info;
             tmp.push_back(TmpGlyph{ fill, outline, dx, dy, info });
+
             x += packedW + GLYPH_SPACING;
             y = std::max(y, packedH);
         }
@@ -340,12 +357,11 @@ bool FontManager::initialize() {
         SDL_Surface* atlasFill = SDL_CreateRGBSurface(0, atlasWidth, atlasHeight, 32, rmask, gmask, bmask, amask);
         if (!atlasFill) {
             LOG_WARNING("Font", "Failed to create fill atlas surface for size " + std::to_string(currentSize));
-            for (auto& p : temp_atlas_build) delete p.second;
+            for (auto& p : temp_build) delete p.second;
             delete mip;
             TTF_CloseFont(font);
-            // Calculate next size and continue loop
             float factor = (currentSize > SWITCH_THRESHOLD) ? DENSE_FACTOR : SPARSE_FACTOR;
-            int nextSize = static_cast<int>(std::round(static_cast<float>(currentSize) * factor));
+            int   nextSize = (int)std::round(currentSize * factor);
             if (nextSize >= currentSize) break;
             currentSize = nextSize;
             continue;
@@ -358,12 +374,11 @@ bool FontManager::initialize() {
             if (!atlasOutline) {
                 LOG_WARNING("Font", "Failed to create outline atlas surface for size " + std::to_string(currentSize));
                 SDL_FreeSurface(atlasFill);
-                for (auto& p : temp_atlas_build) delete p.second;
+                for (auto& p : temp_build) delete p.second;
                 delete mip;
                 TTF_CloseFont(font);
-                // Calculate next size and continue loop
                 float factor = (currentSize > SWITCH_THRESHOLD) ? DENSE_FACTOR : SPARSE_FACTOR;
-                int nextSize = static_cast<int>(std::round(static_cast<float>(currentSize) * factor));
+                int   nextSize = (int)std::round(currentSize * factor);
                 if (nextSize >= currentSize) break;
                 currentSize = nextSize;
                 continue;
@@ -405,15 +420,16 @@ bool FontManager::initialize() {
         SDL_FreeSurface(atlasFill);
         if (atlasOutline) SDL_FreeSurface(atlasOutline);
 
-        for (auto const& [key, val] : temp_atlas_build) {
+        for (auto const& [key, val] : temp_build) {
             mip->glyphs[key] = val->glyph;
             delete val;
         }
-        temp_atlas_build.clear();
+        temp_build.clear();
 
         mipLevels_[currentSize] = mip;
 
         if (currentSize == maxFontSize_) {
+            // Keep the largest-size font handle open for precise kerning/metrics:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
             max_font_ = font;
             max_height_ = mip->height;
             max_ascent_ = mip->ascent;
@@ -423,13 +439,9 @@ bool FontManager::initialize() {
             TTF_CloseFont(font);
         }
 
-        // Calculate the next size using the dual-factor logic
         float factor = (currentSize > SWITCH_THRESHOLD) ? DENSE_FACTOR : SPARSE_FACTOR;
-        int nextSize = static_cast<int>(std::round(static_cast<float>(currentSize) * factor));
-
-        if (nextSize >= currentSize) {
-            break;
-        }
+        int   nextSize = (int)std::round(currentSize * factor);
+        if (nextSize >= currentSize) break;
         currentSize = nextSize;
     }
 
@@ -439,9 +451,10 @@ bool FontManager::initialize() {
         return false;
     }
 
-    setColor(color_);
+    setColor(color_); // color-mod all mip textures:contentReference[oaicite:4]{index=4}
     return true;
 }
+
 void FontManager::deInitialize() {
     clearMips();
     if (max_font_) {

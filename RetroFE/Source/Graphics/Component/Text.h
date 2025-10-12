@@ -30,8 +30,8 @@ class Text : public Component
 
     struct CachedGlyphPosition {
         SDL_Rect sourceRect;  // Source rectangle in the texture atlas
-        int xOffset;          // Pre-calculated x offset
-        int yOffset;         // Pre-calculated y offset
+        float xOffset;          // Pre-calculated x offset
+        float yOffset;         // Pre-calculated y offset
         float advance;       // Pre-calculated advance
     };
 
