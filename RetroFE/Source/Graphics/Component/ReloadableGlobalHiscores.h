@@ -59,7 +59,7 @@ private:
     void destroyAllQr_();
 
     // ----- Grid baseline (computed per-geometry) -----
-    void computeGridBaseline_(SDL_Renderer* renderer, FontManager* font,
+    void computeGridBaseline_( FontManager* font,
         int totalTables, float compW, float compH,
         float baseScale, float asc);
 

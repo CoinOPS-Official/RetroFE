@@ -170,7 +170,7 @@ bool ReloadableGlobalHiscores::update(float dt) {
 }
 
 void ReloadableGlobalHiscores::computeGridBaseline_(
-	SDL_Renderer* renderer, FontManager* font,
+	FontManager* font,
 	int totalTables, float compW, float compH,
 	float baseScale, float asc) {
 	// Decide number of slots in the grid: 6 if we have ?6 tables, else totalTables
@@ -476,7 +476,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
     }
 
     if (!gridBaselineValid_) {
-        computeGridBaseline_(renderer, font, totalTables, compW, compH, baseScale, asc);
+        computeGridBaseline_(font, totalTables, compW, compH, baseScale, asc);
     }
     const int   cols = gridBaselineCols_;
     const int   rows = gridBaselineRows_;
