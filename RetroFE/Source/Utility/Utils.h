@@ -62,6 +62,8 @@ public:
     static void listToVector(const std::string& str, std::vector<std::string>& vec, char delimiter);
     static int gcd(int a, int b);
     static std::string trim(std::string str);
+    static bool isAbsolutePath(const std::string& path);
+    static bool isSubPath(const std::string& candidate);
     static std::string removeAbsolutePath(const std::string& fullPath);
     static bool isOutputATerminal();
     static bool startsWith(const std::string& fullString, const std::string& startOfString);

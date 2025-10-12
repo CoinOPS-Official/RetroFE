@@ -34,6 +34,7 @@
 #include "Menu/Menu.h"
 #include "SDL.h"
 #include "Utility/Log.h"
+#include "Utility/PayloadSync.h"
 #include "Utility/ThreadPool.h"
 #include "Utility/Utils.h"
 #include "Video/VideoFactory.h"
@@ -47,6 +48,7 @@
 #include <tuple>
 #include <vector>
 #include <cmath>
+#include <curl/curl.h>
 #if __has_include(<SDL2/SDL_ttf.h>)
 #include <SDL2/SDL_ttf.h>
 #elif __has_include(<SDL2_ttf/SDL_ttf.h>)
@@ -258,6 +260,11 @@ int RetroFE::initialize(void* context) {
 
 	LOG_INFO("RetroFE", "Initializing");
 
+	static std::once_flag curlOnce;
+	std::call_once(curlOnce, [] {
+		curl_global_init(CURL_GLOBAL_DEFAULT);
+		});
+
 	if (!instance->input_.initialize())
 	{
 		LOG_ERROR("RetroFE", "Could not initialize user controls");
@@ -279,6 +286,21 @@ int RetroFE::initialize(void* context) {
 		LOG_ERROR("RetroFE", "Could not initialize meta database");
 		instance->initializeError = true;
 		return -1;
+	}
+
+	// --- Payload sync: load config and run once at startup ---
+	{
+		PayloadSync::Config psCfg = PayloadSync::Config::LoadFrom(instance->config_);
+		if (psCfg.enabled) {
+			LOG_INFO("Payload", std::string("Startup sync: file=\"") + psCfg.ResolvePayloadPath() + "\"");
+
+			const bool ok = PayloadSync::RunWithConfig(psCfg, /*dryRun=*/false);
+
+			LOG_INFO("Payload", std::string("Startup sync finished: ") + (ok ? "OK" : "Errors (see log)"));
+		}
+		else {
+			LOG_INFO("Payload", "Startup sync disabled by config (payload.enabled=false)");
+		}
 	}
 
 	instance->initializeMusicPlayer();

@@ -425,6 +425,54 @@ std::string Utils::trim(std::string str)
     return str;
 }
 
+#include "../Database/Configuration.h"
+#include <filesystem>
+namespace fs = std::filesystem;
+
+bool Utils::isAbsolutePath(const std::string& path) {
+    return fs::path(path).is_absolute();
+}
+
+bool Utils::isSubPath(const std::string& candidate) {
+    if (candidate.empty())
+        return false;
+
+    fs::path base = fs::path(Configuration::absolutePath);
+    fs::path abs = fs::path(candidate);
+
+    if (!abs.is_absolute())
+        abs = base / abs; // resolve relative to RetroFE root
+
+    std::error_code ec;
+    fs::path baseCanon = fs::weakly_canonical(base, ec);
+    fs::path absCanon = fs::weakly_canonical(abs, ec);
+
+#ifdef _WIN32
+    auto toLower = [](std::string s) {
+        std::transform(s.begin(), s.end(), s.begin(),
+            [](unsigned char c) { return std::tolower(c); });
+        return s;
+        };
+#endif
+
+    auto bIt = baseCanon.begin();
+    auto aIt = absCanon.begin();
+
+    for (; bIt != baseCanon.end(); ++bIt, ++aIt) {
+        if (aIt == absCanon.end())
+            return false; // candidate shorter than base
+#ifdef _WIN32
+        if (toLower(bIt->string()) != toLower(aIt->string()))
+            return false;
+#else
+        if (*bIt != *aIt)
+            return false;
+#endif
+    }
+    return true; // base is prefix of candidate
+}
+
+
 std::string Utils::removeAbsolutePath(const std::string& fullPath) {
     std::string rootPath = Configuration::absolutePath; // Get the absolute path
     std::size_t found = fullPath.find(rootPath);
