@@ -289,7 +289,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
 
             // Outline pass
             if (outlineTex) {
-                float penX = std::round(x);
+                float penX = x;
                 Uint16 prev = 0;
                 for (unsigned char uc : s) {
                     Uint16 ch = (Uint16)uc;
@@ -313,7 +313,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
 
             // Fill pass
             {
-                float penX = std::round(x);
+                float penX = x;
                 Uint16 prev = 0;
                 for (unsigned char uc : s) {
                     Uint16 ch = (Uint16)uc;
@@ -379,7 +379,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
         if (l == std::string::npos) return false;
         size_t r = s.find_last_not_of(" \t");
         const std::string v = s.substr(l, r - l + 1);
-        if (v == "-" || v == "$-" || v == "--:--:---") return true;
+        if (v == "-" || v == "$-" || v == "--:--.---") return true;
         for (unsigned char uc : v) {
             char c = (char)uc;
             if (c == '-' || c == ':' || c == '.' || c == '$' || c == ' ') continue;
@@ -463,8 +463,8 @@ void ReloadableGlobalHiscores::reloadTexture() {
     constexpr float kPanelGuardPx = 1.0f;  // prevents rounding/overhang shaves
 
     // Create/resize composite RT
-    const int compositeW = (int)std::lround(compW);
-    const int compositeH = (int)std::lround(compH);
+    const int compositeW = (int)std::lround(baseViewInfo.ScaledWidth());
+    const int compositeH = (int)std::lround(baseViewInfo.ScaledHeight());
     if (!intermediateTexture_ || compW_ != compositeW || compH_ != compositeH) {
         if (intermediateTexture_) SDL_DestroyTexture(intermediateTexture_);
         intermediateTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
@@ -796,9 +796,14 @@ void ReloadableGlobalHiscores::draw() {
     if (!intermediateTexture_) return;
 
     SDL_FRect rect = {
-        baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
-        baseViewInfo.ScaledWidth(),       baseViewInfo.ScaledHeight()
+        baseViewInfo.XRelativeToOrigin(),
+        baseViewInfo.YRelativeToOrigin(),
+        (float)compW_,  // match intermediateTexture_ size
+        (float)compH_
     };
+
+    LOG_DEBUG("GlobalHiScores", "Intermediate: " + std::to_string(compW_) + "x" + std::to_string(compH_) +
+        ", Draw rect: " + std::to_string(rect.w) + "x" + std::to_string(rect.h));
 
     if (fadeActive_ && prevCompositeTexture_) {
         float t = (fadeDurationSec_ > 0.f) ? (fadeT_ / fadeDurationSec_) : 1.f;
