@@ -739,7 +739,13 @@ bool RetroFE::run() {
 
 	constexpr double GlobalScoreFetchIntervalMs = 5 * 60 * 1000.0; // 5 minutes
 	double nextFetchTimeMs = initial_current_time_ms + GlobalScoreFetchIntervalMs;
-	std::atomic<bool> fetchInFlight{ false };
+
+	// --- Frame timing smoothing state (persistent across frames in this run) ---
+	float smoothedDt = static_cast<float>(fpsIdleTime / 1000.0f); // start smooth timer at idle rate
+	constexpr float MIN_DT = 1.0f / 240.0f;   // clamp to ~240 FPS
+	constexpr float MAX_DT = 1.0f / 15.0f;    // clamp to ~15 FPS
+	constexpr float SMOOTH_FACTOR = 0.10f;    // 10% smoothing factor (higher = faster adaptation)
+
 
 	auto kickFetch = [&]() {
 		HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(
@@ -755,6 +761,8 @@ bool RetroFE::run() {
 		uint64_t loopStart = SDL_GetPerformanceCounter();
 		double nowMs_loopStart = loopStart * 1000.0 / freq_; // freq is SDL_GetPerformanceFrequency()
 
+
+
 		if (nowMs_loopStart >= nextFetchTimeMs) {
 			// Advance by fixed steps to avoid drift if we were paused for a while
 			do { nextFetchTimeMs += GlobalScoreFetchIntervalMs; } while (nowMs_loopStart >= nextFetchTimeMs);
@@ -765,6 +773,14 @@ bool RetroFE::run() {
 		SDL_Event e;
 		while (SDL_PollEvent(&e)) input_.update(e);
 		input_.updateKeystate(); // once per frame, AFTER consuming events, BEFORE processUserInput()
+		bool activelyAnimating = isUserActive(currentTime_)
+			|| (currentPage_ && (
+				currentPage_->isMenuScrolling()
+				|| !currentPage_->isIdle()
+				|| !currentPage_->isGraphicsIdle()
+				|| currentPage_->isPlaylistScrolling()
+				|| currentPage_->isGamesScrolling()));
+		
 		if (!splashMode && state_accepts_input(state_)) {
 			RETROFE_STATE inputState = processUserInput(currentPage_);
 			if (inputState != RETROFE_IDLE) {
@@ -775,14 +791,27 @@ bool RetroFE::run() {
 			nextFrameTime = nowMs_loopStart;
 		}
 
-		deltaTime = static_cast<float>((nowMs_loopStart - lastFrameTimePointMs_) / 1000.0);
+		// --- Frame timing with smoothing & adaptive reset ---
+		float rawDt = static_cast<float>((nowMs_loopStart - lastFrameTimePointMs_) / 1000.0f);
+		lastFrameTimePointMs_ = nowMs_loopStart;
 
-		// If dt is over 100ms (0.1s), clamp it to a "sane" frame time (e.g. 1/60th = 0.0167)
-		// This avoids animation jumps after game launches or big stalls
-		if (deltaTime > 0.1f) deltaTime = 0.0167f;
+		// Convert target frame interval (ms → s)
+		float targetDt = static_cast<float>((activelyAnimating ? fpsTime : fpsIdleTime) / 1000.0f);
 
-		currentTime_ = static_cast<float>(nowMs_loopStart / 1000.0);
-		lastFrameTimePointMs_ = nowMs_loopStart; // For next frame's deltaTime
+		// Clamp extremes
+		if (rawDt < MIN_DT) rawDt = MIN_DT;
+		if (rawDt > MAX_DT) rawDt = MAX_DT;
+
+		// If our target frame pacing changes drastically, reset smoothing immediately
+		float ratio = smoothedDt / targetDt;
+		if (ratio < 0.5f || ratio > 2.0f)
+			smoothedDt = targetDt;
+
+		// Normal EMA smoothing otherwise
+		smoothedDt = smoothedDt * (1.0f - SMOOTH_FACTOR) + rawDt * SMOOTH_FACTOR;
+		deltaTime = smoothedDt;
+
+		currentTime_ = static_cast<float>(nowMs_loopStart / 1000.0f);
 
 		if (!g_isRestrictorCheckDone) {
 			if (g_restrictorManager.isReady()) {
@@ -2180,8 +2209,6 @@ bool RetroFE::run() {
 			{
 				bool unloadSDL = false;
 				config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
-				int currentTrack = -1;
-				double currentPosition = 0.0;
 				nextPageItem_ = currentPage_->getSelectedItem();
 				launchEnter();
 				CollectionInfoBuilder cib(config_, *metadb_);
@@ -2501,7 +2528,7 @@ bool RetroFE::run() {
 			{
 				if (!splashMode && !paused_)
 				{
-					float attract_dt = static_cast<float>(deltaTime);
+					float attract_dt = deltaTime;
 					const float MAX_REASONABLE_DELTA_TIME = 0.1f; // 100ms, or 1/10th of a second
 					if (attract_dt > MAX_REASONABLE_DELTA_TIME) {
 						attract_dt = MAX_REASONABLE_DELTA_TIME;
@@ -2568,12 +2595,6 @@ bool RetroFE::run() {
 
 			// Only do custom frame pacing if vsync is OFF
 			if (!vSync) {
-				bool activelyAnimating = isUserActive(currentTime_)
-					|| currentPage_->isMenuScrolling()
-					|| !currentPage_->isIdle()
-					|| !currentPage_->isGraphicsIdle()
-					|| currentPage_->isPlaylistScrolling()
-					|| currentPage_->isGamesScrolling();
 
 				double currentFrameIntervalMs = activelyAnimating ? fpsTime : fpsIdleTime;
 
