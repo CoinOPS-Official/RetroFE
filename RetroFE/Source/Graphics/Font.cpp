@@ -227,7 +227,7 @@ bool FontManager::initialize() {
 
         // Gentler hinting reduces y-snapping that murders thin horizontals like '-'
         TTF_SetFontKerning(font, 1);
-        TTF_SetFontHinting(font, TTF_HINTING_LIGHT); // <— key tweak :contentReference[oaicite:1]{index=1}
+        TTF_SetFontHinting(font, TTF_HINTING_NORMAL); // <— key tweak :contentReference[oaicite:1]{index=1}
 
         // Build one mip level
         MipLevel* mip = new MipLevel();
