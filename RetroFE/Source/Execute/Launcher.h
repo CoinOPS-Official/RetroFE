@@ -36,9 +36,8 @@ public:
 	void LEDBlinky( int command, std::string collection = "", Item *collectionItem = NULL);
 
 private:
+    bool runHookNoWait_(const std::string& exe, const std::string& args, const std::string& cwd);
     bool launcherName(std::string &launcherName, std::string collection);
-    bool launcherExecutable(std::string &executable, std::string launcherName);
-    bool launcherArgs(std::string &args, std::string launcherName);
     bool extensions(std::string &extensions, std::string launcherName);
     bool collectionDirectory(std::string &directory, std::string collection);
     bool findFile(std::string& foundFilePath, std::string& foundFilename, const std::string& directory, const std::string& filenameWithoutExtension, const std::string& extensions);

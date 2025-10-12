@@ -78,17 +78,33 @@ void WindowsProcessManager::cleanupHandles() {
 
 // --- Public Interface Implementation ---
 
-bool WindowsProcessManager::simpleLaunch(const std::string& executable, const std::string& args, const std::string& currentDirectory) {
-    std::string commandLine = "\"" + executable + "\"";
-    if (!args.empty()) {
-        commandLine += " " + args;
-    }
+bool WindowsProcessManager::simpleLaunch(const std::string& executable,
+    const std::string& args,
+    const std::string& currentDirectory) {
+    std::string ext = Utils::toLower(std::filesystem::path(executable).extension().string());
+    bool isBatch = (ext == ".bat" || ext == ".cmd");
 
-    STARTUPINFOA startupInfo{};
-    PROCESS_INFORMATION processInfo{};
-    startupInfo.cb = sizeof(startupInfo);
-    startupInfo.dwFlags = STARTF_USESHOWWINDOW;
-    startupInfo.wShowWindow = SW_SHOWDEFAULT;
+    std::string commandLine;
+    std::string workDir = currentDirectory;
+
+    STARTUPINFOA si{};
+    PROCESS_INFORMATION pi{};
+    si.cb = sizeof(si);
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE; // hide if anything is created
+
+    if (isBatch) {
+        // Use COMSPEC /C "bat args" — completely windowless
+        char* comspec = std::getenv("COMSPEC");
+        std::string shell = comspec ? comspec : "C:\\Windows\\System32\\cmd.exe";
+        commandLine = "\"" + shell + "\" /C \"\"" + executable + "\"";
+        if (!args.empty()) commandLine += " " + args;
+        commandLine += "\"";
+    }
+    else {
+        commandLine = "\"" + executable + "\"";
+        if (!args.empty()) commandLine += " " + args;
+    }
 
     if (!CreateProcessA(
         nullptr,
@@ -97,17 +113,17 @@ bool WindowsProcessManager::simpleLaunch(const std::string& executable, const st
         FALSE,
         CREATE_NO_WINDOW,
         nullptr,
-        currentDirectory.c_str(),
-        &startupInfo,
-        &processInfo))
+        workDir.empty() ? nullptr : workDir.c_str(),
+        &si,
+        &pi))
     {
-        LOG_ERROR("ProcessManager", "simpleLaunch failed for: " + commandLine + " with error: " + std::to_string(GetLastError()));
+        LOG_ERROR("ProcessManager", "simpleLaunch failed: " + commandLine +
+            " (err=" + std::to_string(GetLastError()) + ")");
         return false;
     }
 
-    // We don't wait, so clean up handles immediately
-    CloseHandle(processInfo.hProcess);
-    CloseHandle(processInfo.hThread);
+    CloseHandle(pi.hProcess);
+    CloseHandle(pi.hThread);
     return true;
 }
 

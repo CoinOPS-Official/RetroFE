@@ -89,6 +89,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     std::string launcherName = collectionItem->collectionInfo->launcher;
     std::string launcherFile = Utils::combinePath(Configuration::absolutePath, "collections", collection, "launchers", collectionItem->name + ".conf");
 
+    // Per-item launcher override file
     if (std::ifstream launcherStream(launcherFile); launcherStream.good()) {
         std::string line;
         if (std::getline(launcherStream, line)) {
@@ -98,6 +99,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         }
     }
 
+    // Collection-specific launcher fallback
     if (launcherName == collectionItem->collectionInfo->launcher) {
         std::string collectionLauncherKey = "collectionLaunchers." + collection;
         if (config_.propertyPrefixExists(collectionLauncherKey)) {
@@ -106,9 +108,23 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         }
     }
 
+    // Lambda helpers: property fallback chain (local -> collection -> global)
+    auto getPropChainStr = [&](const std::string& leaf, std::string& out) -> bool {
+        if (config_.getProperty("localLaunchers." + launcherName + "." + leaf, out)) return true;
+        if (config_.getProperty("collectionLaunchers." + launcherName + "." + leaf, out)) return true;
+        if (config_.getProperty("launchers." + launcherName + "." + leaf, out)) return true;
+        return false;
+        };
+    auto getPropChainBool = [&](const std::string& leaf, bool& out) -> bool {
+        if (config_.getProperty("localLaunchers." + launcherName + "." + leaf, out)) return true;
+        if (config_.getProperty("collectionLaunchers." + launcherName + "." + leaf, out)) return true;
+        if (config_.getProperty("launchers." + launcherName + "." + leaf, out)) return true;
+        return false;
+        };
+
     std::string executablePath, selectedItemsDirectory, selectedItemsPath, extensionstr, matchedExtension, args;
 
-    if (!launcherExecutable(executablePath, launcherName)) {
+    if (!getPropChainStr("executable", executablePath)) {
         LOG_ERROR("Launcher", "Launcher executable not found for: " + launcherName);
         return false;
     }
@@ -121,7 +137,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         return false;
     }
 
-    launcherArgs(args, launcherName);
+    getPropChainStr("arguments", args);
 
     if (!collectionItem->filepath.empty()) {
         selectedItemsDirectory = collectionItem->filepath;
@@ -135,13 +151,13 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         findFile(selectedItemsPath, matchedExtension, selectedItemsDirectory, collectionItem->file, extensionstr);
     }
 
-    // 1. First, replace all variables.
+    // 1) Variable replacement (exe + args)
     LOG_DEBUG("Launcher", "Path before replacement: " + executablePath);
     args = replaceVariables(args, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
     executablePath = replaceVariables(executablePath, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
     LOG_INFO("Launcher", "Path after variable replacement: " + executablePath);
 
-    // 2. Now that we have a real path string, resolve it to an absolute path if it isn't already.
+    // 2) Absolutize executable path (relative to RetroFE root if needed)
     std::filesystem::path finalExePath(executablePath);
     if (!finalExePath.is_absolute()) {
         finalExePath = std::filesystem::path(Configuration::absolutePath) / executablePath;
@@ -149,24 +165,125 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         LOG_INFO("Launcher", "Resolved relative executable path to: " + executablePath);
     }
 
-    // 3. Finally, determine the working directory based on the final, absolute executable path.
-    std::string currentDirectoryKey = "launchers." + launcherName + ".currentDirectory";
-    std::string currentDirectory = Utils::getDirectory(executablePath);
-    config_.getProperty(currentDirectoryKey, currentDirectory);
+    // 3) Determine working directory (default = dir of exe), then fallback chain, then variable replacement
+    std::string currentDirectory = Utils::getDirectory(executablePath); // Start with a sensible default
+    getPropChainStr("currentDirectory", currentDirectory); // The helper will overwrite 'currentDirectory' if the property is found
     currentDirectory = replaceVariables(currentDirectory, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
 
-    // --- Check for flags that determine the launch/wait behavior ---
+    // Flags
     bool reboot = false;
-    config_.getProperty("launchers." + launcherName + ".reboot", reboot);
+    getPropChainBool("reboot", reboot);
 
     bool unloadSDL = false;
     config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
 
+    // Build onFrameTick once (reused for pre wait, main wait, and optionally post wait)
+    FrameTickCallback onFrameTick;
+    if (unloadSDL) {
+        auto start = std::chrono::steady_clock::now();
+        onFrameTick = [this, currentPage, t = start]() mutable {
+            auto now = std::chrono::steady_clock::now();
+            float dt = std::chrono::duration<float>(now - t).count();
+            t = now;
+            if (dt > 0.1f) dt = 0.0167f;
+            if (currentPage) currentPage->update(dt);
+            };
+    }
+    else {
+        Uint64 start = SDL_GetPerformanceCounter();
+        onFrameTick = [this, currentPage, last = start]() mutable {
+            Uint64 now = SDL_GetPerformanceCounter();
+            double f = static_cast<double>(SDL_GetPerformanceFrequency());
+            float  dt = static_cast<float>((now - last) / f);
+            last = now;
+            if (dt > 0.1f) dt = 0.0167f;
+
+            if (!currentPage) return;
+            currentPage->update(dt);
+
+            bool multiple_display = SDL::getScreenCount() > 1;
+            bool animateDuringGame = true;
+            config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
+            if (animateDuringGame && multiple_display) {
+                for (int i = 1; i < SDL::getScreenCount(); ++i) {
+                    SDL_Renderer* r = SDL::getRenderer(i);
+                    SDL_Texture* t = SDL::getRenderTarget(i);
+                    if (!r || !t) continue;
+                    SDL_SetRenderTarget(r, t);
+                    SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
+                    SDL_RenderClear(r);
+                    currentPage->draw(i);
+                    SDL_SetRenderTarget(r, nullptr);
+                    SDL_RenderCopy(r, t, nullptr, nullptr);
+                    SDL_RenderPresent(r);
+                }
+            }
+            };
+    }
+
+    // --- PRE HOOK (sequential by default; uses fallback chain; UI animates while waiting) ---
+// --- PRE HOOK (robust, sequential by default, UI animates while waiting) ---
+    {
+        std::string preExe;
+        if (getPropChainStr("preexecutable", preExe)) {
+            // --- A pre-hook is configured, so prepare and attempt to run it ---
+            std::string preArgs, preCwd;
+            bool preWait = true;
+
+            // Gather the rest of the hook's properties
+            getPropChainStr("prearguments", preArgs);
+            getPropChainStr("precurrentDirectory", preCwd);
+            getPropChainBool("prewait", preWait);
+
+            // Process all variables and paths
+            preExe = replaceVariables(preExe, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
+            preArgs = replaceVariables(preArgs, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
+            if (preCwd.empty()) {
+                preCwd = Utils::getDirectory(preExe); // Default CWD to the executable's directory
+            }
+            preCwd = replaceVariables(preCwd, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
+
+            // Resolve paths to be absolute for reliability
+            std::filesystem::path pExe(preExe), pCwd(preCwd);
+            if (!pExe.is_absolute()) pExe = std::filesystem::path(Configuration::absolutePath) / pExe;
+            if (!pCwd.is_absolute()) pCwd = std::filesystem::path(Configuration::absolutePath) / pCwd;
+
+            // --- CORE REFACTOR: Check for existence BEFORE launching ---
+            if (!std::filesystem::exists(pExe)) {
+                LOG_WARNING("Launcher", "Pre-hook executable not found, skipping: " + pExe.string());
+            }
+            else {
+                // The file exists, so we expect it to run. A failure here is a real error.
+                std::unique_ptr<IProcessManager> preMgr;
+#ifdef WIN32
+                preMgr = std::make_unique<WindowsProcessManager>();
+#else
+                preMgr = std::make_unique<UnixProcessManager>();
+#endif
+                if (!preMgr->launch(pExe.string(), preArgs, pCwd.string())) {
+                    LOG_ERROR("Launcher", "Pre-hook failed to start even though it exists: " + pExe.string());
+                    return false; // Critical failure, halt the launch
+                }
+
+                if (preWait) {
+                    LOG_INFO("Launcher", "Waiting for pre-hook process to complete...");
+                    preMgr->wait(0, nullptr, onFrameTick);
+                    LOG_INFO("Launcher", "Pre-hook complete.");
+                }
+                else {
+                    LOG_INFO("Launcher", "Pre-hook started in fire-and-forget mode.");
+                }
+            }
+        }
+        else {
+            LOG_DEBUG("Launcher", "No preexecutable configured; skipping pre hook.");
+        }
+    }
     //
     // --- STEP 6: EXECUTION ---
     //
 
-    // 6a. Create the platform-specific process manager
+    // 6a) Create the platform-specific process manager
     std::unique_ptr<IProcessManager> processManager;
 #ifdef WIN32
     processManager = std::make_unique<WindowsProcessManager>();
@@ -174,86 +291,33 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     processManager = std::make_unique<UnixProcessManager>();
 #endif
 
-    // 6c. Launch the process
+    // 6c) Launch the main process
     if (!processManager->launch(executablePath, args, currentDirectory)) {
         LOG_ERROR("Launcher", "Execution failed for: " + executablePath);
         return false;
     }
 
-    // --- NEW: Branched wait logic ---
+    // --- Wait/monitor logic ---
     if (reboot) {
-        // This is the efficient path for scripts and theme-swappers.
-        // It performs a minimal, blocking wait with no extra processing.
         LOG_INFO("Launcher", "Reboot mode enabled. Entering simple wait until process terminates.");
-        processManager->wait(0, nullptr, nullptr);
+        processManager->wait(0, nullptr, nullptr);  // minimal wait; no UI tick
     }
     else {
         LOG_INFO("Launcher", "Normal mode. Entering monitoring state.");
 
-        FrameTickCallback onFrameTick;
-
-        if (unloadSDL) {
-            // Define an "SDL-less" onFrameTick that uses std::chrono for timing.
-            // This is safe to run when SDL is de-initialized.
-            LOG_INFO("Launcher", "unloadSDL is true. Using SDL-less frame tick for background processing.");
-
-            auto start = std::chrono::steady_clock::now();  // initial value captured below
-            onFrameTick = [this, currentPage, t = start]() mutable {
-                auto now = std::chrono::steady_clock::now();
-                float delta = std::chrono::duration<float>(now - t).count();
-                t = now;
-
-                if (delta > 0.1f) delta = 0.0167f;
-
-                if (currentPage) currentPage->update(delta);
-                };
-        }
-        else {
-            LOG_INFO("Launcher", "unloadSDL is false. Using standard frame tick for multi-monitor rendering.");
-
-            Uint64 start = SDL_GetPerformanceCounter();     // initial value captured below
-            onFrameTick = [this, currentPage, last = start]() mutable {
-                Uint64 now = SDL_GetPerformanceCounter();
-                double freq = static_cast<double>(SDL_GetPerformanceFrequency());
-                float  delta = static_cast<float>((static_cast<double>(now - last)) / freq);
-                last = now;
-
-                if (delta > 0.1f) delta = 0.0167f;
-
-                if (!currentPage) return;
-                currentPage->update(delta);
-
-                bool multiple_display = SDL::getScreenCount() > 1;
-                bool animateDuringGame = true;
-                config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
-                if (animateDuringGame && multiple_display) {
-                    for (int i = 1; i < SDL::getScreenCount(); ++i) {
-                        SDL_Renderer* renderer = SDL::getRenderer(i);
-                        SDL_Texture* target = SDL::getRenderTarget(i);
-                        if (!renderer || !target) continue;
-                        SDL_SetRenderTarget(renderer, target);
-                        SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255);
-                        SDL_RenderClear(renderer);
-                        currentPage->draw(i);
-                        SDL_SetRenderTarget(renderer, nullptr);
-                        SDL_RenderCopy(renderer, target, nullptr, nullptr);
-                        SDL_RenderPresent(renderer);
-                    }
-                }
-                };
-        }
-
-        // 6b. Create helper components
+        // 6b) Helpers
         InputMonitor inputMonitor(config_);
         std::optional<RestrictorGuard> restrictorGuard;
 
         bool restrictorEnabled = false;
         config_.getProperty("restrictorEnabled", restrictorEnabled);
-        if (!isAttractMode && restrictorEnabled && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
+        if (!isAttractMode && restrictorEnabled &&
+            currentPage && currentPage->getSelectedItem() &&
+            currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
             restrictorGuard.emplace(4);
         }
 
-        // 6d. Monitor the process
+        // 6d) Monitor the process
         auto startTime = std::chrono::steady_clock::now();
         auto endTime = startTime;
         auto interruptionTime = startTime;
@@ -262,7 +326,9 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         if (isAttractMode) {
             int timeout = 30;
             config_.getProperty(OPTION_ATTRACTMODELAUNCHRUNTIME, timeout);
-            auto attractModeInputCheck = [&inputMonitor]() { return inputMonitor.checkInputEvents() != InputDetectionResult::NoInput; };
+            auto attractModeInputCheck = [&inputMonitor]() {
+                return inputMonitor.checkInputEvents() != InputDetectionResult::NoInput;
+                };
             WaitResult result = processManager->wait(timeout, attractModeInputCheck, onFrameTick);
 
             if (result == WaitResult::UserInput) {
@@ -275,7 +341,8 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                 }
                 else {
                     LOG_INFO("Launcher", "User interrupted attract mode with PLAY command. Waiting for game to exit naturally.");
-                    if (restrictorEnabled && currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
+                    if (restrictorEnabled && currentPage && currentPage->getSelectedItem() &&
+                        currentPage->getSelectedItem()->ctrlType.find("4") != std::string::npos) {
                         LOG_INFO("Launcher", "User taking over 4-way game in attract mode. Engaging restrictor.");
                         restrictorGuard.emplace(4);
                     }
@@ -293,6 +360,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                 LOG_INFO("Launcher", "Attract mode timeout reached. Terminating process.");
                 processManager->terminate();
             }
+            endTime = std::chrono::steady_clock::now();
         }
         else { // Normal mode
             LOG_INFO("Launcher", "Waiting for launched process to complete. Press quit combo to force quit.");
@@ -306,11 +374,10 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             else {
                 LOG_INFO("Launcher", "Process completed naturally.");
             }
+            endTime = std::chrono::steady_clock::now();
         }
 
-        endTime = std::chrono::steady_clock::now();
-
-        // 6e. Update stats
+        // 6e) Update stats (time tracking)
         double gameplayDuration = 0.0;
         bool trackTime = false;
         bool shouldRunHi2Txt = false;
@@ -351,9 +418,70 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     //
     // --- STEP 7: REBOOT CHECK ---
     //
+
+    // --- POST HOOK (fire-and-forget by default; fallback chain) ---
+    {
+        std::string postExe, postArgs, postCwd;
+        bool postWait = false;
+
+        bool havePost = getPropChainStr("postexecutable", postExe);
+        if (havePost) {
+            (void)getPropChainStr("postarguments", postArgs);
+            (void)getPropChainStr("postcurrentDirectory", postCwd);
+            (void)getPropChainBool("postwait", postWait);
+
+            postExe = replaceVariables(postExe, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
+            postArgs = replaceVariables(postArgs, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
+            if (postCwd.empty()) postCwd = Utils::getDirectory(postExe);
+            postCwd = replaceVariables(postCwd, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
+
+            std::filesystem::path pExe(postExe), pCwd(postCwd);
+            if (!pExe.is_absolute()) pExe = std::filesystem::path(Configuration::absolutePath) / pExe;
+            if (!pCwd.is_absolute()) pCwd = std::filesystem::path(Configuration::absolutePath) / pCwd;
+
+            std::unique_ptr<IProcessManager> postMgr;
+#ifdef WIN32
+            postMgr = std::make_unique<WindowsProcessManager>();
+#else
+            postMgr = std::make_unique<UnixProcessManager>();
+#endif
+
+            if (postWait) {
+                if (postMgr->launch(pExe.string(), postArgs, pCwd.string())) {
+                    postMgr->wait(0, nullptr, onFrameTick); // animate UI if desired
+                    LOG_INFO("Launcher", "Post hook complete.");
+                }
+                else {
+                    LOG_WARNING("Launcher", "Post hook failed to start: " + pExe.string());
+                }
+            }
+            else {
+                if (!postMgr->simpleLaunch(pExe.string(), postArgs, pCwd.string())) {
+                    LOG_WARNING("Launcher", "Post hook failed to start: " + pExe.string());
+                }
+                else {
+                    LOG_INFO("Launcher", "Post hook started: " + pExe.string());
+                }
+            }
+        }
+        else {
+            LOG_DEBUG("Launcher", "No postexecutable configured; skipping post hook.");
+        }
+    }
+
     LOG_INFO("Launcher", "Execution completed for: " + executablePath + " with reboot flag: " + std::to_string(reboot));
     return reboot;
 }
+
+bool Launcher::runHookNoWait_(const std::string& exe, const std::string& args, const std::string& cwd) {
+#ifdef WIN32
+    auto pm = std::make_unique<WindowsProcessManager>();
+#else
+    auto pm = std::make_unique<UnixProcessManager>();
+#endif
+    return pm->simpleLaunch(exe, args, cwd);
+}
+
 
 void Launcher::startScript() {
 #ifdef WIN32
@@ -489,42 +617,6 @@ bool Launcher::launcherName(std::string& launcherName, std::string collection) {
 
 	LOG_DEBUG("Launcher", ss.str());
 
-	return true;
-}
-
-bool Launcher::launcherExecutable(std::string& executable, std::string launcherName) {
-	// Try with the localLauncher prefix
-	std::string executableKey = "localLaunchers." + launcherName + ".executable";
-	if (!config_.getProperty(executableKey, executable)) {
-		// Try with the collectionLauncher prefix
-		executableKey = "collectionLaunchers." + launcherName + ".executable";
-		if (!config_.getProperty(executableKey, executable)) {
-			// Finally, try with the global launcher prefix
-			executableKey = "launchers." + launcherName + ".executable";
-			if (!config_.getProperty(executableKey, executable)) {
-				LOG_ERROR("Launcher", "No launcher found for: " + executableKey);
-				return false;
-			}
-		}
-	}
-	return true;
-}
-
-bool Launcher::launcherArgs(std::string& args, std::string launcherName) {
-	// Try with the localLauncher prefix
-	std::string argsKey = "localLaunchers." + launcherName + ".arguments";
-	if (!config_.getProperty(argsKey, args)) {
-		// Try with the collectionLauncher prefix
-		argsKey = "collectionLaunchers." + launcherName + ".arguments";
-		if (!config_.getProperty(argsKey, args)) {
-			// Finally, try with the global launcher prefix
-			argsKey = "launchers." + launcherName + ".arguments";
-			if (!config_.getProperty(argsKey, args)) {
-				LOG_WARNING("Launcher", "No arguments specified for: " + argsKey);
-				args.clear(); // Ensure args is empty if not found
-			}
-		}
-	}
 	return true;
 }
 
