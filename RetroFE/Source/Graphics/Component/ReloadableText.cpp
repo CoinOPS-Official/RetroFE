@@ -17,7 +17,6 @@
 #include "ReloadableText.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
-#include "../../Database/Configuration.h"
 #include "../../Sound/MusicPlayer.h"
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
