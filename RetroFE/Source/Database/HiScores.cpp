@@ -80,6 +80,101 @@ struct SortCfg {
 	int  dpOverride;           // valid iff hasDpOverride==true
 };
 
+// ------- Gradient + mask helpers -------------------------------------------
+
+// Apply a vertical gradient overlay (multiplicative darkening) across the whole surface.
+//  topStrength = 0..1   how strong the darkening is at the top (0 = no darken)
+//  botStrength = 0..1   how strong at the bottom (1 = full darken to black)
+static void applyVerticalGradientOverlay_(SDL_Surface* s,
+	float topStrength = 0.0f,
+	float botStrength = 0.4f) {
+	if (!s) return;
+	SDL_LockSurface(s);
+	Uint32* p = (Uint32*)s->pixels;
+	const int W = s->w;
+	const int H = s->h;
+
+	for (int y = 0; y < H; ++y) {
+		float t = (float)y / (float)(H - 1);
+		// interpolation of strength across height
+		float darken = topStrength + (botStrength - topStrength) * t;
+		if (darken < 0.f) darken = 0.f;
+		if (darken > 1.f) darken = 1.f;
+
+		float factor = 1.0f - darken;  // multiply RGB by this factor
+
+		Uint32* row = p + y * W;
+		for (int x = 0; x < W; ++x) {
+			Uint32 px = row[x];
+			Uint8 a = (Uint8)(px >> 24);
+			Uint8 r = (Uint8)(px >> 16);
+			Uint8 g = (Uint8)(px >> 8);
+			Uint8 b = (Uint8)(px >> 0);
+
+			Uint8 nr = (Uint8)(r * factor);
+			Uint8 ng = (Uint8)(g * factor);
+			Uint8 nb = (Uint8)(b * factor);
+			row[x] = (Uint32(a) << 24) | (Uint32(nr) << 16) | (Uint32(ng) << 8) | Uint32(nb);
+		}
+	}
+	SDL_UnlockSurface(s);
+}
+
+// Use SDL blending to apply a grayscale alpha mask.
+// Black = transparent, white = opaque.
+static void bakeAlphaMaskFromPNG_(SDL_Surface* qr, const std::string& maskPath) {
+	if (!qr || maskPath.empty()) return;
+
+	SDL_Surface* raw = IMG_Load(maskPath.c_str());
+	if (!raw) {
+		LOG_WARNING("HiScores", std::string("QR mask load failed: ") + IMG_GetError());
+		return;
+	}
+	SDL_Surface* mask = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_ARGB8888, 0);
+	SDL_FreeSurface(raw);
+	if (!mask) return;
+
+	// Scale if sizes differ
+	if (mask->w != qr->w || mask->h != qr->h) {
+		SDL_Surface* scaled = SDL_CreateRGBSurfaceWithFormat(0, qr->w, qr->h, 32, SDL_PIXELFORMAT_ARGB8888);
+		SDL_Rect dst{ 0,0,qr->w,qr->h };
+		SDL_BlitScaled(mask, nullptr, scaled, &dst);
+		SDL_FreeSurface(mask);
+		mask = scaled;
+	}
+
+	// Convert mask RGB ? alpha; set RGB to 255 so color multiplication is neutral.
+	SDL_LockSurface(mask);
+	{
+		Uint32* p = (Uint32*)mask->pixels;
+		const int total = mask->w * mask->h;
+		for (int i = 0; i < total; ++i) {
+			Uint32 px = p[i];
+			Uint8 grey = (Uint8)((px >> 16) & 0xFF); // use red channel
+			p[i] = (Uint32(grey) << 24) | 0x00FFFFFFu; // A=grey, RGB=255
+		}
+	}
+	SDL_UnlockSurface(mask);
+
+	SDL_LockSurface(qr);
+	SDL_LockSurface(mask);
+	{
+		Uint32* qp = (Uint32*)qr->pixels;
+		Uint32* mp = (Uint32*)mask->pixels;
+		int total = qr->w * qr->h;
+		for (int i = 0; i < total; ++i) {
+			Uint8 da = (qp[i] >> 24) & 0xFF;
+			Uint8 ma = (mp[i] >> 24) & 0xFF;
+			Uint8 na = (Uint8)((unsigned(da) * ma) / 255u);
+			qp[i] = (qp[i] & 0x00FFFFFFu) | (Uint32(na) << 24);
+		}
+	}
+	SDL_UnlockSurface(mask);
+	SDL_UnlockSurface(qr);
+
+	SDL_FreeSurface(mask);
+}
+
 static inline bool isScaledScoreMode_(GlobalSort m) {
 	switch (m) {
 		case GlobalSort::DivideBy10Asc:   case GlobalSort::DivideBy10Desc:
@@ -409,6 +504,17 @@ static void ensureAllQrPngsAsync_(std::vector<std::string> ids) {
 					LOG_WARNING("HiScores", "QR: surface build failed for " + gid);
 					continue;
 				}
+
+				// 1) overlay gradient across whole QR (light ? dark)
+				applyVerticalGradientOverlay_(surf, /*topStrength*/ 0.0f, /*botStrength*/ 0.4f);
+
+				// 2) optional alpha mask
+				const std::string maskPath = Utils::combinePath(qrDir, "qrmask.png");
+				if (fs::exists(maskPath)) {
+					bakeAlphaMaskFromPNG_(surf, maskPath);
+				}
+
+				// 3) save to PNG
 				if (IMG_SavePNG(surf, outPath.c_str()) != 0) {
 					++failed;
 					LOG_WARNING("HiScores", std::string("QR: IMG_SavePNG failed for ")
@@ -416,9 +522,11 @@ static void ensureAllQrPngsAsync_(std::vector<std::string> ids) {
 					SDL_FreeSurface(surf);
 					continue;
 				}
+
 				SDL_FreeSurface(surf);
 				++made;
 			}
+
 			LOG_INFO("HiScores", "QR ensure: made=" + std::to_string(made) +
 				" skipped=" + std::to_string(skipped) +
 				" failed=" + std::to_string(failed));
@@ -1512,7 +1620,7 @@ static inline std::string formatMs_(long long ms) {
 	std::ostringstream oss;
 	oss << minutes  // no padding here
 		<< ":" << std::setw(2) << std::setfill('0') << seconds
-		<< ":" << std::setw(3) << std::setfill('0') << msec;
+		<< "." << std::setw(3) << std::setfill('0') << msec;
 	return oss.str();
 }
 
@@ -1777,13 +1885,30 @@ static inline std::string two_(int v) {
 	return oss.str();
 }
 
-static inline std::string formatDateDotsLocale_(int y, int m, int d) {
+static inline std::string yy2_(int y) {
+	int yy = y % 100;
+	if (yy < 0) yy += 100;
+	return two_(yy);
+}
+
+// now accepts twoDigitYear flag
+static inline std::string formatDateDotsLocale_(int y, int m, int d, bool twoDigitYear = false) {
 	auto ord = cachedDateOrder_();
-	switch (ord) {
-		case DateOrder_::MDY: return two_(m) + "." + two_(d) + "." + std::to_string(y); // 05.23.2024
-		case DateOrder_::DMY: return two_(d) + "." + two_(m) + "." + std::to_string(y); // 23.05.2024
-		case DateOrder_::YMD: return std::to_string(y) + "." + two_(m) + "." + two_(d); // 2024.05.23
-		default:               return two_(d) + "." + two_(m) + "." + std::to_string(y); // fallback
+	if (!twoDigitYear) {
+		switch (ord) {
+			case DateOrder_::MDY: return two_(m) + "." + two_(d) + "." + std::to_string(y); // 05.23.2024
+			case DateOrder_::DMY: return two_(d) + "." + two_(m) + "." + std::to_string(y); // 23.05.2024
+			case DateOrder_::YMD: return std::to_string(y) + "." + two_(m) + "." + two_(d); // 2024.05.23
+			default:               return two_(d) + "." + two_(m) + "." + std::to_string(y);
+		}
+	}
+	else {
+		switch (ord) {
+			case DateOrder_::MDY: return two_(m) + "." + two_(d) + "." + yy2_(y); // 05.23.24
+			case DateOrder_::DMY: return two_(d) + "." + two_(m) + "." + yy2_(y); // 23.05.24
+			case DateOrder_::YMD: return yy2_(y) + "." + two_(m) + "." + two_(d); // 24.05.23
+			default:               return two_(d) + "." + two_(m) + "." + yy2_(y);
+		}
 	}
 }
 
@@ -1799,9 +1924,8 @@ static inline std::string prettyDateNumericDots_(const std::string& ymd_hms) {
 	catch (...) {
 		return ymd_hms; // fallback to raw if parsing fails
 	}
-	return formatDateDotsLocale_(y, m, d);
+	return formatDateDotsLocale_(y, m, d, /*twoDigitYear=*/true);
 }
-
 
 HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
 	static thread_local HighScoreData scratch;
