@@ -288,21 +288,6 @@ int RetroFE::initialize(void* context) {
 		return -1;
 	}
 
-	// --- Payload sync: load config and run once at startup ---
-	{
-		PayloadSync::Config psCfg = PayloadSync::Config::LoadFrom(instance->config_);
-		if (psCfg.enabled) {
-			LOG_INFO("Payload", std::string("Startup sync: file=\"") + psCfg.ResolvePayloadPath() + "\"");
-
-			const bool ok = PayloadSync::RunWithConfig(psCfg, /*dryRun=*/false);
-
-			LOG_INFO("Payload", std::string("Startup sync finished: ") + (ok ? "OK" : "Errors (see log)"));
-		}
-		else {
-			LOG_INFO("Payload", "Startup sync disabled by config (payload.enabled=false)");
-		}
-	}
-
 	instance->initializeMusicPlayer();
 
 	// Initialize HiScores
@@ -573,6 +558,18 @@ bool RetroFE::run() {
 		exit(EXIT_FAILURE);
 	}
 
+	PayloadSync::Config psCfg = PayloadSync::Config::LoadFrom(config_);
+	if (psCfg.enabled) {
+		LOG_INFO("Payload", std::string("Startup sync: file=\"") + psCfg.ResolvePayloadPath() + "\"");
+
+		const bool ok = PayloadSync::RunWithConfig(psCfg, /*dryRun=*/false);
+
+		LOG_INFO("Payload", std::string("Startup sync finished: ") + (ok ? "OK" : "Errors (see log)"));
+	}
+	else {
+		LOG_INFO("Payload", "Startup sync disabled by config (payload.enabled=false)");
+	}
+
 	// Initialize SDL
 	if (!SDL::initialize(config_))
 		return false;
@@ -738,7 +735,10 @@ bool RetroFE::run() {
 	lastFrameTimePointMs_ = initial_current_time_ms;
 
 	constexpr double GlobalScoreFetchIntervalMs = 5 * 60 * 1000.0; // 5 minutes
+	constexpr double payloadSyncIntervalMs = 30.0 * 60.0 * 1000.0; //30 minutes
 	double nextFetchTimeMs = initial_current_time_ms + GlobalScoreFetchIntervalMs;
+
+	double nextPayloadSyncMs = initial_current_time_ms + payloadSyncIntervalMs;
 
 	// --- Frame timing smoothing state (persistent across frames in this run) ---
 	float smoothedDt = static_cast<float>(fpsIdleTime / 1000.0f); // start smooth timer at idle rate
@@ -761,6 +761,19 @@ bool RetroFE::run() {
 		uint64_t loopStart = SDL_GetPerformanceCounter();
 		double nowMs_loopStart = loopStart * 1000.0 / freq_; // freq is SDL_GetPerformanceFrequency()
 
+		if (psCfg.enabled && nowMs_loopStart >= nextPayloadSyncMs) {
+			// avoid drift
+			do { nextPayloadSyncMs += payloadSyncIntervalMs; } while (nowMs_loopStart >= nextPayloadSyncMs);
+
+			const bool ok = PayloadSync::RunWithConfig(psCfg, /*dryRun=*/false);
+			LOG_INFO("Payload", std::string("Periodic sync (5m): ") + (ok ? "OK" : "Errors (see log)"));
+
+			// consume dirty playlists for the active page/collection
+			if (auto* page = currentPage_) {
+				if (page)
+					page->consumeDirtyPlaylistsForActiveCollection();
+			}
+		}
 
 
 		if (nowMs_loopStart >= nextFetchTimeMs) {
