@@ -1,4 +1,6 @@
 #include "PayloadSync.h"
+#include "../Collection/PlaylistDirtyRegistry.h"
+#include "../Collection/PlaylistPath.h"
 #include "../Utility/Utils.h"
 #include "../Utility/Log.h"
 #include "../Database/Configuration.h"
@@ -107,7 +109,7 @@ std::vector<PayloadSync::Entry> PayloadSync::ParseFile(const std::string& payloa
     std::ifstream in(payloadPath, std::ios::binary);
     std::vector<Entry> out;
     if (!in) {
-        LOG_ERROR("Payload", "File not found: %s", payloadPath.c_str());
+        LOG_ERROR("Payload", "File not found: " + payloadPath);
         return out;
     }
 
@@ -323,6 +325,12 @@ bool PayloadSync::RunWithConfig(const Config& cfg, bool dryRun) {
         okAll &= ok;
 
         LOG_INFO("Payload", e.url << " -> " << e.local << " : " << msg);
+        if (ok && msg == "Updated") {
+            if (PlaylistPath::isPlaylistPath(e.local)) {
+                PlaylistDirtyRegistry::addPath(e.local);
+                LOG_INFO("Payload", "Marked playlist dirty: " + e.local);
+            }
+        }
     }
     return okAll;
 }

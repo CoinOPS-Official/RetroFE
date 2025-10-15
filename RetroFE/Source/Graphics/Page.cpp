@@ -18,6 +18,7 @@
 #include "ComponentItemBinding.h"
 #include "Component/Component.h"
 #include "../Collection/CollectionInfo.h"
+#include "../Collection/PlaylistDirtyRegistry.h"
 #include "Component/Text.h"
 #include "../Utility/Log.h"
 #include "Component/ScrollingList.h"
@@ -1002,6 +1003,10 @@ void Page::favPlaylist() {
 void Page::nextPlaylist() {
 	MenuInfo_S& info = collections_.back();
 	size_t numlists = info.collection->playlists.size();
+
+	// Save the current playlist name before switching
+	std::string previousPlaylist = getPlaylistName();
+
 	// save last playlist selected item
 	rememberSelectedItem();
 
@@ -1022,11 +1027,18 @@ void Page::nextPlaylist() {
 		setActiveMenuItemsFromPlaylist(info, *it);
 	}
 	playlistChange();
+	if (!previousPlaylist.empty() && previousPlaylist != getPlaylistName()) {
+		reloadPlaylistIfDirty(previousPlaylist, info.collection);
+	}
 }
 
 void Page::prevPlaylist() {
 	MenuInfo_S& info = collections_.back();
 	size_t numlists = info.collection->playlists.size();
+
+	// Save the current playlist name before switching
+	std::string previousPlaylist = getPlaylistName();
+
 	// save last playlist selected item
 	rememberSelectedItem();
 
@@ -1046,14 +1058,18 @@ void Page::prevPlaylist() {
 		setActiveMenuItemsFromPlaylist(info, *it);
 	}
 	playlistChange();
+	if (!previousPlaylist.empty() && previousPlaylist != getPlaylistName()) {
+		reloadPlaylistIfDirty(previousPlaylist, info.collection);
+	}
 }
-
 
 void Page::selectPlaylist(const std::string& playlist) {
 	MenuInfo_S& info = collections_.back();
 
+	// Save the current playlist name before switching
+	std::string previousPlaylist = getPlaylistName();
+
 	// Check if "remember menu" functionality is enabled.
-	// Our modified rememberSelectedItem() will handle when to actually store the offset.
 	bool rememberMenu = false;
 	config_.getProperty(OPTION_REMEMBERMENU, rememberMenu);
 	if (rememberMenu)
@@ -1067,7 +1083,6 @@ void Page::selectPlaylist(const std::string& playlist) {
 
 	// If the playlist doesn't exist or is empty, restore the original and exit.
 	if (it_playlist == info.collection->playlists.end() || it_playlist->second->empty()) {
-		// Log a warning if the playlist exists but is just empty, as this is useful info.
 		if (it_playlist != info.collection->playlists.end()) {
 			LOG_WARNING("Page", "Attempted to select playlist '" + playlist + "', but it is empty.");
 		}
@@ -1088,7 +1103,6 @@ void Page::selectPlaylist(const std::string& playlist) {
 	ScrollingList* amenu = getAnActiveMenu();
 
 	// Priority 1: Check for a remembered position.
-	// This will only be true for 'lastplayed' if the mode is 'alpha'.
 	if (lastPlaylistOffsets_.count(playlist) > 0) {
 		initialOffset = lastPlaylistOffsets_[playlist];
 	}
@@ -1097,36 +1111,28 @@ void Page::selectPlaylist(const std::string& playlist) {
 		bool randomStart = false;
 		config_.getProperty(OPTION_RANDOMSTART, randomStart);
 
-		bool applyRandomStart = randomStart; // Assume we can apply it based on the global setting.
+		bool applyRandomStart = randomStart;
 
-		// Now, apply exclusion rules.
+		// Apply exclusion rules.
 		if (playlist == "lastplayed") {
-			// For the "last played" list, we must check its sort mode.
 			std::string lastPlayedSort = "time";
 			config_.getProperty(OPTION_LASTPLAYEDSORTTYPE, lastPlayedSort);
 			if (lastPlayedSort == "time") {
-				// In "time" mode, we explicitly FORBID random start.
 				applyRandomStart = false;
 			}
 		}
-		else if (playlist == "settings") { // You can add other lists here if needed.
-			// Never apply random start to the settings playlist.
+		else if (playlist == "settings") {
 			applyRandomStart = false;
 		}
 
-		// If, after all checks, we should apply random start, do it now.
 		if (applyRandomStart && amenu) {
 			amenu->random();
 			initialOffset = amenu->getScrollOffsetIndex();
 
-			// If "remember menu" is on, store this random position so it's consistent
-			// for the rest of the session.
 			if (rememberMenu) {
 				lastPlaylistOffsets_[playlist] = initialOffset;
 			}
 		}
-		// If we reach here and applyRandomStart was false, initialOffset remains 0,
-		// which is the correct default for "time" mode and other excluded lists.
 	}
 
 	setScrollOffsetIndex(initialOffset);
@@ -1134,9 +1140,136 @@ void Page::selectPlaylist(const std::string& playlist) {
 	// Trigger the necessary UI updates.
 	playlistChange();
 	setSelectedItem();
+
+	if (!previousPlaylist.empty() && previousPlaylist != getPlaylistName()) {
+		reloadPlaylistIfDirty(previousPlaylist, info.collection);
+	}
 }
 
+void Page::reloadPlaylistFromDisk(const std::string& playlistName, CollectionInfo* collection) {
+	// Skip dynamic/system playlists - they're generated, not file-based
+// Skip dynamic/system playlists - they're generated, not file-based
+	if (playlistName == "all" ||
+		playlistName == "lastplayed" ||
+		playlistName == "favorites" ||
+		playlistName == "settings" ||
+		playlistName == "quicklist") {
+		return;
+	}
 
+	// Favorites might be global, handle specially
+	std::string playlistCollectionName = collection->name;
+	bool globalFavLast = false;
+	config_.getProperty(OPTION_GLOBALFAVLAST, globalFavLast);
+	if (globalFavLast && playlistName == "favorites") {
+		playlistCollectionName = "Favorites";
+	}
+
+	std::string playlistFile = Utils::combinePath(Configuration::absolutePath,
+		"collections", playlistCollectionName, "playlists", playlistName + ".txt");
+
+	// If the file doesn't exist, nothing to reload
+	if (!std::filesystem::exists(playlistFile)) {
+		return;
+	}
+
+	LOG_INFO("Page", "Reloading playlist: " + playlistName);
+
+	// Clear existing playlist (but don't delete if it points to items vector)
+	if (collection->playlists[playlistName] &&
+		collection->playlists[playlistName] != &collection->items) {
+		collection->playlists[playlistName]->clear();
+	}
+	else {
+		collection->playlists[playlistName] = new std::vector<Item*>();
+	}
+
+	// Load the playlist file into a temporary filter
+	std::vector<Item*> playlistFilter;
+	std::ifstream includeStream(playlistFile);
+
+	if (!includeStream.good()) {
+		LOG_WARNING("Page", "Could not read playlist file: " + playlistFile);
+		return;
+	}
+
+	std::string line;
+	while (std::getline(includeStream, line)) {
+		line = Utils::filterComments(line);
+		if (!line.empty()) {
+			auto* filterItem = new Item();
+			line.erase(std::remove(line.begin(), line.end(), '\r'), line.end());
+			filterItem->fullTitle = line;
+			filterItem->name = line;
+			filterItem->title = line;
+			filterItem->collectionInfo = collection;
+			playlistFilter.push_back(filterItem);
+		}
+	}
+	includeStream.close();
+
+	// Rebuild playlist with actual items from collection
+	for (Item* pfItem : playlistFilter) {
+		std::string collectionName = collection->name;
+		std::string itemName = pfItem->name;
+
+		if (!itemName.empty() && itemName.at(0) == '_') {
+			itemName.erase(0, 1);
+			size_t colonPos = itemName.find(":");
+			if (colonPos != std::string::npos) {
+				collectionName = itemName.substr(0, colonPos);
+				itemName = itemName.erase(0, colonPos + 1);
+			}
+		}
+
+		for (Item* item : collection->items) {
+			if ((item->name == itemName || itemName == "*") &&
+				item->collectionInfo->name == collectionName) {
+
+				// Update favorite status
+				if (playlistName == "favorites") {
+					item->isFavorite = true;
+				}
+
+				collection->playlists[playlistName]->push_back(item);
+
+				if (itemName != "*") {
+					break;
+				}
+			}
+		}
+	}
+
+	// Cleanup temporary filter items
+	for (Item* item : playlistFilter) {
+		delete item;
+	}
+	playlistFilter.clear();
+
+	collection->sortPlaylistByName(playlistName);
+
+	LOG_INFO("Page", "Playlist '" + playlistName + "' reloaded with " +
+		std::to_string(collection->playlists[playlistName]->size()) + " items");
+}
+
+void Page::reloadPlaylistIfDirty(const std::string& playlistName, CollectionInfo* collection) {
+	if (!collection || playlistName.empty()) return;
+
+	// Skip dynamic/system lists
+	if (playlistName == "all" || playlistName == "lastplayed") return;
+
+	const std::string& colName = collection->name;
+
+	if (!PlaylistDirtyRegistry::isDirty(colName, playlistName)) {
+		return; // nothing to do
+	}
+
+	LOG_INFO("Page", "Reloading dirty playlist: " + playlistName);
+	reloadPlaylistFromDisk(playlistName, collection);
+
+	// Clear only this one
+	PlaylistDirtyRegistry::clearOne(colName, playlistName);
+}
 void Page::updatePlaylistMenuPosition() {
 	if (playlistMenu_) {
 		std::string name = getPlaylistName();
@@ -1464,6 +1597,27 @@ void Page::togglePlaylist() {
 			removePlaylist();
 		else
 			addPlaylist();
+	}
+}
+
+void Page::consumeDirtyPlaylistsForActiveCollection() {
+	CollectionInfo* c = getCollection();
+	if (!c) return;
+
+	const std::string current = getPlaylistName();
+
+	auto dirtyList = PlaylistDirtyRegistry::drainForCollection(c->name);
+	if (dirtyList.empty()) return;
+
+	for (const auto& pname : dirtyList) {
+		// Optionally skip the currently viewed playlist
+		if (pname == current) {
+			LOG_INFO("Page", "Dirty playlist is active, deferring: " + pname);
+			PlaylistDirtyRegistry::addPath("collections/" + c->name + "/playlists/" + pname + ".txt");
+			continue;
+		}
+		// Reuse your existing loader
+		reloadPlaylistFromDisk(pname, c);
 	}
 }
 

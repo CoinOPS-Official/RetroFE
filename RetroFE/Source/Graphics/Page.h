@@ -149,6 +149,7 @@ public:
     void  addPlaylist();
     void  removePlaylist();
     void  togglePlaylist();
+    void consumeDirtyPlaylistsForActiveCollection();
     void  reallocateMenuSpritePoints(bool updatePlaylistMenu = true) const;
     bool  isMenuScrolling() const;
     bool isPlaylistScrolling() const;
@@ -207,6 +208,8 @@ private:
     using CollectionVector_T = std::list<MenuInfo_S>;
     
     using MenuVector_T = std::vector<std::vector<ScrollingList *>>;
+    void reloadPlaylistFromDisk(const std::string& playlistName, CollectionInfo* collection);
+    void reloadPlaylistIfDirty(const std::string& playlistName, CollectionInfo* collection);
     void setActiveMenuItemsFromPlaylist(MenuInfo_S info, ScrollingList* menu);
 
     std::vector<ScrollingList *> activeMenu_;

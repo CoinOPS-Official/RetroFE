@@ -34,6 +34,7 @@ public:
     bool isItemInLastPlayed(const Item* selectedItem);
     void addSubcollection(CollectionInfo *info);
     auto itemIsLess(const std::string& sortType, bool currentCollectionMenusort) const;
+    void sortPlaylistByName(const std::string& playlistName);
     void extensionList(std::vector<std::string> &extensions) const;
     std::string name;
     std::string lowercaseName() const;

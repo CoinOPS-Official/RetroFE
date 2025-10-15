@@ -272,6 +272,14 @@ auto CollectionInfo::itemIsLess(const std::string& sortTypeParam, bool currentCo
     };
 }
 
+void CollectionInfo::sortPlaylistByName(const std::string& playlistName) {
+    auto it = playlists.find(playlistName);
+    if (it == playlists.end() || !it->second || it->second == &items) return;
+
+    std::string sortTypeLocal = Item::validSortType(playlistName) ? playlistName : "";
+    auto& vec = *it->second;
+    std::sort(vec.begin(), vec.end(), itemIsLess(sortTypeLocal, menusort));
+}
 
 void CollectionInfo::sortItems()
 {
