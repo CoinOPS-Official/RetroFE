@@ -2062,7 +2062,7 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
 
 		const std::string phName = "-";
 		const std::string phDate = "-";
-		const std::string phScore = isTime ? "--:--:---" : (isMoney ? "$-" : "-");
+		const std::string phScore = isTime ? "--:--.---" : (isMoney ? "$-" : "-");
 
 		// 1) Best row per PLAYER (dedupe) for *this mode*
 		std::unordered_map<std::string, GlobalRow> bestByName;
