@@ -65,6 +65,8 @@ private:
      * @param processedIds A set to track already-terminated PIDs to prevent infinite loops.
      */
     void terminateProcessTree(DWORD processId, std::set<DWORD>& processedIds);
+    bool requestGracefulShutdownForPid(DWORD pid, DWORD waitMsTotal);
+    bool requestGracefulShutdownForJob(DWORD waitMsTotal);
 
     /**
      * @brief A static helper to check if a window is truly fullscreen.

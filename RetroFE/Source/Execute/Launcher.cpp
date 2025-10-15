@@ -152,7 +152,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     }
 
     // 1) Variable replacement (exe + args)
-    LOG_DEBUG("Launcher", "Path before replacement: " + executablePath);
+    LOG_DEBUG("Launcher", "Path before variable replacement: " + executablePath);
     args = replaceVariables(args, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
     executablePath = replaceVariables(executablePath, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
     LOG_INFO("Launcher", "Path after variable replacement: " + executablePath);
@@ -221,57 +221,95 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             };
     }
 
-    // --- PRE HOOK (sequential by default; uses fallback chain; UI animates while waiting) ---
 // --- PRE HOOK (robust, sequential by default, UI animates while waiting) ---
+// --- PRE HOOK (supports prewait in ms or bool) ---
     {
         std::string preExe;
         if (getPropChainStr("preexecutable", preExe)) {
-            // --- A pre-hook is configured, so prepare and attempt to run it ---
             std::string preArgs, preCwd;
-            bool preWait = true;
 
-            // Gather the rest of the hook's properties
+            enum class PreWaitMode { NoWait, Indefinite, UpToMs };
+            PreWaitMode preWaitMode = PreWaitMode::NoWait;
+            int preWaitMs = 0;
+
+            std::string preWaitRaw;
+            if (getPropChainStr("prewait", preWaitRaw)) {
+                std::string s = preWaitRaw;
+                s.erase(std::remove_if(s.begin(), s.end(), ::isspace), s.end());
+                std::transform(s.begin(), s.end(), s.begin(), ::tolower);
+
+                bool isNumeric = !s.empty() && std::all_of(s.begin(), s.end(), ::isdigit);
+                if (s == "true") {
+                    preWaitMode = PreWaitMode::Indefinite;
+                }
+                else if (s == "false") {
+                    preWaitMode = PreWaitMode::NoWait;
+                }
+                else if (isNumeric) {
+                    preWaitMs = std::stoi(s);
+                    preWaitMode = (preWaitMs > 0) ? PreWaitMode::UpToMs : PreWaitMode::NoWait;
+                }
+                else {
+                    LOG_WARNING("Launcher", "Invalid prewait value: " + preWaitRaw + " (expected true/false/integer milliseconds). Treating as NoWait.");
+                }
+            }
+            else {
+                bool preWaitBool = true;
+                if (getPropChainBool("prewait", preWaitBool) && preWaitBool)
+                    preWaitMode = PreWaitMode::Indefinite;
+            }
+
             getPropChainStr("prearguments", preArgs);
             getPropChainStr("precurrentDirectory", preCwd);
-            getPropChainBool("prewait", preWait);
 
-            // Process all variables and paths
-            preExe = replaceVariables(preExe, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
-            preArgs = replaceVariables(preArgs, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
-            if (preCwd.empty()) {
-                preCwd = Utils::getDirectory(preExe); // Default CWD to the executable's directory
-            }
-            preCwd = replaceVariables(preCwd, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
+            preExe = replaceVariables(preExe, selectedItemsPath, collectionItem->name,
+                Utils::getFileName(selectedItemsPath),
+                selectedItemsDirectory, collection);
+            preArgs = replaceVariables(preArgs, selectedItemsPath, collectionItem->name,
+                Utils::getFileName(selectedItemsPath),
+                selectedItemsDirectory, collection);
+            if (preCwd.empty()) preCwd = Utils::getDirectory(preExe);
+            preCwd = replaceVariables(preCwd, selectedItemsPath, collectionItem->name,
+                Utils::getFileName(selectedItemsPath),
+                selectedItemsDirectory, collection);
 
-            // Resolve paths to be absolute for reliability
             std::filesystem::path pExe(preExe), pCwd(preCwd);
             if (!pExe.is_absolute()) pExe = std::filesystem::path(Configuration::absolutePath) / pExe;
             if (!pCwd.is_absolute()) pCwd = std::filesystem::path(Configuration::absolutePath) / pCwd;
 
-            // --- CORE REFACTOR: Check for existence BEFORE launching ---
             if (!std::filesystem::exists(pExe)) {
                 LOG_WARNING("Launcher", "Pre-hook executable not found, skipping: " + pExe.string());
             }
             else {
-                // The file exists, so we expect it to run. A failure here is a real error.
                 std::unique_ptr<IProcessManager> preMgr;
 #ifdef WIN32
                 preMgr = std::make_unique<WindowsProcessManager>();
 #else
                 preMgr = std::make_unique<UnixProcessManager>();
 #endif
+
                 if (!preMgr->launch(pExe.string(), preArgs, pCwd.string())) {
-                    LOG_ERROR("Launcher", "Pre-hook failed to start even though it exists: " + pExe.string());
-                    return false; // Critical failure, halt the launch
+                    LOG_ERROR("Launcher", "Pre-hook failed to start: " + pExe.string());
+                    return false;
                 }
 
-                if (preWait) {
-                    LOG_INFO("Launcher", "Waiting for pre-hook process to complete...");
+                switch (preWaitMode) {
+                    case PreWaitMode::Indefinite:
+                    LOG_INFO("Launcher", "Waiting indefinitely for pre-hook...");
                     preMgr->wait(0, nullptr, onFrameTick);
                     LOG_INFO("Launcher", "Pre-hook complete.");
-                }
-                else {
-                    LOG_INFO("Launcher", "Pre-hook started in fire-and-forget mode.");
+                    break;
+
+                    case PreWaitMode::UpToMs:
+                    LOG_INFO("Launcher", "Waiting up to " + std::to_string(preWaitMs) + " ms for pre-hook...");
+                    preMgr->wait(preWaitMs / 1000.0, nullptr, onFrameTick);
+                    LOG_INFO("Launcher", "Pre-hook wait window elapsed (continuing).");
+                    break;
+
+                    case PreWaitMode::NoWait:
+                    default:
+                    LOG_INFO("Launcher", "Pre-hook started (fire-and-forget).");
+                    break;
                 }
             }
         }

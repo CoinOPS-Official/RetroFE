@@ -64,6 +64,124 @@ WindowsProcessManager::~WindowsProcessManager() {
     cleanupHandles();
 }
 
+// Collect all top - level windows that belong to a PID
+static void collectWindowsForPid(DWORD pid, std::vector<HWND>&out) {
+    struct Ctx { DWORD pid; std::vector<HWND>* out; };
+    auto thunk = [](HWND hwnd, LPARAM lParam) -> BOOL {
+        auto* ctx = reinterpret_cast<Ctx*>(lParam);
+        DWORD winPid = 0; GetWindowThreadProcessId(hwnd, &winPid);
+        if (winPid == ctx->pid && IsWindow(hwnd) && IsWindowVisible(hwnd)) {
+            ctx->out->push_back(hwnd);
+        }
+        return TRUE;
+        };
+    Ctx ctx{ pid, &out };
+    EnumWindows(thunk, reinterpret_cast<LPARAM>(&ctx));
+}
+
+// Politely ask each window to close (never blocks indefinitely)
+static void sendCloseToWindows(const std::vector<HWND>& windows) {
+    for (HWND h : windows) {
+        // Try the standard close command first
+        SendMessageTimeout(h, WM_SYSCOMMAND, SC_CLOSE, 0,
+            SMTO_ABORTIFHUNG | SMTO_NORMAL, 2000, nullptr);
+        // Follow with WM_CLOSE in case SC_CLOSE is ignored
+        SendMessageTimeout(h, WM_CLOSE, 0, 0,
+            SMTO_ABORTIFHUNG | SMTO_NORMAL, 2000, nullptr);
+    }
+}
+
+// Best-effort, bounded wait for a single PID to exit
+static bool waitForPidExitBounded(DWORD pid, DWORD waitMsTotal) {
+    HANDLE h = OpenProcess(SYNCHRONIZE | PROCESS_QUERY_INFORMATION, FALSE, pid);
+    if (!h) return false;
+
+    const DWORD slice = 100;
+    DWORD waited = 0;
+    while (waited < waitMsTotal) {
+        if (WaitForSingleObject(h, 0) == WAIT_OBJECT_0) {
+            CloseHandle(h);
+            return true;
+        }
+        // keep UI responsive (matches your main wait loop style)
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, slice, QS_ALLINPUT);
+        MSG msg;
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) DispatchMessage(&msg);
+        waited += slice;
+    }
+    CloseHandle(h);
+    return false;
+}
+
+// Graceful ask for a single PID
+bool WindowsProcessManager::requestGracefulShutdownForPid(DWORD pid, DWORD waitMsTotal) {
+    std::vector<HWND> hwnds;
+    collectWindowsForPid(pid, hwnds);
+    if (!hwnds.empty()) {
+        LOG_INFO("ProcessManager", "Sending close to " + std::to_string(hwnds.size()) + " window(s) for PID " + std::to_string(pid));
+        sendCloseToWindows(hwnds);
+        return waitForPidExitBounded(pid, waitMsTotal);
+    }
+    // No windows — nothing to ask nicely here.
+    return false;
+}
+
+// Graceful ask for all processes in our Job
+bool WindowsProcessManager::requestGracefulShutdownForJob(DWORD waitMsTotal) {
+    if (!hJob_) return false;
+
+    // Query the list size
+    JOBOBJECT_BASIC_PROCESS_ID_LIST header{ 0 };
+    DWORD bytes = 0;
+    (void)QueryInformationJobObject(hJob_, JobObjectBasicProcessIdList, &header, sizeof(header), &bytes);
+    if (bytes == 0) return false;
+
+    std::vector<BYTE> buf(bytes);
+    auto* list = reinterpret_cast<JOBOBJECT_BASIC_PROCESS_ID_LIST*>(buf.data());
+    if (!QueryInformationJobObject(hJob_, JobObjectBasicProcessIdList, list, bytes, &bytes)) {
+        return false;
+    }
+
+    // Ask all job members to close
+    for (ULONG i = 0; i < list->NumberOfProcessIdsInList; ++i) {
+        DWORD pid = static_cast<DWORD>(list->ProcessIdList[i]);
+        std::vector<HWND> hwnds;
+        collectWindowsForPid(pid, hwnds);
+        if (!hwnds.empty()) {
+            LOG_INFO("ProcessManager", "Requesting close for job member PID " + std::to_string(pid));
+            sendCloseToWindows(hwnds);
+        }
+    }
+
+    // Bounded wait: succeed if all exited before timeout
+    const DWORD slice = 100;
+    DWORD waited = 0;
+    std::vector<HANDLE> handles;
+    handles.reserve(list->NumberOfProcessIdsInList);
+    for (ULONG i = 0; i < list->NumberOfProcessIdsInList; ++i) {
+        HANDLE h = OpenProcess(SYNCHRONIZE, FALSE, static_cast<DWORD>(list->ProcessIdList[i]));
+        if (h) handles.push_back(h);
+    }
+
+    while (waited < waitMsTotal) {
+        bool allExited = true;
+        for (HANDLE h : handles) {
+            if (WaitForSingleObject(h, 0) != WAIT_OBJECT_0) { allExited = false; break; }
+        }
+        if (allExited) {
+            for (HANDLE h : handles) CloseHandle(h);
+            return true;
+        }
+        MsgWaitForMultipleObjects(0, nullptr, FALSE, slice, QS_ALLINPUT);
+        MSG msg;
+        while (PeekMessage(&msg, nullptr, 0, 0, PM_REMOVE)) DispatchMessage(&msg);
+        waited += slice;
+    }
+
+    for (HANDLE h : handles) CloseHandle(h);
+    return false;
+}
+
 void WindowsProcessManager::cleanupHandles() {
     if (hProcess_ != nullptr) {
         CloseHandle(hProcess_);
@@ -354,19 +472,37 @@ WaitResult WindowsProcessManager::wait(double timeoutSeconds, const std::functio
 }
 
 void WindowsProcessManager::terminate() {
-    if (jobAssigned_ && hJob_ != NULL) {
-        LOG_INFO("ProcessManager", "Terminating process via Job Object.");
+    constexpr DWORD kGraceWaitMs = 3000; // tune as desired (1–5s typical)
+
+    if (jobAssigned_ && hJob_) {
+        LOG_INFO("ProcessManager", "Attempting graceful shutdown for job...");
+        if (requestGracefulShutdownForJob(kGraceWaitMs)) {
+            LOG_INFO("ProcessManager", "Graceful job shutdown succeeded.");
+            cleanupHandles();
+            return;
+        }
+        LOG_WARNING("ProcessManager", "Graceful job shutdown failed; escalating to TerminateJobObject.");
         TerminateJobObject(hJob_, 1);
+        cleanupHandles();
+        return;
     }
-    else if (isRunning()) {
-        LOG_INFO("ProcessManager", "Terminating process via process tree termination.");
+
+    if (isRunning()) {
+        LOG_INFO("ProcessManager", "Attempting graceful shutdown for PID " + std::to_string(processId_) + "...");
+        if (requestGracefulShutdownForPid(processId_, kGraceWaitMs)) {
+            LOG_INFO("ProcessManager", "Graceful shutdown succeeded.");
+            cleanupHandles();
+            return;
+        }
+        LOG_WARNING("ProcessManager", "Graceful shutdown failed; terminating process tree.");
         std::set<DWORD> processedIds;
         terminateProcessTree(processId_, processedIds);
+        cleanupHandles();
+        return;
     }
-    else {
-        LOG_WARNING("ProcessManager", "Terminate called but no process was running.");
-    }
-    cleanupHandles(); // Ensure handles are released after termination.
+
+    LOG_WARNING("ProcessManager", "Terminate called but no process was running.");
+    cleanupHandles();
 }
 
 bool WindowsProcessManager::isRunning() const {
