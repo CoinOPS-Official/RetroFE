@@ -284,42 +284,53 @@ bool WindowsProcessManager::launch(const std::string& executable, const std::str
 
     // --- Determine Launch Type and Execute ---
     std::string extension = Utils::toLower(exePath.extension().string());
-    bool isExeOrBat = (extension == ".exe" || extension == ".bat");
+    bool isExe = (extension == ".exe");
+    bool isBat = (extension == ".bat" || extension == ".cmd");
     bool launchCommandSent = false;
 
-    if (isExeOrBat) {
+    if (isExe || isBat) {
         STARTUPINFOA startupInfo{};
         PROCESS_INFORMATION processInfo{};
         startupInfo.cb = sizeof(startupInfo);
         startupInfo.wShowWindow = SW_SHOWDEFAULT;
 
-        std::string commandLine = "\"" + exePathStr + "\"";
-        if (!args.empty()) {
-            commandLine += " " + args;
+        std::string commandLine;
+
+        if (isExe) {
+            commandLine = "\"" + exePathStr + "\"";
+            if (!args.empty()) commandLine += " " + args;
+        }
+        else { // .bat/.cmd -> run via COMSPEC
+            const char* comspec = std::getenv("COMSPEC");
+            std::string shell = comspec ? comspec : "C:\\Windows\\System32\\cmd.exe";
+            // cmd /C "<bat>" [args]  (double-quote dance keeps spaces safe)
+            commandLine = "\"" + shell + "\" /C \"\"" + exePathStr + "\"";
+            if (!args.empty()) commandLine += " " + args;
+            commandLine += "\"";
         }
 
-        if (CreateProcessA(nullptr, &commandLine[0], nullptr, nullptr, TRUE, CREATE_SUSPENDED | CREATE_NO_WINDOW, nullptr, currDirStr.c_str(), &startupInfo, &processInfo)) {
+        DWORD flags = CREATE_NO_WINDOW; // keep pre-hook windowless
+        if (CreateProcessA(nullptr, &commandLine[0], nullptr, nullptr,
+            TRUE, flags, nullptr, currDirStr.c_str(),
+            &startupInfo, &processInfo))
+        {
             launchCommandSent = true;
             hProcess_ = processInfo.hProcess;
             processId_ = processInfo.dwProcessId;
 
-            if (hJob_ != NULL && AssignProcessToJobObject(hJob_, hProcess_)) {
+            if (hJob_ && AssignProcessToJobObject(hJob_, hProcess_)) {
                 jobAssigned_ = true;
                 LOG_INFO("ProcessManager", "Process assigned to Job Object.");
             }
-            else if (hJob_ != NULL) {
+            else if (hJob_) {
                 LOG_ERROR("ProcessManager", "Failed to assign process to Job Object. Error: " + std::to_string(GetLastError()));
             }
 
-            if (ResumeThread(processInfo.hThread) == (DWORD)-1) {
-                LOG_ERROR("ProcessManager", "Failed to resume process thread. Error: " + std::to_string(GetLastError()));
-                terminate(); // Attempt to clean up the failed launch
-                return false;
-            }
             CloseHandle(processInfo.hThread);
         }
         else {
-            LOG_ERROR("ProcessManager", "CreateProcess failed for: " + commandLine + " with error: " + std::to_string(GetLastError()));
+            LOG_ERROR("ProcessManager", "CreateProcess failed for: " + commandLine +
+                " with error: " + std::to_string(GetLastError()));
             return false;
         }
     }
@@ -503,6 +514,15 @@ void WindowsProcessManager::terminate() {
 
     LOG_WARNING("ProcessManager", "Terminate called but no process was running.");
     cleanupHandles();
+}
+
+bool WindowsProcessManager::tryGetExitCode(int& outExitCode) const {
+    if (!hProcess_) return false;
+    DWORD code = 0;
+    if (!GetExitCodeProcess(hProcess_, &code)) return false;
+    if (code == STILL_ACTIVE) return false;
+    outExitCode = static_cast<int>(code);
+    return true;
 }
 
 bool WindowsProcessManager::isRunning() const {

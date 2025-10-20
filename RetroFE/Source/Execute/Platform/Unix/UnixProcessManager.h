@@ -48,10 +48,12 @@ public:
     // This class manages a system resource and should not be copied.
     UnixProcessManager(const UnixProcessManager&) = delete;
     UnixProcessManager& operator=(const UnixProcessManager&) = delete;
+    bool tryGetExitCode(int& outExitCode) const override;
 
 private:
     pid_t pid_ = -1; // Process ID of the forked child process.
     pid_t pgid_ = -1;
+    int   lastExitCode_ = -1;   // -1 => unknown or still running
     bool isRunning() const;
 
 };

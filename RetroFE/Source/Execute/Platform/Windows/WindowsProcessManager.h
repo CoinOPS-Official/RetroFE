@@ -47,7 +47,7 @@ public:
     bool launch(const std::string& executable, const std::string& args, const std::string& currentDirectory) override;
     WaitResult wait(double timeoutSeconds, const std::function<bool()>& userInputCheck, const FrameTickCallback& onFrameTick) override;
     void terminate() override;
-
+    bool tryGetExitCode(int& outExitCode) const override;
     // This class manages unique system resources and should not be copied.
     WindowsProcessManager(const WindowsProcessManager&) = delete;
     WindowsProcessManager& operator=(const WindowsProcessManager&) = delete;

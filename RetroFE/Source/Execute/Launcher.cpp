@@ -82,6 +82,26 @@ static std::string replaceVariables(std::string str,
 	return str;
 }
 
+// Utility: uniform outcome logging
+static void logHookOutcome(const char* phase, int waitedMs, IProcessManager& mgr) {
+    int code = -1;
+    if (mgr.tryGetExitCode(code)) {
+        LOG_INFO("Launcher",
+            std::string(phase) + " complete (exit=" + std::to_string(code) +
+            ", waited=" + std::to_string(waitedMs) + " ms).");
+        return;
+    }
+
+    if (waitedMs > 0) {
+        LOG_INFO("Launcher",
+            std::string(phase) + " still running after " + std::to_string(waitedMs) +
+            " ms; continuing.");
+    }
+    else {
+        LOG_INFO("Launcher", std::string(phase) + " started (fire-and-forget).");
+    }
+}
+
 bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPage, bool isAttractMode) {
     //
     // --- STEP 1-5: GATHER AND PREPARE ALL LAUNCH PARAMETERS ---
@@ -221,7 +241,6 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             };
     }
 
-// --- PRE HOOK (robust, sequential by default, UI animates while waiting) ---
 // --- PRE HOOK (supports prewait in ms or bool) ---
     {
         std::string preExe;
@@ -287,6 +306,9 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
 #else
                 preMgr = std::make_unique<UnixProcessManager>();
 #endif
+                LOG_INFO("Launcher",
+                    std::string("Pre-hook launching: ") + pExe.string() +
+                    (preArgs.empty() ? "" : (" " + preArgs)));
 
                 if (!preMgr->launch(pExe.string(), preArgs, pCwd.string())) {
                     LOG_ERROR("Launcher", "Pre-hook failed to start: " + pExe.string());
@@ -294,22 +316,50 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                 }
 
                 switch (preWaitMode) {
-                    case PreWaitMode::Indefinite:
-                    LOG_INFO("Launcher", "Waiting indefinitely for pre-hook...");
-                    preMgr->wait(0, nullptr, onFrameTick);
-                    LOG_INFO("Launcher", "Pre-hook complete.");
-                    break;
-
-                    case PreWaitMode::UpToMs:
-                    LOG_INFO("Launcher", "Waiting up to " + std::to_string(preWaitMs) + " ms for pre-hook...");
-                    preMgr->wait(preWaitMs / 1000.0, nullptr, onFrameTick);
-                    LOG_INFO("Launcher", "Pre-hook wait window elapsed (continuing).");
-                    break;
-
+                    case PreWaitMode::Indefinite: {
+                        // keep launch() + wait() here (safe: we wait until it exits)
+                        LOG_INFO("Launcher", "Waiting indefinitely for pre-hook...");
+                        auto t0 = std::chrono::steady_clock::now();
+                        if (!preMgr->launch(pExe.string(), preArgs, pCwd.string())) {
+                            LOG_ERROR("Launcher", "Pre-hook failed to start: " + pExe.string());
+                            return false;
+                        }
+                        preMgr->wait(0, nullptr, onFrameTick);
+                        int waitedMs = (int)std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0).count();
+                        logHookOutcome("Pre-hook", waitedMs, *preMgr); // will include exit code
+                        break;
+                    }
+                    case PreWaitMode::UpToMs: {
+                        // IMPORTANT: use simpleLaunch() so job-close doesn’t kill it
+                        LOG_INFO("Launcher", std::string("Waiting up to ") + std::to_string(preWaitMs) + " ms for pre-hook (non-blocking)...");
+                        if (!preMgr->simpleLaunch(pExe.string(), preArgs, pCwd.string())) {
+                            LOG_ERROR("Launcher", "Pre-hook failed to start: " + pExe.string());
+                            return false;
+                        }
+                        auto t0 = std::chrono::steady_clock::now();
+                        // bounded pump so UI stays responsive
+                        while (std::chrono::duration_cast<std::chrono::milliseconds>(
+                            std::chrono::steady_clock::now() - t0).count() < preWaitMs) {
+                            if (onFrameTick) onFrameTick();
+                            // ~30fps
+                            std::this_thread::sleep_for(std::chrono::milliseconds(33));
+                        }
+                        // We can’t know exit code in this mode (no handle by design)
+                        LOG_INFO("Launcher", std::string("Pre-hook still running after ")
+                            + std::to_string(preWaitMs) + " ms; continuing.");
+                        break;
+                    }
                     case PreWaitMode::NoWait:
-                    default:
-                    LOG_INFO("Launcher", "Pre-hook started (fire-and-forget).");
-                    break;
+                    default: {
+                        // IMPORTANT: use simpleLaunch() so job-close doesn’t kill it
+                        if (!preMgr->simpleLaunch(pExe.string(), preArgs, pCwd.string())) {
+                            LOG_ERROR("Launcher", "Pre-hook failed to start: " + pExe.string());
+                            return false;
+                        }
+                        LOG_INFO("Launcher", "Pre-hook started (fire-and-forget).");
+                        break;
+                    }
                 }
             }
         }

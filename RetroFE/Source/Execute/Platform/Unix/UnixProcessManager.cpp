@@ -40,6 +40,7 @@ struct WordExpWrapper {
 
 UnixProcessManager::UnixProcessManager() {
     LOG_INFO("ProcessManager", "UnixProcessManager created.");
+    lastExitCode_ = -1;
 }
 
 UnixProcessManager::~UnixProcessManager() {
@@ -212,6 +213,13 @@ bool UnixProcessManager::launch(const std::string& executable,
     }
 }
 
+bool UnixProcessManager::tryGetExitCode(int& outExitCode) const {
+    if (pid_ > 0) return false; // still running or not yet reaped
+    if (lastExitCode_ < 0) return false; // unknown
+    outExitCode = lastExitCode_;
+    return true;
+}
+
 WaitResult UnixProcessManager::wait(double timeoutSeconds, const std::function<bool()>& userInputCheck, const FrameTickCallback& onFrameTick) {
     if (!isRunning()) {
         LOG_ERROR("ProcessManager", "Wait called but no process is running.");
@@ -219,52 +227,40 @@ WaitResult UnixProcessManager::wait(double timeoutSeconds, const std::function<b
     }
 
     auto startTime = std::chrono::steady_clock::now();
-    // This timer will control our ~30 FPS rendering and logic tick.
     auto lastFrameTime = startTime;
 
     while (true) {
-        // --- 1. HIGH-FREQUENCY INPUT POLLING ---
-        // We poll for input on every single spin of this tight `while` loop.
-        // This ensures maximum responsiveness and prevents missed combos.
         if (userInputCheck && userInputCheck()) {
             return WaitResult::UserInput;
         }
 
-        // --- 2. THROTTLED LOGIC AND RENDERING (~30 FPS) ---
         auto now = std::chrono::steady_clock::now();
         auto elapsedFrameMs = std::chrono::duration_cast<std::chrono::milliseconds>(now - lastFrameTime).count();
 
-        // Only run the "heavy" logic if ~33ms have passed since the last frame.
         if (elapsedFrameMs >= 33) {
-            // A. Call the expensive onFrameTick to render graphics.
-            if (onFrameTick) {
-                onFrameTick();
-            }
+            if (onFrameTick) onFrameTick();
 
-            // B. Check for process exit. This doesn't need to be checked 1000x per second.
-            int status;
+            int status = 0;
             pid_t result = waitpid(pid_, &status, WNOHANG);
             if (result == pid_) {
-                LOG_INFO("ProcessManager", "Process " + std::to_string(pid_) + " has exited.");
-                pid_ = -1; // Mark as not running
+                // NEW: capture a meaningful exit code
+                if (WIFEXITED(status))      lastExitCode_ = WEXITSTATUS(status);
+                else if (WIFSIGNALED(status)) lastExitCode_ = 128 + WTERMSIG(status);
+                else                          lastExitCode_ = 0; // generic “ended” code
+
+                LOG_INFO("ProcessManager", "Process " + std::to_string(pid_) + " has exited with code " + std::to_string(lastExitCode_) + ".");
+                pid_ = -1;
                 return WaitResult::ProcessExit;
             }
 
-            // C. Check for the main timeout.
             if (timeoutSeconds > 0) {
                 auto elapsedTotalSec = std::chrono::duration_cast<std::chrono::seconds>(now - startTime).count();
                 if (elapsedTotalSec >= timeoutSeconds) {
                     return WaitResult::Timeout;
                 }
             }
-
-            // Reset the timer for the next frame.
             lastFrameTime = now;
         }
-
-        // --- 3. YIELD TO THE OS ---
-        // A very short sleep to prevent this tight loop from consuming 100% CPU,
-        // while still allowing it to spin very fast for input polling.
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 }
@@ -275,32 +271,10 @@ void UnixProcessManager::terminate() {
         return;
     }
 
-    // Prefer the recorded process group (child does setsid()). Fall back to PID if needed.
     const pid_t target_pgid = (pgid_ > 0 ? pgid_ : pid_);
     const pid_t target_pid = pid_;
 
-    LOG_INFO("ProcessManager",
-        "Attempting graceful termination of process group "
-        + std::to_string(target_pgid) + " (child pid " + std::to_string(target_pid) + ") with SIGTERM.");
-
-    // --- helpers (inline, so we keep everything in this function and retain logging) ---
-    auto send_group = [&](int sig, const char* name) {
-        int rc = kill(-target_pgid, sig);
-        if (rc == -1) {
-            LOG_ERROR("ProcessManager", std::string("Failed to send ") + name +
-                " to PGID " + std::to_string(target_pgid) +
-                " (errno=" + std::to_string(errno) + ")."
-                " Falling back to PID " + std::to_string(target_pid) + ".");
-            if (kill(target_pid, sig) == -1) {
-                LOG_ERROR("ProcessManager", std::string("Also failed to send ") + name +
-                    " to PID " + std::to_string(target_pid) +
-                    " (errno=" + std::to_string(errno) + ").");
-            }
-        }
-        else {
-            LOG_INFO("ProcessManager", std::string("Sent ") + name + " to PGID " + std::to_string(target_pgid) + ".");
-        }
-        };
+    LOG_INFO("ProcessManager", "Attempting graceful termination of process group " + std::to_string(target_pgid) + " (child pid " + std::to_string(target_pid) + ") with SIGTERM.");
 
     auto waitChildExitTimed = [&](int ms_timeout) -> bool {
         int status = 0;
@@ -308,69 +282,75 @@ void UnixProcessManager::terminate() {
         for (int waited = 0; waited <= ms_timeout; waited += step_ms) {
             pid_t r = waitpid(target_pid, &status, WNOHANG);
             if (r == target_pid) {
+                if (WIFEXITED(status))      lastExitCode_ = WEXITSTATUS(status);
+                else if (WIFSIGNALED(status)) lastExitCode_ = 128 + WTERMSIG(status);
+                else                          lastExitCode_ = 0;
+
                 if (WIFEXITED(status)) {
-                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) +
-                        " exited with code " + std::to_string(WEXITSTATUS(status)) + ".");
+                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) + " exited with code " + std::to_string(lastExitCode_) + ".");
                 }
                 else if (WIFSIGNALED(status)) {
-                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) +
-                        " killed by signal " + std::to_string(WTERMSIG(status)) + ".");
+                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) + " killed by signal " + std::to_string(WTERMSIG(status)) + " (exit=" + std::to_string(lastExitCode_) + ").");
                 }
                 else {
-                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) + " reaped.");
+                    LOG_INFO("ProcessManager", "Child " + std::to_string(target_pid) + " reaped (exit=" + std::to_string(lastExitCode_) + ").");
                 }
                 return true;
             }
-            if (r < 0) {
-                if (errno == ECHILD) {
-                    LOG_INFO("ProcessManager", "No child to reap (ECHILD). Treating as already exited.");
-                    return true;
-                }
+            if (r < 0 && errno != ECHILD) {
                 LOG_WARNING("ProcessManager", "waitpid transient error (errno=" + std::to_string(errno) + ").");
+            }
+            else if (r < 0 && errno == ECHILD) {
+                lastExitCode_ = 0;
+                LOG_INFO("ProcessManager", "No child to reap (ECHILD). Treating as already exited.");
+                return true;
             }
             std::this_thread::sleep_for(std::chrono::milliseconds(step_ms));
         }
-        return false; // still not gone
+        return false;
         };
 
     auto reapAllChildrenNonBlocking = [&]() {
+    int_total:
         int total = 0;
         for (;;) {
             int status = 0;
             pid_t r = waitpid(-1, &status, WNOHANG);
-            if (r > 0) {
-                ++total;
-                continue;
-            }
+            if (r > 0) { ++total; continue; }
             if (r == 0 || (r < 0 && errno == ECHILD)) break;
-            // other error: bail
             break;
         }
         if (total > 0) {
-            LOG_INFO("ProcessManager", "Reaped " + std::to_string(total) + " additional child(ren) (zombies/helpers).");
+            LOG_INFO("ProcessManager", "Reaped " + std::to_string(total) + " additional child(ren).");
         }
         };
-    // --- end helpers ---
 
-    // 1) Polite: SIGTERM to the group, short bounded wait
+    // polite then sledgehammer (existing behavior)
+    auto send_group = [&](int sig, const char* name) {
+        int rc = kill(-target_pgid, sig);
+        if (rc == -1) {
+            LOG_ERROR("ProcessManager", std::string("Failed to send ") + name + " to PGID " + std::to_string(target_pgid) + " (errno=" + std::to_string(errno) + "). Falling back to PID " + std::to_string(target_pid) + ".");
+            (void)kill(target_pid, sig);
+        }
+        else {
+            LOG_INFO("ProcessManager", std::string("Sent ") + name + " to PGID " + std::to_string(target_pgid) + ".");
+        }
+        };
+
     send_group(SIGTERM, "SIGTERM");
     if (waitChildExitTimed(500)) {
         reapAllChildrenNonBlocking();
-        pid_ = -1;
-        pgid_ = -1;
+        pid_ = -1; pgid_ = -1;
         LOG_INFO("ProcessManager", "Process group terminated gracefully after SIGTERM.");
         return;
     }
 
-    // 2) Sledgehammer: SIGKILL to the group, short bounded wait
     LOG_WARNING("ProcessManager", "Process group did not respond to SIGTERM. Escalating to SIGKILL.");
     send_group(SIGKILL, "SIGKILL");
-    (void)waitChildExitTimed(2000); // best effort
+    (void)waitChildExitTimed(2000);
     reapAllChildrenNonBlocking();
 
-    // 3) Cleanup state regardless; if anything remains, it’s not our child anymore
-    pid_ = -1;
-    pgid_ = -1;
+    pid_ = -1; pgid_ = -1;
     LOG_INFO("ProcessManager", "Terminate() complete.");
 }
 

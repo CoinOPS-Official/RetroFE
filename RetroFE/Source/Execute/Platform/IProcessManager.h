@@ -39,4 +39,7 @@ public:
 
     // Forcibly terminates the process
     virtual void terminate() = 0;
+
+    // Best-effort exit code (true if known and process has exited)
+    virtual bool tryGetExitCode(int& outExitCode) const = 0;
 };
