@@ -153,6 +153,11 @@ void ReloadableText::ReloadTexture()
             return std::chrono::time_point_cast<std::chrono::seconds>(ftt);
             };
 
+        if (!std::filesystem::exists(file))
+        {
+            return;
+        }
+
         try
         {
             currentWriteTime = std::filesystem::last_write_time(file);
@@ -171,20 +176,16 @@ void ReloadableText::ReloadTexture()
             return;
         }
 
-        // Read the text from the specified file
         std::ifstream fileStream(filePath_);
         if (fileStream)
         {
             text.assign((std::istreambuf_iterator<char>(fileStream)), std::istreambuf_iterator<char>());
             fileStream.close();
-
-            // Update lastWriteTime_ with the rounded time
             lastWriteTime_ = currentWriteTime;
         }
         else
         {
             LOG_ERROR("ReloadableText", "Failed to open file: " + filePath_);
-            return;
         }
     }
     else if (type_ == "trackInfo") {
