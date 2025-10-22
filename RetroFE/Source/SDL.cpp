@@ -52,7 +52,9 @@ bool SDL::initialize(Configuration& config) {
 	int audioBuffers = 2048;
 	bool hideMouse;
 
+	SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
+	SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
 
 #ifdef WIN32
 	if (!SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_SYSTEM_AWARE))
@@ -63,7 +65,7 @@ bool SDL::initialize(Configuration& config) {
 	if (SDL_WasInit(0) == 0) {
 		// First-time startup: Initialize everything.
 		LOG_INFO("SDL", "Performing first-time full initialization of all SDL subsystems.");
-		if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_AUDIO | SDL_INIT_VIDEO | SDL_INIT_JOYSTICK | SDL_INIT_HAPTIC | SDL_INIT_GAMECONTROLLER | SDL_INIT_EVENTS) != 0)
+		if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0)
 		{
 			std::string error = SDL_GetError();
 			LOG_ERROR("SDL", "Initial SDL_Init failed: " + error);
@@ -108,7 +110,7 @@ bool SDL::initialize(Configuration& config) {
 		LOG_ERROR("SDL", "Failed to set scale quality hint to " + ScaleQuality);
 	}
 
-	SDL_SetHint(SDL_HINT_RENDER_BATCHING, "0"); // For all renderers
+	SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1"); // For all renderers
 
 	if (config.getProperty(OPTION_HIDEMOUSE, hideMouse))
 		SDL_ShowCursor(hideMouse ? SDL_FALSE : SDL_TRUE);

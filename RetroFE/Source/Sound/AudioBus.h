@@ -15,31 +15,24 @@ public:
 
     static AudioBus& instance();
 
-    // Call once AFTER SDL_mixer opened the device
-    // (e.g., right after Mix_OpenAudio or Mix_OpenAudioDevice)
     void configureFromMixer(); // queries Mix_QuerySpec()
 
-    // Create/remove a producer stream (e.g., “video-audio”)
-    // src_* are the format you push (e.g., S16/2ch/48000 from GStreamer)
-
+    // Source management (no Source type leaked):
     SourceId addSource(const char* name, size_t ring_buffer_size_kb = 256);
-
     void     removeSource(SourceId id);
-
-    // Enable/disable a source (soft mute without tearing down)
     void     setEnabled(SourceId id, bool on);
     bool     isEnabled(SourceId id) const;
 
-    // Producer API (thread-safe, lock-light)
-    // Push raw PCM in the source format you registered.
+    // Producer:
     void push(SourceId id, const void* data, int bytes);
 
-
-    // Consumer API: call from ONE postmix callback to mix all sources
-    // ‘dst/len’ are the device buffer (device fmt/rate/channels).
+    // Consumer (post-mix):
     void mixInto(Uint8* dst, int len);
+    void mixInto_s16(Uint8* dst, int lenBytes);
+    void mixInto_f32(Uint8* dst, int lenBytes);
+    void mixInto_s32(Uint8* dst, int lenBytes);
 
-    // Optional: drain/clear (e.g., on pause/stop)
+    // Optional:
     void clear(SourceId id);
 
     // Device spec (read-only)
@@ -50,65 +43,54 @@ public:
 private:
     class SpscRing {
     public:
-        explicit SpscRing(size_t cap_pow2 = (1u << 18)) : buf_(cap_pow2), mask_(cap_pow2 - 1) {}
-        int write(const uint8_t* data, int bytes) {
-            if (!data || bytes <= 0) return 0;
-            size_t h = head_.load(std::memory_order_relaxed);
-            size_t t = tail_.load(std::memory_order_acquire);
-            size_t cap = buf_.size();
-            size_t used = h - t;
-            if ((size_t)bytes > cap) { // only keep last 'cap' bytes
-                data += (bytes - cap);
-                bytes = (int)cap;
-            }
-            // If not enough free, advance tail (drop oldest)
-            size_t free = cap - used;
-            if ((size_t)bytes > free) {
-                size_t need = (size_t)bytes - free;
-                tail_.store(t + need, std::memory_order_release);
-                t += need;
-            }
-            for (int i = 0; i < bytes; ++i) buf_[(h + i) & mask_] = data[i];
-            head_.store(h + bytes, std::memory_order_release);
-            return bytes;
-        }
-        int read(uint8_t* out, int bytes) {
-            if (!out || bytes <= 0) return 0;
+        explicit SpscRing(size_t cap_req = (1u << 18), size_t align = 1);
+        int write(const uint8_t* data, int bytes);
+        int read(uint8_t* out, int bytes);
+        void clear();
+        // AudioBus.h (inside SpscRing public)
+        size_t available() const {
             size_t h = head_.load(std::memory_order_acquire);
             size_t t = tail_.load(std::memory_order_relaxed);
-            size_t avail = h - t;
-            if ((size_t)bytes > avail) bytes = (int)avail;
-            for (int i = 0; i < bytes; ++i) out[i] = buf_[(t + i) & mask_];
-            tail_.store(t + bytes, std::memory_order_release);
-            return bytes;
+            return h - t;
         }
-        void clear() {
-            size_t h = head_.load(std::memory_order_relaxed);
-            tail_.store(h, std::memory_order_release);
-        }
+
     private:
         std::vector<uint8_t> buf_;
         const size_t mask_;
+        const size_t align_;          // bytes-per-frame alignment (>=1)
         std::atomic<size_t> head_{ 0 }, tail_{ 0 };
     };
 
     struct Source {
         std::string       name;
-        SpscRing          ring;                 // holds device-format bytes
+        SpscRing          ring;                 // device-format bytes
         std::atomic<bool> enabled{ true };
-        explicit Source(size_t cap = (1 << 18)) : ring(cap) {}
+        explicit Source(size_t cap, size_t align) : ring(cap, align) {}
     };
-
-    mutable std::mutex mtx_; // protects the map only
-    std::unordered_map<SourceId, std::shared_ptr<Source>> sources_;
-    std::vector<Uint8> scratch_;                // mixer scratch (device fmt)
 
     AudioBus() = default;
     ~AudioBus();
 
-    SourceId nextId_{ 1 };
+    // Typedef just to keep lines short
+    using SourceVec = std::vector<std::shared_ptr<Source>>;
+    using ConstSourceVec = const SourceVec;
 
-    SDL_AudioFormat devFmt_{ AUDIO_S16 };
+    // In AudioBus.h:
+    std::shared_ptr<ConstSourceVec> snapshot_;  // plain shared_ptr (not atomic<T>)
+
+    // Inline accessor:
+    std::shared_ptr<ConstSourceVec> snapshot() const noexcept {
+        return std::atomic_load_explicit(&snapshot_, std::memory_order_acquire);
+    }
+
+    // Rebuild snapshot after any change to sources_/enabled flags (expects mtx_ held)
+    void rebuildSnapshotLocked();
+
+    mutable std::mutex mtx_; // protects sources_ and control-plane ops
+    std::unordered_map<SourceId, std::shared_ptr<Source>> sources_;
+
+    SourceId        nextId_{ 1 };
+    SDL_AudioFormat devFmt_{ AUDIO_S16SYS };
     int             devRate_{ 48000 };
     int             devChans_{ 2 };
 };

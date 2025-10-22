@@ -6,6 +6,8 @@
 #elif defined(__ARM_NEON)
 #include <arm_neon.h>
 #endif
+#include <memory>
+#include <atomic>
 
 namespace {
     // Helper to find the next power of two.
@@ -25,7 +27,109 @@ namespace {
         n++;
         return n;
     }
+    static inline size_t align_up(size_t n, size_t a) { return a ? ((n + (a - 1)) / a) * a : n; }
+
 }
+
+static inline int bytes_per_sample(SDL_AudioFormat f) noexcept {
+    switch (f) {
+        case AUDIO_S8: case AUDIO_U8:                           return 1;
+        case AUDIO_S16LSB: case AUDIO_S16MSB:                   return 2;
+        case AUDIO_S32LSB: case AUDIO_S32MSB:                   return 4;
+        case AUDIO_F32LSB: case AUDIO_F32MSB:                   return 4;
+        default:                                                return 2;
+    }
+}
+
+
+AudioBus::SpscRing::SpscRing(size_t cap_req, size_t align)
+    : buf_(next_power_of_2(cap_req)),
+    mask_(buf_.size() - 1),
+    align_(align ? align : 1) {
+}
+
+int AudioBus::SpscRing::write(const uint8_t* data, int bytes) {
+    if (!data || bytes <= 0) return 0;
+
+    const size_t cap = buf_.size();
+    // If incoming > capacity, keep only the last aligned window
+    if ((size_t)bytes > cap) {
+        size_t keep = (align_ > 1) ? (cap / align_) * align_ : cap;
+        data += (bytes - (int)keep);
+        bytes = (int)keep;
+    }
+
+    size_t h = head_.load(std::memory_order_relaxed);
+    size_t t = tail_.load(std::memory_order_acquire);
+    size_t used = h - t;
+    size_t free = cap - used;
+
+    if ((size_t)bytes > free) {
+        size_t need = (size_t)bytes - free;
+        need = align_up(need, align_);          // drop whole frames
+        if (need > used) need = used;           // don’t jump past head
+        tail_.store(t + need, std::memory_order_release);
+        t += need;
+    }
+
+    for (int i = 0; i < bytes; ++i)
+        buf_[(h + (size_t)i) & mask_] = data[i];
+
+    head_.store(h + (size_t)bytes, std::memory_order_release);
+    return bytes;
+}
+
+int AudioBus::SpscRing::read(uint8_t* out, int bytes) {
+    if (!out || bytes <= 0) return 0;
+
+    size_t h = head_.load(std::memory_order_acquire);
+    size_t t = tail_.load(std::memory_order_relaxed);
+    size_t avail = h - t;
+
+    if ((size_t)bytes > avail) bytes = (int)avail;
+
+    for (int i = 0; i < bytes; ++i) {
+        out[i] = buf_[(t + (size_t)i) & mask_];
+    }
+    tail_.store(t + (size_t)bytes, std::memory_order_release);
+    return bytes;
+}
+
+void AudioBus::SpscRing::clear() {
+    size_t h = head_.load(std::memory_order_relaxed);
+    tail_.store(h, std::memory_order_release);
+}
+
+
+
+// ----- helpers -----
+
+static inline float clip1(float v) {
+    if (v > 1.0f) return  1.0f;
+    if (v < -1.0f) return -1.0f;
+    return v;
+}
+
+static inline int16_t clip16(int v) {
+    if (v > 32767) return  32767;
+    if (v < -32768) return -32768;
+    return (int16_t)v;
+}
+
+static inline int32_t clip32(int64_t v) noexcept {
+    constexpr int64_t INT32_MAX_V = 2147483647LL;
+    constexpr int64_t INT32_MIN_V = -2147483647LL - 1LL;  // avoid unary minus warning
+    if (v > INT32_MAX_V) return static_cast<int32_t>(INT32_MAX_V);
+    if (v < INT32_MIN_V) return static_cast<int32_t>(INT32_MIN_V);
+    return static_cast<int32_t>(v);
+}
+
+
+// Fixed -6 dB headroom for the injected (GStreamer) stream
+// Rationale: keeps typical content out of saturation when summed with SDL_mixer output.
+constexpr int   kHeadroomShiftS16 = 1;     // >>1  (~0.5x)
+constexpr float kHeadroomF32 = 0.5f;  //  -6 dB
+constexpr int   kHeadroomShiftS32 = 1;     // >>1  (~0.5x)
 
 AudioBus& AudioBus::instance() {
     static AudioBus bus;
@@ -38,41 +142,41 @@ AudioBus::~AudioBus() {
 }
 
 void AudioBus::configureFromMixer() {
-    int freq = 48000, chans = 2; Uint16 fmt = AUDIO_S16;
-    (void)Mix_QuerySpec(&freq, &fmt, &chans); // if 0, defaults remain
+    int freq = 48000, chans = 2; Uint16 fmt = AUDIO_S16SYS;
+    (void)Mix_QuerySpec(&freq, &fmt, &chans);
     devFmt_ = fmt; devRate_ = freq; devChans_ = chans;
 }
 
-AudioBus::SourceId AudioBus::addSource(const char* name, size_t ring_buffer_kb) {
-    std::lock_guard<std::mutex> lk(mtx_);
+AudioBus::SourceId AudioBus::addSource(const char* name, size_t ring_kb) {
+    std::lock_guard<std::mutex> lock(mtx_);
+    const SourceId id = nextId_++;
 
-    // 1. Calculate the required buffer capacity.
-    // Clamp to a reasonable minimum (e.g., 4KB) and find the next power of two.
-    const size_t requested_bytes = std::max((size_t)4, ring_buffer_kb) * 1024;
-    const size_t capacity_p2 = next_power_of_2(requested_bytes);
+    const size_t bps = bytes_per_sample(devFmt_);
+    const size_t bpf = bps * (size_t)devChans_;                 // bytes per frame
+    const size_t cap = (size_t)ring_kb * 1024;
 
-    // 2. Create and configure the new source.
-    SourceId id = nextId_++;
-    auto sp = std::make_shared<Source>(capacity_p2);
-    sp->name = name ? name : "source";
-    sp->enabled.store(true, std::memory_order_release);
+    auto src = std::make_shared<Source>(cap, bpf);              // ? construct with align
+    src->name = name ? name : std::string();
+    src->enabled.store(true, std::memory_order_relaxed);
 
-    // 3. Add it to the map.
-    sources_.emplace(id, std::move(sp));
-
+    sources_[id] = std::move(src);
+    rebuildSnapshotLocked();
     return id;
 }
 
 void AudioBus::removeSource(SourceId id) {
-    std::lock_guard<std::mutex> lk(mtx_);
-    sources_.erase(id); // freed when last ref is gone
+    std::lock_guard<std::mutex> lock(mtx_);
+    sources_.erase(id);
+    rebuildSnapshotLocked();
 }
 
 void AudioBus::setEnabled(SourceId id, bool on) {
-    std::lock_guard<std::mutex> lk(mtx_);
+    std::lock_guard<std::mutex> lock(mtx_);
     auto it = sources_.find(id);
-    if (it != sources_.end())
-        it->second->enabled.store(on, std::memory_order_release);
+    if (it != sources_.end() && it->second) {
+        it->second->enabled.store(on, std::memory_order_relaxed);
+        rebuildSnapshotLocked();
+    }
 }
 
 bool AudioBus::isEnabled(SourceId id) const {
@@ -110,16 +214,12 @@ void AudioBus::clear(SourceId id) {
     sp->ring.clear();
 }
 
-static inline void mix_s16_sat_scalar(int16_t* dst, const int16_t* src, int num_samples) {
-    for (int i = 0; i < num_samples; ++i) {
-        // Promote to int to avoid overflow before saturation
+static inline void mix_s16_sat_scalar(int16_t* dst, const int16_t* src, int n) {
+    for (int i = 0; i < n; ++i) {
         int v = (int)dst[i] + (int)src[i];
-        if (v > 32767) v = 32767;
-        if (v < -32768) v = -32768;
-        dst[i] = (int16_t)v;
+        dst[i] = clip16(v);
     }
 }
-
 
 static inline void mix_s16_sat(Uint8* dst_u8, const Uint8* src_u8, int bytes) {
     // Cast pointers once at the beginning
@@ -191,33 +291,172 @@ static inline void mix_s16_sat(Uint8* dst_u8, const Uint8* src_u8, int bytes) {
 #endif
 }
 
-void AudioBus::mixInto(Uint8* dst, int len) {
-    if (!dst || len <= 0) return;
-    if ((int)scratch_.size() < len) scratch_.resize(len);
+void AudioBus::mixInto(Uint8* dst, int lenBytes) {
+    if (!dst || lenBytes <= 0) return;
 
-    std::vector<std::shared_ptr<Source>> local;
-    {
-        std::lock_guard<std::mutex> lk(mtx_);
-        local.reserve(sources_.size());
-        for (auto& kv : sources_) {
-            const auto& sp = kv.second;
-            if (sp->enabled.load(std::memory_order_acquire))
-                local.push_back(sp);
-        }
-    }
+    switch (devFmt_) {
+        // -------- float32 --------
+#if defined(AUDIO_F32LSB)
+        case AUDIO_F32LSB:
+#endif
+#if defined(AUDIO_F32MSB)
+        case AUDIO_F32MSB:
+#endif
+        mixInto_f32(dst, lenBytes);
+        break;
 
-    // Device spec (we normalized to S16/48k/2ch)
-    const int bps = 2; // S16
-    const int bpf = bps * std::max(1, devChans_); // typically 4
-    // do NOT memset(dst) in postmix; we add to existing buffer
+        // -------- signed 32-bit int --------
+#if defined(AUDIO_S32LSB)
+        case AUDIO_S32LSB:
+#endif
+#if defined(AUDIO_S32MSB)
+        case AUDIO_S32MSB:
+#endif
+        mixInto_s32(dst, lenBytes);
+        break;
 
-    for (auto& sp : local) {
-        int got = sp->ring.read(scratch_.data(), len);
-        if (got <= 0) continue;
-        got -= (got % bpf);           // frame-align
-        if (got <= 0) continue;
+        // -------- signed 16-bit int --------
+#if defined(AUDIO_S16LSB)
+        case AUDIO_S16LSB:
+#endif
+#if defined(AUDIO_S16MSB)
+        case AUDIO_S16MSB:
+#endif
+        mixInto_s16(dst, lenBytes);
+        break;
 
-        // S16 additive mix with saturation
-        mix_s16_sat(dst, scratch_.data(), got);
+        default:
+        // Unknown/unsupported device format: do nothing (avoid corruption).
+        break;
     }
 }
+
+void AudioBus::mixInto_s16(Uint8* dst, int lenBytes) {
+    if (!dst || lenBytes <= 0 || devChans_ <= 0) return;
+
+    const int bps = 2;
+    const int bpf = devChans_ * bps;
+    const int want = (lenBytes / bpf) * bpf;
+
+    auto snap = snapshot();
+    if (!snap || snap->empty() || want <= 0) return;
+
+    // Count active sources (have at least one frame ready)
+    int active = 0;
+    for (const auto& src : *snap) {
+        if (src->ring.available() >= (size_t)bpf) ++active;
+    }
+    const bool need_headroom = (active > 1);
+
+    static thread_local std::vector<Uint8> scratch;
+    if ((int)scratch.size() < want) scratch.resize(want);
+    Uint8* tmp = scratch.data();
+
+    for (const auto& src : *snap) {
+        const int got = src->ring.read(tmp, want);
+        const int gotAligned = (got / bpf) * bpf;
+        if (gotAligned <= 0) continue;
+
+        if (need_headroom) {
+            // ?6 dB only when actually mixing multiple streams
+            int16_t* S = reinterpret_cast<int16_t*>(tmp);
+            const int n = gotAligned / sizeof(int16_t);
+            for (int i = 0; i < n; ++i) S[i] = (int16_t)((int)S[i] >> 1);
+        }
+        mix_s16_sat(dst, tmp, gotAligned); // SIMD saturating add
+    }
+}
+
+void AudioBus::mixInto_f32(Uint8* dst, int lenBytes) {
+    if (!dst || lenBytes <= 0 || devChans_ <= 0) return;
+
+    const int bps = 4, bpf = devChans_ * bps;
+    const int want = (lenBytes / bpf) * bpf;
+
+    auto snap = snapshot();
+    if (!snap || snap->empty() || want <= 0) return;
+
+    int active = 0;
+    for (const auto& src : *snap) {
+        if (src->ring.available() >= (size_t)bpf) ++active;
+    }
+    const float gain = (active > 1) ? 0.5f : 1.0f;
+
+    static thread_local std::vector<Uint8> scratch;
+    if ((int)scratch.size() < want) scratch.resize(want);
+    Uint8* tmp = scratch.data();
+
+    float* D = reinterpret_cast<float*>(dst);
+    for (const auto& src : *snap) {
+        const int got = src->ring.read(tmp, want);
+        const int gotAligned = (got / bpf) * bpf;
+        if (gotAligned <= 0) continue;
+
+        const float* S = reinterpret_cast<const float*>(tmp);
+        const int n = gotAligned / sizeof(float);
+        for (int i = 0; i < n; ++i) {
+            float v = D[i] + S[i] * gain;
+            // hard clip or add soft-clip later if desired
+            D[i] = (v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v));
+        }
+    }
+}
+
+void AudioBus::mixInto_s32(Uint8* dst, int lenBytes) {
+    if (!dst || lenBytes <= 0 || devChans_ <= 0) return;
+
+    const int bps = 4, bpf = devChans_ * bps;
+    const int want = (lenBytes / bpf) * bpf;
+
+    auto snap = snapshot();
+    if (!snap || snap->empty() || want <= 0) return;
+
+    int active = 0;
+    for (const auto& src : *snap) {
+        if (src->ring.available() >= (size_t)bpf) ++active;
+    }
+    const bool need_headroom = (active > 1);
+
+    static thread_local std::vector<Uint8> scratch;
+    if ((int)scratch.size() < want) scratch.resize(want);
+    Uint8* tmp = scratch.data();
+    int32_t* D = reinterpret_cast<int32_t*>(dst);
+
+    for (const auto& src : *snap) {
+        const int got = src->ring.read(tmp, want);
+        const int gotAligned = (got / bpf) * bpf;
+        if (gotAligned <= 0) continue;
+
+        const int32_t* S = reinterpret_cast<const int32_t*>(tmp);
+        const int n = gotAligned / sizeof(int32_t);
+        if (need_headroom) {
+            for (int i = 0; i < n; ++i) {
+                int64_t s = ((int64_t)S[i]) >> 1; // ?6 dB
+                int64_t d = (int64_t)D[i] + s;
+                D[i] = clip32(d);
+            }
+        }
+        else {
+            for (int i = 0; i < n; ++i) {
+                int64_t d = (int64_t)D[i] + (int64_t)S[i];
+                D[i] = clip32(d);
+            }
+        }
+    }
+}
+
+void AudioBus::rebuildSnapshotLocked() {
+    auto fresh = std::make_shared<SourceVec>();
+    fresh->reserve(sources_.size());
+    for (auto& kv : sources_) {
+        const auto& sp = kv.second;
+        if (sp && sp->enabled.load(std::memory_order_relaxed)) {
+            fresh->push_back(sp);
+        }
+    }
+    // Bind to const type so the atomic_store overload matches exactly
+    std::shared_ptr<ConstSourceVec> publish = fresh;
+    std::atomic_store_explicit(&snapshot_, publish, std::memory_order_release);
+}
+
+

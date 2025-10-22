@@ -109,6 +109,56 @@ static bool IsIntelGPU() {
 }
 #endif
 
+// Utility: SDL_AudioFormat -> GStreamer audio/x-raw format string
+// SDL_AudioFormat -> GStreamer audio/x-raw "format" string
+// Returns nullptr if unknown.
+static const char* sdl_to_gst_fmt(Uint16 fmt) {
+	switch (fmt) {
+		// 8-bit
+		case AUDIO_U8:  return "U8";
+		case AUDIO_S8:  return "S8";
+
+			// 16-bit
+#if defined(AUDIO_U16LSB)
+		case AUDIO_U16LSB: return "U16LE";
+#endif
+#if defined(AUDIO_U16MSB)
+		case AUDIO_U16MSB: return "U16BE";
+#endif
+#if defined(AUDIO_S16LSB)
+		case AUDIO_S16LSB: return "S16LE";
+#endif
+#if defined(AUDIO_S16MSB)
+		case AUDIO_S16MSB: return "S16BE";
+#endif
+
+			// 24-bit (packed 3 bytes) — if your SDL build exposes these
+#if defined(AUDIO_S24LSB)
+		case AUDIO_S24LSB: return "S24LE";
+#endif
+#if defined(AUDIO_S24MSB)
+		case AUDIO_S24MSB: return "S24BE";
+#endif
+
+			// 32-bit integer
+#if defined(AUDIO_S32LSB)
+		case AUDIO_S32LSB: return "S32LE";
+#endif
+#if defined(AUDIO_S32MSB)
+		case AUDIO_S32MSB: return "S32BE";
+#endif
+
+			// 32-bit float
+#if defined(AUDIO_F32LSB)
+		case AUDIO_F32LSB: return "F32LE";
+#endif
+#if defined(AUDIO_F32MSB)
+		case AUDIO_F32MSB: return "F32BE";
+#endif
+	}
+	return nullptr;
+}
+
 GStreamerVideo::GStreamerVideo(int monitor)
 
 	: monitor_(monitor)
@@ -655,17 +705,42 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	}
 	g_object_set(audioSink_,
 		"emit-signals", FALSE,
-		"max-buffers", 10,     // small, drop if we fall behind
-		"drop", TRUE,
+		"max-buffers", 128,
+		"drop", FALSE,
 		"sync", TRUE,        // we pace via SDL device, not GST
 		"enable-last-sample", FALSE,
 		"wait-on-eos", FALSE,           // nicer shutdown
 		nullptr);
 
-	GstCaps* acaps = gst_caps_from_string("audio/x-raw,format=S16LE,layout=interleaved,rate=48000,channels=2");
+	// Pull the actual device spec SDL_mixer opened
+	int rate = AudioBus::instance().dev_rate();
+	int channels = AudioBus::instance().dev_channels();
+	Uint16 fmt = AudioBus::instance().dev_fmt();
+
+	const char* gstFmt = sdl_to_gst_fmt(fmt);
+	if (!gstFmt) {
+		// Fallback to S16LE if we see a format we don't map yet
+#if SDL_BYTEORDER == SDL_LIL_ENDIAN
+		gstFmt = "S16LE";
+#else
+		gstFmt = "S16BE";
+#endif
+	}
+
+	// Compose caps string
+	std::ostringstream ss;
+	ss << "audio/x-raw"
+		<< ",format=" << gstFmt
+		<< ",layout=interleaved"
+		<< ",rate=" << rate
+		<< ",channels=" << channels;
+
+	GstCaps* acaps = gst_caps_from_string(ss.str().c_str());
 	gst_app_sink_set_caps(GST_APP_SINK(audioSink_), acaps);
 	gst_caps_unref(acaps);
 
+	// (Optional but recommended) Log what you set so it’s easy to debug:
+	LOG_INFO("GStreamerVideo", "Audio caps -> " << ss.str());
 
 	// Force the system clock and disable auto reselection
 	GstClock* sys = gst_system_clock_obtain();
@@ -1021,11 +1096,11 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 
 	// ---- Tune multiqueue to reduce CPU churn ----
 	if (g_str_has_prefix(name, "multiqueue")) {
-		if (has_prop(element, "max-size-buffers")) g_object_set(element, "max-size-buffers", 2, NULL);
+		if (has_prop(element, "max-size-buffers")) g_object_set(element, "max-size-buffers", 0, NULL);
 		if (has_prop(element, "max-size-bytes"))   g_object_set(element, "max-size-bytes", (guint64)0, NULL);
-		if (has_prop(element, "max-size-time"))    g_object_set(element, "max-size-time", (guint64)0, NULL);
-		if (has_prop(element, "low-percent"))      g_object_set(element, "low-percent", 5, NULL);
-		if (has_prop(element, "high-percent"))     g_object_set(element, "high-percent", 25, NULL);
+		if (has_prop(element, "max-size-time"))    g_object_set(element, "max-size-time", (guint64)(300 * GST_MSECOND), NULL);
+		if (has_prop(element, "low-percent"))      g_object_set(element, "low-percent", 30, NULL);
+		if (has_prop(element, "high-percent"))     g_object_set(element, "high-percent", 75, NULL);
 		if (has_prop(element, "sync-by-running-time"))
 			g_object_set(element, "sync-by-running-time", TRUE, NULL);
 	}
