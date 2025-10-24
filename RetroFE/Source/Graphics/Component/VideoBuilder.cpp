@@ -18,23 +18,24 @@
 #include "../../Utility/Utils.h"
 #include <fstream>
 
+ // Declare the extensions vector as static so it's only initialized once.
+#ifdef WIN32
+static std::vector<std::string> extensions = {
+    "mp4", "avi", "mkv",
+    "mp3", "wav", "flac"
+};
+#else
+static std::vector<std::string> extensions = {
+"mp4", "MP4", "avi", "AVI", "mkv", "MKV",
+"mp3", "MP3", "wav", "WAV", "flac", "FLAC"
+};
+#endif
 
 VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
 {
     VideoComponent *component = nullptr;
     
-    // Declare the extensions vector as static so it's only initialized once.
-#ifdef WIN32
-    static std::vector<std::string> extensions = {
-        "mp4", "avi", "mkv",
-        "mp3", "wav", "flac"
-    };
-#else
-    static std::vector<std::string> extensions = {
-    "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
-    "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
-    };
-#endif
+
 
     std::string prefix = Utils::combinePath(path, name);
 
@@ -46,3 +47,16 @@ VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, 
     return component;
 }
 
+bool VideoBuilder::RetargetVideo(VideoComponent& comp,
+    const std::string& directory,
+    const std::string& stem) {
+    if (directory.empty() || stem.empty()) return false;
+
+    const std::string prefix = Utils::combinePath(directory, stem);
+    std::string found;
+    if (!Utils::findMatchingFile(prefix, extensions, found))
+        return false;
+
+    comp.retarget(found);     // non-blocking: arms on-NONE, unload(), then play(new)
+    return true;
+}

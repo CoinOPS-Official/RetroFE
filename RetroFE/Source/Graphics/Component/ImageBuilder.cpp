@@ -36,3 +36,22 @@ Image * ImageBuilder::CreateImage(const std::string& path, Page &p, const std::s
 
     return image;
 }
+
+bool ImageBuilder::RetargetImage(Image& img, const std::string& path, const std::string& name) {
+    static std::vector<std::string> extensions = {
+#ifdef WIN32
+        "gif", "webp", "png", "jpg", "jpeg"
+#else
+        "gif", "GIF", "webp", "WEBP", "png", "PNG", "jpg", "JPG", "jpeg", "JPEG"
+#endif
+    };
+
+    const std::string prefix = Utils::combinePath(path, name);
+    std::string found;
+    if (Utils::findMatchingFile(prefix, extensions, found)) {
+        img.retarget(found, "");
+        return true;
+    }
+    return false;
+}
+

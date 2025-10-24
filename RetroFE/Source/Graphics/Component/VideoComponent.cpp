@@ -210,6 +210,42 @@ void VideoComponent::freeGraphicsMemory() {
 	videoInst_.reset();
 }
 
+void VideoComponent::retarget(const std::string& newFile) {
+    // No work if identical or empty
+    if (newFile.empty() || newFile == videoFile_) return;
+
+    // Update target and reset per-media state so layout/size refresh correctly
+    videoFile_ = newFile;
+    dimensionsUpdated_ = false;
+    hasBeenOnScreen_ = false;
+    wasVisible_ = false;
+    pendingRestart_ = false;
+    instanceReady_ = false;   // will flip true after play() succeeds
+
+    // If we don't have an instance yet, follow the normal path (will acquire/create + play)
+    if (!videoInst_) {
+        allocateGraphicsMemory();
+        return;
+    }
+
+    // Best path: same instance, async drain ? play(new)
+    if (auto* gst = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
+        // Arm one-shot: when pipeline becomes NONE, start the new file
+        gst->armOnBecameNone([this](GStreamerVideo* /*self*/) {
+            if (!videoInst_) return;               // component might have been torn down
+            instanceReady_ = videoInst_->play(videoFile_);  // preroll to PAUSED
+            // Visibility logic you already have will resume when appropriate
+            });
+
+        // Kick the async transition; returns immediately
+        videoInst_->unload();
+        return;
+    }
+
+    // Generic fallback backend: let play() handle quiescing if unload is mid-flight
+    videoInst_->unload();
+    instanceReady_ = videoInst_->play(videoFile_);
+}
 
 void VideoComponent::draw() {
 	if (!videoInst_ || !currentPage_ || !instanceReady_) {

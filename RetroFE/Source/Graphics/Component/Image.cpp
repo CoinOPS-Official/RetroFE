@@ -649,3 +649,25 @@ bool Image::isAnimatedGIF(const std::vector<uint8_t>& buffer) {
     }
     return false;
 }
+
+void Image::retarget(const std::string& newFile, const std::string& newAltFile) {
+    // Avoid redundant work
+    if (newFile == file_ && newAltFile == altFile_) return;
+
+    // Release current instance-owned GPU resources/surfaces (but keep shared-cache content intact)
+    // freeGraphicsMemory() already respects useTextureCaching_ and won't destroy cache-owned textures.
+    freeGraphicsMemory();  // uses your existing logic to drop instance pointers safely
+
+    // Update paths
+    file_ = newFile;
+    altFile_ = newAltFile;
+
+    // Reset animation state for new media
+    currentFrame_ = 0;
+    lastFrameTime_ = 0;
+    frameDelay_ = 0;
+    isUsingCachedSurfaces_ = false;
+
+    // Load graphics for new target (will hit cache if available)
+    allocateGraphicsMemory();
+}

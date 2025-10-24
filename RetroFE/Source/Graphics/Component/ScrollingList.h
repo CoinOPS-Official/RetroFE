@@ -135,6 +135,10 @@ public:
     void triggerJukeboxJumpEvent(int menuIndex = -1);
     void triggerEventOnAll(const std::string& event, int menuIndex);;
 
+    bool tryRetargetImage(size_t index, const Item* item);
+
+    bool tryRetargetVideo(size_t index, const Item* item);
+
     bool allocateTexture(size_t index, const Item* i);
     void buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType);
     void deallocateTexture(size_t index);
