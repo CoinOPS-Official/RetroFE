@@ -2,6 +2,17 @@
 #include "../../Utility/Log.h"
 #ifdef WIN32
 #include "PacDrive.h"
+
+// NEW: Windows HID + SetupAPI
+#define NOMINMAX
+#include <windows.h>
+#include <setupapi.h>
+#include <hidsdi.h>
+#include <initguid.h>
+#include <cfgmgr32.h>
+#include <algorithm>
+#pragma comment(lib, "setupapi.lib")
+#pragma comment(lib, "hid.lib")
 #else
 #include <thread>
 #include <chrono>
@@ -12,6 +23,54 @@ static constexpr char COMPONENT[] = "ServoStik";
 
 #ifdef _WIN32
 
+static bool hidDevicePresent(uint16_t vid, uint16_t pid) {
+    GUID hidGuid;
+    HidD_GetHidGuid(&hidGuid);
+
+    HDEVINFO devInfo = SetupDiGetClassDevs(&hidGuid, nullptr, nullptr, DIGCF_DEVICEINTERFACE | DIGCF_PRESENT);
+    if (devInfo == INVALID_HANDLE_VALUE) {
+        return false;
+    }
+
+    bool found = false;
+    SP_DEVICE_INTERFACE_DATA ifData{};
+    ifData.cbSize = sizeof(ifData);
+
+    // Precompute the lowercase needle e.g. "vid_0d209&pid_1700"
+    char needle[32];
+    snprintf(needle, sizeof(needle), "vid_%04x&pid_%04x", static_cast<unsigned>(vid), static_cast<unsigned>(pid));
+
+    for (DWORD i = 0; SetupDiEnumDeviceInterfaces(devInfo, nullptr, &hidGuid, i, &ifData); ++i) {
+        // Get required length
+        DWORD reqLen = 0;
+        SetupDiGetDeviceInterfaceDetail(devInfo, &ifData, nullptr, 0, &reqLen, nullptr);
+        if (GetLastError() != ERROR_INSUFFICIENT_BUFFER || reqLen == 0) continue;
+
+        std::vector<BYTE> buffer(reqLen);
+        auto* detail = reinterpret_cast<SP_DEVICE_INTERFACE_DETAIL_DATA*>(buffer.data());
+        detail->cbSize = sizeof(SP_DEVICE_INTERFACE_DETAIL_DATA);
+
+        if (!SetupDiGetDeviceInterfaceDetail(devInfo, &ifData, detail, reqLen, nullptr, nullptr)) {
+            continue;
+        }
+
+        // Device path example contains "...\\hid#vid_0d209&pid_1700#...".
+        // Compare case-insensitively.
+        std::string path(detail->DevicePath ? detail->DevicePath : "");
+        std::string pathLC;
+        pathLC.resize(path.size());
+        std::transform(path.begin(), path.end(), pathLC.begin(), [](unsigned char c) { return static_cast<char>(::tolower(c)); });
+
+        if (pathLC.find(needle) != std::string::npos) {
+            found = true;
+            break;
+        }
+    }
+
+    SetupDiDestroyDeviceInfoList(devInfo);
+    return found;
+}
+
 ServoStikRestrictor::ServoStikRestrictor(uint16_t vid, uint16_t pid)
     : vid_(vid), pid_(pid), initialized_(false) {}
 
@@ -19,6 +78,13 @@ ServoStikRestrictor::~ServoStikRestrictor() {}
 
 bool ServoStikRestrictor::initialize() {
     LOG_INFO(COMPONENT, "Attempting to initialize ServoStik restrictor...");
+    // NEW: Only touch the PacDrive SDK if the HID device is really present.
+    if (!hidDevicePresent(0xD209, 0x1700)) {
+        LOG_INFO(COMPONENT, "No ServoStik device found (HID preflight failed).");
+        initialized_ = false;
+        return false;
+    }
+    
     initialized_ = (PacInitialize() != 0);
     if (initialized_) {
         LOG_INFO(COMPONENT, "ServoStik restrictor detected and initialized.");
