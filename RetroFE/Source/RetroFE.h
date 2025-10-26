@@ -167,9 +167,11 @@ private:
     };
 
     RETROFE_STATE state_ = RETROFE_IDLE;
-
+    RETROFE_STATE resumeAfterInfoExit_ = RETROFE_IDLE;
     void setState(RETROFE_STATE newState);
     RETROFE_STATE getState() const;
+    RETROFE_STATE handleInfoExitOr(RETROFE_STATE next);
+
     std::string stateToString(RETROFE_STATE s) const;
 
     void            render();
@@ -193,7 +195,6 @@ private:
     bool isUserActive(double now, double threshold = 3.0) const;
 	void            saveRetroFEState( ) const;
     std::string getLayoutFileName();
-    void resetInfoToggle();
 
     Configuration     &config_;
     DB                *db_;
