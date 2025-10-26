@@ -2998,9 +2998,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
+		
+			if (infoExitOnScroll) {
+				if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_PLAYLIST_FORWARD); s != RETROFE_IDLE)
+					return s;
+			}
 
-			if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_PLAYLIST_FORWARD); s != RETROFE_IDLE)
-				return s;
 
 			return RETROFE_SCROLL_PLAYLIST_FORWARD;
 		}
@@ -3009,9 +3012,11 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-
-			if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_PLAYLIST_BACK); s != RETROFE_IDLE)
-				return s;
+			
+			if (infoExitOnScroll) {
+				if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_PLAYLIST_BACK); s != RETROFE_IDLE)
+					return s;
+			}
 
 			return RETROFE_SCROLL_PLAYLIST_BACK;
 		}
@@ -3025,8 +3030,10 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			}
 			attract_.reset();
 
-			if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_FORWARD); s != RETROFE_IDLE)
-				return s;
+			if (infoExitOnScroll) {
+				if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_FORWARD); s != RETROFE_IDLE)
+					return s;
+			}
 
 			return RETROFE_SCROLL_FORWARD;
 		}
@@ -3038,8 +3045,10 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			}
 			attract_.reset();
 
-			if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_BACK); s != RETROFE_IDLE)
-				return s;
+			if (infoExitOnScroll) {
+				if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_BACK); s != RETROFE_IDLE)
+					return s;
+			}
 
 			return RETROFE_SCROLL_BACK;
 		}
@@ -3054,9 +3063,10 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 				return RETROFE_HIGHLIGHT_REQUEST;
 			}
 			attract_.reset();
-
-			if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_PLAYLIST_FORWARD); s != RETROFE_IDLE)
-				return s;
+			if (infoExitOnScroll) {
+				if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_PLAYLIST_FORWARD); s != RETROFE_IDLE)
+					return s;
+			}
 
 			return RETROFE_SCROLL_PLAYLIST_FORWARD;
 		}
@@ -3066,8 +3076,10 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			}
 			attract_.reset();
 
-			if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_PLAYLIST_BACK); s != RETROFE_IDLE)
-				return s;
+			if (infoExitOnScroll) {
+				if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_PLAYLIST_BACK); s != RETROFE_IDLE)
+					return s;
+			}
 
 			return RETROFE_SCROLL_PLAYLIST_BACK;
 		}
@@ -3081,8 +3093,10 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			}
 			attract_.reset();
 
-			if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_FORWARD); s != RETROFE_IDLE)
-				return s;
+			if (infoExitOnScroll) {
+				if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_FORWARD); s != RETROFE_IDLE)
+					return s;
+			}
 
 			return RETROFE_SCROLL_FORWARD;
 		}
@@ -3094,9 +3108,10 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			}
 			attract_.reset();
 
-			if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_BACK); s != RETROFE_IDLE)
+			if (infoExitOnScroll){
+				if (RETROFE_STATE s = handleInfoExitOr(RETROFE_SCROLL_BACK); s != RETROFE_IDLE)
 				return s;
-
+			}
 			return RETROFE_SCROLL_BACK;
 		}
 	}
