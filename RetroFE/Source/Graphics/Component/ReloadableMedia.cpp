@@ -427,16 +427,15 @@ Component* ReloadableMedia::findComponent(
     const std::string& basename,
     std::string_view filepath,
     bool systemMode,
-    bool isVideo) 
-{
+    bool isVideo) {
     std::string imagePath;
-    Component *component = nullptr;
+    Component* component = nullptr;
     VideoBuilder videoBuild{};
     ImageBuilder imageBuild{};
 
     if (filepath != "") {
-        imagePath = filepath; 
-    } 
+        imagePath = filepath;
+    }
     else {
         // check the system folder
         if (layoutMode_) {
@@ -459,7 +458,7 @@ Component* ReloadableMedia::findComponent(
         }
         else {
             if (commonMode_) {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common" );
+                imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common");
                 if (systemMode)
                     imagePath = Utils::combinePath(imagePath, "system_artwork");
                 else
@@ -473,7 +472,7 @@ Component* ReloadableMedia::findComponent(
 
     // if file already loaded, don't load again
     const std::vector<std::string>& extensions = isVideo ? ReloadableMedia::videoExtensions : ReloadableMedia::imageExtensions;
-    
+
     if (loadedComponent_ != nullptr && !imagePath.empty()) {
         std::string filePath;
         if (Utils::findMatchingFile(Utils::combinePath(imagePath, basename), extensions, filePath)) {
@@ -483,8 +482,8 @@ Component* ReloadableMedia::findComponent(
         }
     }
 
-    if(isVideo) {
-        if ( jukebox_ )
+    if (isVideo) {
+        if (jukebox_)
             component = videoBuild.createVideo(imagePath, page, basename, baseViewInfo.Monitor, jukeboxNumLoops_);
         else
             component = videoBuild.createVideo(imagePath, page, basename, baseViewInfo.Monitor);
@@ -496,7 +495,6 @@ Component* ReloadableMedia::findComponent(
     return component;
 
 }
-
 
 std::string filePath()
 {

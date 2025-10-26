@@ -16,34 +16,47 @@
 
 #include "VideoBuilder.h"
 #include "../../Utility/Utils.h"
-#include <fstream>
+#include <string_view>
 
- // Declare the extensions vector as static so it's only initialized once.
 #ifdef WIN32
-static std::vector<std::string> extensions = {
-    "mp4", "avi", "mkv",
-    "mp3", "wav", "flac"
+static constexpr std::string_view kVidExts[] = {
+    "mp4","avi","mkv"
 };
 #else
-static std::vector<std::string> extensions = {
-"mp4", "MP4", "avi", "AVI", "mkv", "MKV",
-"mp3", "MP3", "wav", "WAV", "flac", "FLAC"
+static constexpr std::string_view kVidExts[] = {
+    "mp4","MP4","avi","AVI","mkv","MKV"
 };
 #endif
 
-VideoComponent * VideoBuilder::createVideo(const std::string& path, Page &page, const std::string& name, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
-{
-    VideoComponent *component = nullptr;
-    
-
-
-    std::string prefix = Utils::combinePath(path, name);
-
-    if(std::string file; Utils::findMatchingFile(prefix, extensions, file)) {
-        component = new VideoComponent(page, file, monitor, numLoops, softOverlay, listId, perspectiveCorners);
-        //component->allocateGraphicsMemory();
+static inline std::string makePrefix(const std::string& path, const std::string& name) {
+    std::string s;
+    s.reserve(path.size() + name.size() + 2);
+    s.append(path);
+    if (!path.empty()) {
+        const char c = path.back();
+        if (c != '/' && c != '\\')
+#ifdef _WIN32
+            s.push_back('\\');
+#else
+            s.push_back('/');
+#endif
     }
+    s.append(name);
+    return s;
+}
 
+VideoComponent* VideoBuilder::createVideo(const std::string& path, Page& page,
+    const std::string& name, int monitor, int numLoops, bool softOverlay,
+    int listId, const int* perspectiveCorners) {
+    VideoComponent* component = nullptr;
+
+    const std::string prefix = makePrefix(path, name);
+    std::string file;
+    if (Utils::findMatchingFile(std::string_view(prefix),
+        std::begin(kVidExts), std::end(kVidExts),
+        file)) {
+        component = new VideoComponent(page, file, monitor, numLoops, softOverlay, listId, perspectiveCorners);
+    }
     return component;
 }
 
@@ -52,11 +65,13 @@ bool VideoBuilder::RetargetVideo(VideoComponent& comp,
     const std::string& stem) {
     if (directory.empty() || stem.empty()) return false;
 
-    const std::string prefix = Utils::combinePath(directory, stem);
+    const std::string prefix = makePrefix(directory, stem);
     std::string found;
-    if (!Utils::findMatchingFile(prefix, extensions, found))
+    if (!Utils::findMatchingFile(std::string_view(prefix),
+        std::begin(kVidExts), std::end(kVidExts),
+        found))
         return false;
 
-    comp.retarget(found);     // non-blocking: arms on-NONE, unload(), then play(new)
+    comp.retarget(found);     // existing non-blocking retarget behavior
     return true;
 }

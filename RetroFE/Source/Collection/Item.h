@@ -17,6 +17,9 @@
 
 #include <string>
 #include <map>
+#include <unordered_map>
+#include <vector>
+#include <string_view>
 #include "CollectionInfo.h"
 
 class Item
@@ -50,6 +53,8 @@ public:
     std::string iscoredId;
     std::string iscoredType;
 
+    mutable std::unordered_map<std::string, std::vector<std::string_view>> nameBaseCache;
+
     int playCount{ 0 };
     double timeSpent{ 0.0 };
     bool        isFavorite{ false };
@@ -64,4 +69,6 @@ public:
     void loadInfo(const std::string& path);
     bool static validSortType(std::string attribute);
     bool static isSortDesc(std::string attribute);
+    void precomputeNameCandidates(const std::vector<std::string>& typesLC) const;
+    const std::vector<std::string_view>& baseNameCandidates(const std::string& typeLC) const;
 };

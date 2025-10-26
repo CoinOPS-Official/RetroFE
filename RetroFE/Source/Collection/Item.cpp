@@ -157,3 +157,43 @@ void Item::loadInfo(const std::string& path)
     }
 }
 
+static void buildBaseNameCandidates(const Item* item,
+    const std::string& typeLC,
+    std::vector<std::string_view>& out) {
+    out.clear();
+    out.reserve(12);
+
+    // Specific names only (NO "default" here)
+    out.push_back(item->name);
+    if (!item->fullTitle.empty()) out.push_back(item->fullTitle);
+    if (!item->cloneof.empty())   out.push_back(item->cloneof);
+
+    if (typeLC == "numberbuttons" && !item->numberButtons.empty()) out.push_back(item->numberButtons);
+    if (typeLC == "numberplayers" && !item->numberPlayers.empty()) out.push_back(item->numberPlayers);
+    if (typeLC == "year" && !item->year.empty())          out.push_back(item->year);
+    if (typeLC == "title" && !item->title.empty())         out.push_back(item->title);
+    if (typeLC == "developer")    out.push_back(!item->developer.empty() ? item->developer
+        : item->manufacturer);
+    if (typeLC == "manufacturer" && !item->manufacturer.empty())  out.push_back(item->manufacturer);
+    if (typeLC == "genre" && !item->genre.empty())         out.push_back(item->genre);
+    if (typeLC == "ctrltype" && !item->ctrlType.empty())      out.push_back(item->ctrlType);
+    if (typeLC == "joyways" && !item->joyWays.empty())       out.push_back(item->joyWays);
+    if (typeLC == "rating" && !item->rating.empty())        out.push_back(item->rating);
+    if (typeLC == "score" && !item->score.empty())         out.push_back(item->score);
+
+    if (typeLC.rfind("playlist", 0) == 0) out.push_back(item->name);
+}
+
+void Item::precomputeNameCandidates(const std::vector<std::string>& typesLC) const {
+    for (const auto& t : typesLC) {
+        auto& v = nameBaseCache[t];
+        if (v.empty()) buildBaseNameCandidates(this, t, v);
+    }
+}
+
+const std::vector<std::string_view>&
+Item::baseNameCandidates(const std::string& typeLC) const {
+    auto& v = nameBaseCache[typeLC];
+    if (v.empty()) buildBaseNameCandidates(this, typeLC, v);
+    return v;
+}

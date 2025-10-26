@@ -53,6 +53,8 @@ std::unordered_map<std::filesystem::path, std::unordered_set<std::string>> Utils
 std::unordered_set<std::filesystem::path> Utils::nonExistingDirectories;
 #endif
 
+namespace fs = std::filesystem;
+
 Utils::Utils() = default;
 
 Utils::~Utils() = default;
@@ -83,6 +85,36 @@ std::string Utils::wstringToString(const std::wstring wstr) {
     static std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
     return converter.to_bytes(wstr);
 #endif
+}
+
+static inline bool is_valid_directory(const fs::path& dir) {
+    std::error_code ec;
+    // Accept real directories OR symlinks/junctions that resolve to directories
+    if (!fs::exists(dir, ec) || ec) return false;
+    if (fs::is_directory(dir, ec) && !ec) return true;                 // follows symlinks on most libs
+    auto s = fs::symlink_status(dir, ec); if (ec) return false;
+    if (fs::is_symlink(s)) {
+        // Resolve target and check if it is a directory
+        auto st = fs::status(dir, ec); if (ec) return false;            // follows link
+        return fs::is_directory(st);
+    }
+    return false;
+}
+
+// Returns true if the entry should be included (regular file OR link-to-file)
+static inline bool is_file_or_link_to_file(const fs::directory_entry& de) {
+    std::error_code ec;
+    // Fast path: regular file
+    if (de.is_regular_file(ec) && !ec) return true;
+    ec.clear();
+
+    // If it's a symlink, check the resolved target
+    if (de.is_symlink(ec) && !ec) {
+        // status() follows the link and reports the target
+        auto st = fs::status(de.path(), ec);
+        if (!ec && fs::is_regular_file(st)) return true;
+    }
+    return false;
 }
 
 void Utils::preciseSleep(double seconds_to_sleep) {
@@ -178,21 +210,52 @@ std::string Utils::filterComments(const std::string& line) {
 }
 
 
+// Utils.cpp
 void Utils::populateCache(const std::filesystem::path& directory) {
     LOG_FILECACHE("Populate", "Populating cache for directory: " + directory.string());
 
-    std::unordered_set<std::string>& files = fileCache[directory];
-    for (const auto& entry : std::filesystem::directory_iterator(directory)) {
-        if (entry.is_regular_file()) {
-#ifdef WIN32
-            files.insert(Utils::toLower(entry.path().filename().string()));
-#else
-            files.insert(entry.path().filename().string());
-#endif
-        }
+    // Negative cache: if already marked missing, bail
+    if (nonExistingDirectories.find(directory) != nonExistingDirectories.end()) {
+        LOG_FILECACHE("Skip", "Directory previously marked missing: " + removeAbsolutePath(directory.string()));
+        return;
     }
-}
+    // Already populated?
+    if (fileCache.find(directory) != fileCache.end()) {
+        return;
+    }
 
+    // Verify dir validity (accept symlink/junction to directory)
+    if (!is_valid_directory(directory)) {
+        nonExistingDirectories.insert(directory);
+        LOG_FILECACHE("Skip", "Directory not present/not a directory: " + removeAbsolutePath(directory.string()));
+        return;
+    }
+
+    std::unordered_set<std::string> files;
+    std::error_code ec;
+    fs::directory_options opts = fs::directory_options::skip_permission_denied;
+    fs::directory_iterator it(directory, opts, ec), end;
+    if (ec) {
+        // Treat as missing-ish this run to avoid repeated faults
+        nonExistingDirectories.insert(directory);
+        LOG_FILECACHE("Skip", "Failed to open directory (ec): " + removeAbsolutePath(directory.string()));
+        return;
+    }
+
+    for (; it != end; it.increment(ec)) {
+        if (ec) { ec.clear(); continue; } // skip bad entries; keep going
+        if (!is_file_or_link_to_file(*it)) continue;
+
+        std::string fname = it->path().filename().string();
+#ifdef _WIN32
+        files.insert(Utils::toLower(std::move(fname)));
+#else
+        files.insert(std::move(fname));
+#endif
+    }
+
+    fileCache.emplace(directory, std::move(files));
+}
 bool Utils::isFileInCache(const std::filesystem::path& baseDir, const std::string& filename) {
     auto baseDirIt = fileCache.find(baseDir);
     if (baseDirIt != fileCache.end()) {
@@ -254,6 +317,52 @@ bool Utils::findMatchingFile(const std::string& prefix, const std::vector<std::s
     // Log cache miss after checking all extensions
     LOG_FILECACHE("Miss", removeAbsolutePath(baseDir.string()) + " does not contain file '" + baseFileName + "'");
     return false; // No matching file found
+}
+
+bool Utils::findMatchingFile(std::string_view prefixNoExt,
+    const std::string_view* extsBegin,
+    const std::string_view* extsEnd,
+    std::string& outPath) {
+    namespace fs = std::filesystem;
+
+    // Mirror the vector overload behavior: build an absolute prefix first
+    const std::string prefixStr(prefixNoExt);
+    fs::path absolutePath = Utils::combinePath(Configuration::absolutePath, prefixStr);
+    fs::path baseDir = absolutePath.parent_path();
+    std::string baseFileName = absolutePath.filename().string();
+
+    // Negative cache fast-path
+    if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
+        LOG_FILECACHE("Skip", "Skipping non-existing directory: " + removeAbsolutePath(baseDir.string()));
+        return false;
+    }
+
+    // Validate / populate the cache safely (handles dir symlinks)
+    if (fileCache.find(baseDir) == fileCache.end()) {
+        populateCache(baseDir);
+        if (nonExistingDirectories.find(baseDir) != nonExistingDirectories.end()) {
+            return false;
+        }
+    }
+
+    // Probe cache for each extension
+    std::string candidate;
+    candidate.reserve(baseFileName.size() + 1 + 8);
+
+    for (auto it = extsBegin; it != extsEnd; ++it) {
+        const std::string_view ext = *it;
+        candidate.assign(baseFileName);
+        candidate.push_back('.');
+        candidate.append(ext.data(), ext.size());
+
+        if (isFileInCache(baseDir, candidate)) {
+            outPath = (baseDir / candidate).string();
+            return true;
+        }
+    }
+
+    LOG_FILECACHE("Miss", removeAbsolutePath(baseDir.string()) + " does not contain file '" + baseFileName + "'");
+    return false;
 }
 
 

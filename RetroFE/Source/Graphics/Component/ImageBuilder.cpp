@@ -16,39 +16,53 @@
 #include "ImageBuilder.h"
 #include "../../Utility/Utils.h"
 #include "../../Utility/Log.h"
+#include <string_view>
 
-Image * ImageBuilder::CreateImage(const std::string& path, Page &p, const std::string& name, int monitor, bool additive, bool useTextureCaching)
-{
-    Image *image = nullptr;
-    static std::vector<std::string> extensions = {
 #ifdef WIN32
-         "gif", "webp", "png", "jpg", "jpeg"
+static constexpr std::string_view kImgExts[] = { "gif","webp","png","jpg","jpeg" };
 #else
-        "gif", "GIF", "webp", "WEBP", "png", "PNG", "jpg", "JPG", "jpeg", "JPEG"
+static constexpr std::string_view kImgExts[] =
+{ "gif","GIF","webp","WEBP","png","PNG","jpg","JPG","jpeg","JPEG" };
 #endif
-    };
 
-    std::string prefix = Utils::combinePath(path, name);
+static inline std::string makePrefix(const std::string& path, const std::string& name) {
+    std::string s;
+    s.reserve(path.size() + name.size() + 2);
+    s.append(path);
+    if (!path.empty()) {
+        const char c = path.back();
+        if (c != '/' && c != '\\')
+#ifdef _WIN32
+            s.push_back('\\');
+#else
+            s.push_back('/');
+#endif
+    }
+    s.append(name);
+    return s;
+}
 
-    if(std::string file; Utils::findMatchingFile(prefix, extensions, file)) {
+Image* ImageBuilder::CreateImage(const std::string& path, Page& p,
+    const std::string& name, int monitor,
+    bool additive, bool useTextureCaching) {
+    Image* image = nullptr;
+    const std::string prefix = makePrefix(path, name);
+
+    std::string file;
+    if (Utils::findMatchingFile(std::string_view(prefix),
+        std::begin(kImgExts), std::end(kImgExts),
+        file)) {
         image = new Image(file, "", p, monitor, additive, useTextureCaching);
     }
-
     return image;
 }
 
 bool ImageBuilder::RetargetImage(Image& img, const std::string& path, const std::string& name) {
-    static std::vector<std::string> extensions = {
-#ifdef WIN32
-        "gif", "webp", "png", "jpg", "jpeg"
-#else
-        "gif", "GIF", "webp", "WEBP", "png", "PNG", "jpg", "JPG", "jpeg", "JPEG"
-#endif
-    };
-
-    const std::string prefix = Utils::combinePath(path, name);
+    const std::string prefix = makePrefix(path, name);
     std::string found;
-    if (Utils::findMatchingFile(prefix, extensions, found)) {
+    if (Utils::findMatchingFile(std::string_view(prefix),
+        std::begin(kImgExts), std::end(kImgExts),
+        found)) {
         img.retarget(found, "");
         return true;
     }

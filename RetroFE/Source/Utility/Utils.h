@@ -16,6 +16,7 @@
 #pragma once
 
 #include <string>
+#include <string_view>
 #include <vector>
 #include <list>
 #include <filesystem>
@@ -54,6 +55,7 @@ public:
     static void setEnvVar(const std::string& var, const std::string& value);
     static std::string getFileName(const std::string& filePath);
     static bool findMatchingFile(const std::string& prefix, const std::vector<std::string>& extensions, std::string& file);
+    static bool findMatchingFile(std::string_view prefixNoExt, const std::string_view* extsBegin, const std::string_view* extsEnd, std::string& outPath);
     static void preciseSleep(double seconds_to_sleep);
     static std::string toLower(const std::string& inputStr);
     static std::string uppercaseFirst(std::string str);
