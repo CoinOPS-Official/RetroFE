@@ -55,6 +55,7 @@ private:
         int w = 0;
         int h = 0;
         bool ok = false;
+        SDL_FRect dst{ 0,0,0,0 };   // NEW: where to draw in component space
     };
     void destroyAllQr_();
 
@@ -82,8 +83,9 @@ private:
     float prevGeomW_ = -1.f, prevGeomH_ = -1.f, prevGeomFont_ = -1.f;
     int   compW_ = 0, compH_ = 0;
 
-    // Data freshness
-    uint64_t lastEpochSeen_ = 0;
+    // --- View-signature based change detection (only hash what's visible) ---
+    uint64_t computeViewSignature_() const;
+    uint64_t lastViewSig_ = 0;
 
     // ----- Grid rendering -----
     static constexpr int kRowsPerPage = 10;
@@ -123,4 +125,11 @@ private:
     QrPlacement              qrPlacement_ = QrPlacement::TopLeft;
     int                      qrMarginPx_ = 6;         // fixed gap between panel and QR
     std::vector<QrEntry>     qrByTable_;               // one per visible table
+
+    // ----- QR fade timing (NEW) -----
+    float prevAlpha_ = 0.0f;          // last-frame alpha to detect 0?>0 edges
+    float qrFadeT_ = 0.0f;            // elapsed since “visible”
+    float qrFadeDelaySec_ = 2.0f;     // start QR fade after this delay
+    float qrFadeDurationSec_ = 1.0f;  // fade-in length
+    bool  qrFadeArmed_ = false;       // timer is running only when visible
 };

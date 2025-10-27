@@ -49,6 +49,27 @@ ReloadableGlobalHiscores::ReloadableGlobalHiscores(Configuration& /*config*/, st
 	//allocateGraphicsMemory();
 }
 
+// FNV-1a 64-bit
+static inline void fnv1a_mix(uint64_t& h, const char* p, size_t n) {
+    constexpr uint64_t FNV_OFFSET = 1469598103934665603ull;
+    constexpr uint64_t FNV_PRIME = 1099511628211ull;
+    if (h == 0) h = FNV_OFFSET;
+    for (size_t i = 0; i < n; ++i) { h ^= (unsigned char)p[i]; h *= FNV_PRIME; }
+}
+static inline void fnv1a_mix(uint64_t& h, const std::string& s) { fnv1a_mix(h, s.data(), s.size()); }
+static inline void fnv1a_mix_u64(uint64_t& h, uint64_t v) { fnv1a_mix(h, (const char*)&v, sizeof(v)); }
+
+static inline std::vector<std::string> splitCsvIds_(const std::string& csv) {
+    std::vector<std::string> out;
+    std::string cur;
+    for (char c : csv) {
+        if (c == ',') { if (!cur.empty()) { out.push_back(cur); cur.clear(); } }
+        else if (c > ' ') cur.push_back(c); // simple trim
+    }
+    if (!cur.empty()) out.push_back(cur);
+    return out;
+}
+
 // Returns {startIndex, count} for the current page.
 // Guarantees count >= 0 and loops page index safely.
 static inline std::pair<int, int> computeVisibleRange(
@@ -67,107 +88,156 @@ ReloadableGlobalHiscores::~ReloadableGlobalHiscores() {
 }
 
 bool ReloadableGlobalHiscores::update(float dt) {
-	// Clamp weird dt spikes/NaNs
-	if (!std::isfinite(dt)) dt = 0.f;
-	dt = std::max(0.f, std::min(dt, 0.25f));
+    // --- 0) QR fade timing FIRST (always runs) -----------------------------------------
+    if (!std::isfinite(dt)) dt = 0.f;
+    dt = std::max(0.f, std::min(dt, 0.25f));
 
-	// Drive crossfade timer
-	if (fadeActive_) {
-		fadeT_ += dt;
-		if (fadeT_ >= fadeDurationSec_) {
-			fadeT_ = fadeDurationSec_;
-			fadeActive_ = false;
-		}
-	}
+    const bool visible = (baseViewInfo.Alpha > 0.0f);
+    if (visible) {
+        if (!qrFadeArmed_) { qrFadeArmed_ = true; qrFadeT_ = 0.0f; }
+        else { qrFadeT_ += dt; }
+    }
+    else {
+        qrFadeArmed_ = false;
+        qrFadeT_ = 0.0f;
+    }
+    prevAlpha_ = baseViewInfo.Alpha;
 
-	// Debounce timer for selection/scroll reloads
-	if (reloadDebounceTimer_ > 0.0f) {
-		reloadDebounceTimer_ = std::max(0.0f, reloadDebounceTimer_ - dt);
-	}
+    // --- 1) Table crossfade timer -------------------------------------------------------
+    if (fadeActive_) {
+        fadeT_ += dt;
+        if (fadeT_ >= fadeDurationSec_) { fadeT_ = fadeDurationSec_; fadeActive_ = false; }
+    }
 
-	const float widthNow = baseViewInfo.Width;
-	const float heightNow = baseViewInfo.Height;
-	const bool geomChanged = (prevGeomW_ != widthNow || prevGeomH_ != heightNow || prevGeomFont_ != baseViewInfo.FontSize);
-	const uint64_t epochNow = HiScores::getInstance().getGlobalEpoch();
-	const bool dataChanged = (epochNow != lastEpochSeen_);
+    // --- 2) Debounce countdown (only matters if we started it) --------------------------
+    if (reloadDebounceTimer_ > 0.0f) {
+        reloadDebounceTimer_ = std::max(0.0f, reloadDebounceTimer_ - dt);
+    }
 
-	const bool selChange = newItemSelected || (newScrollItemSelected && getMenuScrollReload());
+    // --- 3) Change detection ------------------------------------------------------------
+    const float widthNow = baseViewInfo.Width;
+    const float heightNow = baseViewInfo.Height;
+    const bool geomChanged =
+        (prevGeomW_ != widthNow) || (prevGeomH_ != heightNow) || (prevGeomFont_ != baseViewInfo.FontSize);
 
-	// This represents “we are about to load a different table set”
-	const bool tableContextChanged = (!highScoreTable_) || selChange || dataChanged;
+    const uint64_t sigNow = computeViewSignature_();
+    const bool     dataChanged = (sigNow != lastViewSig_);
 
-	// If we are switching to a new table context, don't fade this first show
-	if (tableContextChanged) {
-		hasShownOnce_ = false;   // first paint of the new table should not fade
-		fadeActive_ = false;   // nuke any running fade
-		fadeStartPending_ = false;
-		fadeT_ = 0.0f;
-	}
+    const bool selChange = newItemSelected || (newScrollItemSelected && getMenuScrollReload());
+    const bool tableContextChanged = (!highScoreTable_) || selChange || dataChanged;
 
-	const bool needHardReload = geomChanged || !highScoreTable_ || dataChanged;
-	const bool needSelReload = selChange;
+    // --- 4) Context change (new selection or actual data update) ------------------------
+    if (tableContextChanged) {
+        // reset composite crossfade (not QR); do not reset page index here
+        hasShownOnce_ = false;
+        fadeActive_ = false;
+        fadeStartPending_ = false;
+        fadeT_ = 0.0f;
 
-	// Hard triggers: never debounced, no fade on first show
-	if (needHardReload) {
-		gridPageIndex_ = 0;
-		gridTimerSec_ = 0.0f;
-		gridBaselineValid_ = false;
+        // restart QR fade for the new visible content
+        qrFadeT_ = 0.0f;
+        qrFadeArmed_ = (baseViewInfo.Alpha > 0.0f);
+
+        // latch signature immediately to avoid re-triggering every frame
+        lastViewSig_ = sigNow;
+
+        // schedule a redraw; start debounce
         needsRedraw_ = true;
+        reloadDebounceTimer_ = reloadDebounceSec_;
+    }
 
-		newItemSelected = false;
-		newScrollItemSelected = false;
-		prevGeomW_ = widthNow; prevGeomH_ = heightNow; prevGeomFont_ = baseViewInfo.FontSize;
-		lastEpochSeen_ = epochNow;
+    // --- 5) Hard layout change (geometry/font or first paint) ---------------------------
+    const bool needHardLayout = geomChanged || !gridBaselineValid_ || selChange || !hasShownOnce_;
+    if (needHardLayout) {
+        prevGeomW_ = widthNow;
+        prevGeomH_ = heightNow;
+        prevGeomFont_ = baseViewInfo.FontSize;
 
-		reloadDebounceTimer_ = reloadDebounceSec_;
-		return Component::update(dt);
-	}
+        // only real layout/selection resets the paging state
+        gridPageIndex_ = 0;
+        gridTimerSec_ = 0.0f;
+        gridBaselineValid_ = false;
 
-	// Selection/scroll triggers: debounce; skip fade on first show of new table
-	if (needSelReload) {
-		if (reloadDebounceTimer_ <= 0.0f) {
-			// hasShownOnce_ is already false from the tableContextChanged block above,
-			// so we do NOT arm a fade here.
-			gridPageIndex_ = 0;
-			gridTimerSec_ = 0.0f;
-			gridBaselineValid_ = false;
-            needsRedraw_ = true;
-            reloadDebounceTimer_ = reloadDebounceSec_;
-		}
-		newItemSelected = false;
-		newScrollItemSelected = false;
-		return Component::update(dt);
-	}
+        needsRedraw_ = true;
+        reloadDebounceTimer_ = reloadDebounceSec_;
+        newItemSelected = false;
+        newScrollItemSelected = false;
 
-	// Normal page rotation (same table context) — fades are allowed
-	if (highScoreTable_ && !highScoreTable_->tables.empty()) {
-		const int totalTables = (int)highScoreTable_->tables.size();
-		const int pageSize = std::max(1, gridPageSize_);
-		const int pageCount = std::max(1, (totalTables + pageSize - 1) / pageSize);
+        // latch current signature so the next frame doesn't think data changed again
+        lastViewSig_ = sigNow;
 
-		if (pageCount > 1) {
-			gridTimerSec_ += dt;
-			if (gridTimerSec_ >= gridRotatePeriodSec_) {
-				gridTimerSec_ = 0.0f;
-				gridPageIndex_ = (gridPageIndex_ + 1) % pageCount;
+        // draw() will call reloadTexture()
+        return Component::update(dt);
+    }
 
-				// This is a flip within the same table context — fade is ok
-				fadeStartPending_ = true;
-				fadeActive_ = true;
-				fadeT_ = 0.0f;
+    // --- 6) Page rotation (independent of signature/layout) -----------------------------
+    if (highScoreTable_ && !highScoreTable_->tables.empty()) {
+        const int totalTables = (int)highScoreTable_->tables.size();
+        const int pageSize = std::max(1, gridPageSize_);
+        const int pageCount = std::max(1, (totalTables + pageSize - 1) / pageSize);
+
+        if (pageCount > 1) {
+            gridTimerSec_ += dt;
+            if (gridTimerSec_ >= gridRotatePeriodSec_) {
+                gridTimerSec_ = 0.0f;
+                gridPageIndex_ = (gridPageIndex_ + 1) % pageCount;
+
+                // crossfade the composite; QR fade restarts for the new slice
+                fadeStartPending_ = true;
+                fadeActive_ = true;
+                fadeT_ = 0.0f;
+
+                qrFadeT_ = 0.0f;
+                qrFadeArmed_ = (baseViewInfo.Alpha > 0.0f);
 
                 needsRedraw_ = true;
                 reloadDebounceTimer_ = reloadDebounceSec_;
-			}
-		}
-		else {
-			gridTimerSec_ = 0.0f;
-			gridPageIndex_ = 0;
-		}
-	}
+            }
+        }
+        else {
+            gridTimerSec_ = 0.0f;
+            gridPageIndex_ = 0;
+        }
+    }
 
-	return Component::update(dt);
+    // --- 7) End-of-frame bookkeeping ----------------------------------------------------
+    newItemSelected = false;
+    newScrollItemSelected = false;
+    lastViewSig_ = sigNow;
+
+    return Component::update(dt);
 }
+
+uint64_t ReloadableGlobalHiscores::computeViewSignature_() const {
+    uint64_t h = 0;
+
+    Item const* selectedItem = page.getSelectedItem(displayOffset_);
+    if (!selectedItem) return 0;
+
+    // Parse all IDs (order matters)
+    auto ids = splitCsvIds_(selectedItem->iscoredId);
+    if (ids.empty()) return 0;
+
+    // Combine per-game content
+    for (const auto& id : ids) {
+        fnv1a_mix(h, id);
+
+        const auto* gg = HiScores::getInstance().getGlobalGameById(id);
+        if (!gg) {
+            fnv1a_mix_u64(h, 0x9e3779b97f4a7c15ull);
+            continue;
+        }
+
+        // Mix only player names and scores
+        for (const auto& row : gg->rows) {
+            fnv1a_mix(h, row.player);
+            fnv1a_mix(h, row.score);
+        }
+    }
+    return h;
+}
+
+
 
 void ReloadableGlobalHiscores::computeGridBaseline_(
 	FontManager* font,
@@ -502,7 +572,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
             if (SDL_Texture* tex = IMG_LoadTexture(renderer, path.c_str())) {
                 int w = 0, h = 0; SDL_QueryTexture(tex, nullptr, nullptr, &w, &h);
                 SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND);
-                qrByTable_[t] = { tex, w, h, true };
+                qrByTable_[t] = { tex, w, h, true, SDL_FRect{0,0,0,0} };
             }
         }
     }
@@ -742,7 +812,8 @@ void ReloadableGlobalHiscores::reloadTexture() {
 
         // ---- QR -------------------------------------------------------------
         if (t < (int)qrByTable_.size() && qrByTable_[t].ok) {
-            const QrEntry& q = qrByTable_[t];
+            auto& q = qrByTable_[t];
+
             SDL_FRect panelRect = { drawX0 - kPanelGuardPx, anchorY + (float)extraT, panelW, panelH };
             float qrX = 0.f, qrY = 0.f;
             switch (qrPlacement_) {
@@ -754,17 +825,23 @@ void ReloadableGlobalHiscores::reloadTexture() {
                 case QrPlacement::BottomLeft:    qrX = panelRect.x - qrMarginPx_ - q.w;           qrY = panelRect.y + panelRect.h - q.h - qrMarginPx_; break;
                 case QrPlacement::RightMiddle:   qrX = panelRect.x + panelRect.w + qrMarginPx_;   qrY = panelRect.y + (panelRect.h - q.h) * 0.5f; break;
                 case QrPlacement::LeftMiddle:    qrX = panelRect.x - qrMarginPx_ - q.w;           qrY = panelRect.y + (panelRect.h - q.h) * 0.5f; break;
-                default:                          qrX = panelRect.x + (panelRect.w - q.w) * 0.5f; qrY = panelRect.y + panelRect.h + qrMarginPx_; break;
             }
-            if (font) {
-                const SDL_Color c = font->getColor();
-                Uint8 mx = std::max({ c.r,c.g,c.b });
-                SDL_SetTextureColorMod(q.tex, mx, mx, mx);
-                SDL_SetTextureAlphaMod(q.tex, c.a);
-                SDL_SetTextureBlendMode(q.tex, SDL_BLENDMODE_BLEND);
+
+            q.dst = { qrX, qrY, (float)q.w, (float)q.h };
+
+            const float layoutW = baseViewInfo.Width;
+            const float layoutH = baseViewInfo.Height;
+            const float targetW = (float)compW_;            // composite RT size (ScaledWidth)
+            const float targetH = (float)compH_;
+
+            if (layoutW > 0.f && layoutH > 0.f) {
+                const float sx = targetW / layoutW;
+                const float sy = targetH / layoutH;
+                q.dst.x *= sx;
+                q.dst.y *= sy;
+                q.dst.w *= sx;
+                q.dst.h *= sy;
             }
-            SDL_FRect qrDst = { qrX, qrY, (float)q.w, (float)q.h };
-            SDL_RenderCopyF(renderer, q.tex, nullptr, &qrDst);
         }
     }
 
@@ -781,30 +858,23 @@ void ReloadableGlobalHiscores::reloadTexture() {
 
 void ReloadableGlobalHiscores::draw() {
     Component::draw();
-
     if (baseViewInfo.Alpha <= 0.0f) return;
 
-    // Make sure the composite is current (this may size RTs, snapshot for fade, and paint)
     if (needsRedraw_) {
-        reloadTexture();               // sets needsRedraw_ = false (or clears to blank if no data)
+        reloadTexture();
     }
 
     SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
-    if (!renderer) return;
+    if (!renderer || !intermediateTexture_) return;
 
-    // If we don't have a composite, nothing to present
-    if (!intermediateTexture_) return;
-
+    // Where we draw the composite
     SDL_FRect rect = {
         baseViewInfo.XRelativeToOrigin(),
         baseViewInfo.YRelativeToOrigin(),
-        (float)compW_,  // match intermediateTexture_ size
-        (float)compH_
+        (float)compW_, (float)compH_
     };
 
-    LOG_DEBUG("GlobalHiScores", "Intermediate: " + std::to_string(compW_) + "x" + std::to_string(compH_) +
-        ", Draw rect: " + std::to_string(rect.w) + "x" + std::to_string(rect.h));
-
+    // Draw the table composite (with or without crossfade)
     if (fadeActive_ && prevCompositeTexture_) {
         float t = (fadeDurationSec_ > 0.f) ? (fadeT_ / fadeDurationSec_) : 1.f;
         if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
@@ -830,10 +900,47 @@ void ReloadableGlobalHiscores::draw() {
             page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
     }
 
-    // If the fade has completed (update() turned fadeActive_ off), release the snapshot here.
+    // If the fade has completed, drop the snapshot
     if (!fadeActive_ && prevCompositeTexture_) {
         SDL_DestroyTexture(prevCompositeTexture_);
         prevCompositeTexture_ = nullptr;
+    }
+
+    // ---- NEW: overlay QRs after the composite with delayed fade-in ----
+    // QR alpha = base alpha * phase(after delay) * font alpha (to preserve your style linkage)
+    
+    float qrPhase;
+    if (!qrFadeArmed_) {
+        qrPhase = 0.0f;  // not visible or not yet armed
+    }
+    else if (qrFadeT_ <= qrFadeDelaySec_) {
+        qrPhase = 0.0f;  // still waiting out the delay
+    }
+    else {
+        qrPhase = (qrFadeT_ - qrFadeDelaySec_) / std::max(0.001f, qrFadeDurationSec_);
+        if (qrPhase > 1.0f) qrPhase = 1.0f;
+    }
+
+    if (qrPhase > 0.0f) {
+        // Base color factor: reuse max channel from font color and font alpha, like before
+        const float finalAlphaFactor = baseViewInfo.Alpha * qrPhase; // simplest & safe
+
+        for (const auto& q : qrByTable_) {
+            if (!q.ok || !q.tex) continue;
+
+            // Map component-space dst to screen space by offsetting with the composite draw rect
+            SDL_FRect dst = {
+                rect.x + q.dst.x,
+                rect.y + q.dst.y,
+                q.dst.w, q.dst.h
+            };
+
+            SDL::renderCopyF(
+                q.tex, finalAlphaFactor, nullptr, &dst, baseViewInfo,
+                page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+                page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        }
+    
     }
 }
 

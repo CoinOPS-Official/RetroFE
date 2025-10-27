@@ -2183,3 +2183,18 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
 
 	return &scratch;
 }
+
+const GlobalGame* HiScores::getGlobalGameById(const std::string& gameId) const {
+	std::shared_lock<std::shared_mutex> lk(globalMutex_);
+	auto it = global_.byId.find(gameId);
+	if (it == global_.byId.end()) return nullptr;
+	return &it->second;
+}
+
+std::vector<std::string> HiScores::listGlobalIds() const {
+	std::vector<std::string> out;
+	std::shared_lock<std::shared_mutex> lk(globalMutex_);
+	out.reserve(global_.byId.size());
+	for (const auto& kv : global_.byId) out.push_back(kv.first);
+	return out;
+}
