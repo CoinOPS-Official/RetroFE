@@ -99,6 +99,9 @@
 #define OPTION_FIXEDRESLAYOUTS        "fixedResLayouts"
 #define OPTION_SCREENSAVER            "screensaver"
 
+//HISCORES OPTIONS
+#define OPTION_GLOBALHISCORESENABLED        "globalHiscoresEnabled"
+
 // ATTRACT MODE OPTIONS
 #define OPTION_ATTRACTMODECYCLEPLAYLIST "attractModeCyclePlaylist"
 #define OPTION_ATTRACTMODETIME           "attractModeTime"
@@ -239,6 +242,8 @@ public:
     bool jukebox() { return bool_value(OPTION_JUKEBOX); }
     bool fixedreslayouts() { return bool_value(OPTION_FIXEDRESLAYOUTS); }
     bool screensaver() { return bool_value(OPTION_SCREENSAVER); }
+
+	bool globalhiscoresenabled() { return bool_value(OPTION_GLOBALHISCORESENABLED); }
 
     bool attractmodecycleplaylist() { return bool_value(OPTION_ATTRACTMODECYCLEPLAYLIST); }
     int attractmodetime() { return int_value(OPTION_ATTRACTMODETIME); }

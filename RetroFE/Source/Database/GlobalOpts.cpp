@@ -106,6 +106,10 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_FIXEDRESLAYOUTS,          "false",    global_options::option_type::BOOLEAN,  "Enables the use of fixed resolution layouts ie layout1920x1080.xml"},
     { OPTION_SCREENSAVER,              "false",    global_options::option_type::BOOLEAN,  "Enables screensaver mode"},
 
+    
+    { nullptr,                         nullptr,    global_options::option_type::HEADER,  "HISCORES OPTIONS" },
+	{OPTION_GLOBALHISCORESENABLED,     "false",    global_options::option_type::BOOLEAN,  "Enable global hiscores support" },
+
     { nullptr,                         nullptr,    global_options::option_type::HEADER,   "ATTRACT MODE OPTIONS" },
     { OPTION_ATTRACTMODECYCLEPLAYLIST, "false",    global_options::option_type::BOOLEAN,  "Cycle through all playlists or defined in cyclePlaylist" },
     { OPTION_ATTRACTMODETIME,          "19",       global_options::option_type::INTEGER,  "Number of seconds to wait before scrolling to another random point" },

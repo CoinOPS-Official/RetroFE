@@ -295,25 +295,30 @@ int RetroFE::initialize(void* context) {
 	std::string overridePath = Utils::combinePath(Configuration::absolutePath, "hi2txt", "scores");
 
 	HiScores::getInstance().loadHighScores(zipPath, overridePath);
+	
+	bool globalHiscoresEnabled = false;
+	instance->config_.getProperty(OPTION_GLOBALHISCORESENABLED, globalHiscoresEnabled);
+	
+	if (globalHiscoresEnabled) {
+		LOG_INFO("RetroFE", "Global HiScores enabled; initializing iScored integration.");
+		// 1) Set the gameroom name (must match server-side config).
+		HiScores::getInstance().setGlobalGameroom("Pipmick");
 
-	HiScores::getInstance().setGlobalGameroom("Pipmick");
+		// 2 Set a JSON file to persist global cache for offline fallback.
+		HiScores::getInstance().setGlobalPersistPath(Utils::combinePath(Configuration::absolutePath,
+			"iScored", "global_cache.json"));
 
-	// 2) (Optional) Set a JSON file to persist global cache for offline fallback.
-	HiScores::getInstance().setGlobalPersistPath(Utils::combinePath(Configuration::absolutePath,
-		"iScored", "global_cache.json"));
+		// 3) (Optional) Load last-good cache first so the UI has something instantly.
+		HiScores::getInstance().loadGlobalCacheFromDisk();
 
-	// 3) (Optional) Load last-good cache first so the UI has something instantly.
-	HiScores::getInstance().loadGlobalCacheFromDisk();
-
-	// 4) Warm EVERYTHING from iScored in the background (single HTTP call).
-	//    getAllScores has no server-side max; HiScores will cap locally to GlobalScoresMax.
-	HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(
-		/*limit=*/0
-		// Optional finish hook:
-		, []() { LOG_INFO("HiScores", "Global refresh completed."); }
-	);
-
-
+		// 4) Warm EVERYTHING from iScored in the background (single HTTP call).
+		//    getAllScores has no server-side max; HiScores will cap locally to GlobalScoresMax.
+		HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(
+			/*limit=*/0
+			// Optional finish hook:
+			, []() { LOG_INFO("HiScores", "Global refresh completed."); }
+		);
+	}
 	instance->initialized = true;
 	return 0;
 }
