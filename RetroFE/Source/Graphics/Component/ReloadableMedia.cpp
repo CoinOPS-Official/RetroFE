@@ -428,72 +428,163 @@ Component* ReloadableMedia::findComponent(
     std::string_view filepath,
     bool systemMode,
     bool isVideo) {
-    std::string imagePath;
-    Component* component = nullptr;
+    // Build "dir + sep + name" with one allocation.
+    auto makePrefix = [](std::string_view dir, std::string_view name) -> std::string {
+        std::string s;
+        s.reserve(dir.size() + name.size() + 2);
+        s.append(dir);
+        if (!dir.empty()) {
+            const char c = dir.back();
+            if (c != '/' && c != '\\')
+#ifdef _WIN32
+                s.push_back('\\');
+#else
+                s.push_back('/');
+#endif
+        }
+        s.append(name);
+        return s;
+        };
+
+#ifdef WIN32
+    static constexpr std::string_view kImgExts[] = { "png","webp","gif","jpg","jpeg" };
+    static constexpr std::string_view kVidExts[] = { "mp4","avi","mkv" };
+#else
+    static constexpr std::string_view kImgExts[] =
+    { "png","PNG", "webp", "WEBP", "gif","GIF", "jpg","JPG","jpeg","JPEG" };
+    static constexpr std::string_view kVidExts[] =
+    { "mp4","MP4","avi","AVI","mkv","MKV" };
+#endif
+    const auto* extsBegin = isVideo ? std::begin(kVidExts) : std::begin(kImgExts);
+    const auto* extsEnd = isVideo ? std::end(kVidExts) : std::end(kImgExts);
+
     VideoBuilder videoBuild{};
     ImageBuilder imageBuild{};
 
-    if (filepath != "") {
-        imagePath = filepath;
-    }
-    else {
-        // check the system folder
-        if (layoutMode_) {
-            // check if collection's assets are in a different theme
-            std::string layoutName;
-            config_.getProperty("collections." + collection + ".layout", layoutName);
-            if (layoutName == "") {
-                config_.getProperty(OPTION_LAYOUT, layoutName);
-            }
-            if (commonMode_) {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
+    // 0) If explicit file path is provided, short-circuit: reuse or retarget; else create.
+    if (!filepath.empty()) {
+        const std::string pathStr(filepath);
+        if (loadedComponent_ && loadedComponent_->filePath() == pathStr) {
+            return loadedComponent_;
+        }
+
+        std::filesystem::path p(pathStr);
+        const std::string dir = p.parent_path().string();
+        const std::string stem = p.stem().string();
+
+        if (loadedComponent_) {
+            if (isVideo) {
+                if (videoBuild.RetargetVideo(
+                    *static_cast<VideoComponent*>(loadedComponent_), dir, stem)) {
+                    return loadedComponent_;
+                }
             }
             else {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", collection);
+                if (imageBuild.RetargetImage(
+                    *static_cast<Image*>(loadedComponent_), dir, stem)) {
+                    return loadedComponent_;
+                }
             }
-            if (systemMode)
-                imagePath = Utils::combinePath(imagePath, "system_artwork");
-            else
-                imagePath = Utils::combinePath(imagePath, "medium_artwork", type);
+        }
+
+        // No loaded component or retarget failed ? create fresh.
+        if (isVideo) {
+            return jukebox_
+                ? videoBuild.createVideo(dir, page, stem, baseViewInfo.Monitor, jukeboxNumLoops_)
+                : videoBuild.createVideo(dir, page, stem, baseViewInfo.Monitor);
         }
         else {
-            if (commonMode_) {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common");
-                if (systemMode)
-                    imagePath = Utils::combinePath(imagePath, "system_artwork");
-                else
-                    imagePath = Utils::combinePath(imagePath, "medium_artwork", type);
-            }
-            else {
-                config_.getMediaPropertyAbsolutePath(collection, type, systemMode, imagePath);
-            }
+            return imageBuild.CreateImage(
+                dir, page, stem, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCache_);
         }
     }
 
-    // if file already loaded, don't load again
-    const std::vector<std::string>& extensions = isVideo ? ReloadableMedia::videoExtensions : ReloadableMedia::imageExtensions;
+    // 1) Resolve the base artwork directory (unchanged logic).
+    std::string imagePath;
+    if (layoutMode_) {
+        std::string layoutName;
+        config_.getProperty("collections." + collection + ".layout", layoutName);
+        if (layoutName.empty()) {
+            config_.getProperty(OPTION_LAYOUT, layoutName);
+        }
+        if (commonMode_) {
+            imagePath = Utils::combinePath(
+                Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
+        }
+        else {
+            imagePath = Utils::combinePath(
+                Configuration::absolutePath, "layouts", layoutName, "collections", collection);
+        }
+        imagePath = systemMode
+            ? Utils::combinePath(imagePath, "system_artwork")
+            : Utils::combinePath(imagePath, "medium_artwork", type);
+    }
+    else {
+        if (commonMode_) {
+            imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common");
+            imagePath = systemMode
+                ? Utils::combinePath(imagePath, "system_artwork")
+                : Utils::combinePath(imagePath, "medium_artwork", type);
+        }
+        else {
+            config_.getMediaPropertyAbsolutePath(collection, type, systemMode, imagePath);
+        }
+    }
 
-    if (loadedComponent_ != nullptr && !imagePath.empty()) {
+    // 2) Fast reuse check: if loaded component already matches the resolved file.
+    if (loadedComponent_ && !imagePath.empty()) {
+        const std::string prefix = makePrefix(imagePath, basename); // dir + stem (no ext)
         std::string filePath;
-        if (Utils::findMatchingFile(Utils::combinePath(imagePath, basename), extensions, filePath)) {
+        if (Utils::findMatchingFile(std::string_view(prefix), extsBegin, extsEnd, filePath)) {
             if (filePath == loadedComponent_->filePath()) {
                 return loadedComponent_;
             }
         }
     }
 
-    if (isVideo) {
-        if (jukebox_)
-            component = videoBuild.createVideo(imagePath, page, basename, baseViewInfo.Monitor, jukeboxNumLoops_);
-        else
-            component = videoBuild.createVideo(imagePath, page, basename, baseViewInfo.Monitor);
-    }
-    else {
-        component = imageBuild.CreateImage(imagePath, page, basename, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCache_);
+    // 3) Resolve concrete file via cache, then retarget or create.
+    {
+        const std::string prefix = makePrefix(imagePath, basename);
+        std::string foundPath;
+        if (Utils::findMatchingFile(std::string_view(prefix), extsBegin, extsEnd, foundPath)) {
+            if (loadedComponent_) {
+                std::filesystem::path p(foundPath);
+                const std::string dir = p.parent_path().string();
+                const std::string stem = p.stem().string();
+
+                if (isVideo) {
+                    if (videoBuild.RetargetVideo(
+                        *static_cast<VideoComponent*>(loadedComponent_), dir, stem)) {
+                        return loadedComponent_;
+                    }
+                }
+                else {
+                    if (imageBuild.RetargetImage(
+                        *static_cast<Image*>(loadedComponent_), dir, stem)) {
+                        return loadedComponent_;
+                    }
+                }
+            }
+
+            // Create fresh if no component or retarget failed.
+            std::filesystem::path p(foundPath);
+            const std::string dir = p.parent_path().string();
+            const std::string stem = p.stem().string();
+
+            if (isVideo) {
+                return jukebox_
+                    ? videoBuild.createVideo(dir, page, stem, baseViewInfo.Monitor, jukeboxNumLoops_)
+                    : videoBuild.createVideo(dir, page, stem, baseViewInfo.Monitor);
+            }
+            else {
+                return imageBuild.CreateImage(
+                    dir, page, stem, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCache_);
+            }
+        }
     }
 
-    return component;
-
+    // 4) Not found ? let caller fall back (e.g., text).
+    return nullptr;
 }
 
 std::string filePath()

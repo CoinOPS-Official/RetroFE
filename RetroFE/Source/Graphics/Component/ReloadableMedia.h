@@ -67,22 +67,4 @@ private:
     int  jukeboxNumLoops_;
     int numberOfImages_{ 27 };
 	bool useTextureCache_{ false };
-    
-    static inline const std::vector<std::string> imageExtensions = {
-#ifdef WIN32
-        "png", "gif", "jpg", "jpeg"
-#else
-        "png", "PNG", "gif", "GIF", "jpg", "JPG", "jpeg", "JPEG",
-#endif
-    };
-
-    static inline const std::vector<std::string> videoExtensions = {
-#ifdef WIN32
-        "mp4", "avi", "mkv", "mp3", "wav", "flac"
-#else
-        "mp4", "MP4", "avi", "AVI", "mkv", "MKV",
-        "mp3", "MP3", "wav", "WAV", "flac", "FLAC"
-#endif
-    };
-
 };
