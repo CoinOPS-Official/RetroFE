@@ -58,6 +58,7 @@ private:
         SDL_FRect dst{ 0,0,0,0 };   // NEW: where to draw in component space
     };
     void destroyAllQr_();
+    void destroyPrevQr_();
 
     // ----- Grid baseline (computed per-geometry) -----
     void computeGridBaseline_( FontManager* font,
@@ -124,7 +125,8 @@ private:
     // QR config/state (aligned to visible tables per page)
     QrPlacement              qrPlacement_ = QrPlacement::TopLeft;
     int                      qrMarginPx_ = 6;         // fixed gap between panel and QR
-    std::vector<QrEntry>     qrByTable_;               // one per visible table
+    std::vector<QrEntry>     qrByTable_;              // one per visible table
+	std::vector<QrEntry>     prevQrByTable_;          // prev page's qrs for crossfade
 
     // ----- QR fade timing (NEW) -----
     float prevAlpha_ = 0.0f;          // last-frame alpha to detect 0?>0 edges
@@ -132,4 +134,5 @@ private:
     float qrFadeDelaySec_ = 2.0f;     // start QR fade after this delay
     float qrFadeDurationSec_ = 1.0f;  // fade-in length
     bool  qrFadeArmed_ = false;       // timer is running only when visible
+    bool  qrDelayConsumed_ = false;
 };

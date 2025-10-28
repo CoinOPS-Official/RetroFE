@@ -137,6 +137,7 @@ bool ReloadableGlobalHiscores::update(float dt) {
         // restart QR fade for the new visible content
         qrFadeT_ = 0.0f;
         qrFadeArmed_ = (baseViewInfo.Alpha > 0.0f);
+		qrDelayConsumed_ = false;
 
         // latch signature immediately to avoid re-triggering every frame
         lastViewSig_ = sigNow;
@@ -197,6 +198,15 @@ bool ReloadableGlobalHiscores::update(float dt) {
         else {
             gridTimerSec_ = 0.0f;
             gridPageIndex_ = 0;
+        }
+    }
+
+    if (!qrDelayConsumed_) {
+        const float phase = (qrFadeArmed_ && qrFadeT_ > qrFadeDelaySec_)
+            ? (qrFadeT_ - qrFadeDelaySec_) / std::max(0.001f, qrFadeDurationSec_)
+            : 0.0f;
+        if (phase >= 1.0f) {
+            qrDelayConsumed_ = true; // we've completed the one-time delayed fade
         }
     }
 
@@ -330,6 +340,7 @@ void ReloadableGlobalHiscores::freeGraphicsMemory() {
 	if (prevCompositeTexture_) { SDL_DestroyTexture(prevCompositeTexture_); prevCompositeTexture_ = nullptr; }
 
 	destroyAllQr_();
+    destroyPrevQr_();
 }
 
 
@@ -482,7 +493,6 @@ void ReloadableGlobalHiscores::reloadTexture() {
 
     // --- setup / early-outs ------------------------------------------------------------
     SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
-    destroyAllQr_();
 
     Item* selectedItem = page.getSelectedItem(displayOffset_);
     if (!selectedItem || !renderer) {
@@ -558,6 +568,34 @@ void ReloadableGlobalHiscores::reloadTexture() {
     const auto [startIdx, Nvisible] =
         computeVisibleRange(totalTables, gridPageIndex_, std::max(1, gridPageSize_));
     if (Nvisible <= 0) { needsRedraw_ = true; return; }
+
+    // --- Fade snapshot if needed ---------------------------------------------------------
+    if (fadeStartPending_) {
+        // 1) Snapshot previous composite (unchanged from your code)
+        if (!prevCompositeTexture_) {
+            prevCompositeTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
+                SDL_TEXTUREACCESS_TARGET, compositeW, compositeH);
+            SDL_SetTextureBlendMode(prevCompositeTexture_, SDL_BLENDMODE_BLEND);
+        }
+        SDL_Texture* oldRT = SDL_GetRenderTarget(renderer);
+        SDL_SetRenderTarget(renderer, prevCompositeTexture_);
+        if (intermediateTexture_) SDL_RenderCopy(renderer, intermediateTexture_, nullptr, nullptr);
+        SDL_SetRenderTarget(renderer, oldRT);
+
+        // 2) Hand off the ENTIRE current QR set (with already-valid dst from last frame)
+        destroyPrevQr_();                 // drop any older prev set
+        prevQrByTable_ = std::move(qrByTable_); // move old page's QRs into prev
+        qrByTable_.clear();               // leave empty; we'll rebuild for the new page now
+
+        fadeStartPending_ = false;
+    }
+    else {
+        // Not crossfading ? ensure prev set is gone
+        destroyPrevQr_();
+        // We are going to rebuild current QRs, so drop any existing current textures cleanly
+        destroyAllQr_();
+        qrByTable_.clear();
+    }
 
     // --- Load QRs for visible set -------------------------------------------------------
     std::vector<std::string> gameIds;
@@ -682,19 +720,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
         rowScale[r] = quantize_down(s);
     }
 
-    // --- Fade snapshot if needed ---------------------------------------------------------
-    if (fadeStartPending_) {
-        if (!prevCompositeTexture_) {
-            prevCompositeTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_ABGR8888,
-                SDL_TEXTUREACCESS_TARGET, compositeW, compositeH);
-            SDL_SetTextureBlendMode(prevCompositeTexture_, SDL_BLENDMODE_BLEND);
-        }
-        SDL_Texture* oldRT = SDL_GetRenderTarget(renderer);
-        SDL_SetRenderTarget(renderer, prevCompositeTexture_);
-        if (intermediateTexture_) SDL_RenderCopy(renderer, intermediateTexture_, nullptr, nullptr);
-        SDL_SetRenderTarget(renderer, oldRT);
-        fadeStartPending_ = false;
-    }
+ 
 
     // --- Paint to composite --------------------------------------------------------------
     SDL_Texture* old = SDL_GetRenderTarget(renderer);
@@ -861,86 +887,89 @@ void ReloadableGlobalHiscores::draw() {
     if (baseViewInfo.Alpha <= 0.0f) return;
 
     if (needsRedraw_) {
-        reloadTexture();
+        reloadTexture();                 // rebuild current composite + qrByTable_
     }
 
     SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
     if (!renderer || !intermediateTexture_) return;
 
-    // Where we draw the composite
+    // Destination rect for the composite (component space ? screen)
     SDL_FRect rect = {
         baseViewInfo.XRelativeToOrigin(),
         baseViewInfo.YRelativeToOrigin(),
         (float)compW_, (float)compH_
     };
 
-    // Draw the table composite (with or without crossfade)
-    if (fadeActive_ && prevCompositeTexture_) {
-        float t = (fadeDurationSec_ > 0.f) ? (fadeT_ / fadeDurationSec_) : 1.f;
-        if (t < 0.f) t = 0.f; else if (t > 1.f) t = 1.f;
-        const float A = baseViewInfo.Alpha;
+    const float A = baseViewInfo.Alpha;
 
-        // Old page fades out
-        SDL::renderCopyF(
-            prevCompositeTexture_, A * (1.0f - t), nullptr, &rect, baseViewInfo,
-            page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-            page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-
-        // New page fades in
-        SDL::renderCopyF(
-            intermediateTexture_, A * t, nullptr, &rect, baseViewInfo,
-            page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-            page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-    }
-    else {
-        // Normal draw
-        SDL::renderCopyF(
-            intermediateTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo,
-            page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-            page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-    }
-
-    // If the fade has completed, drop the snapshot
-    if (!fadeActive_ && prevCompositeTexture_) {
-        SDL_DestroyTexture(prevCompositeTexture_);
-        prevCompositeTexture_ = nullptr;
-    }
-
-    // ---- NEW: overlay QRs after the composite with delayed fade-in ----
-    // QR alpha = base alpha * phase(after delay) * font alpha (to preserve your style linkage)
-    
-    float qrPhase;
-    if (!qrFadeArmed_) {
-        qrPhase = 0.0f;  // not visible or not yet armed
-    }
-    else if (qrFadeT_ <= qrFadeDelaySec_) {
-        qrPhase = 0.0f;  // still waiting out the delay
-    }
-    else {
+    // Compute QR fade phase (delayed fade-in) once
+    float qrPhase = 0.0f;
+    if (qrFadeArmed_ && qrFadeT_ > qrFadeDelaySec_) {
         qrPhase = (qrFadeT_ - qrFadeDelaySec_) / std::max(0.001f, qrFadeDurationSec_);
         if (qrPhase > 1.0f) qrPhase = 1.0f;
     }
 
-    if (qrPhase > 0.0f) {
-        // Base color factor: reuse max channel from font color and font alpha, like before
-        const float finalAlphaFactor = baseViewInfo.Alpha * qrPhase; // simplest & safe
+    const int layoutW = page.getLayoutWidthByMonitor(baseViewInfo.Monitor);
+    const int layoutH = page.getLayoutHeightByMonitor(baseViewInfo.Monitor);
 
-        for (const auto& q : qrByTable_) {
-            if (!q.ok || !q.tex) continue;
+    if (fadeActive_ && prevCompositeTexture_) {
+        float t = (fadeDurationSec_ > 0.f) ? (fadeT_ / fadeDurationSec_) : 1.f;
+        t = std::clamp(t, 0.0f, 1.0f);
 
-            // Map component-space dst to screen space by offsetting with the composite draw rect
-            SDL_FRect dst = {
-                rect.x + q.dst.x,
-                rect.y + q.dst.y,
-                q.dst.w, q.dst.h
-            };
+        // composites
+        SDL::renderCopyF(prevCompositeTexture_, A * (1.0f - t), nullptr, &rect, baseViewInfo, layoutW, layoutH);
+        SDL::renderCopyF(intermediateTexture_, A * t, nullptr, &rect, baseViewInfo, layoutW, layoutH);
 
-            SDL::renderCopyF(
-                q.tex, finalAlphaFactor, nullptr, &dst, baseViewInfo,
-                page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-                page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+        // old QRs fade out with old page
+        if (!prevQrByTable_.empty()) {
+            const float alphaOld = A * (1.0f - t);
+            if (alphaOld > 0.0f) {
+                for (const auto& q : prevQrByTable_) {
+                    if (!q.ok || !q.tex) continue;
+                    SDL_FRect dst{ rect.x + q.dst.x, rect.y + q.dst.y, q.dst.w, q.dst.h };
+                    SDL::renderCopyF(q.tex, alphaOld, nullptr, &dst, baseViewInfo, layoutW, layoutH);
+                }
+            }
         }
-    
+
+        // new QRs:
+        // - If the one-time delay hasn't been consumed yet ? use t * qrPhase (delayed + ride page)
+        // - Otherwise ? just ride the page fade with t (no delay on flips)
+        if (!qrByTable_.empty()) {
+            const float qrBlend = qrDelayConsumed_ ? t : (t * qrPhase);
+            const float alphaNew = A * qrBlend;
+            if (alphaNew > 0.0f) {
+                for (const auto& q : qrByTable_) {
+                    if (!q.ok || !q.tex) continue;
+                    SDL_FRect dst{ rect.x + q.dst.x, rect.y + q.dst.y, q.dst.w, q.dst.h };
+                    SDL::renderCopyF(q.tex, alphaNew, nullptr, &dst, baseViewInfo, layoutW, layoutH);
+                }
+            }
+        }
+    }
+    else {
+        // No page crossfade:
+        SDL::renderCopyF(intermediateTexture_, A, nullptr, &rect, baseViewInfo, layoutW, layoutH);
+
+        if (!qrByTable_.empty()) {
+            // If first time (delay not consumed): use delayed phase; otherwise show fully with the table
+            const float qrBlend = qrDelayConsumed_ ? 1.0f : qrPhase;
+            const float alpha = A * qrBlend;
+            if (alpha > 0.0f) {
+                for (const auto& q : qrByTable_) {
+                    if (!q.ok || !q.tex) continue;
+                    SDL_FRect dst{ rect.x + q.dst.x, rect.y + q.dst.y, q.dst.w, q.dst.h };
+                    SDL::renderCopyF(q.tex, alpha, nullptr, &dst, baseViewInfo, layoutW, layoutH);
+                }
+            }
+        }
+    }
+
+    // Cleanup once the crossfade completes
+    if (!fadeActive_ && prevCompositeTexture_) {
+        SDL_DestroyTexture(prevCompositeTexture_);
+        prevCompositeTexture_ = nullptr;
+        destroyPrevQr_();    // dispose of prevQrByTable_ textures when fully faded out
     }
 }
 
@@ -951,4 +980,9 @@ void ReloadableGlobalHiscores::destroyAllQr_() {
 		q = {};
 	}
 	qrByTable_.clear();
+}
+
+void ReloadableGlobalHiscores::destroyPrevQr_() {
+    for (auto& q : prevQrByTable_) if (q.tex) SDL_DestroyTexture(q.tex);
+    prevQrByTable_.clear();
 }
