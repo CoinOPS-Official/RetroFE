@@ -80,6 +80,30 @@ struct SortCfg {
 	int  dpOverride;           // valid iff hasDpOverride==true
 };
 
+static inline uint64_t computeRowsHash_(const std::vector<GlobalRow>& rows) {
+	constexpr uint64_t FNV_OFFSET = 14695981039346656037ull;
+	constexpr uint64_t FNV_PRIME = 1099511628211ull;
+
+	// Collect stable keys (sorted to be order-independent)
+	std::vector<std::string> keys;
+	keys.reserve(rows.size());
+	for (const auto& r : rows) {
+		static constexpr char SEP = '\x1F';
+		keys.push_back(r.player + SEP + r.score + SEP + r.date);
+	}
+	std::sort(keys.begin(), keys.end());
+
+	// Hash the sorted keys
+	uint64_t h = FNV_OFFSET;
+	for (const auto& key : keys) {
+		for (unsigned char c : key) {
+			h ^= c;
+			h *= FNV_PRIME;
+		}
+	}
+	return h;
+}
+
 // ------- Gradient + mask helpers -------------------------------------------
 
 // Apply a vertical gradient overlay (multiplicative darkening) across the whole surface.
@@ -1175,29 +1199,19 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
 		return;
 	}
 
-	// --- MODIFICATION ---
-	// We will now work directly on the 'global_' object.
-	// Lock the mutex for the entire duration of the score population.
 	std::unique_lock<std::shared_mutex> lk(globalMutex_);
 
-	// Before we begin, it's safer to clear the scores of all games in the cache.
-	// This handles cases where a game's last score was removed, making it empty.
+	// Clear all existing rows (preserves game structure)
 	for (auto& pair : global_.byId) {
 		pair.second.rows.clear();
 	}
 
-	// Helper function to find a game and push a score row to it.
-	// It will only operate on games that are already in our 'global_.byId' map.
 	auto pushRow = [&](const std::string& gid, const std::string& gname,
 		const json& s) {
 			auto it = global_.byId.find(gid);
-			if (it == global_.byId.end()) {
-				// This shouldn't happen with the new refresh logic, but is a good safeguard.
-				return;
-			}
+			if (it == global_.byId.end()) return;
 
 			GlobalGame& gg = it->second;
-			// Optionally update the game name if the scores payload has a more current one.
 			if (!gname.empty() && gg.gameName.empty()) gg.gameName = gname;
 
 			GlobalRow r;
@@ -1213,9 +1227,7 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
 			for (const auto& s : arr) pushRow(gid, gname, s);
 		};
 
-	// --- Parsing logic is the same, but now calls the modified 'pushRow' ---
-
-	// Shape A: { "games": [ { "gameId":..., "gameName":..., "scores":[...] }, ... ] }
+	// [Keep existing JSON parsing logic - shapes A, B, C, D...]
 	if (j.is_object() && j.contains("games") && j["games"].is_array()) {
 		for (const auto& g : j["games"]) {
 			const std::string gid = g.contains("gameId") ? j2s(g["gameId"]) : "";
@@ -1224,7 +1236,6 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
 			if (g.contains("scores")) parseScoresArray(gid, gname, g["scores"]);
 		}
 	}
-	// Shape B: { "scores": [ { "game":..., "gameName":..., "name":..., "score":..., "date":... }, ... ] }
 	else if (j.is_object() && j.contains("scores") && j["scores"].is_array()) {
 		for (const auto& s : j["scores"]) {
 			const std::string gid = s.contains("game") ? j2s(s["game"]) : "";
@@ -1233,7 +1244,6 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
 			pushRow(gid, gname, s);
 		}
 	}
-	// ... (other JSON shapes C and D follow the same pattern) ...
 	else if (j.is_array()) {
 		for (const auto& s : j) {
 			if (!s.is_object()) continue;
@@ -1248,7 +1258,7 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
 			const std::string key = it.key();
 			const json& v = it.value();
 			if (v.is_array()) {
-				for (const auto& s : v) pushRow(key, /*gname*/"", s);
+				for (const auto& s : v) pushRow(key, "", s);
 			}
 			else if (v.is_object() && v.contains("scores") && v["scores"].is_array()) {
 				const std::string gname = v.contains("gameName") ? j2s(v["gameName"]) : "";
@@ -1259,17 +1269,15 @@ void HiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGame) {
 	else {
 		LOG_WARNING("HiScores", "ingestIScoredAll_: Unrecognized JSON shape");
 	}
-
-	// Cap rows per game if requested
+	// Cap rows and compute hashes for each game
 	for (auto& kv : global_.byId) {
 		capRows_(kv.second.rows, capPerGame);
-	}
 
-	globalEpoch_.fetch_add(1, std::memory_order_acq_rel);
-	// --- MODIFICATION ---
-	// The destructive 'global_ = std::move(tmp)' is removed. The lock will be released
-	// automatically when the function ends.
+		// Compute new hash (always update it)
+		kv.second.contentHash = computeRowsHash_(kv.second.rows);
+	}
 }
+
 bool HiScores::loadGlobalCacheFromDisk() {
 	if (globalPersistPath_.empty()) return false;
 
@@ -1307,6 +1315,15 @@ bool HiScores::loadGlobalCacheFromDisk() {
 				}
 			}
 
+			// Load hash if present (version 4+), otherwise compute it (version 3 or legacy)
+			if (g.contains("contentHash") && g["contentHash"].is_number_unsigned()) {
+				gg.contentHash = g["contentHash"].get<uint64_t>();
+			}
+			else {
+				// Fallback for old cache files without hashes
+				gg.contentHash = computeRowsHash_(gg.rows);
+			}
+
 			tmp.byId.emplace(gg.gameId, std::move(gg));
 		}
 
@@ -1331,7 +1348,6 @@ bool HiScores::saveGlobalCacheToDisk() const {
 	fs::path p(globalPersistPath_);
 	if (p.has_parent_path()) fs::create_directories(p.parent_path(), ec);
 
-	// Snapshot + sort by gameId (for deterministic output)
 	std::vector<GlobalGame> ordered;
 	{
 		std::shared_lock<std::shared_mutex> lk(globalMutex_);
@@ -1341,12 +1357,16 @@ bool HiScores::saveGlobalCacheToDisk() const {
 	std::sort(ordered.begin(), ordered.end(),
 		[](const GlobalGame& a, const GlobalGame& b) { return a.gameId < b.gameId; });
 
-	nlohmann::json root; root["version"] = 3;
+	nlohmann::json root;
+	root["version"] = 4;  // Bump version for hash support
 	auto& games = root["games"] = nlohmann::json::array();
+
 	for (const auto& gg : ordered) {
 		nlohmann::json g;
 		g["gameId"] = gg.gameId;
 		if (!gg.gameName.empty()) g["gameName"] = gg.gameName;
+		g["contentHash"] = gg.contentHash;  // Save hash
+
 		auto& scores = g["scores"] = nlohmann::json::array();
 		for (const auto& r : gg.rows) {
 			scores.push_back({ {"name", r.player}, {"score", r.score}, {"date", r.date} });
@@ -1354,7 +1374,7 @@ bool HiScores::saveGlobalCacheToDisk() const {
 		games.push_back(std::move(g));
 	}
 
-	// Atomic write: to temp then rename
+	// [Keep existing atomic write logic...]
 	fs::path tmp = p; tmp += ".tmp";
 	{
 		std::ofstream out(tmp, std::ios::binary);
@@ -1365,7 +1385,6 @@ bool HiScores::saveGlobalCacheToDisk() const {
 	}
 	fs::rename(tmp, p, ec);
 	if (ec) {
-		// fallback: direct write
 		std::ofstream out(p, std::ios::binary);
 		if (!out) return false;
 		out << root.dump(2);

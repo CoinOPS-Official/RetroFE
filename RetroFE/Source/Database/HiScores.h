@@ -35,6 +35,7 @@ struct GlobalGame {
     std::string gameId;                  // key
     std::string gameName;                // label for UI page title
     std::vector<GlobalRow> rows;         // flat rows from iScored
+    uint64_t contentHash = 0;
 };
 
 struct GlobalHiScoreData {
@@ -78,9 +79,6 @@ public:
 
     // Shutdown cleanup (persist if you want, then clear)
     void deinitialize();
-
-    std::atomic<uint64_t> globalEpoch_{ 0 };
-    uint64_t getGlobalEpoch() const noexcept { return globalEpoch_.load(std::memory_order_acquire); }
 
 private:
     HiScores() = default;
