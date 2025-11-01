@@ -32,9 +32,11 @@ extern "C" {
 #if __has_include(<gstreamer-1.0/gst/gst.h>)
 #include <gstreamer-1.0/gst/gst.h>
 #include <gstreamer-1.0/gst/video/video.h>
+#include <gstreamer-1.0/gst/app/gstappsink.h>
 #elif __has_include(<GStreamer/gst/gst.h>)
 #include <GStreamer/gst/gst.h>
 #include <GStreamer/gst/video/video.h>
+#include <GStreamer/gst/app/gstappsink.h>
 #else
 #error "Cannot find Gstreamer headers"
 #endif
