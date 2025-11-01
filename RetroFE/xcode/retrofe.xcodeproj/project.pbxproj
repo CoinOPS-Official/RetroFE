@@ -357,6 +357,8 @@
 		DF0EFC452EB63589008F5DAB /* Utility */ = {
 			isa = PBXGroup;
 			children = (
+				DF0EFC7D2EB63589008F5DAB /* ThreadPool.h */,
+				DF0EFCA02EB63589008F5DAB /* ThreadPool.cpp */,
 				DF0EFC462EB63589008F5DAB /* Utils.h */,
 				DF0EFC472EB63589008F5DAB /* Log.cpp */,
 				DF0EFC482EB63589008F5DAB /* Utils.cpp */,
@@ -437,7 +439,6 @@
 				DF0EFC712EB63589008F5DAB /* Page.cpp */,
 				DF0EFC722EB63589008F5DAB /* Page.h */,
 				DF0EFC732EB63589008F5DAB /* Animate */,
-				DF0EFC7D2EB63589008F5DAB /* ThreadPool.h */,
 				DF0EFC7E2EB63589008F5DAB /* ComponentItemBinding.cpp */,
 				DF0EFC7F2EB63589008F5DAB /* ComponentItemBinding.h */,
 				DF0EFC802EB63589008F5DAB /* Font.cpp */,
@@ -448,7 +449,6 @@
 				DF0EFC9D2EB63589008F5DAB /* ComponentItemBindingBuilder.h */,
 				DF0EFC9E2EB63589008F5DAB /* ViewInfo.h */,
 				DF0EFC9F2EB63589008F5DAB /* Font.h */,
-				DF0EFCA02EB63589008F5DAB /* ThreadPool.cpp */,
 				DF0EFCA12EB63589008F5DAB /* ViewInfo.cpp */,
 				DF0EFCA22EB63589008F5DAB /* PageBuilder.h */,
 				DF0EFCA32EB63589008F5DAB /* PageBuilder.cpp */,
