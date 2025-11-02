@@ -23,18 +23,19 @@
 #include <utility>
 #include <deque>
 
+static constexpr int DYNAMIC_ATLAS_SIZE = 2048;
+
  // This is a temporary struct used only during atlas generation for a single mip level.
 struct GlyphInfoBuild {
     FontManager::GlyphInfo glyph;
     SDL_Surface* surface = nullptr; // Kept for compatibility with original code structure, but not used.
 };
 
-// Static utility function (unchanged)
-static void fillHolesInOutline(SDL_Surface* s,
-    Uint8 alphaThresh = 16,
-    int   minHoleArea = 0,
-    int   minHoleW = 0,
-    int   minHoleH = 0) {
+void FontManager::fillHolesInOutline(SDL_Surface* s,
+    int alphaThresh,
+    int minHoleArea,
+    int minHoleW,
+    int minHoleH) {
     if (!s || s->format->BytesPerPixel != 4) return;
 
     SDL_LockSurface(s);
@@ -139,14 +140,13 @@ static void fillHolesInOutline(SDL_Surface* s,
     SDL_UnlockSurface(s);
 }
 
-// NEW: MipLevel destructor to release textures
+// MipLevel destructor to release textures
 FontManager::MipLevel::~MipLevel() {
-    if (fillTexture) {
-        SDL_DestroyTexture(fillTexture);
-    }
-    if (outlineTexture) {
-        SDL_DestroyTexture(outlineTexture);
-    }
+    if (fillTexture)          SDL_DestroyTexture(fillTexture);
+    if (outlineTexture)       SDL_DestroyTexture(outlineTexture);
+    if (dynamicFillTexture)   SDL_DestroyTexture(dynamicFillTexture);
+    if (dynamicOutlineTexture)SDL_DestroyTexture(dynamicOutlineTexture);
+    if (font) { TTF_CloseFont(font); font = nullptr; }
 }
 
 // MODIFIED: Constructor now accepts maxFontSize
@@ -159,11 +159,8 @@ FontManager::FontManager(std::string fontPath, int maxFontSize, SDL_Color color,
     , monitor_(monitor) {
 }
 
-FontManager::~FontManager() {
-    deInitialize();
-}
+FontManager::~FontManager() { deInitialize(); }
 
-// Static helper (unchanged)
 SDL_Surface* FontManager::applyVerticalGrayGradient(SDL_Surface* s, Uint8 topGray, Uint8 bottomGray) {
     if (!s) return nullptr;
     if (s->format->BytesPerPixel != 4) {
@@ -173,46 +170,171 @@ SDL_Surface* FontManager::applyVerticalGrayGradient(SDL_Surface* s, Uint8 topGra
         s = conv;
     }
 
+    // sRGB <-> linear helpers (Rec. 709)
+    auto toLinear = [](float u) -> float {
+        return (u <= 0.04045f) ? (u / 12.92f) : std::pow((u + 0.055f) / 1.055f, 2.4f);
+        };
+    auto toSRGB = [](float u) -> float {
+        return (u <= 0.0031308f) ? (12.92f * u) : (1.055f * std::pow(u, 1.0f / 2.4f) - 0.055f);
+        };
+    auto clamp01 = [](float v) -> float { return v < 0.f ? 0.f : (v > 1.f ? 1.f : v); };
+
     SDL_LockSurface(s);
     Uint8* px = static_cast<Uint8*>(s->pixels);
     const int pitch = s->pitch;
 
     for (int y = 0; y < s->h; ++y) {
+        // vertical ramp in sRGB space (we’ll convert the result to linear)
         const float t = (s->h > 1) ? float(y) / float(s->h - 1) : 0.f;
-        const Uint8 G = Uint8((1.f - t) * topGray + t * bottomGray);
+        const float Gs = ((1.f - t) * (topGray / 255.0f)) + (t * (bottomGray / 255.0f));
+        const float Glin = toLinear(Gs);  // target luminance in linear
+
         Uint32* row = reinterpret_cast<Uint32*>(px + y * pitch);
         for (int x = 0; x < s->w; ++x) {
-            Uint8 r, g, b, a; SDL_GetRGBA(row[x], s->format, &r, &g, &b, &a);
-            if (a) row[x] = SDL_MapRGBA(s->format, G, G, G, a); // recolor, keep alpha
+            Uint8 r8, g8, b8, a8;
+            SDL_GetRGBA(row[x], s->format, &r8, &g8, &b8, &a8);
+            if (a8 == 0) continue;  // keep fully transparent untouched
+
+            // current color in linear
+            float r = toLinear(r8 / 255.0f);
+            float g = toLinear(g8 / 255.0f);
+            float b = toLinear(b8 / 255.0f);
+
+            // current luminance (linear, Rec. 709)
+            float Y = 0.2126f * r + 0.7152f * g + 0.0722f * b;
+
+            // scale RGB to hit target luminance; if nearly black, just set to target gray
+            if (Y > 1e-6f) {
+                float m = Glin / Y;
+                r *= m; g *= m; b *= m;
+            }
+            else {
+                r = g = b = Glin;
+            }
+
+            // back to sRGB and pack (alpha preserved)
+            Uint8 R = static_cast<Uint8>(std::round(clamp01(toSRGB(r)) * 255.0f));
+            Uint8 G = static_cast<Uint8>(std::round(clamp01(toSRGB(g)) * 255.0f));
+            Uint8 B = static_cast<Uint8>(std::round(clamp01(toSRGB(b)) * 255.0f));
+            row[x] = SDL_MapRGBA(s->format, R, G, B, a8);
         }
     }
+
     SDL_UnlockSurface(s);
     return s;
 }
 
 // NEW: Replaces clearAtlas, cleans up all mip levels
 void FontManager::clearMips() {
-    for (auto& pair : mipLevels_) {
-        delete pair.second; // This invokes MipLevel::~MipLevel()
-    }
+    for (auto& kv : mipLevels_) delete kv.second;
     mipLevels_.clear();
+}
+
+void FontManager::preloadGlyphRange(TTF_Font* font,
+    Uint32 start, Uint32 end,
+    int& x, int& y,
+    int atlasWidth, int& atlasHeight,
+    int GLYPH_SPACING,
+    std::vector<TmpGlyph>& tmp,
+    std::unordered_map<unsigned int, GlyphInfoBuild*>& temp_build) {
+    for (Uint32 ch = start; ch <= end; ++ch) {
+        if (!TTF_GlyphIsProvided32(font, ch)) continue;
+
+        int minx, maxx, miny, maxy, adv;
+        if (TTF_GlyphMetrics(font, ch, &minx, &maxx, &miny, &maxy, &adv) != 0) continue;
+
+        // Fill
+        TTF_SetFontOutline(font, 0);
+        SDL_Color white{ 255, 255, 255, 255 };
+        SDL_Surface* fill = TTF_RenderGlyph32_Blended(font, ch, white);
+        if (!fill) continue;
+
+        if (gradient_) {
+            fill = applyVerticalGrayGradient(fill, 255, 128);
+            if (!fill) continue;
+        }
+        else if (fill->format->BytesPerPixel != 4) {
+            SDL_Surface* conv = SDL_ConvertSurfaceFormat(fill, SDL_PIXELFORMAT_ARGB8888, 0);
+            SDL_FreeSurface(fill);
+            fill = conv;
+            if (!fill) continue;
+        }
+
+        // Outline (optional)
+        SDL_Surface* outline = nullptr;
+        int dx = 0, dy = 0;
+        if (outlinePx_ > 0) {
+            TTF_SetFontOutline(font, outlinePx_);
+            outline = TTF_RenderGlyph32_Blended(font, ch, outlineColor_);
+            TTF_SetFontOutline(font, 0);
+            if (outline) {
+                if (outline->format->BytesPerPixel != 4) {
+                    SDL_Surface* conv = SDL_ConvertSurfaceFormat(outline, SDL_PIXELFORMAT_ARGB8888, 0);
+                    SDL_FreeSurface(outline);
+                    outline = conv;
+                    if (!outline) { SDL_FreeSurface(fill); continue; }
+                }
+                const int px = outlinePx_;
+                int minArea = 0, minW = 0, minH = 0;
+                if (px >= 3) {
+                    minArea = (px * px * 3) / 2;
+                    minW = px + 1;
+                    minH = px + 1;
+                }
+                fillHolesInOutline(outline, 16, minArea, minW, minH);
+                dx = (outline->w - fill->w) / 2;
+                dy = (outline->h - fill->h) / 2;
+            }
+        }
+
+        const int packedW = outline ? outline->w : fill->w;
+        const int packedH = outline ? outline->h : fill->h;
+
+        if (x + packedW + GLYPH_SPACING > atlasWidth) {
+            atlasHeight += y + GLYPH_SPACING;
+            x = 0;
+            y = 0;
+        }
+
+        auto* info = new GlyphInfoBuild;
+        info->glyph.advance = adv;
+        info->glyph.minX = minx;
+        info->glyph.maxX = maxx;
+        info->glyph.minY = miny;
+        info->glyph.maxY = maxy;
+        info->glyph.rect = { x, atlasHeight, packedW, packedH };
+
+        if (outline) {
+            info->glyph.fillX = dx;
+            info->glyph.fillY = dy;
+            info->glyph.fillW = fill->w;
+            info->glyph.fillH = fill->h;
+        }
+        else {
+            info->glyph.fillX = 0;
+            info->glyph.fillY = 0;
+            info->glyph.fillW = packedW;
+            info->glyph.fillH = packedH;
+        }
+
+        temp_build[ch] = info;
+        tmp.push_back(TmpGlyph{ fill, outline, dx, dy, info });
+
+        x += packedW + GLYPH_SPACING;
+        y = std::max(y, packedH);
+    }
 }
 
 // HEAVILY MODIFIED: initialize() now generates a chain of atlases
 bool FontManager::initialize() {
     clearMips();
 
-    // --- Mipmapping knobs ---
-    const int   MIN_FONT_SIZE = 8;
-    const float DENSE_FACTOR = 0.85f; // step when sizes are large
-    const float SPARSE_FACTOR = 0.60f; // step when sizes are small
+    const int   MIN_FONT_SIZE = 24;
+    const float DENSE_FACTOR = 0.70f;
+    const float SPARSE_FACTOR = 0.50f;
     const int   SWITCH_THRESHOLD = 40;
 
-    struct GlyphInfoBuild {
-        GlyphInfo   glyph;
-        SDL_Surface* surface = nullptr; // unused, kept for symmetry
-    };
-
+    bool first = true;
     for (int currentSize = maxFontSize_; currentSize >= MIN_FONT_SIZE; ) {
         TTF_Font* font = TTF_OpenFont(fontPath_.c_str(), currentSize);
         if (!font) {
@@ -225,16 +347,15 @@ bool FontManager::initialize() {
             continue;
         }
 
-        // Gentler hinting reduces y-snapping that murders thin horizontals like '-'
         TTF_SetFontKerning(font, 1);
-        TTF_SetFontHinting(font, TTF_HINTING_NORMAL); // <— key tweak :contentReference[oaicite:1]{index=1}
+        TTF_SetFontHinting(font, TTF_HINTING_LIGHT);
 
-        // Build one mip level
-        MipLevel* mip = new MipLevel();
+        auto* mip = new MipLevel();
         mip->fontSize = currentSize;
         mip->height = TTF_FontHeight(font);
         mip->ascent = TTF_FontAscent(font);
         mip->descent = TTF_FontDescent(font);
+        mip->font = font; // <— keep per-mip handle
 
         const int GLYPH_SPACING = std::max(1, std::max(outlinePx_ + 1, currentSize / 16));
         int atlasWidth = std::min(1024, currentSize * 16);
@@ -248,107 +369,18 @@ bool FontManager::initialize() {
         rmask = 0x000000ff; gmask = 0x0000ff00; bmask = 0x00ff0000; amask = 0xff000000;
 #endif
 
-        struct TmpGlyph {
-            SDL_Surface* fill = nullptr;
-            SDL_Surface* outline = nullptr;
-            int              dx = 0, dy = 0;
-            GlyphInfoBuild* info = nullptr;
-        };
-        std::vector<TmpGlyph> tmp; tmp.reserve(128 - 32);
+        std::vector<TmpGlyph> tmp;
+        tmp.reserve(512);
         std::unordered_map<unsigned int, GlyphInfoBuild*> temp_build;
 
-        for (Uint16 ch = 32; ch < 128; ++ch) {
-            int minx, maxx, miny, maxy, adv;
-            if (TTF_GlyphMetrics(font, ch, &minx, &maxx, &miny, &maxy, &adv) != 0) continue;
+        // ASCII + Latin ext + Greek + Cyrillic
+        preloadGlyphRange(font, 32, 1023, x, y, atlasWidth, atlasHeight, GLYPH_SPACING, tmp, temp_build);
 
-            // Render fill
-            TTF_SetFontOutline(font, 0);
-            SDL_Color white{ 255,255,255,255 };
-            SDL_Surface* fill = TTF_RenderGlyph_Blended(font, ch, white);
-            if (!fill) continue;
-
-            if (gradient_) {
-                fill = applyVerticalGrayGradient(fill, 255, 128);
-                if (!fill) continue;
-            }
-            else if (fill->format->BytesPerPixel != 4) {
-                SDL_Surface* conv = SDL_ConvertSurfaceFormat(fill, SDL_PIXELFORMAT_ARGB8888, 0);
-                SDL_FreeSurface(fill);
-                fill = conv;
-                if (!fill) continue;
-            }
-
-            // Optional outline
-            SDL_Surface* outline = nullptr;
-            int dx = 0, dy = 0;
-            if (outlinePx_ > 0) {
-                TTF_SetFontOutline(font, outlinePx_);
-                outline = TTF_RenderGlyph_Blended(font, ch, outlineColor_);
-                TTF_SetFontOutline(font, 0);
-                if (outline) {
-                    if (outline->format->BytesPerPixel != 4) {
-                        SDL_Surface* conv = SDL_ConvertSurfaceFormat(outline, SDL_PIXELFORMAT_ARGB8888, 0);
-                        SDL_FreeSurface(outline);
-                        outline = conv;
-                        if (!outline) { SDL_FreeSurface(fill); continue; }
-                    }
-                    const int px = outlinePx_;
-                    int minArea = 0, minW = 0, minH = 0;
-                    if (px >= 3) {
-                        minArea = (px * px * 3) / 2;
-                        minW = px + 1;
-                        minH = px + 1;
-                    }
-                    fillHolesInOutline(outline, 16, minArea, minW, minH);
-                    dx = (outline->w - fill->w) / 2;
-                    dy = (outline->h - fill->h) / 2;
-                }
-            }
-
-            // --- SYNTHETIC VERTICAL METRICS ---
-            // SDL_ttf metrics (miny/maxy) are relative to baseline and in *pixels* at this size.
-            // Bitmap height may differ due to hinting. To keep layout consistent, force:
-            //   newHeight = fill->h
-            //   keep centerline = (maxy + miny)/2
-            // so that "top = ascent - maxY" places the bitmap exactly where metrics expect.
-            const float metricsCenter = 0.5f * float(maxy + miny);
-            const float halfBitmapH = 0.5f * float(fill->h);
-            // Choose integer new minY/maxY that preserve center and match bitmap height.
-            int newMinY = int(std::floor(metricsCenter - halfBitmapH + 0.5f));
-            int newMaxY = newMinY + fill->h;
-
-            const int packedW = outline ? outline->w : fill->w;
-            const int packedH = outline ? outline->h : fill->h;
-
-            if (x + packedW + GLYPH_SPACING > atlasWidth) {
-                atlasHeight += y + GLYPH_SPACING;
-                x = 0; y = 0;
-            }
-
-            auto* info = new GlyphInfoBuild;
-            info->surface = nullptr;
-            info->glyph.advance = adv;
-            info->glyph.minX = minx;
-            info->glyph.maxX = maxx;
-            // Use synthetic vertical metrics (fixes hyphen/underscore misplacement)
-            info->glyph.minY = newMinY;
-            info->glyph.maxY = newMaxY;
-            info->glyph.rect = { x, atlasHeight, packedW, packedH };
-
-            if (outline) {
-                info->glyph.fillX = dx; info->glyph.fillY = dy;
-                info->glyph.fillW = fill->w; info->glyph.fillH = fill->h;
-            }
-            else {
-                info->glyph.fillX = 0;  info->glyph.fillY = 0;
-                info->glyph.fillW = packedW; info->glyph.fillH = packedH;
-            }
-
-            temp_build[ch] = info;
-            tmp.push_back(TmpGlyph{ fill, outline, dx, dy, info });
-
-            x += packedW + GLYPH_SPACING;
-            y = std::max(y, packedH);
+        // Optional: CJK seed (Hiragana/Katakana) if font provides
+        bool hasCJK = TTF_GlyphIsProvided32(font, 0x30A2) || TTF_GlyphIsProvided32(font, 0x3042);
+        if (hasCJK) {
+            preloadGlyphRange(font, 0x3040, 0x309F, x, y, atlasWidth, atlasHeight, GLYPH_SPACING, tmp, temp_build);
+            preloadGlyphRange(font, 0x30A0, 0x30FF, x, y, atlasWidth, atlasHeight, GLYPH_SPACING, tmp, temp_build);
         }
 
         atlasWidth = std::max(atlasWidth, x);
@@ -359,7 +391,6 @@ bool FontManager::initialize() {
             LOG_WARNING("Font", "Failed to create fill atlas surface for size " + std::to_string(currentSize));
             for (auto& p : temp_build) delete p.second;
             delete mip;
-            TTF_CloseFont(font);
             float factor = (currentSize > SWITCH_THRESHOLD) ? DENSE_FACTOR : SPARSE_FACTOR;
             int   nextSize = (int)std::round(currentSize * factor);
             if (nextSize >= currentSize) break;
@@ -372,11 +403,9 @@ bool FontManager::initialize() {
         if (outlinePx_ > 0) {
             atlasOutline = SDL_CreateRGBSurface(0, atlasWidth, atlasHeight, 32, rmask, gmask, bmask, amask);
             if (!atlasOutline) {
-                LOG_WARNING("Font", "Failed to create outline atlas surface for size " + std::to_string(currentSize));
                 SDL_FreeSurface(atlasFill);
                 for (auto& p : temp_build) delete p.second;
                 delete mip;
-                TTF_CloseFont(font);
                 float factor = (currentSize > SWITCH_THRESHOLD) ? DENSE_FACTOR : SPARSE_FACTOR;
                 int   nextSize = (int)std::round(currentSize * factor);
                 if (nextSize >= currentSize) break;
@@ -401,15 +430,18 @@ bool FontManager::initialize() {
             if (t.outline) SDL_FreeSurface(t.outline);
         }
 
+        // Create static atlas textures
         SDL_Texture* fillTex = SDL_CreateTextureFromSurface(SDL::getRenderer(monitor_), atlasFill);
         if (fillTex) {
+            SDL_SetTextureScaleMode(fillTex, SDL_ScaleModeLinear);
             SDL_SetTextureBlendMode(fillTex, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureColorMod(fillTex, color_.r, color_.g, color_.b);
             mip->fillTexture = fillTex;
         }
-
         if (atlasOutline) {
             SDL_Texture* outTex = SDL_CreateTextureFromSurface(SDL::getRenderer(monitor_), atlasOutline);
             if (outTex) {
+                SDL_SetTextureScaleMode(outTex, SDL_ScaleModeLinear);
                 SDL_SetTextureBlendMode(outTex, SDL_BLENDMODE_BLEND);
                 mip->outlineTexture = outTex;
             }
@@ -420,6 +452,56 @@ bool FontManager::initialize() {
         SDL_FreeSurface(atlasFill);
         if (atlasOutline) SDL_FreeSurface(atlasOutline);
 
+        // Dynamic atlases — STREAMING
+        mip->dynamicFillTexture = SDL_CreateTexture(
+            SDL::getRenderer(monitor_),
+            SDL_PIXELFORMAT_ARGB8888,
+            SDL_TEXTUREACCESS_STREAMING,
+            DYNAMIC_ATLAS_SIZE, DYNAMIC_ATLAS_SIZE);
+        if (mip->dynamicFillTexture) {
+            SDL_SetTextureScaleMode(mip->dynamicFillTexture, SDL_ScaleModeLinear);
+            SDL_SetTextureBlendMode(mip->dynamicFillTexture, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureColorMod(mip->dynamicFillTexture, color_.r, color_.g, color_.b);
+            void* pixels = nullptr; int pitch = 0;
+            SDL_Rect full{ 0,0,DYNAMIC_ATLAS_SIZE,DYNAMIC_ATLAS_SIZE };
+            if (SDL_LockTexture(mip->dynamicFillTexture, &full, &pixels, &pitch) == 0) {
+                for (int y0 = 0; y0 < DYNAMIC_ATLAS_SIZE; ++y0) {
+                    std::memset((Uint8*)pixels + y0 * pitch, 0x00, DYNAMIC_ATLAS_SIZE * 4);
+                }
+                SDL_UnlockTexture(mip->dynamicFillTexture);
+            }
+        }
+        else {
+            LOG_WARNING("Font", "Failed to create dynamic fill texture");
+        }
+
+        if (outlinePx_ > 0) {
+            mip->dynamicOutlineTexture = SDL_CreateTexture(
+                SDL::getRenderer(monitor_),
+                SDL_PIXELFORMAT_ARGB8888,
+                SDL_TEXTUREACCESS_STREAMING,
+                DYNAMIC_ATLAS_SIZE, DYNAMIC_ATLAS_SIZE);
+            if (mip->dynamicOutlineTexture) {
+                SDL_SetTextureScaleMode(mip->dynamicOutlineTexture, SDL_ScaleModeLinear);
+                SDL_SetTextureBlendMode(mip->dynamicOutlineTexture, SDL_BLENDMODE_BLEND);
+                void* pixels = nullptr; int pitch = 0;
+                SDL_Rect full{ 0,0,DYNAMIC_ATLAS_SIZE,DYNAMIC_ATLAS_SIZE };
+                if (SDL_LockTexture(mip->dynamicOutlineTexture, &full, &pixels, &pitch) == 0) {
+                    for (int y0 = 0; y0 < DYNAMIC_ATLAS_SIZE; ++y0) {
+                        std::memset((Uint8*)pixels + y0 * pitch, 0x00, DYNAMIC_ATLAS_SIZE * 4);
+                    }
+                    SDL_UnlockTexture(mip->dynamicOutlineTexture);
+                }
+            }
+            else {
+                LOG_WARNING("Font", "Failed to create dynamic outline texture");
+            }
+        }
+
+        mip->dynamicNextX = 0;
+        mip->dynamicNextY = 0;
+        mip->dynamicRowHeight = 0;
+
         for (auto const& [key, val] : temp_build) {
             mip->glyphs[key] = val->glyph;
             delete val;
@@ -428,17 +510,14 @@ bool FontManager::initialize() {
 
         mipLevels_[currentSize] = mip;
 
-        if (currentSize == maxFontSize_) {
-            // Keep the largest-size font handle open for precise kerning/metrics:contentReference[oaicite:2]{index=2}:contentReference[oaicite:3]{index=3}
-            max_font_ = font;
+        if (first) {
+            max_font_ = font; // same pointer as mip->font for largest size
             max_height_ = mip->height;
             max_ascent_ = mip->ascent;
             max_descent_ = mip->descent;
+            first = false;
         }
-        else {
-            TTF_CloseFont(font);
-        }
-
+        // NOTE: do NOT TTF_CloseFont(font) here; held by mip->font
         float factor = (currentSize > SWITCH_THRESHOLD) ? DENSE_FACTOR : SPARSE_FACTOR;
         int   nextSize = (int)std::round(currentSize * factor);
         if (nextSize >= currentSize) break;
@@ -447,20 +526,154 @@ bool FontManager::initialize() {
 
     if (mipLevels_.empty()) {
         LOG_WARNING("Font", "Failed to generate any mip levels for font: " + fontPath_);
-        if (max_font_) { TTF_CloseFont(max_font_); max_font_ = nullptr; }
+        max_font_ = nullptr;      // do not TTF_CloseFont here
         return false;
     }
 
-    setColor(color_); // color-mod all mip textures:contentReference[oaicite:4]{index=4}
+    setColor(color_); // ensure color mod on static & dynamic fill textures
+    return true;
+}
+
+bool FontManager::loadGlyphOnDemand(Uint32 ch, MipLevel* mip) {
+    if (!mip) return false;
+
+    if (mip->glyphs.find(ch) != mip->glyphs.end())        return true;
+    if (mip->dynamicGlyphs.find(ch) != mip->dynamicGlyphs.end()) return true;
+
+    if (!mip->dynamicFillTexture) {
+        LOG_ERROR("Font", "Dynamic atlas not initialized");
+        return false;
+    }
+    if (!mip->font) {
+        LOG_ERROR("Font", "Per-mip TTF_Font not available");
+        return false;
+    }
+
+    TTF_Font* font = mip->font;
+
+    int minx, maxx, miny, maxy, adv;
+    if (TTF_GlyphMetrics(font, ch, &minx, &maxx, &miny, &maxy, &adv) != 0) {
+        return false;
+    }
+
+    // Render fill to surface (ARGB8888)
+    TTF_SetFontOutline(font, 0);
+    SDL_Color white{ 255, 255, 255, 255 };
+    SDL_Surface* fill = TTF_RenderGlyph32_Blended(font, ch, white);
+    if (!fill) return false;
+
+    if (adv > 0 && fill->w > 0 && adv < fill->w * 0.8f) {
+        LOG_INFO("Font", "Broken advance U+" + std::to_string(ch) +
+            " adv=" + std::to_string(adv) + " < surface w=" + std::to_string(fill->w) + "; clamping");
+        adv = (int)(fill->w * 0.9f);
+    }
+
+    if (gradient_) {
+        fill = applyVerticalGrayGradient(fill, 255, 128);
+        if (!fill) return false;
+    }
+    else if (fill->format->BytesPerPixel != 4) {
+        SDL_Surface* conv = SDL_ConvertSurfaceFormat(fill, SDL_PIXELFORMAT_ARGB8888, 0);
+        SDL_FreeSurface(fill);
+        fill = conv;
+        if (!fill) return false;
+    }
+
+    SDL_Surface* outline = nullptr;
+    int dx = 0, dy = 0;
+    if (outlinePx_ > 0) {
+        TTF_SetFontOutline(font, outlinePx_);
+        outline = TTF_RenderGlyph32_Blended(font, ch, outlineColor_);
+        TTF_SetFontOutline(font, 0);
+        if (outline) {
+            if (outline->format->BytesPerPixel != 4) {
+                SDL_Surface* conv = SDL_ConvertSurfaceFormat(outline, SDL_PIXELFORMAT_ARGB8888, 0);
+                SDL_FreeSurface(outline);
+                outline = conv;
+                if (!outline) { SDL_FreeSurface(fill); return false; }
+            }
+            const int px = outlinePx_;
+            int minArea = 0, minW = 0, minH = 0;
+            if (px >= 3) {
+                minArea = (px * px * 3) / 2;
+                minW = px + 1;
+                minH = px + 1;
+            }
+            fillHolesInOutline(outline, 16, minArea, minW, minH);
+            dx = (outline->w - fill->w) / 2;
+            dy = (outline->h - fill->h) / 2;
+        }
+    }
+
+    const int packedW = outline ? outline->w : fill->w;
+    const int packedH = outline ? outline->h : fill->h;
+    const int GLYPH_SPACING = std::max(1, std::max(outlinePx_ + 1, mip->fontSize / 16));
+
+    // Shelf wrap
+    if (mip->dynamicNextX + packedW + GLYPH_SPACING > DYNAMIC_ATLAS_SIZE) {
+        mip->dynamicNextY += mip->dynamicRowHeight + GLYPH_SPACING;
+        mip->dynamicNextX = 0;
+        mip->dynamicRowHeight = 0;
+    }
+    if (mip->dynamicNextY + packedH + GLYPH_SPACING > DYNAMIC_ATLAS_SIZE) {
+        LOG_WARNING("Font", "Dynamic atlas full; cannot load glyph U+" + std::to_string(ch));
+        SDL_FreeSurface(fill);
+        if (outline) SDL_FreeSurface(outline);
+        return false;
+    }
+
+    // Build final glyph info
+    GlyphInfo glyph;
+    glyph.advance = adv;
+    glyph.minX = minx;
+    glyph.maxX = maxx;
+    glyph.minY = miny;
+    glyph.maxY = maxy;
+    glyph.rect = { mip->dynamicNextX, mip->dynamicNextY, packedW, packedH };
+
+    if (outline) {
+        glyph.fillX = dx; glyph.fillY = dy;
+        glyph.fillW = fill->w; glyph.fillH = fill->h;
+    }
+    else {
+        glyph.fillX = 0; glyph.fillY = 0;
+        glyph.fillW = packedW; glyph.fillH = packedH;
+    }
+
+    // --- Streaming upload (no temp textures, no RT switches) ---
+    // Upload OUTLINE first (if present)
+    if (outline && mip->dynamicOutlineTexture) {
+        SDL_Rect dst{ glyph.rect.x, glyph.rect.y, outline->w, outline->h };
+        if (SDL_UpdateTexture(mip->dynamicOutlineTexture, &dst, outline->pixels, outline->pitch) != 0) {
+            LOG_WARNING("Font", std::string("SDL_UpdateTexture outline failed: ") + SDL_GetError());
+        }
+    }
+
+    // Upload FILL (always)
+    {
+        SDL_Rect dst{ glyph.rect.x + glyph.fillX, glyph.rect.y + glyph.fillY, glyph.fillW, glyph.fillH };
+        if (SDL_UpdateTexture(mip->dynamicFillTexture, &dst, fill->pixels, fill->pitch) != 0) {
+            LOG_WARNING("Font", std::string("SDL_UpdateTexture fill failed: ") + SDL_GetError());
+        }
+    }
+
+    // Color mod persists on the texture object (already set in initialize/setColor)
+
+    // Track glyph
+    mip->dynamicGlyphs[ch] = glyph;
+
+    // Advance shelf
+    mip->dynamicNextX += packedW + GLYPH_SPACING;
+    mip->dynamicRowHeight = std::max(mip->dynamicRowHeight, packedH);
+
+    SDL_FreeSurface(fill);
+    if (outline) SDL_FreeSurface(outline);
     return true;
 }
 
 void FontManager::deInitialize() {
     clearMips();
-    if (max_font_) {
-        TTF_CloseFont(max_font_);
-        max_font_ = nullptr;
-    }
+    max_font_ = nullptr;
 }
 
 // MODIFIED: Applies color to all mip levels
@@ -479,52 +692,35 @@ void FontManager::setColor(SDL_Color c) {
 const FontManager::MipLevel* FontManager::getMipLevelForSize(int targetSize) const {
     if (mipLevels_.empty()) return nullptr;
 
-    // Find the first mip that is >= the target size.
     auto itCeil = mipLevels_.lower_bound(targetSize);
+    const MipLevel* best = nullptr;
 
-    const FontManager::MipLevel* best = nullptr;
-
-    // Case 1: Target size is smaller than all available mips.
-    // We must downscale from the smallest available mip.
     if (itCeil == mipLevels_.begin()) {
         best = itCeil->second;
     }
-    // Case 2: Target size is larger than all available mips.
-    // We must upscale from the largest available mip.
     else if (itCeil == mipLevels_.end()) {
         best = std::prev(itCeil)->second;
     }
-    // Case 3: We are between two mips. itCeil is >= target, and itFloor is < target.
     else {
         auto itFloor = std::prev(itCeil);
-
-        // --- The "Best of Both Worlds" logic ---
-        const float UPSCALE_TOLERANCE_PERCENT = 0.15f; // Allow up to 15% upscaling
+        const float UPSCALE_TOLERANCE_PERCENT = 0.15f;
         int floorSize = itFloor->first;
         if ((targetSize - floorSize) <= (floorSize * UPSCALE_TOLERANCE_PERCENT)) {
-            // Upscaling is tolerable, so choose the mip with the nearest size.
             int dUp = std::abs(itCeil->first - targetSize);
             int dDown = std::abs(floorSize - targetSize);
-
-            // In case of a tie, prefer the larger mip (downscaling).
             best = (dDown < dUp) ? itFloor->second : itCeil->second;
         }
         else {
-            // Upscaling is not tolerable, so we must downscale from the larger mip.
             best = itCeil->second;
         }
     }
-
-    // --- ADD THIS DEBUG LOG ---
-    // This will only compile and run in debug builds if LOG_DEBUG is enabled.
-    //LOG_DEBUG("FontManager", "For target size " + std::to_string(targetSize) + ", picked atlas size " + std::to_string(best ? best->fontSize : 0));
-    // -------------------------
-
     return best;
-}// MODIFIED: Uses the max-resolution font handle for best precision
-int FontManager::getKerning(Uint16 prevChar, Uint16 curChar) const {
+}
+
+// MODIFIED: Uses the max-resolution font handle for best precision
+int FontManager::getKerning(Uint32 prevChar, Uint32 curChar) const {  // ? was Uint16
     if (!max_font_ || prevChar == 0 || curChar == 0) return 0;
-    return TTF_GetFontKerningSizeGlyphs(max_font_, prevChar, curChar);
+    return TTF_GetFontKerningSizeGlyphs32(max_font_, prevChar, curChar);  // ? was GetFontKerningSizeGlyphs
 }
 
 // MODIFIED: Calculates width based on the metrics of the highest-resolution font
@@ -533,22 +729,52 @@ int FontManager::getWidth(const std::string& text) {
         return 0;
     }
 
-    // Get glyph data from the highest-resolution mip level for measurement
     const MipLevel* maxMip = mipLevels_.rbegin()->second;
 
     int width = 0;
-    Uint16 prev = 0;
+    Uint32 prev = 0;  // ? was Uint16
     bool haveGlyph = false;
 
-    for (unsigned char uc : text) {
-        Uint16 ch = (Uint16)uc;
+    const char* ptr = text.c_str();
+    const char* end = ptr + text.size();
+
+    while (ptr < end) {
+        uint32_t codepoint = 0;
+        unsigned char c = *ptr++;
+
+        if (c < 0x80) {
+            codepoint = c;
+        }
+        else if ((c & 0xE0) == 0xC0) {
+            codepoint = ((c & 0x1F) << 6) | (*ptr++ & 0x3F);
+        }
+        else if ((c & 0xF0) == 0xE0) {
+            codepoint = ((c & 0x0F) << 12) | ((*ptr++ & 0x3F) << 6) | (*ptr++ & 0x3F);
+        }
+        else if ((c & 0xF8) == 0xF0) {
+            codepoint = ((c & 0x07) << 18) | ((*ptr++ & 0x3F) << 12) |
+                ((*ptr++ & 0x3F) << 6) | (*ptr++ & 0x3F);
+        }
+        else {
+            prev = 0;
+            continue;
+        }
+
+        Uint32 ch = codepoint;  // ? Full Uint32, no truncation
         auto it = maxMip->glyphs.find(ch);
+        if (it == maxMip->glyphs.end()) {
+            it = maxMip->dynamicGlyphs.find(ch);  // ? Check dynamic too
+        }
+
         if (it != maxMip->glyphs.end()) {
             const GlyphInfo& g = it->second;
             haveGlyph = true;
             width += getKerning(prev, ch);
             width += g.advance;
             prev = ch;
+        }
+        else {
+            prev = 0;
         }
     }
 
@@ -557,7 +783,6 @@ int FontManager::getWidth(const std::string& text) {
     }
     return width;
 }
-
 int FontManager::getOutlinePx() const {
     return outlinePx_;
 }

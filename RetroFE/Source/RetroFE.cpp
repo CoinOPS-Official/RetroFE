@@ -445,6 +445,15 @@ void RetroFE::launchExit(bool userInitiated) {
 #ifdef __APPLE__
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 #endif
+	bool globalHiscoresEnabled = false;
+	config_.getProperty(OPTION_GLOBALHISCORESENABLED, globalHiscoresEnabled);
+	if (globalHiscoresEnabled) {
+		HiScores::getInstance().refreshGlobalAllFromSingleCallAsync(
+			/*limit=*/0
+			// Optional finish hook:
+			, []() { LOG_INFO("HiScores", "Global refresh completed."); }
+		);
+	}
 }
 
 // Free the textures, and optionall take down SDL
@@ -708,6 +717,10 @@ bool RetroFE::run() {
 	l.startScript();
 	config_.getProperty(OPTION_KIOSK, kioskLock_);
 
+	//globalhiscores enabled?
+	bool globalHiscoresEnabled = false;
+	config_.getProperty(OPTION_GLOBALHISCORESENABLED, globalHiscoresEnabled);
+
 	// settings button
 	std::string settingsCollection = "";
 	std::string settingsPlaylist = "settings";
@@ -781,7 +794,7 @@ bool RetroFE::run() {
 		}
 
 
-		if (nowMs_loopStart >= nextFetchTimeMs) {
+		if (globalHiscoresEnabled && nowMs_loopStart >= nextFetchTimeMs) {
 			// Advance by fixed steps to avoid drift if we were paused for a while
 			do { nextFetchTimeMs += GlobalScoreFetchIntervalMs; } while (nowMs_loopStart >= nextFetchTimeMs);
 

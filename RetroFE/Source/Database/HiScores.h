@@ -16,6 +16,7 @@ struct HighScoreTable {
     std::string id;                                 // table/page title
     std::vector<std::string> columns;               // column names
     std::vector<std::vector<std::string>> rows;     // cell rows
+    std::vector<std::vector<bool>> isPlaceholder;  // parallel to rows
     bool forceRedraw = false;
 };
 

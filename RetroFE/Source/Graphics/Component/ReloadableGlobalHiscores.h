@@ -23,7 +23,7 @@
 #include "Component.h"
 
  // Forward declarations
-    class Configuration;
+class Configuration;
 class FontManager;
 struct HighScoreData;
 
@@ -72,22 +72,8 @@ private:
         LeftMiddle
     };
 
-    // --- Structures ---
-
-    struct QrEntry {
-        SDL_Texture* tex = nullptr;
-        int w = 0;
-        int h = 0;
-        bool ok = false;
-        SDL_FRect dst{ 0, 0, 0, 0 };  // destination rect in component space
-    };
-
     // --- Core rendering ---
     void reloadTexture();
-
-    // --- QR management ---
-    void destroyAllQr_();
-    void destroyPrevQr_();
 
     // --- Grid baseline computation ---
     void computeGridBaseline_(FontManager* font,
@@ -95,19 +81,19 @@ private:
         float baseScale, float asc);
 
     // --- State helpers ---
-    void beginContext_();      // new game/score context; reset everything
+    void beginContext_(bool resetQr = true);      // new game/score context; reset everything
     void beginPageFlip_();     // enter Crossfading; snapshot happens in reloadTexture()
-    void updateState_(float dt, bool visible);
     void computeAlphas_(float baseA,
-        float& prevCompA, float& newCompA,
-        float& prevQrA, float& newQrA) const;
+        float& prevCompA, float& newCompA) const;  // CHANGED: removed QR alphas
 
     // One-shot snapshot helper used during crossfading
     void snapshotPrevPage_(SDL_Renderer* r, int compositeW, int compositeH);
 
     // --- Change detection ---
-    std::unordered_map<std::string, uint64_t> lastSeenHashes_;  // gameId -- last hash we rendered
-
+    std::string cachedIscoredId_;                    // last iscoredId string we processed
+    std::vector<std::string> cachedIds_;             // parsed ids from that string
+    std::unordered_map<std::string, uint64_t> lastSeenHashes_;  // gameId - last hash we rendered
+    Item const* lastSelectedItem_ = nullptr;
 
     // --- Config / Font ---
     FontManager* fontInst_;
@@ -117,16 +103,16 @@ private:
     int          displayOffset_;
 
     // --- State / Resources ---
+
+    bool           tablesNeedRedraw_;    // Tables need re-rendering (data/geometry changed)
     bool           needsRedraw_;
     HighScoreData* highScoreTable_;
 
     // Composite textures
-    SDL_Texture* intermediateTexture_;      // current page composite
-    SDL_Texture* prevCompositeTexture_;     // previous page for crossfade
-
-    // QR code textures
-    std::vector<QrEntry> qrByTable_;        // current page QRs
-    std::vector<QrEntry> prevQrByTable_;    // previous page QRs for crossfade
+    SDL_Texture* tableTexture_;             // Tables only (cached until data/geometry changes)
+    SDL_Texture* intermediateTexture_;      // current page (tables + QRs composited together)
+    SDL_Texture* prevCompositeTexture_;     // previous page snapshot
+    SDL_Texture* crossfadeTexture_;  // Pre-composited crossfade result
 
     // --- Geometry cache ---
     float prevGeomW_;
@@ -172,6 +158,11 @@ private:
     float     qrT_;             // QR delay/fade timer
     float     qrDelaySec_;      // delay before QR first appears
     float     qrFadeSec_;       // QR fade-in duration
+
+    // QR surface cache (loaded once, reused during fade)
+    std::vector<SDL_Texture*> cachedQrTextures_;
+    std::vector<std::pair<int, int>> cachedQrSizes_;
+    std::vector<std::string> cachedQrGameIds_;
 
     // --- QR configuration ---
     QrPlacement qrPlacement_;   // where to place QR codes

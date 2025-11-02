@@ -63,29 +63,32 @@ void Text::draw() {
     FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
     if (!font || textData_.empty()) return;
 
-    // --- NEW: Select the best MipLevel for the current render size ---
+    // Select the best MipLevel for the current render size
     const int targetFontSize = static_cast<int>(baseViewInfo.FontSize);
     const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
     if (!mip || !mip->fillTexture) {
-        // If no suitable mip is found, we cannot draw.
         return;
     }
 
-    // MODIFIED: Get textures from the selected mip level.
+    if (mip) {
+        LOG_INFO("Text", "Text: '" + textData_ + "' targetSize=" +
+            std::to_string(targetFontSize) +
+            " selectedMip=" + std::to_string(mip->fontSize) +
+            " scale=" + std::to_string((mip->fontSize > 0) ? (baseViewInfo.FontSize / (float)mip->fontSize) : 1.f));  // ? Use same formula
+    }
+
+    // Get textures from the selected mip level
     SDL_Texture* fillTex = mip->fillTexture;
     SDL_Texture* outlineTex = mip->outlineTexture;
 
-    // MODIFIED: The scale is now calculated relative to the chosen mip's height,
-    // which results in a much higher quality downscale.
-    const float mipImageHeight = float(mip->height);
-    const float scale = (mipImageHeight > 0.f) ? (baseViewInfo.FontSize / mipImageHeight) : 1.f;
+    // Calculate scale relative to the chosen mip's height
+    const float scale = (mip->fontSize > 0) ? (baseViewInfo.FontSize / (float)mip->fontSize) : 1.f;
 
     const float maxW =
         (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
         ? baseViewInfo.Width : baseViewInfo.MaxWidth;
 
     if (needsUpdate_ || lastScale_ != scale || lastMaxWidth_ != maxW) {
-        // Pass the new mip-relative scale to the update function.
         updateGlyphPositions(font, scale, maxW);
         needsUpdate_ = false;
         lastScale_ = scale;
@@ -93,7 +96,7 @@ void Text::draw() {
     }
     if (cachedPositions_.empty()) return;
 
-    // --- compute origin (unchanged) ---
+    // Compute origin
     const float oldW = baseViewInfo.Width;
     const float oldH = baseViewInfo.Height;
     const float oldIW = baseViewInfo.ImageWidth;
@@ -101,8 +104,8 @@ void Text::draw() {
 
     baseViewInfo.Width = cachedWidth_;
     baseViewInfo.Height = baseViewInfo.FontSize;
-    baseViewInfo.ImageWidth = float(mip->atlasW);  // MODIFIED: use mip's atlas size
-    baseViewInfo.ImageHeight = float(mip->atlasH); // MODIFIED: use mip's atlas size
+    baseViewInfo.ImageWidth = float(mip->atlasW);
+    baseViewInfo.ImageHeight = float(mip->atlasH);
 
     const float xOrigin = baseViewInfo.XRelativeToOrigin();
     const float yOrigin = baseViewInfo.YRelativeToOrigin();
@@ -113,52 +116,119 @@ void Text::draw() {
     const int layoutW = page.getLayoutWidthByMonitor(baseViewInfo.Monitor);
     const int layoutH = page.getLayoutHeightByMonitor(baseViewInfo.Monitor);
 
-    // --- PASS 1: OUTLINE — anchor by subtracting fill offset ---
-    if (outlineTex) {
+    // --- PASS 1: OUTLINE ---
+    if (outlineTex || mip->dynamicOutlineTexture) {
         SDL_FRect dst;
+        const char* ptr = textData_.c_str();
+        const char* end = ptr + textData_.size();
         size_t i = 0;
-        for (unsigned char uc : textData_) {
-            if (i >= cachedPositions_.size()) break;
-            const auto& pos = cachedPositions_[i++];
-            Uint16 ch = (Uint16)uc;
 
-            // MODIFIED: Get glyph info from the mip level's map.
+        while (ptr < end && i < cachedPositions_.size()) {
+            const auto& pos = cachedPositions_[i];
+
+            // UTF-8 decode
+            uint32_t codepoint = 0;
+            unsigned char c = *ptr++;
+            if (c < 0x80) {
+                codepoint = c;
+            }
+            else if ((c & 0xE0) == 0xC0) {
+                codepoint = ((c & 0x1F) << 6) | (*ptr++ & 0x3F);
+            }
+            else if ((c & 0xF0) == 0xE0) {
+                codepoint = ((c & 0x0F) << 12) | ((*ptr++ & 0x3F) << 6) | (*ptr++ & 0x3F);
+            }
+            else if ((c & 0xF8) == 0xF0) {
+                codepoint = ((c & 0x07) << 18) | ((*ptr++ & 0x3F) << 12) |
+                    ((*ptr++ & 0x3F) << 6) | (*ptr++ & 0x3F);
+            }
+            else {
+                continue; // Invalid UTF-8
+            }
+
+            Uint32 ch = codepoint;
+
+            // Look up glyph (pre-loaded or dynamic)
             auto it = mip->glyphs.find(ch);
-            if (it == mip->glyphs.end()) continue;
-            const FontManager::GlyphInfo& g = it->second;
+            bool isDynamic = false;
+            if (it == mip->glyphs.end()) {
+                it = mip->dynamicGlyphs.find(ch);
+                isDynamic = true;
+                if (it == mip->dynamicGlyphs.end()) {  // ? FIXED
+                    i++;
+                    continue;
+                }
+            }
 
-            // packed (outline) source
+            const FontManager::GlyphInfo& g = it->second;
             const SDL_Rect& srcOutline = g.rect;
 
-            // destination: start from fill top-left, then shift back by fill offset
             dst.x = xOrigin + pos.xOffset - g.fillX * scale;
             dst.y = yOrigin + pos.yOffset - g.fillY * scale;
             dst.w = srcOutline.w * scale;
             dst.h = srcOutline.h * scale;
 
-            SDL::renderCopyF(
-                outlineTex,
-                baseViewInfo.Alpha,
-                &srcOutline,
-                &dst,
-                baseViewInfo,
-                layoutW, layoutH
-            );
+            // Use correct texture (pre-loaded or dynamic)
+            SDL_Texture* texToUse = isDynamic ? mip->dynamicOutlineTexture : outlineTex;
+            if (texToUse) {
+                SDL::renderCopyF(
+                    texToUse,
+                    baseViewInfo.Alpha,
+                    &srcOutline,
+                    &dst,
+                    baseViewInfo,
+                    layoutW, layoutH
+                );
+            }
+
+            i++;
         }
     }
 
-    // --- PASS 2: FILL — anchor directly at fill top-left (no extra +fillX/+fillY) ---
+    // --- PASS 2: FILL ---
     {
         SDL_FRect dst;
+        const char* ptr = textData_.c_str();
+        const char* end = ptr + textData_.size();
         size_t i = 0;
-        for (unsigned char uc : textData_) {
-            if (i >= cachedPositions_.size()) break;
-            const auto& pos = cachedPositions_[i++];
-            Uint16 ch = (Uint16)uc;
 
-            // MODIFIED: Get glyph info from the mip level's map.
+        while (ptr < end && i < cachedPositions_.size()) {
+            const auto& pos = cachedPositions_[i];
+
+            // UTF-8 decode
+            uint32_t codepoint = 0;
+            unsigned char c = *ptr++;
+            if (c < 0x80) {
+                codepoint = c;
+            }
+            else if ((c & 0xE0) == 0xC0) {
+                codepoint = ((c & 0x1F) << 6) | (*ptr++ & 0x3F);
+            }
+            else if ((c & 0xF0) == 0xE0) {
+                codepoint = ((c & 0x0F) << 12) | ((*ptr++ & 0x3F) << 6) | (*ptr++ & 0x3F);
+            }
+            else if ((c & 0xF8) == 0xF0) {
+                codepoint = ((c & 0x07) << 18) | ((*ptr++ & 0x3F) << 12) |
+                    ((*ptr++ & 0x3F) << 6) | (*ptr++ & 0x3F);
+            }
+            else {
+                continue; // Invalid UTF-8
+            }
+
+            Uint32 ch = codepoint;
+
+            // Look up glyph (pre-loaded or dynamic)
             auto it = mip->glyphs.find(ch);
-            if (it == mip->glyphs.end()) continue;
+            bool isDynamic = false;
+            if (it == mip->glyphs.end()) {
+                it = mip->dynamicGlyphs.find(ch);
+                isDynamic = true;
+                if (it == mip->dynamicGlyphs.end()) {  // ? FIXED
+                    i++;
+                    continue;
+                }
+            }
+
             const FontManager::GlyphInfo& g = it->second;
 
             SDL_Rect srcFill{
@@ -168,20 +238,39 @@ void Text::draw() {
                 g.fillH
             };
 
-            // Position is already the fill's top-left
             dst.x = xOrigin + pos.xOffset;
             dst.y = yOrigin + pos.yOffset;
             dst.w = g.fillW * scale;
             dst.h = g.fillH * scale;
 
-            SDL::renderCopyF(
-                fillTex,
-                baseViewInfo.Alpha,
-                &srcFill,
-                &dst,
-                baseViewInfo,
-                layoutW, layoutH
-            );
+            if (ch >= 65 && ch <= 90) {  // A-Z
+                LOG_INFO("Text", "Rendering '" + std::string(1, (char)ch) +
+                    "' dst.x=" + std::to_string(dst.x) +
+                    " dst.w=" + std::to_string(dst.w) +
+                    " src.w=" + std::to_string(srcFill.w));
+            }
+
+            // Use correct texture (pre-loaded or dynamic)
+            SDL_Texture* texToUse = isDynamic ? mip->dynamicFillTexture : fillTex;
+
+            if (ch >= 65 && ch <= 90) {
+                LOG_INFO("Text", "Char '" + std::string(1, (char)ch) +
+                    "' isDynamic=" + std::to_string(isDynamic) +
+                    " texture=" + (texToUse == fillTex ? "PRELOADED" : "DYNAMIC"));
+            }
+
+            if (texToUse) {
+                SDL::renderCopyF(
+                    texToUse,
+                    baseViewInfo.Alpha,
+                    &srcFill,
+                    &dst,
+                    baseViewInfo,
+                    layoutW, layoutH
+                );
+            }
+
+            i++;
         }
     }
 
@@ -204,32 +293,97 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
         ? static_cast<float>(targetFontSize) / static_cast<float>(font->getMaxFontSize())
         : 1.0f;
 
-    // Use double for running math to reduce accumulation error
     double penX = 0.0;
-    Uint16 prev = 0;
+    Uint32 prev = 0;
 
     struct PosTmp { SDL_Rect src; float xOff, yOff, advance_px; };
     std::vector<PosTmp> tmp; tmp.reserve(textData_.size());
 
-    for (unsigned char uc : textData_) {
-        const Uint16 ch = static_cast<Uint16>(uc);
+    const char* ptr = textData_.c_str();
+    const char* end = ptr + textData_.size();
+
+    while (ptr < end) {
+        uint32_t codepoint = 0;
+        unsigned char c = *ptr++;
+
+        if (c < 0x80) {
+            codepoint = c;
+        }
+        else if ((c & 0xE0) == 0xC0) {
+            codepoint = ((c & 0x1F) << 6) | (*ptr++ & 0x3F);
+        }
+        else if ((c & 0xF0) == 0xE0) {
+            codepoint = ((c & 0x0F) << 12) | ((*ptr++ & 0x3F) << 6) | (*ptr++ & 0x3F);
+        }
+        else if ((c & 0xF8) == 0xF0) {
+            codepoint = ((c & 0x07) << 18) | ((*ptr++ & 0x3F) << 12) |
+                ((*ptr++ & 0x3F) << 6) | (*ptr++ & 0x3F);
+        }
+        else {
+            prev = 0;
+            continue;
+        }
+
+        const Uint32 ch = codepoint;
 
         auto it = mip->glyphs.find(ch);
-        if (it == mip->glyphs.end() || it->second.rect.h <= 0) { prev = 0; continue; }
+        if (it == mip->glyphs.end() || it->second.rect.h <= 0) {
+            it = mip->dynamicGlyphs.find(ch);
+            if (it == mip->dynamicGlyphs.end()) {
+                if (ch >= 1024) {
+                    if (font->loadGlyphOnDemand(ch, const_cast<FontManager::MipLevel*>(mip))) {
+                        it = mip->dynamicGlyphs.find(ch);
+                        if (it == mip->dynamicGlyphs.end() || it->second.rect.h <= 0) {
+                            prev = 0;
+                            continue;
+                        }
+                    }
+                    else {
+                        prev = 0;
+                        continue;
+                    }
+                }
+                else {
+                    prev = 0;
+                    continue;
+                }
+            }
+        }
+
         const auto& g = it->second;
 
-        // kerning from max-res (int) -> screen px
-        const int   kern_fp = font->getKerning(prev, ch);
+        if (ch >= 65 && ch <= 90) {  // A-Z
+            bool isDynamic = (mip->glyphs.find(ch) == mip->glyphs.end());
+            LOG_INFO("Text", "Char '" + std::string(1, (char)ch) +
+                "' advance=" + std::to_string(g.advance) +
+                " minX=" + std::to_string(g.minX) +
+                " maxX=" + std::to_string(g.maxX) +
+                " source=" + (isDynamic ? "DYNAMIC" : "PRELOADED"));
+        }
+
+        // Get kerning and apply to pen
+        const int kern_fp = font->getKerning(prev, ch);
         const float kern_px = static_cast<float>(kern_fp) * kerningScale;
+        penX += static_cast<double>(kern_px);
 
-        // positions in screen px (explicit casts for clarity)
-        const float minX_px = static_cast<float>(g.minX) * scale;
-        const float maxY_px = static_cast<float>(g.maxY) * scale;
+        // FIXED: Position glyph at penX directly (don't add minX!)
+        const float gx = static_cast<float>(penX);
 
-        const float gx = static_cast<float>(penX) + kern_px + minX_px;
-        const float gy = (ascent_f * scale) - maxY_px;
+        // Y position (this was already correct)
+        const float minY_px = static_cast<float>(g.minY) * scale;
+        const float gy = (ascent_f * scale) - minY_px - (g.fillH * scale);
 
-        const float adv_px = static_cast<float>(g.advance) * scale + kern_px;
+        // Advance pen
+        const float adv_px = static_cast<float>(g.advance) * scale;
+
+        if (ch >= 65 && ch <= 90) {  // A-Z
+            LOG_INFO("Text", "Char '" + std::string(1, (char)ch) +
+                "' penX=" + std::to_string(penX) +
+                " gx=" + std::to_string(gx) +
+                " kern_px=" + std::to_string(kern_px) +
+                " adv_px=" + std::to_string(adv_px));
+        }
+
         const double nextPen = penX + static_cast<double>(adv_px);
 
         if (maxWidth > 0.0f && static_cast<float>(nextPen) > maxWidth) break;

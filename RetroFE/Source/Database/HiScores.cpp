@@ -2143,11 +2143,12 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
 
 		// 3) Emit top 10 with formatting
 		HighScoreTable t;
-		t.id = pg.title;                             // show title even for single table
+		t.id = pg.title;
 		t.columns = { "Rank", "Name", scoreHeader, "Date" };
 
 		constexpr size_t kRowsPerTable = 10;
 		t.rows.reserve(kRowsPerTable);
+		t.isPlaceholder.reserve(kRowsPerTable);  // NEW
 
 		size_t rank = 1;
 		for (const auto& r : pg.rows) {
@@ -2172,11 +2173,11 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
 				if (isScaledScoreMode_(mode)) {
 					double val;
 					if (getScaledScore_(mode, r.score, val)) {
-						const int dp = cfg.hasDpOverride ? cfg.dpOverride : -1; // -1 => use default for the mode
+						const int dp = cfg.hasDpOverride ? cfg.dpOverride : -1;
 						scorePretty = formatScaledScoreStr_(mode, val, dp);
 					}
 					else {
-						scorePretty = formatThousands_(r.score); // fallback
+						scorePretty = formatThousands_(r.score);
 					}
 				}
 				else {
@@ -2189,6 +2190,22 @@ HighScoreData* HiScores::getGlobalHiScoreTable(Item* item) const {
 				r.player.empty() ? phName : r.player,
 				scorePretty.empty() ? phScore : scorePretty,
 				datePretty.empty() ? phDate : datePretty
+				});
+
+			// NEW: Mark placeholders (false = real data for all columns)
+			t.isPlaceholder.push_back({ false, false, false, false });
+		}
+
+		for (; rank <= kRowsPerTable; ++rank) {
+			t.rows.push_back({ ordinal_(rank), phName, phScore, phDate });
+
+			// NEW: Mark ALL cells in this row as placeholders
+			// Column order: Rank, Name, Score, Date
+			t.isPlaceholder.push_back({
+				false,  // Rank is never a placeholder (always shows "10th" etc)
+				true,   // Name
+				true,   // Score
+				true    // Date
 				});
 		}
 
