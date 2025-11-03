@@ -145,7 +145,6 @@ static void applyVerticalGradientOverlay_(SDL_Surface* s,
 }
 
 // Use SDL blending to apply a grayscale alpha mask.
-// Black = transparent, white = opaque.
 static void bakeAlphaMaskFromPNG_(SDL_Surface* qr, const std::string& maskPath) {
 	if (!qr || maskPath.empty()) return;
 
@@ -161,25 +160,14 @@ static void bakeAlphaMaskFromPNG_(SDL_Surface* qr, const std::string& maskPath) 
 	// Scale if sizes differ
 	if (mask->w != qr->w || mask->h != qr->h) {
 		SDL_Surface* scaled = SDL_CreateRGBSurfaceWithFormat(0, qr->w, qr->h, 32, SDL_PIXELFORMAT_ARGB8888);
-		SDL_Rect dst{ 0,0,qr->w,qr->h };
+		if (!scaled) { SDL_FreeSurface(mask); return; }
+		SDL_Rect dst{ 0, 0, qr->w, qr->h };
 		SDL_BlitScaled(mask, nullptr, scaled, &dst);
 		SDL_FreeSurface(mask);
 		mask = scaled;
 	}
 
-	// Convert mask RGB ? alpha; set RGB to 255 so color multiplication is neutral.
-	SDL_LockSurface(mask);
-	{
-		Uint32* p = (Uint32*)mask->pixels;
-		const int total = mask->w * mask->h;
-		for (int i = 0; i < total; ++i) {
-			Uint32 px = p[i];
-			Uint8 grey = (Uint8)((px >> 16) & 0xFF); // use red channel
-			p[i] = (Uint32(grey) << 24) | 0x00FFFFFFu; // A=grey, RGB=255
-		}
-	}
-	SDL_UnlockSurface(mask);
-
+	// Just apply the mask's alpha directly to the QR code's alpha
 	SDL_LockSurface(qr);
 	SDL_LockSurface(mask);
 	{
@@ -187,10 +175,12 @@ static void bakeAlphaMaskFromPNG_(SDL_Surface* qr, const std::string& maskPath) 
 		Uint32* mp = (Uint32*)mask->pixels;
 		int total = qr->w * qr->h;
 		for (int i = 0; i < total; ++i) {
-			Uint8 da = (qp[i] >> 24) & 0xFF;
-			Uint8 ma = (mp[i] >> 24) & 0xFF;
+			Uint32 qv = qp[i];
+			Uint32 mv = mp[i];
+			Uint8 da = (qv >> 24) & 0xFF;      // QR's current alpha
+			Uint8 ma = (mv >> 24) & 0xFF;      // Mask's alpha (the actual mask!)
 			Uint8 na = (Uint8)((unsigned(da) * ma) / 255u);
-			qp[i] = (qp[i] & 0x00FFFFFFu) | (Uint32(na) << 24);
+			qp[i] = (qv & 0x00FFFFFFu) | (Uint32(na) << 24);
 		}
 	}
 	SDL_UnlockSurface(mask);
