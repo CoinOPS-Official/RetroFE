@@ -689,31 +689,36 @@ void FontManager::setColor(SDL_Color c) {
 // NEW: Gets the best mip level for a target rendering size
 // In Font.cpp
 
+// Font.cpp
 const FontManager::MipLevel* FontManager::getMipLevelForSize(int targetSize) const {
     if (mipLevels_.empty()) return nullptr;
 
-    auto itCeil = mipLevels_.lower_bound(targetSize);
-    const MipLevel* best = nullptr;
+    // Include outline thickness in the effective draw height.
+    // If there's no outline, outlinePx_ is 0 and this is a no-op.
+    const int outline = outlinePx_ > 0 ? outlinePx_ : 0;
+    const int effectiveTarget = targetSize + (outline * 2);
 
-    if (itCeil == mipLevels_.begin()) {
-        best = itCeil->second;
-    }
-    else if (itCeil == mipLevels_.end()) {
-        best = std::prev(itCeil)->second;
-    }
-    else {
-        auto itFloor = std::prev(itCeil);
-        const float UPSCALE_TOLERANCE_PERCENT = 0.15f;
-        int floorSize = itFloor->first;
-        if ((targetSize - floorSize) <= (floorSize * UPSCALE_TOLERANCE_PERCENT)) {
-            int dUp = std::abs(itCeil->first - targetSize);
-            int dDown = std::abs(floorSize - targetSize);
-            best = (dDown < dUp) ? itFloor->second : itCeil->second;
-        }
-        else {
-            best = itCeil->second;
+    const MipLevel* best = nullptr;
+    int smallestLargerHeight = INT_MAX;
+
+    // Prefer the smallest mip >= effectiveTarget (downscale only)
+    for (const auto& [fontSize, mip] : mipLevels_) {
+        if (!mip) continue;
+        if (mip->height == effectiveTarget) return mip;
+        if (mip->height > effectiveTarget && mip->height < smallestLargerHeight) {
+            smallestLargerHeight = mip->height;
+            best = mip;
         }
     }
+
+    // If none are large enough, fall back to largest available
+    if (!best) {
+        for (const auto& [fontSize, mip] : mipLevels_) {
+            if (!mip) continue;
+            if (!best || mip->height > best->height) best = mip;
+        }
+    }
+
     return best;
 }
 
