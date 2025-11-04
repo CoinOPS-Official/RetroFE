@@ -72,7 +72,7 @@ RetroFE::RetroFE(Configuration& c)
 	: initialized(false), initializeError(false), initializeThread(NULL), config_(c), db_(NULL), metadb_(NULL),
 	input_(config_), currentPage_(NULL), keyInputDisable_(0), currentTime_(0), lastLaunchReturnTime_(0),
 	keyLastTime_(0), keyDelayTime_(.3f), reboot_(false), kioskLock_(false), paused_(false), buildInfo_(false),
-	collectionInfo_(false), gameInfo_(false)
+	collectionInfo_(false), gameInfo_(false), pendingScrollState_(RETROFE_IDLE)
 {
 	menuMode_ = false;
 	attractMode_ = false;
@@ -764,7 +764,15 @@ bool RetroFE::run()
 
 		case RETROFE_GAMEINFO_EXIT:
 			currentPage_->gameInfoExit();
-			state = RETROFE_PLAYLIST_ENTER;
+			if (pendingScrollState_ != RETROFE_IDLE)
+			{
+				state = pendingScrollState_;
+				pendingScrollState_ = RETROFE_IDLE;
+			}
+			else
+			{
+				state = RETROFE_PLAYLIST_ENTER;
+			}
 			break;
 
 		case RETROFE_COLLECTIONINFO_ENTER:
@@ -774,7 +782,15 @@ bool RetroFE::run()
 
 		case RETROFE_COLLECIONINFO_EXIT:
 			currentPage_->collectionInfoExit();
-			state = RETROFE_PLAYLIST_ENTER;
+			if (pendingScrollState_ != RETROFE_IDLE)
+			{
+				state = pendingScrollState_;
+				pendingScrollState_ = RETROFE_IDLE;
+			}
+			else
+			{
+				state = RETROFE_PLAYLIST_ENTER;
+			}
 			break;
 
 		case RETROFE_BUILDINFO_ENTER:
@@ -784,7 +800,15 @@ bool RetroFE::run()
 
 		case RETROFE_BUILDINFO_EXIT:
 			currentPage_->buildInfoExit();
-			state = RETROFE_PLAYLIST_ENTER;
+			if (pendingScrollState_ != RETROFE_IDLE)
+			{
+				state = pendingScrollState_;
+				pendingScrollState_ = RETROFE_IDLE;
+			}
+			else
+			{
+				state = RETROFE_PLAYLIST_ENTER;
+			}
 			break;
 
 		case RETROFE_PLAYLIST_NEXT:
@@ -899,7 +923,7 @@ bool RetroFE::run()
 				}
 				break;
 			}
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			state = RETROFE_QUICKLIST_PAGE_REQUEST;
 			break;
 		case RETROFE_SETTINGS_REQUEST:
@@ -968,7 +992,7 @@ bool RetroFE::run()
 				}
 				break;
 			}
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			state = RETROFE_SETTINGS_PAGE_REQUEST;
 			break;
 		case RETROFE_PLAYLIST_PREV_CYCLE:
@@ -2345,7 +2369,7 @@ bool RetroFE::run()
 							// hide toggle before attract mode
 							if (buildInfo_ || collectionInfo_ || gameInfo_)
 							{
-								resetInfoToggle();
+								(void)resetInfoToggle();
 							}
 							else
 							{
@@ -2556,7 +2580,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			if (infoExitOnScroll)
 			{
-				resetInfoToggle();
+				RETROFE_STATE exitState = resetInfoToggle();
+				if (exitState != RETROFE_IDLE)
+				{
+					pendingScrollState_ = RETROFE_SCROLL_PLAYLIST_FORWARD;
+					return exitState;
+				}
 			}
 			return RETROFE_SCROLL_PLAYLIST_FORWARD;
 		}
@@ -2567,7 +2596,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			if (infoExitOnScroll)
 			{
-				resetInfoToggle();
+				RETROFE_STATE exitState = resetInfoToggle();
+				if (exitState != RETROFE_IDLE)
+				{
+					pendingScrollState_ = RETROFE_SCROLL_PLAYLIST_BACK;
+					return exitState;
+				}
 			}
 			return RETROFE_SCROLL_PLAYLIST_BACK;
 		}
@@ -2582,7 +2616,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			if (infoExitOnScroll)
 			{
-				resetInfoToggle();
+				RETROFE_STATE exitState = resetInfoToggle();
+				if (exitState != RETROFE_IDLE)
+				{
+					pendingScrollState_ = RETROFE_SCROLL_FORWARD;
+					return exitState;
+				}
 			}
 			return RETROFE_SCROLL_FORWARD;
 		}
@@ -2595,7 +2634,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			if (infoExitOnScroll)
 			{
-				resetInfoToggle();
+				RETROFE_STATE exitState = resetInfoToggle();
+				if (exitState != RETROFE_IDLE)
+				{
+					pendingScrollState_ = RETROFE_SCROLL_BACK;
+					return exitState;
+				}
 			}
 			return RETROFE_SCROLL_BACK;
 		}
@@ -2612,7 +2656,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			if (infoExitOnScroll)
 			{
-				resetInfoToggle();
+				RETROFE_STATE exitState = resetInfoToggle();
+				if (exitState != RETROFE_IDLE)
+				{
+					pendingScrollState_ = RETROFE_SCROLL_PLAYLIST_FORWARD;
+					return exitState;
+				}
 			}
 			return RETROFE_SCROLL_PLAYLIST_FORWARD;
 		}
@@ -2623,7 +2672,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			if (infoExitOnScroll)
 			{
-				resetInfoToggle();
+				RETROFE_STATE exitState = resetInfoToggle();
+				if (exitState != RETROFE_IDLE)
+				{
+					pendingScrollState_ = RETROFE_SCROLL_PLAYLIST_BACK;
+					return exitState;
+				}
 			}
 			return RETROFE_SCROLL_PLAYLIST_BACK;
 		}
@@ -2638,7 +2692,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			if (infoExitOnScroll)
 			{
-				resetInfoToggle();
+				RETROFE_STATE exitState = resetInfoToggle();
+				if (exitState != RETROFE_IDLE)
+				{
+					pendingScrollState_ = RETROFE_SCROLL_FORWARD;
+					return exitState;
+				}
 			}
 			return RETROFE_SCROLL_FORWARD;
 		}
@@ -2651,7 +2710,12 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			attract_.reset();
 			if (infoExitOnScroll)
 			{
-				resetInfoToggle();
+				RETROFE_STATE exitState = resetInfoToggle();
+				if (exitState != RETROFE_IDLE)
+				{
+					pendingScrollState_ = RETROFE_SCROLL_BACK;
+					return exitState;
+				}
 			}
 			return RETROFE_SCROLL_BACK;
 		}
@@ -2709,7 +2773,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			}
 			input_.resetStates();
 			keyLastTime_ = currentTime_;
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			if (collectionCycle_.size())
 			{
@@ -2738,7 +2802,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			}
 			input_.resetStates();
 			keyLastTime_ = currentTime_;
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			if (collectionCycle_.size())
 			{
@@ -2769,7 +2833,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		{
 			if (!isStandalonePlaylist(currentPage_->getPlaylistName()))
 			{
-				resetInfoToggle();
+				(void)resetInfoToggle();
 				attract_.reset();
 				keyLastTime_ = currentTime_;
 				return RETROFE_PLAYLIST_NEXT_CYCLE;
@@ -2779,7 +2843,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		{
 			if (!isStandalonePlaylist(currentPage_->getPlaylistName()))
 			{
-				resetInfoToggle();
+				(void)resetInfoToggle();
 				attract_.reset();
 				keyLastTime_ = currentTime_;
 				return RETROFE_PLAYLIST_PREV_CYCLE;
@@ -2787,7 +2851,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 		}
 		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodeBack))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			if (back(exit) || exit)
 			{
@@ -2814,7 +2878,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			(input_.keystate(UserInput::KeyCodeCollectionLeft) &&
 				(!page->isHorizontalScroll() || !input_.keystate(UserInput::KeyCodeLeft)))))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			bool backOnCollection = false;
 			config_.getProperty(OPTION_BACKONCOLLECTION, backOnCollection);
@@ -2829,7 +2893,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			(input_.keystate(UserInput::KeyCodeCollectionRight) &&
 				(!page->isHorizontalScroll() || !input_.keystate(UserInput::KeyCodeRight)))))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			bool backOnCollection = false;
 			config_.getProperty(OPTION_BACKONCOLLECTION, backOnCollection);
@@ -2841,7 +2905,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 
 		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodePageUp))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			page->pageScroll(Page::ScrollDirectionBack);
 			state = RETROFE_MENUJUMP_REQUEST;
@@ -2849,7 +2913,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 
 		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodePageDown))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			page->pageScroll(Page::ScrollDirectionForward);
 			state = RETROFE_MENUJUMP_REQUEST;
@@ -2857,7 +2921,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 
 		else if (input_.keystate(UserInput::KeyCodeLetterUp))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			if (currentPage_->getPlaylistName() != "lastplayed")
 			{
@@ -2881,7 +2945,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 
 		else if (input_.keystate(UserInput::KeyCodeLetterDown))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			if (currentPage_->getPlaylistName() != "lastplayed")
 			{
@@ -2919,7 +2983,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			(input_.keystate(UserInput::KeyCodePlaylistDown) && page->isHorizontalScroll()) ||
 			(input_.keystate(UserInput::KeyCodePlaylistRight) && !page->isHorizontalScroll())))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			state = RETROFE_PLAYLIST_NEXT;
 		}
@@ -2928,7 +2992,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 			(input_.keystate(UserInput::KeyCodePlaylistUp) && page->isHorizontalScroll()) ||
 			(input_.keystate(UserInput::KeyCodePlaylistLeft) && !page->isHorizontalScroll())))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			state = RETROFE_PLAYLIST_PREV;
 		}
@@ -3106,7 +3170,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 
 		else if (input_.keystate(UserInput::KeyCodeSelect) && !currentPage_->isMenuScrolling())
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			nextPageItem_ = page->getSelectedItem();
 			if (nextPageItem_)
@@ -3163,7 +3227,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page)
 
 		else if (!kioskLock_ && input_.keystate(UserInput::KeyCodeSaveFirstPlaylist))
 		{
-			resetInfoToggle();
+			(void)resetInfoToggle();
 			attract_.reset();
 			if (page->getMenuDepth() == 1)
 			{
@@ -3479,23 +3543,24 @@ std::string RetroFE::getLayoutFileName()
 	return layoutName;
 }
 
-void RetroFE::resetInfoToggle()
+RetroFE::RETROFE_STATE RetroFE::resetInfoToggle()
 {
 	if (gameInfo_)
 	{
-		currentPage_->gameInfoExit();
 		gameInfo_ = false;
+		return RETROFE_GAMEINFO_EXIT;
 	}
 	else if (collectionInfo_)
 	{
-		currentPage_->collectionInfoExit();
 		collectionInfo_ = false;
+		return RETROFE_COLLECIONINFO_EXIT;
 	}
 	else if (buildInfo_)
 	{
-		currentPage_->buildInfoExit();
 		buildInfo_ = false;
+		return RETROFE_BUILDINFO_EXIT;
 	}
+	return RETROFE_IDLE;
 }
 
 MetadataDatabase* RetroFE::getMetaDb() {
