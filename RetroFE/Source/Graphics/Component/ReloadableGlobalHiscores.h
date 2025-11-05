@@ -20,7 +20,6 @@
 #include <cstdint>
 #include <SDL2/SDL.h>
 
-#include "../Font.h"
 #include "Component.h"
 
  // Forward declarations
@@ -44,7 +43,6 @@ public:
     void  initializeFonts() override;
 
 private:
-    
     // --- Enums for state management ---
 
     // Fade state for the composite/page
@@ -73,35 +71,6 @@ private:
         RightMiddle,
         LeftMiddle
     };
-
-	//--- Text batch helper ---
-    struct TextBatch {
-        std::vector<SDL_Vertex> vertices;
-        std::vector<int> indices;
-        const FontManager::MipLevel* mip = nullptr;
-
-        void clear();
-        void addQuad(const SDL_FRect& dst, const SDL_Rect& src,
-            int atlasW, int atlasH, SDL_Color color);
-        void render(SDL_Renderer* r, SDL_Texture* texture);
-    };
-
-    // --- Layout caching structure (computed every frame) ---
-    struct SlotLayout {
-        SDL_FRect panelRect = { 0.f, 0.f, 0.f, 0.f };  // Text panel rectangle
-        SDL_FRect qrDst = { 0.f, 0.f, 0.f, 0.f };      // QR destination (pre-rounded, cached)
-        float xCell = 0.f;                            // Cell origin
-        float yCell = 0.f;
-        float finalScale = 1.f;                       // Text scale for this slot
-        float lineH = 0.f;                            // Line height at finalScale
-        std::vector<float> colW;                      // Column widths (empty by default)
-        float colPad = 0.f;                           // Column padding
-        float drawX0 = 0.f;                           // Text origin X
-        float drawY0 = 0.f;                           // Text origin Y (top of panel)
-        bool hasQr = false;                           // Whether this slot has a QR
-    };
-
-    std::vector<SlotLayout> slotLayouts_;  // Cached layout data
 
     // --- Core rendering ---
     void reloadTexture();
@@ -190,29 +159,12 @@ private:
     float     qrDelaySec_;      // delay before QR first appears
     float     qrFadeSec_;       // QR fade-in duration
 
+    // QR surface cache (loaded once, reused during fade)
+    std::vector<SDL_Texture*> cachedQrTextures_;
+    std::vector<std::pair<int, int>> cachedQrSizes_;
+    std::vector<std::string> cachedQrGameIds_;
+
     // --- QR configuration ---
     QrPlacement qrPlacement_;   // where to place QR codes
     int         qrMarginPx_;    // margin between QR and panel
-
-    // --- Dynamic QR Atlas ---
-    struct QrAtlasEntry {
-        SDL_Rect srcRect;
-        std::string gameId;
-        int atlasIndex;  // Which atlas this QR lives in
-    };
-
-    std::vector<SDL_Texture*> qrAtlasTextures_;  // Multiple atlases
-    int currentAtlasIndex_;                       // Which atlas we're currently filling
-    std::unordered_map<std::string, QrAtlasEntry> qrAtlasMap_;
-    int qrAtlasWidth_;
-    int qrAtlasHeight_;
-    int qrAtlasMaxSize_;
-    int qrNextX_;
-    int qrNextY_;
-    bool qrAtlasBuilt_;
-
-    void buildInitialAtlas_(SDL_Renderer* renderer);
-    void clearQrAtlas_();
-    bool addQrToAtlas_(SDL_Renderer* renderer, const std::string& gameId);
-    const QrAtlasEntry* findQrInAtlas_(const std::string& gameId) const;
 };
