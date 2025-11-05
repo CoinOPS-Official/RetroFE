@@ -72,6 +72,23 @@ private:
         LeftMiddle
     };
 
+
+    // Per-table layout cache struct
+    struct TableLayout {
+        float finalScale = 0.0f;
+        float ratio = 1.0f;
+        float panelW = 0.0f;
+        float panelH = 0.0f;
+        float anchorX = 0.0f;
+        float anchorY = 0.0f;
+        float drawX0 = 0.0f;
+        float titleH = 0.0f;
+        float headerH = 0.0f;
+        float dataH = 0.0f;
+        std::vector<float> colW;  // per-column width at finalScale
+        SDL_FRect panelRect = { 0,0,0,0 }; // for QR positioning
+    };
+
     // --- Core rendering ---
     void reloadTexture();
 
@@ -167,4 +184,7 @@ private:
     // --- QR configuration ---
     QrPlacement qrPlacement_;   // where to place QR codes
     int         qrMarginPx_;    // margin between QR and panel
+
+    // Layout cache (populated in Stage 1, reused in Stage 2)
+    std::vector<TableLayout> cachedTableLayouts_;
 };

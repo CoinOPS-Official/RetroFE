@@ -121,6 +121,9 @@ void ReloadableGlobalHiscores::beginContext_(bool resetQr) {
         SDL_DestroyTexture(prevCompositeTexture_);
         prevCompositeTexture_ = nullptr;
     }
+
+    // NEW: Clear layout cache
+    cachedTableLayouts_.clear();
 }
 
 void ReloadableGlobalHiscores::beginPageFlip_() {
@@ -753,7 +756,6 @@ void ReloadableGlobalHiscores::reloadTexture() {
                 }
             }
         };
-
     // --- Exact width measure (mip + kerning + outline overhang) ---
     auto measureTextWidthExact = [&](FontManager* f, const std::string& s, float scale) -> float {
         if (!f || s.empty()) return 0.0f;
@@ -762,32 +764,25 @@ void ReloadableGlobalHiscores::reloadTexture() {
         if (!mip || !mip->fillTexture) {
             return (float)f->getWidth(s) * scale;
         }
-
         const float k = (mip->height > 0) ? (targetH / mip->height) : 1.0f;
         const bool hasOutline = (mip->outlineTexture != nullptr);
-
         float penX = 0.0f, minX = 0.0f, maxX = 0.0f;
         bool first = true;
         Uint16 prev = 0;
-
         for (unsigned char uc : s) {
             Uint16 ch = (Uint16)uc;
             if (prev) penX += f->getKerning(prev, ch) * scale;
-
             auto it = mip->glyphs.find(ch);
             if (it != mip->glyphs.end()) {
                 const auto& g = it->second;
-
                 float left = penX;
                 float right = penX + g.fillW * k;
-
                 if (hasOutline) {
                     const float oL = penX - g.fillX * k;
                     const float oR = oL + g.rect.w * k;
                     left = std::min(left, oL);
                     right = std::max(right, oR);
                 }
-
                 if (first) {
                     minX = left;
                     maxX = right;
@@ -797,40 +792,34 @@ void ReloadableGlobalHiscores::reloadTexture() {
                     minX = std::min(minX, left);
                     maxX = std::max(maxX, right);
                 }
-
                 penX += g.advance * k;
             }
             prev = ch;
         }
-
         return std::max(0.0f, maxX - minX);
         };
-
     // --- Column alignment helper ---
     enum class ColAlign { Left, Center, Right };
     auto colAlignFor = [](size_t idx, size_t nCols) -> ColAlign {
         if (nCols >= 4) {
-            if (idx == 0) return ColAlign::Left;   // rank
-            if (idx == 1) return ColAlign::Left;   // name
-            if (idx == 2) return ColAlign::Right;  // score
-            if (idx == 3) return ColAlign::Right;  // time
+            if (idx == 0) return ColAlign::Left; // rank
+            if (idx == 1) return ColAlign::Left; // name
+            if (idx == 2) return ColAlign::Right; // score
+            if (idx == 3) return ColAlign::Right; // time
         }
         return ColAlign::Center;
         };
-
     auto alignX = [](float x, float colW, float textW, ColAlign a) -> float {
         switch (a) {
-            case ColAlign::Left:   return x + 1.0f;  // 1px guard
+            case ColAlign::Left: return x + 1.0f; // 1px guard
             case ColAlign::Center: return x + (colW - textW) * 0.5f;
-            case ColAlign::Right:  return x + (colW - textW);
+            case ColAlign::Right: return x + (colW - textW);
         }
         return x;
         };
-
     auto clampf = [](float v, float lo, float hi) {
         return std::max(lo, std::min(v, hi));
         };
-
     auto quantize_down = [](float s) {
         const float q = 64.f;
         return std::max(0.f, std::floor(s * q) / q);
@@ -1174,6 +1163,10 @@ void ReloadableGlobalHiscores::reloadTexture() {
     // ========================================================================
 
     if (tablesNeedRedraw_) {
+        // NEW: Clear and resize layout cache
+        cachedTableLayouts_.clear();
+        cachedTableLayouts_.resize(Nvisible);
+
         // Create/resize table texture if needed
         if (!tableTexture_ || compW_ != compositeW || compH_ != compositeH) {
             if (tableTexture_) {
@@ -1252,6 +1245,26 @@ void ReloadableGlobalHiscores::reloadTexture() {
             // Text origin
             float drawX0 = anchorX + (float)extraL + kPanelGuardPx;
             float y = anchorY + (float)extraT;
+
+            // NEW: Store layout in cache before rendering
+            auto& layout = cachedTableLayouts_[t];
+            layout.finalScale = finalScale;
+            layout.ratio = ratio;
+            layout.panelW = panelW;
+            layout.panelH = panelH;
+            layout.anchorX = anchorX;
+            layout.anchorY = anchorY;
+            layout.drawX0 = drawX0;
+            layout.titleH = titleH;
+            layout.headerH = headerH;
+            layout.dataH = dataH;
+            layout.colW = colW;
+            layout.panelRect = {
+                drawX0 - kPanelGuardPx,
+                anchorY + (float)extraT,
+                panelW,
+                panelH
+            };
 
             // ---- Title ----
             if (!table.id.empty()) {
@@ -1342,58 +1355,9 @@ void ReloadableGlobalHiscores::reloadTexture() {
             if (qrW == 0 || qrH == 0) continue;
             if (t >= (int)qrTextures.size() || !qrTextures[t]) continue;
 
-            const int gi = startIdx + t;
-            const auto& table = highScoreTable_->tables[gi];
-
-            const int slotCol = (t % cols);
-            const int slotRow = (t / cols);
-
-            const float xCell = std::round(slotCol * (cellW + spacingH));
-            const float yCell = std::round(slotRow * (cellH + spacingV));
-
-            const float finalScale = baseScale * rowScale[std::min(slotRow, rows - 1)];
-            const float ratio = (baseScale > 0.f) ? (finalScale / baseScale) : 1.0f;
-
-            const float drawableH = asc * finalScale;
-            const float lineH = drawableH * (1.0f + baseRowPadding_);
-
-            // Recalculate panel dimensions
-            std::vector<float> colW(maxCols, 0.0f);
-            float totalWCols = 0.0f;
-            for (size_t c = 0; c < maxCols; ++c) {
-                colW[c] = maxColW0[c] * ratio;
-                totalWCols += colW[c];
-                if (c + 1 < maxCols) totalWCols += sharedPad0 * ratio;
-            }
-            totalWCols += 2.0f * kPanelGuardPx;
-
-            const float titleH = table.id.empty() ? 0.0f : lineH;
-            const float headerH = lineH;
-            const float dataH = lineH * kRowsPerPage;
-            const float panelH = titleH + headerH + dataH;
-            const float panelW = totalWCols;
-
-            const int extraL = (int)std::lround(qrReserve[t].L);
-            const int extraR = (int)std::lround(qrReserve[t].R);
-            const int extraT = (int)std::lround(qrReserve[t].T);
-            const int extraB = (int)std::lround(qrReserve[t].B);
-
-            float anchorW = panelW + (float)(extraL + extraR);
-            float anchorH = panelH + (float)(extraT + extraB);
-
-            float anchorX = xCell + (cellW - anchorW) * 0.5f;
-            float anchorY = yCell;
-            anchorX = std::round(clampf(anchorX, xCell, xCell + cellW - anchorW));
-            anchorY = std::round(clampf(anchorY, yCell, yCell + cellH - anchorH));
-
-            float drawX0 = anchorX + (float)extraL + kPanelGuardPx;
-
-            SDL_FRect panelRect = {
-                drawX0 - kPanelGuardPx,
-                anchorY + (float)extraT,
-                panelW,
-                panelH
-            };
+            // NEW: Use cached layout (no recomputation)
+            const auto& layout = cachedTableLayouts_[t];
+            const SDL_FRect& panelRect = layout.panelRect;
 
             // Calculate QR position
             float qrX = 0.f, qrY = 0.f;
