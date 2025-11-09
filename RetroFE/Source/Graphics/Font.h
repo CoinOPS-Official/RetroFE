@@ -48,6 +48,8 @@ public:
     bool getRect(unsigned int charCode, GlyphInfo &glyph);
     int getHeight() const;
     int getWidth(const std::string& text);
+    int getAtlasW() const;
+	int getAtlasH() const;
     int getFontSize() const;
     int getAscent() const;
     int getDescent() const;
@@ -65,6 +67,8 @@ private:
     int height;
     int descent;
     int ascent;
+	int atlasW;
+	int atlasH;
     std::unordered_map<unsigned int, GlyphInfoBuild*> atlas;
     std::string fontPath_;
     int fontSize_;

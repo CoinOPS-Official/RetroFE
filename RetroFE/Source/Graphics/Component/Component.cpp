@@ -59,10 +59,7 @@ void Component::freeGraphicsMemory() {
     elapsedTweenTime_ = 0;
 
     if (backgroundTexture_) {
-        SDL_LockMutex(SDL::getMutex());
         SDL_DestroyTexture(backgroundTexture_);
-        SDL_UnlockMutex(SDL::getMutex());
-
         backgroundTexture_ = nullptr;
     }
 }

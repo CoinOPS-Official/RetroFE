@@ -49,7 +49,7 @@ public:
     unsigned long long getCurrent( ) override;
     unsigned long long getDuration( ) override;
     bool isPaused( ) override;
-    std::string_view filePath() const;
+    std::string_view filePath();
 
 private:
     std::string videoFile_;
@@ -65,4 +65,5 @@ private:
     bool hasPerspective_{ false };
     bool dimensionsUpdated_ = false; // Track if dimensions have been updated for the current video
 	bool instanceReady_{ false }; // Track if the video instance is ready to play
+	bool pendingRestart_{ false }; // Track if a restart is pending after fast-scroll
 };

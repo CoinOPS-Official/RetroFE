@@ -61,65 +61,79 @@ const std::string& Text::getText() const {
 void Text::draw() {
     Component::draw();
 
+    // --- 1. Setup and Texture Acquisition (Unchanged) ---
     FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
-    SDL_Texture* texture = font->getTexture();
+    SDL_Texture* texture = font ? font->getTexture() : nullptr;
+    if (!texture || textData_.empty()) return;
 
-    if (!texture || textData_.empty()) {
-        return;
-    }
+    // --- 2. Glyph Position Caching (Unchanged) ---
+    // This section correctly caches the relative positions of glyphs.
+    const float imageHeight = float(font->getHeight());
+    const float scale = (imageHeight > 0.f) ? (baseViewInfo.FontSize / imageHeight) : 1.f;
+    const float maxW =
+        (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
+        ? baseViewInfo.Width : baseViewInfo.MaxWidth;
 
-    float imageHeight = static_cast<float>(font->getHeight());
-    float scale = baseViewInfo.FontSize / imageHeight;
-    float imageMaxWidth = (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
-        ? baseViewInfo.Width
-        : baseViewInfo.MaxWidth;
-
-    // Recalculate and cache positions if necessary
-    if (needsUpdate_ || lastScale_ != scale || lastMaxWidth_ != imageMaxWidth) {
-        updateGlyphPositions(font, scale, imageMaxWidth);
+    if (needsUpdate_ || lastScale_ != scale || lastMaxWidth_ != maxW) {
+        updateGlyphPositions(font, scale, maxW);
         needsUpdate_ = false;
         lastScale_ = scale;
-        lastMaxWidth_ = imageMaxWidth;
+        lastMaxWidth_ = maxW;
     }
 
-    float oldWidth = baseViewInfo.Width;
-    float oldHeight = baseViewInfo.Height;
-    float oldImageWidth = baseViewInfo.ImageWidth;
-    float oldImageHeight = baseViewInfo.ImageHeight;
+    // --- 3. Calculate Text Block Origin & Prepare ViewInfo (Mostly Unchanged) ---
+    // We must temporarily modify the ViewInfo to calculate the origin of the entire
+    // text block and to pass the atlas dimensions to the renderer.
+    const float oldW = baseViewInfo.Width;
+    const float oldH = baseViewInfo.Height;
+    const float oldIW = baseViewInfo.ImageWidth;
+    const float oldIH = baseViewInfo.ImageHeight;
 
-    baseViewInfo.Width = cachedWidth_;  // Use unscaled cachedWidth_
+    // Set the text's computed size to find its top-left origin point.
+    baseViewInfo.Width = cachedWidth_;
     baseViewInfo.Height = baseViewInfo.FontSize;
-    baseViewInfo.ImageWidth = cachedWidth_;
-    baseViewInfo.ImageHeight = imageHeight;
 
-    float xOrigin = baseViewInfo.XRelativeToOrigin();
-    float yOrigin = baseViewInfo.YRelativeToOrigin();
+    baseViewInfo.ImageWidth = float(font->getAtlasW());
+    baseViewInfo.ImageHeight = float(font->getAtlasH());
 
-    // Restore old baseViewInfo values
-    baseViewInfo.Width = oldWidth;
-    baseViewInfo.Height = oldHeight;
-    baseViewInfo.ImageWidth = oldImageWidth;
-    baseViewInfo.ImageHeight = oldImageHeight;
+    const float xOrigin = baseViewInfo.XRelativeToOrigin();
+    const float yOrigin = baseViewInfo.YRelativeToOrigin();
 
-    SDL_FRect destRect;
+    // Restore layout-related sizes immediately after use.
+    baseViewInfo.Width = oldW;
+    baseViewInfo.Height = oldH;
 
-    // Render each cached glyph position
+    // --- 4. Get Layout Dimensions (Simplified) ---
+    const int m = baseViewInfo.Monitor;
+    const int layoutW = page.getLayoutWidthByMonitor(m);
+    const int layoutH = page.getLayoutHeightByMonitor(m);
+
+    SDL_FRect destRect; // Re-used for each glyph
     for (const auto& pos : cachedPositions_) {
+        // Construct the LOGICAL destination rectangle for this single glyph.
+        // It's the text block's origin plus the glyph's relative offset.
         destRect.x = xOrigin + pos.xOffset;
         destRect.y = yOrigin + pos.yOffset;
         destRect.w = pos.sourceRect.w * scale;
         destRect.h = pos.sourceRect.h * scale;
 
+        // Call the master renderer for each glyph. It will handle scaling,
+        // rotation, mirroring, and final drawing.
         SDL::renderCopyF(
             texture,
             baseViewInfo.Alpha,
-            &pos.sourceRect,
-            &destRect,
-            baseViewInfo,
-            page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
-            page.getLayoutHeightByMonitor(baseViewInfo.Monitor)
+            &pos.sourceRect, // The glyph's rect in the atlas (Source)
+            &destRect,       // The glyph's logical position on screen (Destination)
+            baseViewInfo,    // Contains alpha, angle, and atlas dimensions
+            layoutW,
+            layoutH
         );
     }
+
+    // --- 6. Restore ViewInfo (Unchanged) ---
+    // Restore the original ImageWidth/Height so we don't affect other components.
+    baseViewInfo.ImageWidth = oldIW;
+    baseViewInfo.ImageHeight = oldIH;
 }
 
 void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) {

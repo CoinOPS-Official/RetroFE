@@ -15,6 +15,7 @@
  */
 
 #include "Video/GStreamerVideo.h"
+#include "Video/GlibLoop.h"
 #include "Database/Configuration.h"
 #include "Database/DB.h"
 #include "Database/GlobalOpts.h"
@@ -325,7 +326,7 @@ int main(int argc, char** argv)
 
 
     gst_init(nullptr, nullptr);
-
+    GlibLoop::instance().start();
     try {
         while (true) {
             if (!ImportConfiguration(&config)) {
@@ -341,8 +342,11 @@ int main(int argc, char** argv)
                 exit(EXIT_FAILURE);
             }
             RetroFE p(config);
-            if (p.run()) // Check if we need to reboot after running
+            if (p.run()){ // Check if we need to reboot after running
+                SDL::deInitialize(true);   // full teardown: destroys window/renderer/subsystems
                 config.clearProperties();
+                continue;
+            }
             else
                 break;
         }
@@ -352,6 +356,7 @@ int main(int argc, char** argv)
     }
 
     ThreadPool::getInstance().shutdown();
+    GlibLoop::instance().stop();
     gst_deinit();
     SDL::deInitialize(true);
     Logger::deInitialize();

@@ -168,7 +168,7 @@ private:
         RETROFE_SCROLL_PLAYLIST_BACK,
     };
 
-    RETROFE_STATE state_ = RETROFE_IDLE;  // Private version of your state variable
+    RETROFE_STATE state_ = RETROFE_IDLE;
 
     void setState(RETROFE_STATE newState);
     RETROFE_STATE getState() const;
@@ -179,8 +179,9 @@ private:
     bool isStandalonePlaylist(std::string playlist);
     bool isInAttractModeSkipPlaylist(std::string playlist);
     void goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleVector);
+    void advanceToNextValidAttractPlaylist();
+    bool state_accepts_input(RetroFE::RETROFE_STATE s);
     void handleMusicControls(UserInput::KeyCode_E input);
-    void            quit( );
     Page           *loadPage(const std::string& collectionName);
     Page           *loadSplashPage( );
 
@@ -188,7 +189,6 @@ private:
     std::vector<std::string>::iterator collectionCycleIt_;
 
     RETROFE_STATE   processUserInput( Page *page );
-    void            update( float dt, bool scrollActive );
     CollectionInfo *getCollection( const std::string& collectionName );
     void updatePageControls(const std::string& type);
     CollectionInfo *getMenuCollection( const std::string& collectionName );
@@ -230,4 +230,10 @@ private:
     std::map<std::string, std::string>  lastMenuPlaylists_;
     std::vector<std::string> cycleVector_;
     std::filesystem::file_time_type lastHiFileModifiedTime_{};
+    std::map<UserInput::KeyCode_E, float> nextRepeatTime_;
+
+    const float KEY_REPEAT_INITIAL_DELAY = 0.4f; // How long to wait before the first repeat
+    const float KEY_REPEAT_RATE = 0.1f;          // How quickly to repeat after the first one
+    const float LETTER_SKIP_INITIAL_DELAY = 0.5f; // A slightly longer initial pause
+    const float LETTER_SKIP_RATE = 0.3f;          // A slightly slower repeat rate for better control
 };

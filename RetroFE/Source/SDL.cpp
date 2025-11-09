@@ -19,6 +19,8 @@
 #include "Database/Configuration.h"
 #include "Database/GlobalOpts.h"
 #include "Utility/Log.h"
+#include "Sound/AudioBus.h"
+#include "Sound/MusicPlayer.h"
 #if __has_include(<SDL2/SDL_mixer.h>)
 #include <SDL2/SDL_mixer.h>
 #elif __has_include(<SDL2_mixer/SDL_mixer.h>)
@@ -30,8 +32,7 @@
 
 std::vector<SDL_Window*>    SDL::window_;
 std::vector<SDL_Renderer*>  SDL::renderer_;
-std::vector<SDL_Texture*>   SDL::renderTargets_;
-SDL_mutex* SDL::mutex_ = nullptr;
+std::vector<SDL::MonitorRT> SDL::renderTargets_;
 std::vector<int>            SDL::displayWidth_;
 std::vector<int>            SDL::displayHeight_;
 std::vector<int>            SDL::windowWidth_;
@@ -45,10 +46,10 @@ int                         SDL::screenCount_;
 
 // Initialize SDL
 bool SDL::initialize(Configuration& config) {
-	int audioRate = MIX_DEFAULT_FREQUENCY;
+	int audioRate = 48000;
 	Uint16 audioFormat = MIX_DEFAULT_FORMAT; // 16-bit stereo
 	int audioChannels = 2;
-	int audioBuffers = 4096;
+	int audioBuffers = 2048;
 	bool hideMouse;
 
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -391,11 +392,10 @@ bool SDL::initialize(Configuration& config) {
 			{
 #ifndef __APPLE__
 				SDL_WarpMouseInWindow(window_[logicalScreen], windowWidth_[logicalScreen], 0);
-#endif
-#ifdef __APPLE__
+#else
 				SDL_WarpMouseInWindow(window_[logicalScreen], windowWidth_[logicalScreen] / 2, windowHeight_[logicalScreen] / 2);
-				SDL_SetRelativeMouseMode(SDL_TRUE);
 #endif
+				SDL_SetRelativeMouseMode(SDL_TRUE);
 			}
 			bool vSync = false;
 			config.getProperty(OPTION_VSYNC, vSync);
@@ -419,22 +419,38 @@ bool SDL::initialize(Configuration& config) {
 			}
 			else
 			{
-				// Create a render target texture for this screen
-				SDL_Texture* renderTarget = SDL_CreateTexture(renderer_[logicalScreen],
-					SDL_PIXELFORMAT_RGBA32,
-					SDL_TEXTUREACCESS_TARGET,
-					windowWidth_[logicalScreen],
-					windowHeight_[logicalScreen]);
+				// ensure vector sized once before the per-screen loop (or here; harmless)
+				renderTargets_.resize(screenCount_);
 
-				if (renderTarget == NULL)
+				// Create the ring for THIS logicalScreen
 				{
-					std::string error = SDL_GetError();
-					LOG_ERROR("SDL", "Create render target texture failed: " + error);
-					return false;
-				}
+					SDL_Renderer* r = renderer_[logicalScreen];
+					if (!r) return false;
 
-				// Store the render target texture
-				renderTargets_.push_back(renderTarget);
+					const int w = windowWidth_[logicalScreen];
+					const int h = windowHeight_[logicalScreen];
+
+					auto& ring = renderTargets_[logicalScreen];
+					ring.ringCount = 2;         // or 3
+					ring.writeIdx = 0;
+					ring.width = w; ring.height = h;
+
+					for (int i = 0; i < ring.ringCount; ++i) {
+						SDL_Texture* t = SDL_CreateTexture(r, SDL_PIXELFORMAT_RGBA32,
+							SDL_TEXTUREACCESS_TARGET, w, h);
+						if (!t) { /* log+return false */ }
+						SDL_SetTextureBlendMode(t, SDL_BLENDMODE_NONE);
+						SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
+						// --- One-time init clear so contents are defined ---
+						SDL_SetRenderTarget(r, t);
+						SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_NONE); // avoid accidental blending
+						SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
+						SDL_RenderClear(r);
+						// (Optional) draw a background image/color here if you want a non-black default
+						SDL_SetRenderTarget(r, nullptr);
+						ring.rt[i] = t;
+					}
+				}
 
 				SDL_RendererInfo info;
 				if (SDL_GetRendererInfo(renderer_[logicalScreen], &info) == 0)
@@ -478,15 +494,6 @@ bool SDL::initialize(Configuration& config) {
 		SDL_SetHintWithPriority(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, minimizeOnFocusLoss ? "1" : "0", SDL_HINT_OVERRIDE);
 	}
 
-	mutex_ = SDL_CreateMutex();
-
-	if (mutex_ == nullptr)
-	{
-		std::string error = SDL_GetError();
-		LOG_ERROR("SDL", "Mutex creation failed: " + error);
-		return false;
-	}
-
 	int num_audio_devices_open = Mix_QuerySpec(nullptr, nullptr, nullptr);
 
 	if (num_audio_devices_open == 0) {
@@ -507,6 +514,42 @@ bool SDL::initialize(Configuration& config) {
 			else {
 				LOG_INFO("SDL", "SDL_mixer decoders (MP3, OGG, etc.) initialized successfully.");
 			}
+			// --- NEW: configure AudioBus to match the device SDL_mixer opened ---
+			AudioBus::instance().configureFromMixer();
+			// Define a tiny context
+			struct PostMixCtx {
+				MusicPlayer* mp;   // nullptr if music player disabled
+			};
+
+			// … during init …
+			bool musicPlayerEnabled = false;
+			config.getProperty("musicPlayer.enabled", musicPlayerEnabled);
+
+			// If enabled, ensure the instance exists *before* installing the callback
+			MusicPlayer* mp = nullptr;
+			if (musicPlayerEnabled) {
+				mp = MusicPlayer::getInstance();
+			}
+
+			// Context must outlive the audio device; make it static or allocate it
+			static PostMixCtx g_postmix_ctx{ mp };
+
+			Mix_SetPostMix(
+				[](void* udata, Uint8* stream, int len) {
+					auto* ctx = static_cast<PostMixCtx*>(udata);
+
+					// 1) MUSIC-ONLY visualization: notify visualizers if enabled
+					if (ctx && ctx->mp) {
+						ctx->mp->processAudioData(stream, len);
+					}
+
+					// 2) Mix in external (GStreamer) audio AFTER visualizers saw music-only
+					AudioBus::instance().mixInto(stream, len);
+
+					// 3) optional: master metering on final mix goes here
+				},
+				&g_postmix_ctx
+			);
 		}
 	}
 
@@ -531,11 +574,11 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	}
 
 	// Destroy render target textures
-	for (auto texture : renderTargets_)
-	{
-		if (texture) SDL_DestroyTexture(texture);
+	for (auto& ring : renderTargets_) {
+		for (auto& t : ring.rt) {
+			if (t) { SDL_DestroyTexture(t); t = nullptr; }
+		}
 	}
-	renderTargets_.clear();
 
 	// Destroy renderers and windows
 	for (auto renderer : renderer_)
@@ -553,16 +596,13 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	// Step 2: Decide which subsystems to shut down.
 	if (fullShutdown)
 	{
+		SDL_ShowCursor(SDL_TRUE);
 		// This is the final application exit. Shut down everything.
 		LOG_INFO("SDL", "Performing full de-initialization of all SDL subsystems.");
 		Mix_CloseAudio();
 		Mix_Quit();
 		SDL_Quit();
 		
-		if (mutex_) {
-			SDL_DestroyMutex(mutex_);
-			mutex_ = nullptr;
-		}
 	}
 	else
 	{
@@ -578,8 +618,6 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	fullscreen_.clear();
 	mirror_.clear();
 	rotation_.clear();
-
-	SDL_ShowCursor(SDL_TRUE);
 
 	return true;
 }
@@ -608,13 +646,6 @@ std::string SDL::getRendererBackend(int index) {
 	return std::string(info.name);
 }
 
-// Get the mutex
-SDL_mutex* SDL::getMutex()
-{
-	return mutex_;
-}
-
-
 // Get the window
 SDL_Window* SDL::getWindow(int index) {
 	if (window_.empty()) {
@@ -623,12 +654,18 @@ SDL_Window* SDL::getWindow(int index) {
 	return (index < screenCount_ ? window_[index] : window_[0]);
 }
 
-SDL_Texture* SDL::getRenderTarget(int index)
-{
-	if (renderTargets_.empty()) {
-		return nullptr;
-	}
-	return (index < screenCount_ ? renderTargets_[index] : renderTargets_[0]);
+// current target to render into for this frame
+SDL_Texture* SDL::getRenderTarget(int index) {
+	if (renderTargets_.empty()) return nullptr;
+	int i = (index < screenCount_) ? index : 0;
+	return renderTargets_[i].rt[renderTargets_[i].writeIdx];
+}
+
+void SDL::advanceRenderTarget(int index) {
+	if (renderTargets_.empty()) return;
+	int i = (index < screenCount_) ? index : 0;
+	auto& ring = renderTargets_[i];
+	ring.writeIdx = (ring.writeIdx + 1) % ring.ringCount;
 }
 
 // Render a copy of a texture
@@ -1283,654 +1320,390 @@ bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL
 	return true;
 }
 
-bool SDL::renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight)
-{
+// SDL 2.0.18+ for SDL_RenderGeometry
+bool SDL::renderCopyF(SDL_Texture* texture,
+	float alpha,
+	const SDL_Rect* src,
+	const SDL_FRect* dest,
+	ViewInfo& viewInfo,
+	int layoutWidth,
+	int layoutHeight) {
+	// --- Quick rejects ---
+	if (!texture) return false;
+	if (alpha <= 0.0f) return true;
+	const int m = viewInfo.Monitor;
+	if (m < 0 || m >= screenCount_ || !renderer_[m]) return true;
 
-	// Skip rendering if the object is invisible anyway or if renderer does not exist
-	if (alpha == 0 || viewInfo.Monitor >= screenCount_ || !renderer_[viewInfo.Monitor])
+	// Output size (pixels)
+	const int outW = windowWidth_[m];
+	const int outH = windowHeight_[m];
+
+	// Logical -> pixel scales (base computation; adjustments for rotation/mirror later if needed)
+	float scaleX = layoutWidth > 0 ? float(outW) / float(layoutWidth) : 1.0f;
+	float scaleY = layoutHeight > 0 ? float(outH) / float(layoutHeight) : 1.0f;
+
+	// Texture size for UVs (from ViewInfo)
+	auto texW = (int)viewInfo.ImageWidth;
+	auto texH = (int)viewInfo.ImageHeight;
+	if (texW <= 0 || texH <= 0) {
+		SDL_QueryTexture(texture, nullptr, nullptr, &texW, &texH);
+		viewInfo.ImageWidth = (float)texW;
+		viewInfo.ImageHeight = (float)texH;
+	}
+
+	// --- Source / Destination (logical space) ---
+	SDL_Rect srcRect = src ? *src : SDL_Rect{ 0, 0, texW, texH };
+	SDL_FRect dstRect = *dest;
+
+	if (dstRect.w <= 0.f || dstRect.h <= 0.f || srcRect.w <= 0 || srcRect.h <= 0)
 		return true;
-	SDL_GetWindowSize(getWindow(viewInfo.Monitor), &windowWidth_[viewInfo.Monitor], &windowHeight_[viewInfo.Monitor]);
 
-	float scaleX = (float)windowWidth_[viewInfo.Monitor] / (float)layoutWidth;
-	float scaleY = (float)windowHeight_[viewInfo.Monitor] / (float)layoutHeight;
-
-	// 90 or 270 degree rotation; change scale factors
-	if (rotation_[viewInfo.Monitor] % 2 == 1) {
-		scaleX = (float)windowHeight_[viewInfo.Monitor] / (float)layoutWidth;
-		scaleY = (float)windowWidth_[viewInfo.Monitor] / (float)layoutHeight;
+	// Local container (don’t mutate viewInfo)
+	SDL_FRect container{};
+	bool hasContainer = (viewInfo.ContainerWidth > 0.0f && viewInfo.ContainerHeight > 0.0f);
+	const int rot = (rotation_[m] & 3);
+	const bool mir = mirror_[m];
+	if (mir && !hasContainer) {
+		container = { 0.0f, 0.0f, float(layoutWidth), float(layoutHeight) };
+		hasContainer = true;
+	}
+	else if (hasContainer) {
+		container = { viewInfo.ContainerX, viewInfo.ContainerY,
+					 viewInfo.ContainerWidth, viewInfo.ContainerHeight };
 	}
 
-	if (mirror_[viewInfo.Monitor])
-		scaleY /= 2;
+	// Adjust scales for rotation and mirror
+	if ((rotation_[m] & 1) == 1) {
+		scaleX = layoutWidth > 0 ? float(outH) / float(layoutWidth) : 1.0f;
+		scaleY = layoutHeight > 0 ? float(outW) / float(layoutHeight) : 1.0f;
+	}
+	if (mir) scaleY /= 2.0f;
 
-	// Don't print outside the screen in mirror mode
-	if (mirror_[viewInfo.Monitor] && (viewInfo.ContainerWidth < 0 || viewInfo.ContainerHeight < 0)) {
-		viewInfo.ContainerX = 0;
-		viewInfo.ContainerY = 0;
-		viewInfo.ContainerWidth = static_cast<float>(layoutWidth);
-		viewInfo.ContainerHeight = static_cast<float>(layoutHeight);
+	// Fullscreen offset in LOGICAL units
+	if (fullscreen_[m]) {
+		const float dxL = 0.5f * float(displayWidth_[m] - outW) / std::max(scaleX, 1e-6f);
+		const float dyL = 0.5f * float(displayHeight_[m] - outH) / std::max(scaleY, 1e-6f);
+		dstRect.x += dxL; dstRect.y += dyL;
 	}
 
-	SDL_Rect srcRect{};
-	SDL_FRect dstRect{};
-	SDL_Rect srcRectCopy{};
-	SDL_FRect dstRectCopy{};
-	SDL_Rect srcRectOrig{};
-	SDL_FRect dstRectOrig{};
-	double   imageScaleX;
-	double   imageScaleY;
-
-	dstRect.w = dest->w;
-	dstRect.h = dest->h;
-
-	if (fullscreen_[viewInfo.Monitor]) {
-		dstRect.x = dest->x + (displayWidth_[viewInfo.Monitor] - windowWidth_[viewInfo.Monitor]) / 2;
-		dstRect.y = dest->y + (displayHeight_[viewInfo.Monitor] - windowHeight_[viewInfo.Monitor]) / 2;
+	// ---------- CULL: exact AABB (fast) if axis-aligned ----------
+	if (viewInfo.Angle == 0.0f && !mir) {
+		const SDL_FRect dPx = { dstRect.x * scaleX, dstRect.y * scaleY,
+							   dstRect.w * scaleX, dstRect.h * scaleY };
+		if (dPx.x + dPx.w <= 0.0f || dPx.y + dPx.h <= 0.0f ||
+			dPx.x >= float(outW) || dPx.y >= float(outH)) {
+			return true; // fully offscreen
+		}
 	}
+	// ---------- CULL: conservative AABB for rotated/mirrored ----------
 	else {
-		dstRect.x = dest->x;
-		dstRect.y = dest->y;
-	}
-
-	// Create the base fields to check against the container.
-	if (src) {
-		srcRect.x = src->x;
-		srcRect.y = src->y;
-		srcRect.w = src->w;
-		srcRect.h = src->h;
-	}
-	else {
-		srcRect.x = 0;
-		srcRect.y = 0;
-		int w = 0;
-		int h = 0;
-		SDL_QueryTexture(texture, nullptr, nullptr, &w, &h);
-		srcRect.w = w;
-		srcRect.h = h;
-	}
-
-	// Define the scale
-	imageScaleX = (dstRect.w > 0) ? static_cast<double>(srcRect.w) / static_cast<double>(dstRect.w) : 0.0;
-	imageScaleY = (dstRect.h > 0) ? static_cast<double>(srcRect.h) / static_cast<double>(dstRect.h) : 0.0;
-
-	// Make two copies
-	srcRectOrig.x = srcRect.x;
-	srcRectOrig.y = srcRect.y;
-	srcRectOrig.w = srcRect.w;
-	srcRectOrig.h = srcRect.h;
-	dstRectOrig.x = dstRect.x;
-	dstRectOrig.y = dstRect.y;
-	dstRectOrig.w = dstRect.w;
-	dstRectOrig.h = dstRect.h;
-
-	srcRectCopy.x = srcRect.x;
-	srcRectCopy.y = srcRect.y;
-	srcRectCopy.w = srcRect.w;
-	srcRectCopy.h = srcRect.h;
-	dstRectCopy.x = dstRect.x;
-	dstRectCopy.y = dstRect.y;
-	dstRectCopy.w = dstRect.w;
-	dstRectCopy.h = dstRect.h;
-
-	// If a container has been defined, limit the display to the container boundaries.
-	if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-		dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-
-		// Correct if the image falls to the left of the container
-		if (dstRect.x < viewInfo.ContainerX) {
-			dstRect.x = viewInfo.ContainerX;
-			dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-			srcRect.x = srcRectCopy.x + static_cast<int>(srcRectCopy.w * (dstRect.x - dstRectCopy.x) / dstRectCopy.w);
-		}
-
-		// Correct if the image falls to the right of the container
-		if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-			dstRect.w = viewInfo.ContainerX + viewInfo.ContainerWidth - dstRect.x;
-		}
-
-		// Correct if the image falls to the top of the container
-		if (dstRect.y < viewInfo.ContainerY) {
-			dstRect.y = viewInfo.ContainerY;
-			dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-			srcRect.y = srcRectCopy.y + static_cast<int>(srcRectCopy.h * (dstRect.y - dstRectCopy.y) / dstRectCopy.h);
-		}
-
-		// Correct if the image falls to the bottom of the container
-		if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-			dstRect.h = static_cast<int>(viewInfo.ContainerY + viewInfo.ContainerHeight) - dstRect.y;
-		}
-
-		// Define source width and height
-		srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-		srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-
-	}
-
-	double angle = viewInfo.Angle;
-	if (!mirror_[viewInfo.Monitor])
-		angle += rotation_[viewInfo.Monitor] * 90;
-
-	dstRect.x = dstRect.x * scaleX;
-	dstRect.y = dstRect.y * scaleY;
-	dstRect.w = dstRect.w * scaleX;
-	dstRect.h = dstRect.h * scaleY;
-
-	if (mirror_[viewInfo.Monitor]) {
-		if (rotation_[viewInfo.Monitor] % 2 == 0) {
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-				angle += 180;
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-			}
-		}
-		else {
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				float tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-				angle += 90;
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-				angle += 180;
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-			}
-		}
-	}
-	else {
-		// 90 degree rotation
-		if (rotation_[viewInfo.Monitor] == 1) {
-			float tmp = dstRect.x;
-			dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-			dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-		}
-		// 180 degree rotation
-		if (rotation_[viewInfo.Monitor] == 2) {
-			dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-			dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-		}
-		// 270 degree rotation
-		if (rotation_[viewInfo.Monitor] == 3) {
-			float tmp = dstRect.x;
-			dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-			dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-		}
-
-		if (srcRect.h > 0 && srcRect.w > 0) {
-			SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-			SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
+		const float pxW = dstRect.w * scaleX;
+		const float pxH = dstRect.h * scaleY;
+		const float cx = (dstRect.x * scaleX) + 0.5f * pxW;
+		const float cy = (dstRect.y * scaleY) + 0.5f * pxH;
+		float theta = viewInfo.Angle;
+		if (!mir) theta += float(rot * 90);
+		const float rad = theta * 3.1415926535f / 180.0f;
+		const float c = fabsf(cosf(rad)), s = fabsf(sinf(rad));
+		const float hx = 0.5f * (c * pxW + s * pxH);
+		const float hy = 0.5f * (s * pxW + c * pxH);
+		const float minX = cx - hx, maxX = cx + hx;
+		const float minY = cy - hy, maxY = cy + hy;
+		if (maxX <= 0.0f || maxY <= 0.0f ||
+			minX >= float(outW) || minY >= float(outH)) {
+			return true; // fully offscreen
 		}
 	}
 
-	// Restore original parameters
-	srcRect.x = srcRectOrig.x;
-	srcRect.y = srcRectOrig.y;
-	srcRect.w = srcRectOrig.w;
-	srcRect.h = srcRectOrig.h;
-	dstRect.x = dstRectOrig.x;
-	dstRect.y = dstRectOrig.y;
-	dstRect.w = dstRectOrig.w;
-	dstRect.h = dstRectOrig.h;
-	srcRectCopy.x = srcRectOrig.x;
-	srcRectCopy.y = srcRectOrig.y;
-	srcRectCopy.w = srcRectOrig.w;
-	srcRectCopy.h = srcRectOrig.h;
-	dstRectCopy.x = dstRectOrig.x;
-	dstRectCopy.y = dstRectOrig.y;
-	dstRectCopy.w = dstRectOrig.w;
-	dstRectCopy.h = dstRectOrig.h;
+	// --- Fast path: no mirror, no rotation, no reflection ---
+	if (!mir && rot == 0 && viewInfo.Angle == 0.0f && !viewInfo.hasReflection) {
+		SDL_Rect srcCopy = srcRect;
+		SDL_FRect dstCopy = dstRect;
 
-	if (viewInfo.Reflection.find("top") != std::string::npos) {
-		dstRect.h = dstRect.h * viewInfo.ReflectionScale;
-		dstRect.y = dstRect.y - dstRect.h - viewInfo.ReflectionDistance;
-		imageScaleY = (dstRect.h > 0) ? static_cast<double>(srcRect.h) / static_cast<double>(dstRect.h) : 0.0;
-		dstRectCopy.y = dstRect.y;
-		dstRectCopy.h = dstRect.h;
-
-		// If a container has been defined, limit the display to the container boundaries.
-		if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-			dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-
-			// Correct if the image falls to the left of the container
-			if (dstRect.x < viewInfo.ContainerX) {
-				dstRect.x = viewInfo.ContainerX;
-				dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-				srcRect.x = srcRectCopy.x + static_cast<int>(srcRectCopy.w * (dstRect.x - dstRectCopy.x) / dstRectCopy.w);
+		// Clip to container if applicable
+		if (hasContainer) {
+			if (dstRect.x < container.x) {
+				float newW = dstCopy.w + dstCopy.x - container.x;
+				dstRect.x = container.x;
+				dstRect.w = std::max(0.0f, newW);
 			}
-
-			// Correct if the image falls to the right of the container
-			if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-				dstRect.w = viewInfo.ContainerX + viewInfo.ContainerWidth - dstRect.x;
+			if ((dstRect.x + dstRect.w) > (container.x + container.w))
+				dstRect.w = std::max(0.0f, (container.x + container.w) - dstRect.x);
+			if (dstRect.y < container.y) {
+				float newH = dstCopy.h + dstCopy.y - container.y;
+				dstRect.y = container.y;
+				dstRect.h = std::max(0.0f, newH);
 			}
+			if ((dstRect.y + dstRect.h) > (container.y + container.h))
+				dstRect.h = std::max(0.0f, (container.y + container.h) - dstRect.y);
 
-			// Correct if the image falls to the top of the container
-			if (dstRect.y < viewInfo.ContainerY) {
-				dstRect.y = viewInfo.ContainerY;
-				dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-			}
+			// Recompute source rectangle
+			if (dstRect.w > 0.f && dstRect.h > 0.f) {
+				float sx = (dstCopy.w > 0.f) ? float(srcCopy.w) / dstCopy.w : 0.f;
+				float sy = (dstCopy.h > 0.f) ? float(srcCopy.h) / dstCopy.h : 0.f;
+				srcRect.w = (int)lroundf(dstRect.w * sx);
+				srcRect.h = (int)lroundf(dstRect.h * sy);
+				if (dstCopy.w > 0.f)
+					srcRect.x = srcCopy.x + (int)lroundf((dstRect.x - dstCopy.x) * sx);
+				if (dstCopy.h > 0.f)
+					srcRect.y = srcCopy.y + (int)lroundf((dstRect.y - dstCopy.y) * sy);
 
-			// Correct if the image falls to the bottom of the container
-			if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-				dstRect.h = viewInfo.ContainerY + viewInfo.ContainerHeight - dstRect.y;
-				srcRect.y = srcRectCopy.y + static_cast<int>(srcRectCopy.h * (dstRectCopy.h - dstRect.h) / dstRectCopy.h);
-			}
-
-			// Define source width and height
-			srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-			srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-
-		}
-
-		angle = viewInfo.Angle;
-		if (!mirror_[viewInfo.Monitor])
-			angle += rotation_[viewInfo.Monitor] * 90;
-
-		dstRect.x = dstRect.x * scaleX;
-		dstRect.y = dstRect.y * scaleY;
-		dstRect.w = dstRect.w * scaleX;
-		dstRect.h = dstRect.h * scaleY;
-
-		if (mirror_[viewInfo.Monitor]) {
-			if (rotation_[viewInfo.Monitor] % 2 == 0) {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-				}
+				// Clamp source to original limits
+				const SDL_Rect limit = src ? *src : SDL_Rect{ 0, 0, texW, texH };
+				if (srcRect.x < limit.x) srcRect.x = limit.x;
+				if (srcRect.y < limit.y) srcRect.y = limit.y;
+				if (srcRect.x + srcRect.w > limit.x + limit.w)
+					srcRect.w = std::max(0, limit.x + limit.w - srcRect.x);
+				if (srcRect.y + srcRect.h > limit.y + limit.h)
+					srcRect.h = std::max(0, limit.y + limit.h - srcRect.y);
 			}
 			else {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					float tmp = dstRect.x;
-					dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-					angle += 90;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-				}
+				return true; // Clipped to zero size
 			}
 		}
-		else {
-			// 90 degree rotation
-			if (rotation_[viewInfo.Monitor] == 1) {
-				float tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-			}
-			// 180 degree rotation
-			if (rotation_[viewInfo.Monitor] == 2) {
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-			}
-			// 270 degree rotation
-			if (rotation_[viewInfo.Monitor] == 3) {
-				float tmp = dstRect.x;
-				dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-			}
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-			}
-		}
+
+		// Convert to pixel space (culling already done earlier)
+		SDL_FRect dstPx = { dstRect.x * scaleX, dstRect.y * scaleY, dstRect.w * scaleX, dstRect.h * scaleY };
+
+		// Set alpha modulation
+		auto clamp_u8 = [](float a01) -> Uint8 {
+			if (a01 < 0.f) a01 = 0.f; else if (a01 > 1.f) a01 = 1.f;
+			int v = (int)lroundf(a01 * 255.f);
+			return (Uint8)(v < 0 ? 0 : (v > 255 ? 255 : v));
+			};
+		Uint8 alpha8 = clamp_u8(alpha);
+		SDL_SetTextureAlphaMod(texture, alpha8);
+
+		// Render directly
+		bool success = SDL_RenderCopyF(renderer_[m], texture, &srcRect, &dstPx) == 0;
+
+		// Reset alpha mod if needed (optional, depending on usage)
+		// SDL_SetTextureAlphaMod(texture, 255);
+
+		return success;
 	}
 
-	// Restore original parameters
-	srcRect.x = srcRectOrig.x;
-	srcRect.y = srcRectOrig.y;
-	srcRect.w = srcRectOrig.w;
-	srcRect.h = srcRectOrig.h;
-	dstRect.x = dstRectOrig.x;
-	dstRect.y = dstRectOrig.y;
-	dstRect.w = dstRectOrig.w;
-	dstRect.h = dstRectOrig.h;
-	srcRectCopy.x = srcRectOrig.x;
-	srcRectCopy.y = srcRectOrig.y;
-	srcRectCopy.w = srcRectOrig.w;
-	srcRectCopy.h = srcRectOrig.h;
-	dstRectCopy.x = dstRectOrig.x;
-	dstRectCopy.y = dstRectOrig.y;
-	dstRectCopy.w = dstRectOrig.w;
-	dstRectCopy.h = dstRectOrig.h;
+	// --- Original complex path for mirror, rotation, or reflections ---
 
-	if (viewInfo.Reflection.find("bottom") != std::string::npos) {
-		dstRect.y = dstRect.y + dstRect.h + viewInfo.ReflectionDistance;
-		dstRect.h = std::max(0.0f, dstRect.h * viewInfo.ReflectionScale);
-		imageScaleY = (dstRect.h > 0) ? static_cast<double>(srcRect.h) / static_cast<double>(dstRect.h) : 0.0;
-		dstRectCopy.y = dstRect.y;
-		dstRectCopy.h = dstRect.h;
+	const SDL_Rect src0 = srcRect;
+	const SDL_FRect dst0 = dstRect;
 
-		// If a container has been defined, limit the display to the container boundaries.
-		if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-			dstRectCopy.w > 0 && dstRectCopy.h > 0) {
+	// ---- helpers ----
+	auto clamp_int = [](int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); };
+	auto clamp_u8 = [&](float a01)->Uint8 {
+		if (a01 < 0.f) a01 = 0.f; else if (a01 > 1.f) a01 = 1.f;
+		int v = (int)lroundf(a01 * 255.f);
+		return (Uint8)clamp_int(v, 0, 255);
+		};
+	auto to_pixels = [&](SDL_FRect r)->SDL_FRect { r.x *= scaleX; r.y *= scaleY; r.w *= scaleX; r.h *= scaleY; return r; };
 
-			// Correct if the image falls to the left of the container
-			if (dstRect.x < viewInfo.ContainerX) {
-				dstRect.x = viewInfo.ContainerX;
-				dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-				srcRect.x = srcRectCopy.x + static_cast<int>(srcRectCopy.w * (dstRect.x - dstRectCopy.x) / dstRectCopy.w);
-			}
-			// Correct if the image falls to the right of the container
-			if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-				dstRect.w = static_cast<int>(viewInfo.ContainerX + viewInfo.ContainerWidth) - dstRect.x;
-			}
-			// Correct if the image falls to the top of the container
-			if (dstRect.y < viewInfo.ContainerY) {
-				dstRect.y = viewInfo.ContainerY;
-				dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-			}
-			// Correct if the image falls to the bottom of the container
-			if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-				dstRect.h = viewInfo.ContainerY + viewInfo.ContainerHeight - dstRect.y;
-				srcRect.y = srcRectCopy.y + static_cast<int>(srcRectCopy.h * (dstRectCopy.h - dstRect.h) / dstRectCopy.h);
-			}
-			// Define source width and height
-			srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-			srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
+	auto clamp_src_to_rect = [&](SDL_Rect& s, const SDL_Rect& limit) {
+		const int minX = limit.x, minY = limit.y, maxX = limit.x + limit.w, maxY = limit.y + limit.h;
+		if (s.x < minX) s.x = minX;
+		if (s.y < minY) s.y = minY;
+		if (s.x + s.w > maxX) s.w = std::max(0, maxX - s.x);
+		if (s.y + s.h > maxY) s.h = std::max(0, maxY - s.y);
+		};
+
+	auto recompute_src_from_dst = [&](SDL_Rect& s, const SDL_Rect& sCopy,
+		const SDL_FRect& d, const SDL_FRect& dCopy) {
+			const float sx = (dCopy.w > 0.f) ? float(sCopy.w) / dCopy.w : 0.f;
+			const float sy = (dCopy.h > 0.f) ? float(sCopy.h) / dCopy.h : 0.f;
+			s.w = (int)lroundf(d.w * sx);
+			s.h = (int)lroundf(d.h * sy);
+			if (dCopy.w > 0.f) s.x = sCopy.x + (int)lroundf((d.x - dCopy.x) * sx);
+			if (dCopy.h > 0.f) s.y = sCopy.y + (int)lroundf((d.y - dCopy.y) * sy);
+			clamp_src_to_rect(s, src ? *src : SDL_Rect{ 0,0,texW,texH });
+		};
+
+	auto clip_to_container = [&](SDL_Rect& s, SDL_FRect& d, const SDL_Rect& sCopy, const SDL_FRect& dCopy) {
+		if (!hasContainer || dCopy.w <= 0.f || dCopy.h <= 0.f) return;
+		if (d.x < container.x) { const float newW = dCopy.w + dCopy.x - container.x; d.x = container.x; d.w = std::max(0.0f, newW); }
+		if ((d.x + d.w) > (container.x + container.w)) d.w = std::max(0.0f, (container.x + container.w) - d.x);
+		if (d.y < container.y) { const float newH = dCopy.h + dCopy.y - container.y; d.y = container.y; d.h = std::max(0.0f, newH); }
+		if ((d.y + d.h) > (container.y + container.h)) d.h = std::max(0.0f, (container.y + container.h) - d.y);
+		recompute_src_from_dst(s, sCopy, d, dCopy);
+		};
+
+	auto apply_output_rotation_rect = [&](SDL_FRect& dPx) {
+		switch (rotation_[m] & 3) {
+			case 0: break;
+			case 1: {
+				float tmp = dPx.x;
+				dPx.x = float(outW) - dPx.y - dPx.h * 0.5f - dPx.w * 0.5f;
+				dPx.y = tmp - dPx.h * 0.5f + dPx.w * 0.5f;
+			} break;
+			case 2: dPx.x = float(outW) - dPx.x - dPx.w;
+				dPx.y = float(outH) - dPx.y - dPx.h; break;
+			case 3: {
+				float tmp = dPx.x;
+				dPx.x = dPx.y + dPx.h * 0.5f - dPx.w * 0.5f;
+				dPx.y = float(outH) - tmp - dPx.h * 0.5f - dPx.w * 0.5f;
+			} break;
 		}
+		};
 
-		angle = viewInfo.Angle;
-		if (!mirror_[viewInfo.Monitor])
-			angle += rotation_[viewInfo.Monitor] * 90;
+	auto rect_to_points = [](const SDL_FRect& r, SDL_FPoint p[4]) {
+		p[0] = { r.x,         r.y }; // TL
+		p[1] = { r.x + r.w,   r.y }; // TR
+		p[2] = { r.x + r.w,   r.y + r.h }; // BR
+		p[3] = { r.x,         r.y + r.h }; // BL
+		};
+	auto rotate_points_about_center = [](SDL_FPoint p[4], const SDL_FRect& r, float angleDeg) {
+		if (angleDeg == 0.0f) return;
+		const float cx = r.x + r.w * 0.5f, cy = r.y + r.h * 0.5f;
+		const float rad = angleDeg * 3.1415926535f / 180.0f;
+		const float c = cosf(rad), s = sinf(rad);
+		for (int i = 0; i < 4; ++i) {
+			const float x = p[i].x - cx, y = p[i].y - cy;
+			p[i].x = x * c - y * s + cx;
+			p[i].y = x * s + y * c + cy;
+		}
+		};
 
-		dstRect.x = dstRect.x * scaleX;
-		dstRect.y = dstRect.y * scaleY;
-		dstRect.w = dstRect.w * scaleX;
-		dstRect.h = dstRect.h * scaleY;
+	auto make_verts = [&](const SDL_Rect& s, SDL_FRect dPx, float angleDeg,
+		bool flipH, bool flipV, float alpha01, SDL_Vertex out[4]) {
+			// UVs
+			float u0 = float(s.x) / float(texW);
+			float v0 = float(s.y) / float(texH);
+			float u1 = float(s.x + s.w) / float(texW);
+			float v1 = float(s.y + s.h) / float(texH);
+			if (flipH) std::swap(u0, u1);
+			if (flipV) std::swap(v0, v1);
 
-		if (mirror_[viewInfo.Monitor]) {
-			if (rotation_[viewInfo.Monitor] % 2 == 0) {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-				}
+			SDL_FPoint pts[4]; rect_to_points(dPx, pts);
+			rotate_points_about_center(pts, dPx, angleDeg);
+
+			const SDL_Color col = { 255,255,255, clamp_u8(alpha01) };
+			out[0] = { {pts[0].x, pts[0].y}, col, {u0, v0} };
+			out[1] = { {pts[1].x, pts[1].y}, col, {u1, v0} };
+			out[2] = { {pts[2].x, pts[2].y}, col, {u1, v1} };
+			out[3] = { {pts[3].x, pts[3].y}, col, {u0, v1} };
+		};
+
+	auto draw_quad = [&](const SDL_Rect& s, const SDL_FRect& dPx, float angleDeg,
+		bool flipH, bool flipV, float alpha01)->bool
+		{
+			SDL_Vertex v[4];
+			make_verts(s, dPx, angleDeg, flipH, flipV, alpha01, v);
+			static const int idx[6] = { 0,1,2, 0,2,3 };
+			return SDL_RenderGeometry(renderer_[m], texture, v, 4, idx, 6) == 0;
+		};
+
+	// --- Base draw path (no reflection) ---
+	auto draw_base = [&]()->bool {
+		SDL_Rect  s = src0;
+		SDL_FRect d = dst0;
+
+		const SDL_Rect  sCopy = s;
+		const SDL_FRect dCopy = d;
+		clip_to_container(s, d, sCopy, dCopy);
+		if (d.w <= 0.f || d.h <= 0.f || s.w <= 0 || s.h <= 0) return true;
+
+		float angle = viewInfo.Angle;
+		if (!mir) angle += float(rot * 90);
+
+		SDL_FRect dPx = to_pixels(d);
+
+		bool ok = true;
+		if (mir) {
+			if ((rotation_[m] & 1) == 0) {
+				SDL_FRect r = dPx;
+				r.y += float(outH) * 0.5f;
+				ok &= draw_quad(s, r, angle, false, false, alpha);
+				r.x = float(outW) - r.x - r.w;
+				r.y = float(outH) - r.y - r.h;
+				ok &= draw_quad(s, r, angle + 180.0f, false, false, alpha);
 			}
 			else {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					float tmp = dstRect.x;
-					dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-					angle += 90;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-				}
+				SDL_FRect r = dPx;
+				float tmpx = r.x;
+				r.x = float(outW) * 0.5f - r.y - r.h * 0.5f - r.w * 0.5f;
+				r.y = tmpx - r.h * 0.5f + r.w * 0.5f;
+				ok &= draw_quad(s, r, angle + 90.0f, false, false, alpha);
+				r.x = float(outW) - r.x - r.w;
+				r.y = float(outH) - r.y - r.h;
+				ok &= draw_quad(s, r, angle + 270.0f, false, false, alpha);
 			}
 		}
 		else {
-			// 90 degree rotation
-			if (rotation_[viewInfo.Monitor] == 1) {
-				float tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-			}
-			// 180 degree rotation
-			if (rotation_[viewInfo.Monitor] == 2) {
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-			}
-			// 270 degree rotation
-			if (rotation_[viewInfo.Monitor] == 3) {
-				float tmp = dstRect.x;
-				dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-			}
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-			}
+			apply_output_rotation_rect(dPx);
+			ok &= draw_quad(s, dPx, angle, false, false, alpha);
 		}
-	}
+		return ok;
+		};
 
-	// Restore original parameters
-	srcRect.x = srcRectOrig.x;
-	srcRect.y = srcRectOrig.y;
-	srcRect.w = srcRectOrig.w;
-	srcRect.h = srcRectOrig.h;
-	dstRect.x = dstRectOrig.x;
-	dstRect.y = dstRectOrig.y;
-	dstRect.w = dstRectOrig.w;
-	dstRect.h = dstRectOrig.h;
-	srcRectCopy.x = srcRectOrig.x;
-	srcRectCopy.y = srcRectOrig.y;
-	srcRectCopy.w = srcRectOrig.w;
-	srcRectCopy.h = srcRectOrig.h;
-	dstRectCopy.x = dstRectOrig.x;
-	dstRectCopy.y = dstRectOrig.y;
-	dstRectCopy.w = dstRectOrig.w;
-	dstRectCopy.h = dstRectOrig.h;
+	// Reflection draw (0=top,1=bottom,2=left,3=right)
+	auto draw_reflection = [&](int kind)->bool {
+		SDL_Rect  s = src0;
+		SDL_FRect d = dst0;
 
-	if (viewInfo.Reflection.find("left") != std::string::npos) {
-		dstRect.w = std::max(0.0f, dstRect.w * viewInfo.ReflectionScale);
-		dstRect.x = dstRect.x - dstRect.w - viewInfo.ReflectionDistance;
-		imageScaleX = (dstRect.h > 0) ? static_cast<double>(srcRect.w) / static_cast<double>(dstRect.w) : 0.0;
-		dstRectCopy.x = dstRect.x;
-		dstRectCopy.w = dstRect.w;
-
-		// If a container has been defined, limit the display to the container boundaries.
-		if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-			dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-			// Correct if the image falls to the left of the container
-			if (dstRect.x < viewInfo.ContainerX) {
-				dstRect.x = viewInfo.ContainerX;
-				dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-			}
-			// Correct if the image falls to the right of the container
-			if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-				dstRect.w = viewInfo.ContainerX + viewInfo.ContainerWidth - dstRect.x;
-				srcRect.x = srcRectCopy.x + static_cast<int>(srcRectCopy.w * (dstRectCopy.w - dstRect.w) / dstRectCopy.w);
-			}
-			// Correct if the image falls to the top of the container
-			if (dstRect.y < viewInfo.ContainerY) {
-				dstRect.y = viewInfo.ContainerY;
-				dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-				srcRect.y = srcRectCopy.y + static_cast<int>(srcRectCopy.h * (dstRect.y - dstRectCopy.y) / dstRectCopy.h);
-			}
-			// Correct if the image falls to the bottom of the container
-			if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-				dstRect.h = viewInfo.ContainerY + viewInfo.ContainerHeight - dstRect.y;
-			}
-			// Define source width and height
-			srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-			srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-
+		switch (kind) {
+			case 0: d.h = d.h * viewInfo.ReflectionScale;
+				d.y = d.y - d.h - viewInfo.ReflectionDistance; break;
+			case 1: d.y = d.y + d.h + viewInfo.ReflectionDistance;
+				d.h = std::max(0.0f, d.h * viewInfo.ReflectionScale); break;
+			case 2: d.w = std::max(0.0f, d.w * viewInfo.ReflectionScale);
+				d.x = d.x - d.w - viewInfo.ReflectionDistance; break;
+			case 3: d.x = d.x + d.w + viewInfo.ReflectionDistance;
+				d.w = std::max(0.0f, d.w * viewInfo.ReflectionScale); break;
 		}
 
-		angle = viewInfo.Angle;
-		if (!mirror_[viewInfo.Monitor])
-			angle += rotation_[viewInfo.Monitor] * 90;
+		const SDL_Rect  sCopy = s;
+		const SDL_FRect dCopy = d;
+		clip_to_container(s, d, sCopy, dCopy);
+		if (d.w <= 0.f || d.h <= 0.f || s.w <= 0 || s.h <= 0) return true;
 
-		dstRect.x = dstRect.x * scaleX;
-		dstRect.y = dstRect.y * scaleY;
-		dstRect.w = dstRect.w * scaleX;
-		dstRect.h = dstRect.h * scaleY;
+		float baseAngle = viewInfo.Angle;
+		if (!mir) baseAngle += float(rot * 90);
 
-		if (mirror_[viewInfo.Monitor]) {
-			if (rotation_[viewInfo.Monitor] % 2 == 0) {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-				}
+		const bool flipV = (kind == 0 || kind == 1);
+		const bool flipH = (kind == 2 || kind == 3);
+		const float aRef = viewInfo.ReflectionAlpha * alpha;
+
+		SDL_FRect dPx = to_pixels(d);
+
+		bool ok = true;
+		if (mir) {
+			if ((rotation_[m] & 1) == 0) {
+				SDL_FRect r = dPx;
+				r.y += float(outH) * 0.5f;
+				ok &= draw_quad(s, r, baseAngle, flipH, flipV, aRef);
+				r.x = float(outW) - r.x - r.w;
+				r.y = float(outH) - r.y - r.h;
+				ok &= draw_quad(s, r, baseAngle + 180.0f, flipH, flipV, aRef);
 			}
 			else {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					float tmp = dstRect.x;
-					dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-					angle += 90;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-				}
+				SDL_FRect r = dPx;
+				float tmpx = r.x;
+				r.x = float(outW) * 0.5f - r.y - r.h * 0.5f - r.w * 0.5f;
+				r.y = tmpx - r.h * 0.5f + r.w * 0.5f;
+				ok &= draw_quad(s, r, baseAngle + 90.0f, flipH, flipV, aRef);
+				r.x = float(outW) - r.x - r.w;
+				r.y = float(outH) - r.y - r.h;
+				ok &= draw_quad(s, r, baseAngle + 270.0f, flipH, flipV, aRef);
 			}
 		}
 		else {
-			// 90 degree rotation
-			if (rotation_[viewInfo.Monitor] == 1) {
-				float tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-			}
-			// 180 degree rotation
-			if (rotation_[viewInfo.Monitor] == 2) {
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-			}
-			// 270 degree rotation
-			if (rotation_[viewInfo.Monitor] == 3) {
-				float tmp = dstRect.x;
-				dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-			}
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-			}
+			apply_output_rotation_rect(dPx);
+			ok &= draw_quad(s, dPx, baseAngle, flipH, flipV, aRef);
 		}
+		return ok;
+		};
+
+	bool ok = true;
+	ok &= draw_base();
+
+	if (viewInfo.hasReflection) {
+		const uint8_t mask = viewInfo.reflectionMask;
+		if (mask & (1 << 0)) ok &= draw_reflection(0); // Top
+		if (mask & (1 << 1)) ok &= draw_reflection(1); // Bottom
+		if (mask & (1 << 2)) ok &= draw_reflection(2); // Left
+		if (mask & (1 << 3)) ok &= draw_reflection(3); // Right
 	}
 
-	// Restore original parameters
-	srcRect.x = srcRectOrig.x;
-	srcRect.y = srcRectOrig.y;
-	srcRect.w = srcRectOrig.w;
-	srcRect.h = srcRectOrig.h;
-	dstRect.x = dstRectOrig.x;
-	dstRect.y = dstRectOrig.y;
-	dstRect.w = dstRectOrig.w;
-	dstRect.h = dstRectOrig.h;
-	srcRectCopy.x = srcRectOrig.x;
-	srcRectCopy.y = srcRectOrig.y;
-	srcRectCopy.w = srcRectOrig.w;
-	srcRectCopy.h = srcRectOrig.h;
-	dstRectCopy.x = dstRectOrig.x;
-	dstRectCopy.y = dstRectOrig.y;
-	dstRectCopy.w = dstRectOrig.w;
-	dstRectCopy.h = dstRectOrig.h;
-
-	if (viewInfo.Reflection.find("right") != std::string::npos) {
-		dstRect.x = dstRect.x + dstRect.w + viewInfo.ReflectionDistance;
-		dstRect.w = std::max(0.0f, dstRect.w * viewInfo.ReflectionScale);
-		imageScaleX = (dstRect.h > 0) ? static_cast<double>(srcRect.w) / static_cast<double>(dstRect.w) : 0.0;
-		dstRectCopy.x = dstRect.x;
-		dstRectCopy.w = dstRect.w;
-
-		// If a container has been defined, limit the display to the container boundaries.
-		if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-			dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-			// Correct if the image falls to the left of the container
-			if (dstRect.x < viewInfo.ContainerX) {
-				dstRect.x = viewInfo.ContainerX;
-				dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-			}
-			// Correct if the image falls to the right of the container
-			if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-				dstRect.w = viewInfo.ContainerX + viewInfo.ContainerWidth - dstRect.x;
-				srcRect.x = srcRectCopy.x + static_cast<int>(srcRectCopy.w * (dstRectCopy.w - dstRect.w) / dstRectCopy.w);
-			}
-			// Correct if the image falls to the top of the container
-			if (dstRect.y < viewInfo.ContainerY) {
-				dstRect.y = viewInfo.ContainerY;
-				dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-				srcRect.y = srcRectCopy.y + static_cast<int>(srcRectCopy.h * (dstRect.y - dstRectCopy.y) / dstRectCopy.h);
-			}
-			// Correct if the image falls to the bottom of the container
-			if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-				dstRect.h = viewInfo.ContainerY + viewInfo.ContainerHeight - dstRect.y;
-			}
-			// Define source width and height
-			srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-			srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-
-
-		}
-
-		angle = viewInfo.Angle;
-		if (!mirror_[viewInfo.Monitor])
-			angle += rotation_[viewInfo.Monitor] * 90;
-
-		dstRect.x = dstRect.x * scaleX;
-		dstRect.y = dstRect.y * scaleY;
-		dstRect.w = dstRect.w * scaleX;
-		dstRect.h = dstRect.h * scaleY;
-
-		if (mirror_[viewInfo.Monitor]) {
-			if (rotation_[viewInfo.Monitor] % 2 == 0) {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-				}
-			}
-			else {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					float tmp = dstRect.x;
-					dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-					angle += 90;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-				}
-			}
-		}
-		else {
-			// 90 degree rotation
-			if (rotation_[viewInfo.Monitor] == 1) {
-				float tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-			}
-			// 180 degree rotation
-			if (rotation_[viewInfo.Monitor] == 2) {
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-			}
-			// 270 degree rotation
-			if (rotation_[viewInfo.Monitor] == 3) {
-				float tmp = dstRect.x;
-				dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-			}
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyExF(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-			}
-		}
-	}
-	return true;
+	return ok;
 }
+
+
+

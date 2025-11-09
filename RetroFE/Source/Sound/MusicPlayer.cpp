@@ -180,16 +180,9 @@ bool MusicPlayer::initialize(Configuration& config) {
 
 void MusicPlayer::reinitialize() {
 	LOG_INFO("MusicPlayer", "Re-initializing hooks after SDL cycle.");
-	// Re-register the callback that allows for automatic track changes.
 	Mix_HookMusicFinished(MusicPlayer::musicFinishedCallback);
-
-	// Re-apply the current volume, as this can be reset by Mix_OpenAudio.
 	Mix_VolumeMusic(volume_);
-
-	// Re-register the visualizer if it was active.
-	if (hasActiveVisualizers_) {
-		Mix_SetPostMix(MusicPlayer::postMixCallback, this);
-	}
+	// No Mix_SetPostMix here anymore.
 }
 
 void MusicPlayer::onGameLaunchStart() {
@@ -286,12 +279,8 @@ void MusicPlayer::addVisualizerListener(MusicPlayerComponent* listener) {
 	visualizerListeners_.push_back(listener);
 	LOG_INFO("MusicPlayer", "Visualizer listener added. Total listeners: " + std::to_string(visualizerListeners_.size()));
 
-	// If this is the FIRST listener, register the master callback.
-	if (!hasActiveVisualizers_) {
-		Mix_SetPostMix(MusicPlayer::postMixCallback, this);
-		hasActiveVisualizers_ = true;
-		LOG_INFO("MusicPlayer", "Master post-mix callback registered.");
-	}
+	hasActiveVisualizers_ = !visualizerListeners_.empty(); // true if we now have any
+	LOG_INFO("MusicPlayer", "Visualizer listener added. Total: " + std::to_string(visualizerListeners_.size()));
 }
 
 void MusicPlayer::removeVisualizerListener(MusicPlayerComponent* listener) {
@@ -304,21 +293,10 @@ void MusicPlayer::removeVisualizerListener(MusicPlayerComponent* listener) {
 	LOG_INFO("MusicPlayer", "Visualizer listener removed. Total listeners: " + std::to_string(visualizerListeners_.size()));
 
 	// If this was the LAST listener, unregister the master callback to save CPU.
-	if (visualizerListeners_.empty() && hasActiveVisualizers_) {
-		Mix_SetPostMix(nullptr, nullptr);
-		hasActiveVisualizers_ = false;
-		LOG_INFO("MusicPlayer", "Master post-mix callback unregistered.");
-	}
+	hasActiveVisualizers_ = !visualizerListeners_.empty();
+	LOG_INFO("MusicPlayer", "Visualizer listener removed. Total: " + std::to_string(visualizerListeners_.size()));
 }
 
-
-void MusicPlayer::postMixCallback(void* udata, Uint8* stream, int len) {
-	// This is a static callback, so we need to get the instance
-	if (udata) {
-		MusicPlayer* player = static_cast<MusicPlayer*>(udata);
-		player->processAudioData(stream, len);
-	}
-}
 
 void MusicPlayer::processAudioData(Uint8* stream, int len) {
 	if (!hasActiveVisualizers_ || !stream || len <= 0) {

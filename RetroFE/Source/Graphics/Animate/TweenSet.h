@@ -18,48 +18,20 @@
 #include "Tween.h"
 #include <vector>
 #include <memory>
-#include <map>
-
-#include "TweenPool.h" // Add this include
-
- // This custom deleter doesn't delete memory, it returns the object to our pool.
-struct TweenPoolDeleter {
-    void operator()(Tween* p) const {
-        if (p) {
-            TweenPool::getInstance().release(p);
-        }
-    }
-};
-
-// Define a convenient type alias for a unique_ptr that uses our custom deleter.
-using PooledTweenPtr = std::unique_ptr<Tween, TweenPoolDeleter>;
 
 class TweenSet
 {
 public:
     TweenSet();
+    TweenSet(const TweenSet& copy);
+    TweenSet& operator=(const TweenSet& other);
     ~TweenSet();
-
-    // --- FORBID COPYING ---
-// By deleting these, the compiler will give an error if anything
-// tries to copy a TweenSet, which is now the safe behavior.
-    TweenSet(const TweenSet& other) = delete;
-    TweenSet& operator=(const TweenSet& other) = delete;
-
-    // We also forbid moving for simplicity, as we pass TweenSets by pointer (shared_ptr)
-    TweenSet(TweenSet&& other) = delete;
-    TweenSet& operator=(TweenSet&& other) = delete;
-
-    void push(PooledTweenPtr tween);
+    void push(std::unique_ptr<Tween> tween);
     void clear();
-    Tween* getTween(TweenProperty property) const;
     Tween* getTween(unsigned int index) const;
 
     size_t size() const;
 
 private:
-    std::map<TweenProperty, PooledTweenPtr> set_;
-
-    // This vector still stores non-owning pointers
-    std::vector<Tween*> ordered_tweens_;
+    std::vector<std::unique_ptr<Tween>> set_;
 };

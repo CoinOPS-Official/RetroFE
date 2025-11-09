@@ -39,6 +39,7 @@ Page::Page(Configuration& config, int layoutWidth, int layoutHeight)
 	, anActiveMenu_(NULL)
 	, playlistMenu_(NULL)
 	, menuDepth_(0)
+	, LayerComponents_(NUM_LAYERS)
 	, scrollActive_(false)
 	, playlistScrollActive_(false)
 	, gameScrollActive_(false)
@@ -60,7 +61,6 @@ Page::Page(Configuration& config, int layoutWidth, int layoutHeight)
 		layoutWidthByMonitor_.push_back(layoutWidth);
 		layoutHeightByMonitor_.push_back(layoutHeight);
 	}
-
 	currentLayout_ = 0;
 }
 
@@ -88,7 +88,6 @@ void Page::deInitialize() {
 		}
 		layer.clear();
 	}
-	LayerComponents_.clear();
 
 	// Delete sound chunks and reset pointers
 	if (loadSoundChunk_) {
@@ -284,11 +283,7 @@ void Page::setStatusTextComponent(Text* t) {
 
 bool Page::addComponent(Component* c) {
 	if (c->baseViewInfo.Layer < NUM_LAYERS) {
-		// Ensure that the vector for the specific layer exists
-		if (LayerComponents_.size() <= c->baseViewInfo.Layer) {
-			LayerComponents_.resize(NUM_LAYERS);
-		}
-		// Add the component to the appropriate layer vector
+		// No need to resize—guaranteed by constructor
 		LayerComponents_[c->baseViewInfo.Layer].push_back(c);
 		return true;
 	}
@@ -318,57 +313,41 @@ bool Page::isMenuIdle() {
 
 
 bool Page::isIdle() {
-	bool idle = isMenuIdle();
-
-	// Iterate from the highest layer to the lowest
-	for (auto it = LayerComponents_.rbegin(); it != LayerComponents_.rend() && idle; ++it) {
-		for (const Component* component : *it) {
-			if (!component->isIdle()) {
-				idle = false;
-				break;  // Exit inner loop early if a component is not idle
-			}
+	if (!isMenuIdle()) return false;
+	for (int i = NUM_LAYERS - 1; i >= 0; --i) {
+		const auto& layer = LayerComponents_[i];
+		for (const Component* component : layer) {
+			if (!component->isIdle()) return false;
 		}
 	}
-
-	return idle;
-}
-
-
-
-bool Page::isAttractIdle() {
-	// Check if any menu is not attract idle
-	for (const auto& menuVector : menus_) {
-		for (const ScrollingList* menu : menuVector) {
-			if (!menu->isAttractIdle()) {
-				return false;
-			}
-		}
-	}
-
-	// Iterate from the highest layer to the lowest
-	for (auto it = LayerComponents_.rbegin(); it != LayerComponents_.rend(); ++it) {
-		for (const Component* component : *it) {
-			if (!component->isAttractIdle()) {
-				return false;
-			}
-		}
-	}
-
 	return true;
 }
 
 
 
-bool Page::isGraphicsIdle() {
-	// Iterate from the highest layer to the lowest
-	for (auto it = LayerComponents_.rbegin(); it != LayerComponents_.rend(); ++it) {
-		for (const Component* component : *it) {
-			if (!component->isIdle()) {
-				return false;
-			}
+bool Page::isAttractIdle() {
+	for (const auto& menuVector : menus_) {
+		for (const ScrollingList* menu : menuVector) {
+			if (!menu->isAttractIdle()) return false;
 		}
 	}
+	for (int i = NUM_LAYERS - 1; i >= 0; --i) {
+		const auto& layer = LayerComponents_[i];
+		for (const Component* component : layer) {
+			if (!component->isAttractIdle()) return false;
+		}
+	}
+	return true;
+}
 
+
+bool Page::isGraphicsIdle() {
+	for (int i = NUM_LAYERS - 1; i >= 0; --i) {
+		const auto& layer = LayerComponents_[i];
+		for (const Component* component : layer) {
+			if (!component->isIdle()) return false;
+		}
+	}
 	return true;
 }
 
@@ -1326,34 +1305,18 @@ void Page::cleanup() {
 
 void Page::draw(int monitor) {
 	for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
-		if (i >= LayerComponents_.size()) {
-			LOG_ERROR("Page::draw", "Layer index out of bounds: " + std::to_string(i));
-			break;
-		}
-
-		if (LayerComponents_[i].empty() && menus_.empty()) {
-			continue;
-		}
-
-		for (Component* component : LayerComponents_[i]) {
-			if (!component) {
-				continue;
-			}
-			if (component->baseViewInfo.Monitor == monitor) {
-				component->draw();
+		// Draw all components in this layer for the given monitor
+		for (Component* c : LayerComponents_[i]) {
+			if (c && c->baseViewInfo.Monitor == monitor) {
+				c->draw();
 			}
 		}
-
+		// Draw all menu components belonging to this layer and monitor
 		for (const auto& menuList : menus_) {
-			for (ScrollingList* const menu : menuList) {
-				if (!menu) {
-					continue;
-				}
+			for (ScrollingList const* const menu : menuList) {
+				if (!menu) continue;
 				for (Component* c : menu->getComponents()) {
-					if (!c) {
-						continue;
-					}
-					if (c->baseViewInfo.Layer == i && c->baseViewInfo.Monitor == monitor) {
+					if (c && c->baseViewInfo.Layer == i && c->baseViewInfo.Monitor == monitor) {
 						c->draw();
 					}
 				}
@@ -1361,7 +1324,6 @@ void Page::draw(int monitor) {
 		}
 	}
 }
-
 
 
 void Page::removePlaylist() {

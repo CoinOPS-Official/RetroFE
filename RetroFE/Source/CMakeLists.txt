@@ -102,6 +102,7 @@ else()
     pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
     pkg_search_module(LIBUSB REQUIRED libusb-1.0)
     pkg_check_modules(LIBEVDEV REQUIRED libevdev)
+    pkg_check_modules(LIBUDEV  REQUIRED libudev)
     pkg_search_module(LIBSERIALPORT REQUIRED libserialport)
     find_package(Threads REQUIRED)
     
@@ -120,6 +121,7 @@ else()
         ${LIBUSB_INCLUDE_DIRS}
         ${LIBUSB_INCLUDE_DIR}
         ${LIBEVDEV_INCLUDE_DIRS}
+        ${LIBUDEV_INCLUDE_DIRS}
         ${LIBSERIALPORT_INCLUDE_DIRS}
     )
     
@@ -136,6 +138,7 @@ else()
         ${GLIB2_LIBRARY_DIRS}
         ${LIBUSB_LIBRARY_DIRS}
         ${LIBEVDEV_LIBRARY_DIRS}
+        ${LIBUDEV_LIBRARY_DIRS}
         ${LIBSERIALPORT_LIBRARY_DIRS}
     )
     
@@ -155,6 +158,7 @@ else()
         ${CMAKE_THREAD_LIBS_INIT}
         ${LIBUSB_LIBRARIES}
         ${LIBEVDEV_LIBRARIES}
+        ${LIBUDEV_LIBRARIES} 
         ${LIBSERIALPORT_LIBRARIES}
     )
     add_definitions(${LIBEVDEV_CFLAGS_OTHER})
@@ -215,8 +219,10 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Control/JoyHatHandler.h"
 	"${RETROFE_DIR}/Source/Control/KeyboardHandler.h"
 	"${RETROFE_DIR}/Source/Control/MouseButtonHandler.h"
+	"${RETROFE_DIR}/Source/Control/MouseAxisHandler.h"
+	"${RETROFE_DIR}/Source/Control/TouchDragHandler.h"
     "${RETROFE_DIR}/Source/Control/Restrictor/Restrictor.h"
-    "${RETROFE_DIR}/Source/Control/Restrictor/RestrictorInstance.h"
+    "${RETROFE_DIR}/Source/Control/Restrictor/RestrictorManager.h"
     "${RETROFE_DIR}/Source/Control/Restrictor/ServoStikRestrictor.h"
     "${RETROFE_DIR}/Source/Control/Restrictor/TOSGRSRestrictor.h"
 	"${RETROFE_DIR}/Source/Database/Configuration.h"
@@ -226,6 +232,8 @@ set(RETROFE_HEADERS
     "${RETROFE_DIR}/Source/Execute/AttractMode.h"
     "${RETROFE_DIR}/Source/Execute/Input/InputMonitor.h"
     "${RETROFE_DIR}/Source/Execute/Input/SDLJoyStickScopeGuard.h"
+    "${RETROFE_DIR}/Source/Execute/Input/IKeyboardBackend.h"
+    "${RETROFE_DIR}/Source/Execute/Input/KeyboardBackendFactory.h"
     "${RETROFE_DIR}/Source/Execute/Launcher.h"
     "${RETROFE_DIR}/Source/Execute/PatchExecutor.h"
     "${RETROFE_DIR}/Source/Execute/Platform/IProcessManager.h"
@@ -237,7 +245,6 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Execute/Launcher.h"
 	"${RETROFE_DIR}/Source/Graphics/Animate/Tween.h"
 	"${RETROFE_DIR}/Source/Graphics/Animate/TweenTypes.h"
-    "${RETROFE_DIR}/Source/Graphics/Animate/TweenPool.h"
 	"${RETROFE_DIR}/Source/Graphics/Animate/TweenSet.h"
 	"${RETROFE_DIR}/Source/Graphics/Animate/Animation.h"
 	"${RETROFE_DIR}/Source/Graphics/Animate/AnimationEvents.h"
@@ -260,12 +267,15 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Graphics/PageBuilder.h"
 	"${RETROFE_DIR}/Source/Graphics/Page.h"
 	"${RETROFE_DIR}/Source/Menu/Menu.h"
+	"${RETROFE_DIR}/Source/Sound/AudioBus.h"
 	"${RETROFE_DIR}/Source/Sound/Sound.h"
     "${RETROFE_DIR}/Source/Sound/MusicPlayer.h"
+    "${RETROFE_DIR}/Source/Sound/VuMeterDSP.h"
 	"${RETROFE_DIR}/Source/Utility/Log.h"
 	"${RETROFE_DIR}/Source/Utility/ThreadPool.h"
 	"${RETROFE_DIR}/Source/Utility/Utils.h"
 	"${RETROFE_DIR}/Source/Video/IVideo.h"
+    "${RETROFE_DIR}/Source/Video/GlibLoop.h"
 	"${RETROFE_DIR}/Source/Video/GStreamerVideo.h"
 	"${RETROFE_DIR}/Source/Video/VideoFactory.h"
     "${RETROFE_DIR}/Source/Video/VideoPool.h"
@@ -287,8 +297,10 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Control/JoyHatHandler.cpp"
 	"${RETROFE_DIR}/Source/Control/KeyboardHandler.cpp"
 	"${RETROFE_DIR}/Source/Control/MouseButtonHandler.cpp"
+    "${RETROFE_DIR}/Source/Control/MouseAxisHandler.cpp"
+	"${RETROFE_DIR}/Source/Control/TouchDragHandler.cpp"
     "${RETROFE_DIR}/Source/Control/Restrictor/Restrictor.cpp"
-    "${RETROFE_DIR}/Source/Control/Restrictor/RestrictorInstance.cpp"
+    "${RETROFE_DIR}/Source/Control/Restrictor/RestrictorManager.cpp"
     "${RETROFE_DIR}/Source/Control/Restrictor/ServoStikRestrictor.cpp"
     "${RETROFE_DIR}/Source/Control/Restrictor/TOSGRSRestrictor.cpp"
 	"${RETROFE_DIR}/Source/Database/Configuration.cpp"
@@ -298,6 +310,9 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Database/MetadataDatabase.cpp"
     "${RETROFE_DIR}/Source/Execute/AttractMode.cpp"
     "${RETROFE_DIR}/Source/Execute/Input/InputMonitor.cpp"
+    "${RETROFE_DIR}/Source/Execute/Input/Platform/KeyboardBackendLinux.cpp"
+    "${RETROFE_DIR}/Source/Execute/Input/Platform/KeyboardBackendWindows.cpp"
+    "${RETROFE_DIR}/Source/Execute/Input/Platform/KeyboardBackendMac.cpp"
     "${RETROFE_DIR}/Source/Execute/Launcher.cpp"
     "${RETROFE_DIR}/Source/Execute/PatchExecutor.cpp"
     "${RETROFE_DIR}/Source/Execute/Platform/Windows/WindowsProcessManager.cpp"
@@ -314,7 +329,6 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Graphics/Animate/AnimationEvents.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Animate/Tween.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Animate/TweenSet.cpp"
-    "${RETROFE_DIR}/Source/Graphics/Animate/TweenPool.cpp"
 	"${RETROFE_DIR}/Source/Graphics/ComponentItemBindingBuilder.cpp"
 	"${RETROFE_DIR}/Source/Graphics/ComponentItemBinding.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Component/Container.cpp"
@@ -331,11 +345,14 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Graphics/Component/VideoBuilder.cpp"
 	"${RETROFE_DIR}/Source/Graphics/Component/VideoComponent.cpp"
 	"${RETROFE_DIR}/Source/Menu/Menu.cpp"
+	"${RETROFE_DIR}/Source/Sound/AudioBus.cpp"
 	"${RETROFE_DIR}/Source/Sound/Sound.cpp"
     "${RETROFE_DIR}/Source/Sound/MusicPlayer.cpp"
+    "${RETROFE_DIR}/Source/Sound/VuMeterDSP.cpp"
 	"${RETROFE_DIR}/Source/Utility/Log.cpp"
 	"${RETROFE_DIR}/Source/Utility/ThreadPool.cpp"
 	"${RETROFE_DIR}/Source/Utility/Utils.cpp"
+    "${RETROFE_DIR}/Source/Video/GlibLoop.cpp"
 	"${RETROFE_DIR}/Source/Video/GStreamerVideo.cpp"
 	"${RETROFE_DIR}/Source/Video/VideoFactory.cpp"
     "${RETROFE_DIR}/Source/Video/VideoPool.cpp"

@@ -21,7 +21,6 @@
 #include "../Animate/Animation.h"
 #include "../Animate/AnimationEvents.h"
 #include "../Animate/TweenTypes.h"
-#include "../Animate/TweenPool.h"
 #include "../Font.h"
 #include "ImageBuilder.h"
 #include "VideoBuilder.h"
@@ -149,7 +148,8 @@ std::string ScrollingList::getSelectedItemName()
     if (!size)
         return "";
     
-    return (*items_)[(itemIndex_ + selectedOffsetIndex_) % static_cast<int>(size)]->name;
+    size_t idx = loopIncrement(itemIndex_, selectedOffsetIndex_, items_->size());
+    return (*items_)[idx]->name;
 }
 
 void ScrollingList::setScrollAcceleration( float value )
@@ -318,26 +318,56 @@ void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     clearTweenPoints();
 
     scrollPoints_ = scrollPoints;
-    tweenPoints_ = tweenPoints;
+    tweenPoints_ = std::move(tweenPoints);
 
-    size_t size = (scrollPoints_) ? scrollPoints_->size() : 0;
+    const size_t N = (scrollPoints_ ? scrollPoints_->size() : 0);
 
-    // Initialize or reset the CircularBuffer
-    components_.initialize(size);
-
-    // No need to manually set to nullptr as initialize already does that
-    // Initialize all components to nullptr (redundant if initialize sets them to nullptr)
-    // for (size_t i = 0; i < size; ++i) {
-    //     components_.raw()[i] = nullptr;
-    // }
+    // Reset circular buffer (fills with nullptrs)
+    components_.initialize(N);
 
     if (items_) {
         itemIndex_ = loopDecrement(0, selectedOffsetIndex_, items_->size());
     }
 
-    // Allocate and initialize components
+    // --- Precompute neighbor index maps ---
+    forwardMap_.resize(N);
+    backwardMap_.resize(N);
+
+    for (size_t i = 0; i < N; ++i) {
+        forwardMap_[i] = (N <= 1) ? 0 : (i == 0 ? N - 1 : i - 1);
+        backwardMap_[i] = (N <= 1) ? 0 : (i + 1 == N ? 0 : i + 1);
+    }
+
+    // --- Precompute tween/view tuples (so scroll() is just lookups) ---
+    forwardTween_.resize(N);
+    backwardTween_.resize(N);
+
+    if (N > 0 && tweenPoints_ && scrollPoints_) {
+        for (size_t i = 0; i < N; ++i) {
+            const size_t jF = forwardMap_[i];
+            const size_t jB = backwardMap_[i];
+
+            forwardTween_[i] = TweenNeighbor{
+                (*tweenPoints_)[jF],
+                (*scrollPoints_)[i],
+                (*scrollPoints_)[jF]
+            };
+            backwardTween_[i] = TweenNeighbor{
+                (*tweenPoints_)[jB],
+                (*scrollPoints_)[i],
+                (*scrollPoints_)[jB]
+            };
+        }
+    }
+    else {
+        forwardTween_.clear();
+        backwardTween_.clear();
+    }
+
+    // Allocate and initialize components (your existing behavior)
     allocateSpritePoints();
 }
+
 
 size_t ScrollingList::getScrollOffsetIndex( ) const
 {
@@ -518,15 +548,29 @@ void ScrollingList::letterChange(bool increment) {
     itemIndex_ = newIndex;
 }
 
-size_t ScrollingList::loopIncrement(size_t currentIndex, size_t incrementAmount, size_t listSize) const {
-    if (listSize == 0) return 0;
-    return (currentIndex + incrementAmount) % listSize;
+size_t ScrollingList::loopIncrement(size_t currentIndex, size_t incrementAmount, size_t N) const {
+    if (N == 0) return 0;
+
+    if (currentIndex >= N) currentIndex -= N;
+
+    if (incrementAmount >= N) incrementAmount %= N;
+
+    size_t next = currentIndex + incrementAmount;
+    if (next >= N) next -= N;
+    return next;
 }
 
+size_t ScrollingList::loopDecrement(size_t currentIndex, size_t decrementAmount, size_t N) const {
+    if (N == 0) return 0;
 
-size_t ScrollingList::loopDecrement(size_t currentIndex, size_t decrementAmount, size_t listSize) const {
-    if (listSize == 0) return 0;
-    return (currentIndex + listSize - decrementAmount) % listSize;
+    if (currentIndex >= N) currentIndex -= N;
+
+    if (decrementAmount >= N) decrementAmount %= N;
+
+    const size_t add = N - decrementAmount;
+    size_t next = currentIndex + add;
+    if (next >= N) next -= N;
+    return next;
 }
 
 void ScrollingList::metaUp(const std::string& attribute)
@@ -823,6 +867,7 @@ size_t ScrollingList::getSize() const
     return items_->size();
 }
 
+// Change the type of scrollTime here to float, as it's only used to create tweens that need floats.
 void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, float scrollTime) const {
     if (!c || !sets || !currentViewInfo || !nextViewInfo) return;
 
@@ -836,8 +881,6 @@ void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> s
     c->setTweens(sets);
 
     std::shared_ptr<Animation> scrollTween = sets->getAnimation("menuScroll");
-
-    // This now automatically returns all tweens from the last scroll back to the pool.
     scrollTween->Clear();
 
     // Start with a fresh baseViewInfo
@@ -845,81 +888,66 @@ void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> s
 
     auto set = std::make_unique<TweenSet>();
 
+    // Define a small epsilon for floating-point comparisons
     const float EPSILON_FLOAT = 0.0001f;
 
-    // --- REFACTORED LOGIC: Acquire from pool instead of allocating new ---
+    // NOTE: Using static_cast<float> on all numeric start/end values to explicitly
+    // convert them to the type expected by the Tween constructor. This resolves all C4244 warnings.
 
+    // Apply conditional push for each Tween property
     if (currentViewInfo->Restart != nextViewInfo->Restart && scrollPeriod_ > minScrollTime_) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_RESTART, LINEAR, 1.0f, 1.0f, 0.0f);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_RESTART, LINEAR, static_cast<float>(currentViewInfo->Restart), static_cast<float>(nextViewInfo->Restart), 0.0f));
     }
     if (std::abs(currentViewInfo->Height - nextViewInfo->Height) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_HEIGHT, LINEAR, currentViewInfo->Height, nextViewInfo->Height, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_HEIGHT, LINEAR, static_cast<float>(currentViewInfo->Height), static_cast<float>(nextViewInfo->Height), scrollTime));
     }
     if (std::abs(currentViewInfo->Width - nextViewInfo->Width) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_WIDTH, LINEAR, currentViewInfo->Width, nextViewInfo->Width, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_WIDTH, LINEAR, static_cast<float>(currentViewInfo->Width), static_cast<float>(nextViewInfo->Width), scrollTime));
     }
     if (std::abs(currentViewInfo->Angle - nextViewInfo->Angle) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_ANGLE, LINEAR, currentViewInfo->Angle, nextViewInfo->Angle, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ANGLE, LINEAR, static_cast<float>(currentViewInfo->Angle), static_cast<float>(nextViewInfo->Angle), scrollTime));
     }
     if (std::abs(currentViewInfo->Alpha - nextViewInfo->Alpha) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_ALPHA, LINEAR, currentViewInfo->Alpha, nextViewInfo->Alpha, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_ALPHA, LINEAR, static_cast<float>(currentViewInfo->Alpha), static_cast<float>(nextViewInfo->Alpha), scrollTime));
     }
     if (std::abs(currentViewInfo->X - nextViewInfo->X) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_X, LINEAR, currentViewInfo->X, nextViewInfo->X, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X, LINEAR, static_cast<float>(currentViewInfo->X), static_cast<float>(nextViewInfo->X), scrollTime));
     }
     if (std::abs(currentViewInfo->Y - nextViewInfo->Y) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_Y, LINEAR, currentViewInfo->Y, nextViewInfo->Y, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y, LINEAR, static_cast<float>(currentViewInfo->Y), static_cast<float>(nextViewInfo->Y), scrollTime));
     }
     if (std::abs(currentViewInfo->XOrigin - nextViewInfo->XOrigin) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_X_ORIGIN, LINEAR, currentViewInfo->XOrigin, nextViewInfo->XOrigin, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_ORIGIN, LINEAR, static_cast<float>(currentViewInfo->XOrigin), static_cast<float>(nextViewInfo->XOrigin), scrollTime));
     }
     if (std::abs(currentViewInfo->YOrigin - nextViewInfo->YOrigin) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, currentViewInfo->YOrigin, nextViewInfo->YOrigin, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, static_cast<float>(currentViewInfo->YOrigin), static_cast<float>(nextViewInfo->YOrigin), scrollTime));
     }
     if (std::abs(currentViewInfo->XOffset - nextViewInfo->XOffset) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_X_OFFSET, LINEAR, currentViewInfo->XOffset, nextViewInfo->XOffset, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_X_OFFSET, LINEAR, static_cast<float>(currentViewInfo->XOffset), static_cast<float>(nextViewInfo->XOffset), scrollTime));
     }
     if (std::abs(currentViewInfo->YOffset - nextViewInfo->YOffset) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_Y_OFFSET, LINEAR, currentViewInfo->YOffset, nextViewInfo->YOffset, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_Y_OFFSET, LINEAR, static_cast<float>(currentViewInfo->YOffset), static_cast<float>(nextViewInfo->YOffset), scrollTime));
     }
     if (std::abs(currentViewInfo->FontSize - nextViewInfo->FontSize) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_FONT_SIZE, LINEAR, currentViewInfo->FontSize, nextViewInfo->FontSize, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_FONT_SIZE, LINEAR, static_cast<float>(currentViewInfo->FontSize), static_cast<float>(nextViewInfo->FontSize), scrollTime));
     }
     if (std::abs(currentViewInfo->BackgroundAlpha - nextViewInfo->BackgroundAlpha) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, currentViewInfo->BackgroundAlpha, nextViewInfo->BackgroundAlpha, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, static_cast<float>(currentViewInfo->BackgroundAlpha), static_cast<float>(nextViewInfo->BackgroundAlpha), scrollTime));
     }
     if (std::abs(currentViewInfo->MaxWidth - nextViewInfo->MaxWidth) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, currentViewInfo->MaxWidth, nextViewInfo->MaxWidth, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, static_cast<float>(currentViewInfo->MaxWidth), static_cast<float>(nextViewInfo->MaxWidth), scrollTime));
     }
     if (std::abs(currentViewInfo->MaxHeight - nextViewInfo->MaxHeight) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, currentViewInfo->MaxHeight, nextViewInfo->MaxHeight, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, static_cast<float>(currentViewInfo->MaxHeight), static_cast<float>(nextViewInfo->MaxHeight), scrollTime));
     }
     if (currentViewInfo->Layer != nextViewInfo->Layer) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_LAYER, LINEAR, static_cast<float>(currentViewInfo->Layer), static_cast<float>(nextViewInfo->Layer), scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_LAYER, LINEAR, static_cast<float>(currentViewInfo->Layer), static_cast<float>(nextViewInfo->Layer), scrollTime));
     }
     if (std::abs(currentViewInfo->Volume - nextViewInfo->Volume) > EPSILON_FLOAT) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_VOLUME, LINEAR, currentViewInfo->Volume, nextViewInfo->Volume, scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_VOLUME, LINEAR, static_cast<float>(currentViewInfo->Volume), static_cast<float>(nextViewInfo->Volume), scrollTime));
     }
     if (currentViewInfo->Monitor != nextViewInfo->Monitor) {
-        Tween* raw_tween = TweenPool::getInstance().acquire(TWEEN_PROPERTY_MONITOR, LINEAR, static_cast<float>(currentViewInfo->Monitor), static_cast<float>(nextViewInfo->Monitor), scrollTime);
-        if (raw_tween) set->push(PooledTweenPtr(raw_tween));
+        set->push(std::make_unique<Tween>(TWEEN_PROPERTY_MONITOR, LINEAR, static_cast<float>(currentViewInfo->Monitor), static_cast<float>(nextViewInfo->Monitor), scrollTime));
     }
 
     // Only push the set if there are any tweens in it
@@ -927,6 +955,7 @@ void ScrollingList::resetTweens(Component* c, std::shared_ptr<AnimationEvents> s
         scrollTween->Push(std::move(set));
     }
 }
+
 bool ScrollingList::allocateTexture(size_t index, const Item* item) {
     if (index >= components_.size()) return false;
 
@@ -1227,56 +1256,51 @@ bool ScrollingList::isFastScrolling() const
     return scrollPeriod_ == minScrollTime_;
 }
 
-void ScrollingList::scroll(bool forward)
-{
-    // Exit conditions: if no items or scroll points, return.
+void ScrollingList::scroll(bool forward) {
+    // Exit conditions
     if (!items_ || items_->empty() || !scrollPoints_ || scrollPoints_->empty())
         return;
 
-    // Ensure that scrollPeriod is not below the minimum.
+    // Clamp scroll speed
     if (scrollPeriod_ < minScrollTime_)
         scrollPeriod_ = minScrollTime_;
 
-    size_t itemsSize = items_->size();
-    size_t scrollPointsSize = scrollPoints_->size();
+    const size_t itemsSize = items_->size();
+    const size_t N = scrollPoints_->size();
+    const size_t f = static_cast<size_t>(forward); // 0 or 1
 
-    // Determine which component is exiting based on the logical order.
-    size_t exitIndex = forward ? 0 : scrollPoints_->size() - 1;
+    // Decide which slot exits (was: forward ? 0 : N-1)
+    const size_t exitIndex = (N <= 1) ? 0 : (N - 1) * (1 - f);
 
-    // Determine the new item to load into the exiting slot.
-    Item const* itemToScroll = nullptr;
+    // Determine the new item to load into the exiting slot, and update itemIndex_
+    const Item* itemToScroll = nullptr;
     if (forward) {
-        // Use loopIncrement to get the item that follows the currently visible block.
-        itemToScroll = (*items_)[ loopIncrement(itemIndex_, scrollPointsSize, itemsSize) ];
-        // Advance the index.
+        itemToScroll = (*items_)[loopIncrement(itemIndex_, N, itemsSize)];
         itemIndex_ = loopIncrement(itemIndex_, 1, itemsSize);
     }
     else {
-        itemToScroll = (*items_)[ loopDecrement(itemIndex_, 1, itemsSize) ];
+        itemToScroll = (*items_)[loopDecrement(itemIndex_, 1, itemsSize)];
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
     }
 
-    // Only deallocate (i.e. reset/recycle) the component that is exiting.
+    // Rebuild only the exiting slot (consider switching to recycle/retarget later)
     deallocateTexture(exitIndex);
-    // Then allocate new media (video or image) into that slot.
     allocateTexture(exitIndex, itemToScroll);
 
-    // Update the animations (tweening) for each visible component.
-    for (size_t index = 0; index < scrollPointsSize; ++index)
-    {
-        size_t nextIndex;
-        if (forward) {
-            nextIndex = (index == 0) ? scrollPointsSize - 1 : index - 1;
-        }
-        else {
-            nextIndex = (index == scrollPointsSize - 1) ? 0 : index + 1;
-        }
+    // --- Use precomputed tuples ---
+    const auto& T = forward ? forwardTween_ : backwardTween_;
+    // Guard (paranoia) in case N changed without setPoints being called:
+    if (T.size() != N) {
+        // fallback to maps if ever mismatched
+        const auto& neighbor = forward ? forwardMap_ : backwardMap_;
+        for (size_t index = 0; index < N; ++index) {
+            const size_t nextIndex = neighbor[index];
+            Component* component = components_[index];
+            if (!component) continue;
 
-        Component* component = components_[index];  // components_ operator[] gives the logical ordering.
-        if (component) {
-            auto& nextTweenPoint     = (*tweenPoints_)[nextIndex];
-            auto& currentScrollPoint = (*scrollPoints_)[index];
-            auto& nextScrollPoint    = (*scrollPoints_)[nextIndex];
+            auto& nextTweenPoint = (*tweenPoints_)[nextIndex];
+            auto* currentScrollPoint = (*scrollPoints_)[index];
+            auto* nextScrollPoint = (*scrollPoints_)[nextIndex];
 
             component->allocateGraphicsMemory();
             resetTweens(component, nextTweenPoint, currentScrollPoint, nextScrollPoint, scrollPeriod_);
@@ -1284,8 +1308,22 @@ void ScrollingList::scroll(bool forward)
             component->triggerEvent("menuScroll");
         }
     }
+    else {
+        for (size_t index = 0; index < N; ++index) {
+            Component* component = components_[index];
+            if (!component) continue;
 
-    // Rotate the RotatableView so that the logical order is updated.
+            const TweenNeighbor& t = T[index];
+
+            component->allocateGraphicsMemory(); // consider removing per-scroll alloc later
+            resetTweens(component, t.tween, t.cur, t.next, scrollPeriod_);
+            if (component->baseViewInfo.font != t.next->font)
+                component->baseViewInfo.font = t.next->font;
+            component->triggerEvent("menuScroll");
+        }
+    }
+
+    // Rotate logical order
     components_.rotate(forward);
 }
 

@@ -331,19 +331,12 @@ void UserInput::resetStates()
 }
 
 
-bool UserInput::update( SDL_Event &e )
-{
-    if (updated_) {
-        memcpy(lastKeyState_, currentKeyState_, sizeof(lastKeyState_));
-    }
-    updated_ = false;
-    memset( currentKeyState_, 0, sizeof( currentKeyState_ ) );
-
+bool UserInput::update(SDL_Event& e) {
     // Handle adding a joystick
-    if ( e.type == SDL_JOYDEVICEADDED ) {
-        SDL_JoystickID id = SDL_JoystickInstanceID( SDL_JoystickOpen( e.jdevice.which ) );
-        for ( unsigned int i = 0; i < cMaxJoy; i++ ) {
-            if ( joysticks_[i] == -1 ) {
+    if (e.type == SDL_JOYDEVICEADDED) {
+        SDL_JoystickID id = SDL_JoystickInstanceID(SDL_JoystickOpen(e.jdevice.which));
+        for (unsigned int i = 0; i < cMaxJoy; i++) {
+            if (joysticks_[i] == -1) {
                 joysticks_[i] = id;
                 break;
             }
@@ -351,43 +344,42 @@ bool UserInput::update( SDL_Event &e )
     }
 
     // Handle removing a joystick
-    if ( e.type == SDL_JOYDEVICEREMOVED ) {
-        for ( unsigned int i = 0; i < cMaxJoy; i++ ) {
-            if ( joysticks_[i] == e.jdevice.which ) {
+    if (e.type == SDL_JOYDEVICEREMOVED) {
+        for (unsigned int i = 0; i < cMaxJoy; i++) {
+            if (joysticks_[i] == e.jdevice.which) {
                 joysticks_[i] = -1;
                 break;
             }
         }
-        SDL_JoystickClose( SDL_JoystickFromInstanceID( e.jdevice.which ) );
+        SDL_JoystickClose(SDL_JoystickFromInstanceID(e.jdevice.which));
     }
 
     // Remap joystick events
-    if ( e.type == SDL_JOYAXISMOTION ||
-         e.type == SDL_JOYBUTTONUP   ||
-         e.type == SDL_JOYBUTTONDOWN ||
-         e.type == SDL_JOYHATMOTION ) {
-        for ( unsigned int i = 0; i < cMaxJoy; i++ ) {
-            if ( joysticks_[i] == e.jdevice.which ) {
+    if (e.type == SDL_JOYAXISMOTION ||
+        e.type == SDL_JOYBUTTONUP ||
+        e.type == SDL_JOYBUTTONDOWN ||
+        e.type == SDL_JOYHATMOTION) {
+        for (unsigned int i = 0; i < cMaxJoy; i++) {
+            if (joysticks_[i] == e.jdevice.which) {
                 e.jdevice.which = i;
-                e.jaxis.which   = i;
+                e.jaxis.which = i;
                 e.jbutton.which = i;
-                e.jhat.which    = i;
+                e.jhat.which = i;
                 break;
             }
         }
     }
 
-    for ( unsigned int i = 0; i < keyHandlers_.size( ); ++i ) {
-        InputHandler *h = keyHandlers_[i].first;
-        if ( h ) {
-            if ( h->update( e ) ) updated_ = true;
-            currentKeyState_[keyHandlers_[i].second] |= h->pressed( );
+    bool event_handled = false;
+    for (unsigned int i = 0; i < keyHandlers_.size(); ++i) {
+        InputHandler* h = keyHandlers_[i].first;
+        if (h) {
+            if (h->update(e)) event_handled = true;
         }
     }
-    
-    return updated_;
-}
 
+    return event_handled;
+}
 
 bool UserInput::keystate(KeyCode_E code) const
 {
@@ -430,13 +422,17 @@ void UserInput::reconfigure()
 }
 
 
-void UserInput::updateKeystate( )
-{
-    for ( unsigned int i = 0; i < keyHandlers_.size( ); ++i ) {
-        InputHandler *h = keyHandlers_[i].first;
-        if ( h ) {
-			h->updateKeystate( );
-            currentKeyState_[keyHandlers_[i].second] |= h->pressed( );
+void UserInput::updateKeystate() {
+    // First, prepare the state for the new frame.
+    memcpy(lastKeyState_, currentKeyState_, sizeof(lastKeyState_));
+    memset(currentKeyState_, 0, sizeof(currentKeyState_));
+
+    // Now, poll all handlers to aggregate the final state for this frame.
+    for (unsigned int i = 0; i < keyHandlers_.size(); ++i) {
+        InputHandler* h = keyHandlers_[i].first;
+        if (h) {
+            h->updateKeystate(); // For polling-based inputs like touch
+            currentKeyState_[keyHandlers_[i].second] |= h->pressed();
         }
     }
 }

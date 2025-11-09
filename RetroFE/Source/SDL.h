@@ -20,6 +20,7 @@
 #include <string>
 #include "Graphics/ViewInfo.h"
 #include <vector>
+#include <array>
 
 
 class Configuration;
@@ -32,9 +33,9 @@ public:
     static bool deInitialize(bool fullShutdown = false );
     static SDL_Renderer *getRenderer( int index );
     static std::string getRendererBackend(int index);
-    static SDL_mutex *getMutex( );
     static SDL_Window *getWindow( int index );
     static SDL_Texture* getRenderTarget(int index);
+    static void advanceRenderTarget(int index);
     static bool renderCopy( SDL_Texture *texture, float alpha, SDL_Rect const *src, SDL_Rect const *dest, ViewInfo &viewInfo, int layoutWidth, int layoutHeight );
     static bool renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight);
     static int getScreenCount( ) 
@@ -65,15 +66,21 @@ public:
     {
         rotation_[index] = rotation;
     }
-    static int getRotation(int index)
-    {
-        return rotation_[index];
+    static int getDisplayWidth(int index) {
+        return (index < screenCount_ ? displayWidth_[index] : displayWidth_[0]);
     }
-
+    static int getDisplayHeight(int index) {
+        return (index < screenCount_ ? displayHeight_[index] : displayHeight_[0]);
+    }
+    static bool isMirrorEnabled(int index) {
+        return (index < screenCount_ ? mirror_[index] : mirror_[0]);
+    }
+    static int getRotation(int index) {
+        return (index < screenCount_ ? (rotation_[index] & 3) : (rotation_[0] & 3));
+    }
 private:
     static std::vector<SDL_Window *>   window_;
     static std::vector<SDL_Renderer *> renderer_;
-    static SDL_mutex                  *mutex_;
     static std::vector<int>            displayWidth_;
     static std::vector<int>            displayHeight_;
     static std::vector<int>            windowWidth_;
@@ -84,5 +91,12 @@ private:
     static int                         numScreens_;
     static int                         numDisplays_;
 	static int                         screenCount_;
-    static std::vector<SDL_Texture*>   renderTargets_;
+    struct MonitorRT {
+        std::array<SDL_Texture*, 2> rt{};
+        int ringCount = 2;
+        int writeIdx = 0;
+        int width = 0, height = 0;
+    };
+
+    static std::vector<MonitorRT> renderTargets_;
 };

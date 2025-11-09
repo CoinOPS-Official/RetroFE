@@ -59,8 +59,7 @@ PageBuilder::PageBuilder(const std::string& layoutKey, const std::string& layout
 	, layoutPage(layoutPage)
 	, config_(c)
 	, fontCache_(fc)
-	, isMenu_(isMenu)
-{
+	, isMenu_(isMenu) {
 	screenWidth_ = SDL::getWindowWidth(0);
 	screenHeight_ = SDL::getWindowHeight(0);
 	fontColor_.a = 255;
@@ -384,8 +383,7 @@ Page* PageBuilder::buildPage(const std::string& collectionName, bool defaultToCu
 
 	return page;
 }
-float PageBuilder::getHorizontalAlignment(const xml_attribute<>* attribute, float valueIfNull) const
-{
+float PageBuilder::getHorizontalAlignment(const xml_attribute<>* attribute, float valueIfNull) const {
 	float value;
 	std::string str;
 
@@ -420,8 +418,7 @@ float PageBuilder::getHorizontalAlignment(const xml_attribute<>* attribute, floa
 	return value;
 }
 
-float PageBuilder::getVerticalAlignment(const xml_attribute<>* attribute, float valueIfNull) const
-{
+float PageBuilder::getVerticalAlignment(const xml_attribute<>* attribute, float valueIfNull) const {
 	float value;
 	std::string str;
 
@@ -735,8 +732,7 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
 }
 
 
-void PageBuilder::loadReloadableImages(const xml_node<>* layout, const std::string& tagName, Page* page)
-{
+void PageBuilder::loadReloadableImages(const xml_node<>* layout, const std::string& tagName, Page* page) {
 	xml_attribute<> const* layoutMonitorXml = layout->first_attribute("monitor");
 	int layoutMonitor = layoutMonitorXml ? Utils::convertInt(layoutMonitorXml->value()) : monitor_; // Fallback to monitor_ if not in layout
 
@@ -921,8 +917,7 @@ void PageBuilder::loadReloadableImages(const xml_node<>* layout, const std::stri
 	}
 }
 
-FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>* defaults, int monitor)
-{
+FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>* defaults, int monitor) {
 	xml_attribute<> const* fontXml = component->first_attribute("font");
 	xml_attribute<> const* fontColorXml = component->first_attribute("fontColor");
 	xml_attribute<> const* fontSizeXml = component->first_attribute("loadFontSize");
@@ -975,15 +970,13 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 	return fontCache_->getFont(fontName, fontSize, fontColor, monitor);
 }
 
-void PageBuilder::loadTweens(Component* c, xml_node<>* componentXml)
-{
+void PageBuilder::loadTweens(Component* c, xml_node<>* componentXml) {
 	buildViewInfo(componentXml, c->baseViewInfo);
 
 	c->setTweens(createTweenInstance(componentXml));
 }
 
-std::shared_ptr<AnimationEvents> PageBuilder::createTweenInstance(rapidxml::xml_node<>* componentXml)
-{
+std::shared_ptr<AnimationEvents> PageBuilder::createTweenInstance(rapidxml::xml_node<>* componentXml) {
 	auto tweens = std::make_shared<AnimationEvents>();
 
 	buildTweenSet(tweens.get(), componentXml, "onEnter", "enter");
@@ -1087,8 +1080,7 @@ void PageBuilder::buildTweenSet(AnimationEvents* tweens, xml_node<>* componentXm
 	}
 }
 
-ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monitor)
-{
+ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monitor) {
 	ScrollingList* menu = nullptr;
 	std::string menuType = "vertical";
 	std::string imageType = "null";
@@ -1383,8 +1375,7 @@ void PageBuilder::buildVerticalMenu(ScrollingList* menu, const rapidxml::xml_nod
 	menu->setPoints(points, std::move(tweenPoints)); // Use std::move to transfer ownership of the shared pointer
 }
 
-ViewInfo* PageBuilder::createMenuItemInfo(xml_node<>* component, xml_node<>* defaults, const ViewInfo& menuViewInfo)
-{
+ViewInfo* PageBuilder::createMenuItemInfo(xml_node<>* component, xml_node<>* defaults, const ViewInfo& menuViewInfo) {
 	auto* viewInfo = new ViewInfo();
 	viewInfo->Monitor = menuViewInfo.Monitor;
 
@@ -1393,8 +1384,7 @@ ViewInfo* PageBuilder::createMenuItemInfo(xml_node<>* component, xml_node<>* def
 	return viewInfo;
 }
 
-int PageBuilder::parseMenuPosition(const std::string& strIndex)
-{
+int PageBuilder::parseMenuPosition(const std::string& strIndex) {
 	int index = MENU_FIRST;
 
 	if (strIndex == "end") {
@@ -1415,8 +1405,7 @@ int PageBuilder::parseMenuPosition(const std::string& strIndex)
 	return index;
 }
 
-xml_attribute<>* PageBuilder::findAttribute(const xml_node<>* componentXml, const std::string& attribute, const xml_node<>* defaultXml = nullptr)
-{
+xml_attribute<>* PageBuilder::findAttribute(const xml_node<>* componentXml, const std::string& attribute, const xml_node<>* defaultXml = nullptr) {
 	xml_attribute<>* attributeXml = componentXml->first_attribute(attribute.c_str());
 
 	if (!attributeXml && defaultXml) {
@@ -1426,8 +1415,7 @@ xml_attribute<>* PageBuilder::findAttribute(const xml_node<>* componentXml, cons
 	return attributeXml;
 }
 
-void PageBuilder::buildViewInfo(xml_node<>* componentXml, ViewInfo& info, xml_node<>* defaultXml)
-{
+void PageBuilder::buildViewInfo(xml_node<>* componentXml, ViewInfo& info, xml_node<>* defaultXml) {
 	xml_attribute<> const* x = findAttribute(componentXml, "x", defaultXml);
 	xml_attribute<> const* y = findAttribute(componentXml, "y", defaultXml);
 	xml_attribute<> const* xOffset = findAttribute(componentXml, "xOffset", defaultXml);
@@ -1491,6 +1479,27 @@ void PageBuilder::buildViewInfo(xml_node<>* componentXml, ViewInfo& info, xml_no
 	info.Angle = angle ? Utils::convertFloat(angle->value()) : 0.f;
 	info.Layer = layer ? Utils::convertInt(layer->value()) : 0;
 	info.Reflection = reflection ? reflection->value() : "";
+	// Parse reflection string
+	info.reflectionMask = 0;
+	if (!info.Reflection.empty()) {
+		std::istringstream ss(info.Reflection);
+		std::string token;
+		while (ss >> token) {
+			token = Utils::toLower(token);
+			if (token == "top")
+				info.reflectionMask |= 1u << 0;
+			else if (token == "bottom")
+				info.reflectionMask |= 1u << 1;
+			else if (token == "left")
+				info.reflectionMask |= 1u << 2;
+			else if (token == "right")
+				info.reflectionMask |= 1u << 3;
+			else
+				LOG_WARNING("PageBuilder", "Unknown reflection token: " + token + " (valid: top, bottom, left, right)");
+		}
+	}
+	// Precompute flag for draw
+	info.hasReflection = (info.reflectionMask != 0) && (info.ReflectionAlpha > 0.f) && (info.ReflectionScale > 0.f);
 	info.ReflectionDistance = reflectionDistance ? Utils::convertInt(reflectionDistance->value()) : 0;
 	info.ReflectionScale = reflectionScale ? Utils::convertFloat(reflectionScale->value()) : 0.25f;
 	info.ReflectionAlpha = reflectionAlpha ? Utils::convertFloat(reflectionAlpha->value()) : 1.f;
@@ -1724,15 +1733,10 @@ void PageBuilder::getAnimationEvents(const xml_node<>* node, TweenSet& tweens) {
 
 					// if in layout action has playlist="<current playlist name>" then perform action
 					std::string playlistFilter = playlist && playlist->value() ? playlist->value() : "";
-					Tween* raw_tween = TweenPool::getInstance().acquire(*optProperty, algorithm, fromValue, toValue, durationValue, playlistFilter);					if (!fromDefined)
-						if (raw_tween) {
-							if (!fromDefined) {
-								raw_tween->startDefined = false;
-							}
-							// Wrap the raw pointer from the pool in our special PooledTweenPtr
-							// and push it into the TweenSet.
-							tweens.push(PooledTweenPtr(raw_tween));
-						}
+					auto t = std::make_unique<Tween>(property, algorithm, fromValue, toValue, durationValue, playlistFilter);
+					if (!fromDefined)
+						t->startDefined = false;
+					tweens.push(std::move(t));
 				}
 				else {
 					std::stringstream ss;

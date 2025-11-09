@@ -34,6 +34,7 @@
 #include <algorithm>
 #include <charconv>
 #include <numeric>
+#include <cmath>
 
 static const SDL_BlendMode softOverlayBlendMode = SDL_ComposeCustomBlendMode(
 	SDL_BLENDFACTOR_SRC_ALPHA,           // Source color factor: modulates source color by the alpha value set dynamically
@@ -139,7 +140,7 @@ namespace ImageProcessorConstants {
 	const int MIN_SEGMENT_WIDTH = 2;
 }
 
-MusicPlayerComponent::~MusicPlayerComponent(){
+MusicPlayerComponent::~MusicPlayerComponent() {
 	freeGraphicsMemory();
 	if (loadedComponent_ != nullptr) {
 		//loadedComponent_->freeGraphicsMemory();
@@ -156,7 +157,7 @@ void MusicPlayerComponent::freeGraphicsMemory() {
 		musicPlayer_->removeVisualizerListener(this);
 	}
 
-	if(fftTexture_ != nullptr) {
+	if (fftTexture_ != nullptr) {
 		SDL_DestroyTexture(fftTexture_);
 		fftTexture_ = nullptr;
 		fftTexW_ = fftTexH_ = 0;
@@ -235,16 +236,28 @@ void MusicPlayerComponent::allocateGraphicsMemory() {
 		fftTexW_ = fftTexH_ = 0;
 
 		if (isIsoVisualizer_) {
-			iso_grid_.assign(ISO_HISTORY, std::vector<IsoPoint>(NR_OF_FREQ));
+			// Resize the outer vector to hold ISO_HISTORY rows.
+			iso_grid_.resize(ISO_HISTORY);
 			const int base_spacing_x = 8;
 			const int base_spacing_y = 12;
 
 			for (int i = 0; i < ISO_HISTORY; ++i) {
+				// For each row, resize the inner coordinate vectors.
+				iso_grid_[i].x.resize(NR_OF_FREQ);
+				iso_grid_[i].y.resize(NR_OF_FREQ);
+				iso_grid_[i].z.assign(NR_OF_FREQ, 0.0f); // Initialize all z to 0
+
 				for (int j = 0; j < NR_OF_FREQ; ++j) {
-					iso_grid_[i][j].x = (j - (NR_OF_FREQ / 2)) * base_spacing_x;
-					iso_grid_[i][j].y = i * base_spacing_y;
-					iso_grid_[i][j].z = 0.0f;
+					// Populate the data with the new access pattern.
+					iso_grid_[i].x[j] = static_cast<float>((j - (NR_OF_FREQ / 2)) * base_spacing_x);
+					iso_grid_[i].y[j] = static_cast<float>(i * base_spacing_y);
 				}
+			}
+			td_grid_.assign(ISO_HISTORY, {});
+			for (auto& r : td_grid_) {
+				r.x.resize(NR_OF_FREQ);
+				r.y.resize(NR_OF_FREQ);
+				r.z_amp.resize(NR_OF_FREQ);
 			}
 		}
 
@@ -606,7 +619,7 @@ bool MusicPlayerComponent::update(float dt) {
 			updateIsoState(dt);
 		}
 		else if (isVuMeter_) {
-			updateVuMeterFFT(dt); 
+			updateVuMeterFFT(dt);
 			vuMeterNeedsUpdate_ = true;
 		}
 		int targetW = static_cast<int>(baseViewInfo.ScaledWidth());
@@ -808,25 +821,24 @@ void MusicPlayerComponent::updateIsoState(float dt) {
 	// This is the key to smooth, frame-rate independent animation.
 	iso_scroll_offset_ += iso_scroll_rate_ * dt;
 
-	// 2. If we have scrolled past a full row, update the backing data grid.
 	if (iso_scroll_offset_ >= 1.0f) {
-		// Shift all Z values down one row.
+		// Shift all Z-value rows down by one.
+		// This is more efficient as it moves whole blocks of memory.
 		for (int i = ISO_HISTORY - 1; i > 0; --i) {
-			for (int j = 0; j < NR_OF_FREQ; ++j)
-				iso_grid_[i][j].z = iso_grid_[i - 1][j].z;
+			iso_grid_[i].z = iso_grid_[i - 1].z; // Vector assignment handles the copy
 		}
 
-		// Populate the top row with new FFT data.
+		// Populate the top row (row 0) with new FFT data.
 		const float amplitude = 10.0f;
 		const float logScale = 30.0f;
 		for (int j = 1; j < NR_OF_FREQ; ++j) {
-			float pre_emphasis = std::sqrt((float)j / (float)NR_OF_FREQ);
+			float pre_emphasis = std::sqrt(static_cast<float>(j) / static_cast<float>(NR_OF_FREQ));
 			float mag = fftMagnitudes_[j] * pre_emphasis;
-			iso_grid_[0][j].z = amplitude * std::log2f(1 + logScale * mag);
+			// New access pattern for z values
+			iso_grid_[0].z[j] = amplitude * std::log2f(1 + logScale * mag);
 		}
-		iso_grid_[0][0].z = iso_grid_[0][1].z; // Mirror bin
+		iso_grid_[0].z[0] = iso_grid_[0].z[1]; // Mirror bin
 
-		// Decrement offset, keeping the remainder for the next frame's calculation.
 		iso_scroll_offset_ -= 1.0f;
 	}
 
@@ -891,47 +903,96 @@ void MusicPlayerComponent::loadVuMeterConfig() {
 }
 
 // Minimal replacement for MusicPlayerComponent::updateVuMeterFFT
+// Smooth, lively, no-FFT VU
 void MusicPlayerComponent::updateVuMeterFFT(float dt) {
-	if (!fillPcmBuffer() || !kissfft_cfg_) return;
+	// --- Configuration (most of this is the same) ---
+	const float fLow = 60.0f;
+	const float fHigh = 12000.0f;
+	const float floorDb = -100.0f;
+	const float transientGain = 2.0f;
+	const float peakFallPerS = std::clamp(vuMeterConfig_.peakDecayRate, 0.5f, 8.0f);
 
-	// --- FFT Processing ---
-	std::vector<kiss_fft_scalar> fftInput(FFT_SIZE);
-	std::copy(pcmBuffer_.begin(), pcmBuffer_.begin() + FFT_SIZE, fftInput.begin());
+	const int chans = std::max(1, musicPlayer_->getAudioChannels());
+	const int bps = musicPlayer_->getSampleSize();
+	int sr = musicPlayer_->getAudioSampleRate() > 0 ? musicPlayer_->getAudioSampleRate() : 44100;
+	if (bps <= 0) return;
 
-	// Erase from the main buffer immediately after copying (hop size = half window for smoothness)
-	pcmBuffer_.erase(pcmBuffer_.begin(), pcmBuffer_.begin() + FFT_SIZE / 2);
+	const int N = std::max(1, vuMeterConfig_.barCount);
+	const bool stereoView = (!vuMeterConfig_.isMono) && (chans > 1);
+	const int barsPerChan = stereoView ? std::max(1, N / 2) : N;
 
-	kiss_fftr(kissfft_cfg_, fftInput.data(), fftOutput_.data());
+	// --- Rebuild DSP if needed ---
+	vuDSP_.rebuild(barsPerChan, sr, fLow, fHigh);
 
-	// Compute magnitudes (NR_OF_FREQ = FFT_SIZE/2 + 1 for kiss_fftr)
-	std::vector<float> magnitudes(NR_OF_FREQ);
-	for (int i = 0; i < NR_OF_FREQ; ++i)
-		magnitudes[i] = std::sqrt(fftOutput_[i].r * fftOutput_[i].r + fftOutput_[i].i * fftOutput_[i].i);
-
-	int barCount = vuMeterConfig_.barCount;
-	if (vuLevels_.size() != barCount)
-		vuLevels_.assign(barCount, 0.0f);
-
-	// Linear mapping: group bins into bars
-	int binsPerBar = NR_OF_FREQ / barCount;
-	for (int b = 0; b < barCount; ++b) {
-		float sum = 0.0f;
-		for (int i = 0; i < binsPerBar; ++i) {
-			int idx = b * binsPerBar + i;
-			if (idx < NR_OF_FREQ)
-				sum += magnitudes[idx];
-		}
-		vuLevels_[b] = binsPerBar > 0 ? sum / binsPerBar : 0.0f;
+	if ((int)vuLevels_.size() != N) vuLevels_.assign(N, 0.0f);
+	if ((int)vuPeaks_.size() != N) {
+		vuPeaks_.assign(N, 0.0f);
 	}
 
-	// Normalize
-	float maxVal = *std::max_element(vuLevels_.begin(), vuLevels_.end());
-	if (maxVal > 0.0f)
-		for (auto& v : vuLevels_) v /= maxVal;
+	// --- Consume and Process PCM ---
+	constexpr int MAX_FRAMES_PER_UPDATE = 4096;
+	int totalFramesProcessed = 0;
+	bool dataWasProcessed = false;
+
+	while (totalFramesProcessed < MAX_FRAMES_PER_UPDATE) {
+		std::vector<Uint8> blk;
+		{
+			std::lock_guard<std::mutex> lock(pcmMutex_);
+			if (pcmQueue_.empty()) break;
+			blk = std::move(pcmQueue_.front());
+			pcmQueue_.pop_front();
+		}
+		dataWasProcessed = true;
+		const int nFrames = int(blk.size()) / (bps * chans);
+		const int framesToProcess = std::min(nFrames, MAX_FRAMES_PER_UPDATE - totalFramesProcessed);
+
+		// Offload all processing to the optimized DSP object
+		vuDSP_.process(blk.data(), framesToProcess, chans, bps);
+		totalFramesProcessed += framesToProcess;
+	}
+	if (!dataWasProcessed) return;
+
+	// --- Map DSP results to final VU levels (this logic is the same) ---
+	auto combineAndMap = [&](float eFast, float eSlow)->float {
+		float punch = std::max(0.f, eFast - eSlow) * transientGain;
+		float lin = std::clamp(eSlow + punch, 0.0f, 1.0f);
+		float dB = 20.0f * log10f(std::max(lin, 1e-6f));
+		float n = (dB - floorDb) / (0.0f - floorDb);
+		n = powf(std::clamp(n, 0.0f, 1.0f), vuMeterConfig_.curvePower);
+		n *= vuMeterConfig_.amplification;
+		return std::clamp(n, 0.0f, 1.0f);
+		};
+
+	const auto& Lf = vuDSP_.getLeftEnvFast();
+	const auto& Ls = vuDSP_.getLeftEnvSlow();
+	const auto& Rf = vuDSP_.getRightEnvFast();
+	const auto& Rs = vuDSP_.getRightEnvSlow();
+
+	// Write outputs
+	if (stereoView) {
+		int half = barsPerChan;
+		for (int i = 0; i < half; ++i) {
+			vuLevels_[i] = combineAndMap(Lf[i], Ls[i]);
+			vuLevels_[half + i] = combineAndMap(Rf[i], Rs[i]);
+		}
+		for (int i = half * 2; i < N; ++i) vuLevels_[i] = vuLevels_[N - 1];
+	}
+	else {
+		for (int i = 0; i < barsPerChan; ++i)
+			vuLevels_[i] = combineAndMap(Lf[i], Ls[i]);
+		for (int i = barsPerChan; i < N; ++i)
+			vuLevels_[i] = vuLevels_[barsPerChan - 1];
+	}
+
+	// Peak-hold (unchanged)
+	const float drop = peakFallPerS * dt;
+	for (int i = 0; i < N; ++i) {
+		vuPeaks_[i] = std::max(vuPeaks_[i], vuLevels_[i]);
+		if (vuPeaks_[i] > vuLevels_[i]) vuPeaks_[i] = std::max(vuLevels_[i], vuPeaks_[i] - drop);
+	}
 
 	vuMeterNeedsUpdate_ = true;
 }
-
 bool MusicPlayerComponent::fillPcmBuffer() {
 	// 1. If we already have enough data, we're done.
 	if (pcmBuffer_.size() >= FFT_SIZE) {
@@ -1094,7 +1155,7 @@ void MusicPlayerComponent::draw() {
 		rect.y = baseViewInfo.YRelativeToOrigin();
 		rect.w = baseViewInfo.ScaledWidth();
 		rect.h = baseViewInfo.ScaledHeight();
-		SDL::renderCopyF(fftTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutWidthByMonitor(baseViewInfo.Monitor));
+		SDL::renderCopyF(fftTexture_, baseViewInfo.Alpha, nullptr, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
 		return;
 	}
 
@@ -1136,7 +1197,7 @@ void MusicPlayerComponent::drawVuMeterToTexture() {
 	// The target is already set to fftTexture_ by the draw() function.
 
 	// Clear with transparent background (or the configured one)
-	SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.backgroundColor.r, vuMeterConfig_.backgroundColor.g, vuMeterConfig_.backgroundColor.b, vuMeterConfig_.backgroundColor.a);
+	SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.backgroundColor.r, vuMeterConfig_.backgroundColor.g, vuMeterConfig_.backgroundColor.b, 255);
 	SDL_RenderClear(renderer_);
 	SDL_SetRenderDrawBlendMode(renderer_, SDL_BLENDMODE_BLEND);
 
@@ -1202,108 +1263,141 @@ void MusicPlayerComponent::drawVuMeterToTexture() {
 void MusicPlayerComponent::drawIsoVisualizer(SDL_Renderer* renderer, int win_w, int win_h) {
 	if (iso_grid_.empty() || win_w <= 0 || win_h <= 0) return;
 
-	// --- 1. Define Scale Factors and Tweakable Constants ---
-	const float ref_w = 1280.0f;
-	const float ref_h = 720.0f;
-	const float scale_w = float(win_w) / ref_w;
-	const float scale_h = float(win_h) / ref_h;
+	// --- sizes (use live buffers, not constants) ---
+	const int tall = static_cast<int>(iso_grid_.size());
+	const int nr = static_cast<int>(iso_grid_[0].x.size());
+	if (tall < 2 || nr < 2) return;
 
-	// --- Vignette & Color Controls ---
-	const float vignette_power = 2.0f;
-	const float vignette_radius = 1.0f;
-	const float arch_factor = 0.0005f;
-
-	// --- Peak Color Controls ---
-	const float BASE_HUE = 120.0f / 360.0f; // Green
-	const float PEAK_HUE = 0.0f / 360.0f;   // Red
-	const float MIN_BRIGHTNESS = 0.4f;      // Brightness of valleys (0.0 to 1.0)
-	const float MAX_Z_FOR_COLOR = 50.0f;    // The Z-height that corresponds to peak color/brightness
-
-	// --- 2. Animation and Geometry Constants ---
-	float eased_offset = 0.5f * (1.0f - cosf(iso_scroll_offset_ * float(M_PI)));
-	const int tall = ISO_HISTORY;
-	const int nr = NR_OF_FREQ;
-	const float inc = 0.7f;
-	const float yOffset = float(win_h) * 0.7f;
-
-	// The grid stores the final 2D point AND its Z-amplitude for coloring.
-	struct PointData { SDL_FPoint pos; float z_amp; };
-	std::vector<std::vector<PointData>> td_grid(tall, std::vector<PointData>(nr));
-
-	// --- 3. Projection Loop: Calculate all point data first ---
-	for (int i = 0; i < tall - 1; ++i) {
-		float arch_term = arch_factor * float(i) * float(i);
-		float i_over_10 = float(i) / 10.0f;
-
-		for (int j = 0; j < nr; ++j) {
-			float z_amplitude = iso_grid_[i][j].z * (1.0f - eased_offset) + iso_grid_[i + 1][j].z * eased_offset;
-			td_grid[i][j].z_amp = z_amplitude;
-
-			float static_x = iso_grid_[i][j].x;
-			float static_y = iso_grid_[i][j].y;
-			float local_x = inc * static_x * (8.0f / 10.0f + static_y * static_y * 0.0001f);
-			float local_y = arch_term * static_y - z_amplitude - z_amplitude * i_over_10 * inc;
-
-			td_grid[i][j].pos.x = local_x * scale_w + float(win_w) / 2.0f;
-			td_grid[i][j].pos.y = local_y * scale_h + yOffset;
+	// --- ensure our temp grid matches sizes (no per-frame reallocation if unchanged) ---
+	if ((int)td_grid_.size() != tall ||
+		(int)td_grid_[0].x.size() != nr) {
+		td_grid_.assign(tall, {});                  // resize rows
+		for (auto& r : td_grid_) {
+			r.x.resize(nr);
+			r.y.resize(nr);
+			r.z_amp.resize(nr);
 		}
 	}
 
-	// --- 4. Drawing Loop with Per-Line Vignette and Color Modulation ---
-	const float centerX = float(win_w) / 2.0f;
-	const float centerY = float(win_h) / 2.0f;
+	// --- constants ---
+	constexpr float PI_F = 3.1415926535f;
+	const float ref_w = 1280.0f;
+	const float ref_h = 720.0f;
+	const float scale_w = static_cast<float>(win_w) / ref_w;
+	const float scale_h = static_cast<float>(win_h) / ref_h;
+	const float vignette_radius = 1.0f;
+	const float arch_factor = 0.0005f;
+	const float BASE_HUE = 120.0f / 360.0f;
+	const float PEAK_HUE = 0.0f / 360.0f;
+	const float MIN_BRIGHTNESS = 0.4f;
+	const float MAX_Z_FOR_COLOR = 50.0f;
+	const float inc = 0.7f;
 
+	const float eased_offset = 0.5f * (1.0f - cosf(iso_scroll_offset_ * PI_F));
+	const float yOffset = static_cast<float>(win_h) * 0.7f;
+	const float half_win_w = static_cast<float>(win_w) * 0.5f;
+
+	// precompute vignette params
+	const float centerX = static_cast<float>(win_w) * 0.5f;
+	const float centerY = static_cast<float>(win_h) * 0.5f;
 	const float centerX_div = centerX * vignette_radius;
 	const float centerY_div = centerY * vignette_radius;
 
+	// --- projection: hoist row invariants, keep look identical ---
+	for (int i = 0; i < tall - 1; ++i) {
+		const float i_f = static_cast<float>(i);
+		const float arch_term = arch_factor * i_f * i_f;
+		const float i_over_10_times_inc = (i_f / 10.0f) * inc;
+
+		// y is constant within a row (as initialized); if you ever vary it per column,
+		// replace sy/rowFactor/baseY with per-j reads again.
+		const float sy = iso_grid_[i].y[0];
+		const float rowFactor = 0.8f + sy * sy * 0.0001f;
+		const float baseY = arch_term * sy;
+
+		const auto& X = iso_grid_[i].x;
+		const auto& Z0 = iso_grid_[i].z;
+		const auto& Z1 = iso_grid_[i + 1].z;
+		auto& outX = td_grid_[i].x;
+		auto& outY = td_grid_[i].y;
+		auto& outZ = td_grid_[i].z_amp;
+
+		for (int j = 0; j < nr; ++j) {
+			const float z = Z0[j] + (Z1[j] - Z0[j]) * eased_offset; // lerp
+			outZ[j] = z;
+
+			const float local_x = inc * X[j] * rowFactor;
+			const float local_y = baseY - z * (1.0f + i_over_10_times_inc);
+
+			outX[j] = local_x * scale_w + half_win_w;
+			outY[j] = local_y * scale_h + yOffset;
+		}
+	}
+
+	// --- drawing: identical visual, but cheaper math (no sqrt/pow) ---
+	Uint8 last_r = 255, last_g = 255, last_b = 255; // track to avoid redundant SetColor calls
+	bool  have_last = false;
+
 	for (int i = 1; i < tall - 2; ++i) {
+		const auto& X = td_grid_[i].x;
+		const auto& Y = td_grid_[i].y;
+		const auto& Z = td_grid_[i].z_amp;
+		const auto& Xprev = td_grid_[i - 1].x;
+		const auto& Yprev = td_grid_[i - 1].y;
+		const auto& Zprev = td_grid_[i - 1].z_amp;
+
 		for (int j = 1; j < nr; ++j) {
-			// --- Horizontal Line ---
-			PointData p1_h = td_grid[i][j - 1];
-			PointData p2_h = td_grid[i][j];
+			// -------- horizontal segment (i, j-1) -> (i, j)
+			{
+				const float x1 = X[j - 1], y1 = Y[j - 1];
+				const float x2 = X[j], y2 = Y[j];
 
-			// VIGNETTE calculation
-			float mid_x_h = (p1_h.pos.x + p2_h.pos.x) / 2.0f;
-			float mid_y_h = (p1_h.pos.y + p2_h.pos.y) / 2.0f;
-			float dx_h = (mid_x_h - centerX) / centerX_div;
-			float dy_h = (mid_y_h - centerY) / centerY_div;
-			float distance_h = std::clamp(std::sqrt(dx_h * dx_h + dy_h * dy_h), 0.0f, 1.0f);
-			float vignette_fade = 1.0f - std::pow(distance_h, vignette_power);
+				// vignette (equivalent to 1 - (clamped distance)^2, no sqrt)
+				const float mid_x = (x1 + x2) * 0.5f;
+				const float mid_y = (y1 + y2) * 0.5f;
+				const float dx = (mid_x - centerX) / centerX_div;
+				const float dy = (mid_y - centerY) / centerY_div;
+				const float d2 = std::min(dx * dx + dy * dy, 1.0f); // distance^2 in [0,1]
+				const float vignette = 1.0f - d2;
 
-			// PEAK COLOR calculation
-			float avg_z_h = (p1_h.z_amp + p2_h.z_amp) / 2.0f;
-			float peak_mix = std::clamp(avg_z_h / MAX_Z_FOR_COLOR, 0.0f, 1.0f);
-			float hue_h = BASE_HUE * (1.0f - peak_mix) + PEAK_HUE * peak_mix;
-			float value_h = MIN_BRIGHTNESS * (1.0f - peak_mix) + 1.0f * peak_mix;
+				// color from average height
+				const float avg_z = 0.5f * (Z[j - 1] + Z[j]);
+				const float peak_mix = std::clamp(avg_z / MAX_Z_FOR_COLOR, 0.0f, 1.0f);
+				const float hue = BASE_HUE * (1.0f - peak_mix) + PEAK_HUE * peak_mix;
+				const float value = MIN_BRIGHTNESS * (1.0f - peak_mix) + 1.0f * peak_mix;
 
-			// Combine vignette and peak brightness
-			Uint8 r_h, g_h, b_h;
-			HSVtoRGB(hue_h, 1.0f, value_h * vignette_fade, r_h, g_h, b_h);
+				Uint8 r, g, b; HSVtoRGB(hue, 1.0f, value * vignette, r, g, b);
+				if (!have_last || r != last_r || g != last_g || b != last_b) {
+					SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+					last_r = r; last_g = g; last_b = b; have_last = true;
+				}
+				SDL_RenderDrawLineF(renderer, x1, y1, x2, y2);
+			}
 
-			SDL_SetRenderDrawColor(renderer, r_h, g_h, b_h, 255);
-			SDL_RenderDrawLineF(renderer, p1_h.pos.x, p1_h.pos.y, p2_h.pos.x, p2_h.pos.y);
+			// -------- vertical segment (i-1, j) -> (i, j)
+			{
+				const float x1 = Xprev[j], y1 = Yprev[j];
+				const float x2 = X[j], y2 = Y[j];
 
-			// --- Vertical Line ---
-			PointData p1_v = td_grid[i - 1][j];
-			PointData p2_v = td_grid[i][j];
+				const float mid_x = (x1 + x2) * 0.5f;
+				const float mid_y = (y1 + y2) * 0.5f;
+				const float dx = (mid_x - centerX) / centerX_div;
+				const float dy = (mid_y - centerY) / centerY_div;
+				const float d2 = std::min(dx * dx + dy * dy, 1.0f);
+				const float vignette = 1.0f - d2;
 
-			float mid_x_v = (p1_v.pos.x + p2_v.pos.x) / 2.0f;
-			float mid_y_v = (p1_v.pos.y + p2_v.pos.y) / 2.0f;
-			float dx_v = (mid_x_v - centerX) / (centerX * vignette_radius);
-			float dy_v = (mid_y_v - centerY) / (centerY * vignette_radius);
-			float distance_v = std::clamp(std::sqrt(dx_v * dx_v + dy_v * dy_v), 0.0f, 1.0f);
-			float vignette_fade_v = 1.0f - std::pow(distance_v, vignette_power);
+				const float avg_z = 0.5f * (Zprev[j] + Z[j]);
+				const float peak_mix = std::clamp(avg_z / MAX_Z_FOR_COLOR, 0.0f, 1.0f);
+				const float hue = BASE_HUE * (1.0f - peak_mix) + PEAK_HUE * peak_mix;
+				const float value = MIN_BRIGHTNESS * (1.0f - peak_mix) + 1.0f * peak_mix;
 
-			float avg_z_v = (p1_v.z_amp + p2_v.z_amp) / 2.0f;
-			float peak_mix_v = std::clamp(avg_z_v / MAX_Z_FOR_COLOR, 0.0f, 1.0f);
-			float hue_v = BASE_HUE * (1.0f - peak_mix_v) + PEAK_HUE * peak_mix_v;
-			float value_v = MIN_BRIGHTNESS * (1.0f - peak_mix_v) + 1.0f * peak_mix_v;
-
-			Uint8 r_v, g_v, b_v;
-			HSVtoRGB(hue_v, 1.0f, value_v * vignette_fade_v, r_v, g_v, b_v);
-
-			SDL_SetRenderDrawColor(renderer, r_v, g_v, b_v, 255);
-			SDL_RenderDrawLineF(renderer, p1_v.pos.x, p1_v.pos.y, p2_v.pos.x, p2_v.pos.y);
+				Uint8 r, g, b; HSVtoRGB(hue, 1.0f, value * vignette, r, g, b);
+				if (r != last_r || g != last_g || b != last_b) {
+					SDL_SetRenderDrawColor(renderer, r, g, b, 255);
+					last_r = r; last_g = g; last_b = b;
+				}
+				SDL_RenderDrawLineF(renderer, x1, y1, x2, y2);
+			}
 		}
 	}
 }
@@ -1381,7 +1475,7 @@ void MusicPlayerComponent::createGstPipeline() {
 	if (gstreamerVisType_ == GStreamerVisType::Wavescope) {
 		g_object_set(visualizer, "style", 3, NULL); // 1 for default mode
 	}
-	
+
 	g_object_set(gstAppSink_, "caps", video_caps,
 		"emit-signals", FALSE,
 		"sync", FALSE,

@@ -50,21 +50,24 @@ public:
 
     // Rotate the buffer forward or backward
     void rotate(bool forward) {
+        if (capacity_ == 0) return;
         if (forward) {
-            head_ = (head_ + 1) % capacity_;
+            if (++head_ == capacity_) head_ = 0;
         }
         else {
-            head_ = (head_ - 1 + capacity_) % capacity_;
+            head_ = (head_ == 0) ? (capacity_ - 1) : (head_ - 1);
         }
     }
 
-    // Access element at a given offset from the head
     T& operator[](size_t index) {
-        return data_[(head_ + index) % capacity_];
+        size_t i = head_ + index;
+        if (i >= capacity_) i -= capacity_;
+        return data_[i];
     }
-
     const T& operator[](size_t index) const {
-        return data_[(head_ + index) % capacity_];
+        size_t i = head_ + index;
+        if (i >= capacity_) i -= capacity_;
+        return data_[i];
     }
 
 
@@ -213,6 +216,16 @@ private:
 
     size_t itemIndex_{ 0 };
     size_t selectedOffsetIndex_{ 0 };
+    struct TweenNeighbor {
+        std::shared_ptr<AnimationEvents> tween;
+        ViewInfo* cur;
+        ViewInfo* next;
+    };
+
+    std::vector<size_t> forwardMap_;
+    std::vector<size_t> backwardMap_;
+    std::vector<TweenNeighbor> forwardTween_;
+    std::vector<TweenNeighbor> backwardTween_;
 
     float scrollAcceleration_{ 0 };
     float startScrollTime_{ 0.500 };

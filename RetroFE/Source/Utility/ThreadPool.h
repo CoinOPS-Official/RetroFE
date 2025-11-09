@@ -7,10 +7,15 @@
 #include <thread>
 #include <mutex>
 #include <condition_variable>
-#include <future>
-#include <functional>
+#include <future>      // for std::future, std::packaged_task
+#include <functional>  // for std::invoke
 #include <stdexcept>
-#include <type_traits> // Include for std::invoke_result
+#include <type_traits> // for std::invoke_result_t, std::is_void_v
+#include <utility>     // for std::move, std::forward
+#include <memory>      // for std::shared_ptr
+#include <tuple>       // for std::tuple, std::make_tuple, std::apply
+
+#include "Log.h"
 
 class ThreadPool {
 public:
@@ -50,24 +55,33 @@ private:
 // Implementation of the enqueue method needs to be visible to all translation units that use it, hence defined in the header
 template<class F, class... Args>
 auto ThreadPool::enqueue(F&& f, Args&&... args)
--> std::future<typename std::invoke_result_t<F, Args...>> {
-    using return_type = typename std::invoke_result<F, Args...>::type;
+-> std::future<std::invoke_result_t<F, Args...>> {
+    using return_type = std::invoke_result_t<F, Args...>;
 
-    auto task = std::make_shared<std::packaged_task<return_type()>>(
-        std::bind(std::forward<F>(f), std::forward<Args>(args)...)
+    // Store callable and args by value (moved), invoke via std::apply
+    auto pkg = std::make_shared<std::packaged_task<return_type()>>(
+        [func = std::forward<F>(f),
+        tup = std::make_tuple(std::forward<Args>(args)...)
+        ]() mutable -> return_type {
+            if constexpr (std::is_void_v<return_type>) {
+                std::apply(std::move(func), std::move(tup));
+                return;
+            }
+            else {
+                return std::apply(std::move(func), std::move(tup));
+            }
+        }
     );
 
-    std::future<return_type> res = task->get_future();
+    std::future<return_type> res = pkg->get_future();
     {
         std::unique_lock<std::mutex> lock(queueMutex);
-
-        if (stop)
-            throw std::runtime_error("enqueue on stopped ThreadPool");
-
-        tasks.emplace([task] { (*task)(); });
+        if (stop) throw std::runtime_error("enqueue on stopped ThreadPool");
+        tasks.emplace([pkg] { (*pkg)(); });
     }
     condition.notify_one();
     return res;
 }
+
 
 #endif // THREADPOOL_H

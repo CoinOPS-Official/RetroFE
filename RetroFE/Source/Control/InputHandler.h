@@ -10,4 +10,5 @@ public:
     virtual bool pressed() = 0;
     virtual void reset() = 0;
 	virtual void updateKeystate() = 0;
+    virtual void beginFrame() {}
 };
