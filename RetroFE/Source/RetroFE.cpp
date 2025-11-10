@@ -2436,37 +2436,37 @@ bool RetroFE::run() {
 		case RETROFE_AMBIENT:
 			// second stage of entering ambient mode: once the fade-out is complete, actually enter ambient mode.
 			if (currentPage_->isGraphicsIdle())
-				{
+			{
 #ifdef WIN32
-					// stop music
-					Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 75, 0);
+				// stop music
+				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 75, 0);
 #endif
-					currentPage_->setIsLaunched(true);
-					l.LEDBlinky(5); // 5= "Screensaver Start Event" per https://ledblinky.net/downloads/readme.txt
-					// initialize the instance of AmbientMode
-					int ambientModeMinutesPerImage = 2;
-					config_.getProperty(OPTION_AMBIENTMODEMINUTESPERIMAGE, ambientModeMinutesPerImage);					
-					AmbientMode ambientMode(input_, Configuration::absolutePath, ambientModeMinutesPerImage);
-    				ambientMode.activate(); // blocks until user exits					
-					currentPage_->start();	// ... and we're back! Restart the page, and continue normally
-					state_ = RETROFE_IDLE;
-					// START: honestly, I'm not sure how much of this is needed, but adding it solved problems with a blank screen on exiting from ambient mode.
-					currentPage_->setIsLaunched(false);
-					currentPage_->updateReloadables(0);
-					currentPage_->onNewItemSelected();
-					currentPage_->reallocateMenuSpritePoints(false);
-					currentTime_ = static_cast<float>(SDL_GetTicks()) / 1000;
-					keyLastTime_ = currentTime_;
-					lastLaunchReturnTime_ = currentTime_;
-					// END
+				currentPage_->setIsLaunched(true);
+				l.LEDBlinky(5); // 5= "Screensaver Start Event" per https://ledblinky.net/downloads/readme.txt
+				// initialize the instance of AmbientMode
+				int ambientModeMinutesPerImage = 2;
+				config_.getProperty(OPTION_AMBIENTMODEMINUTESPERIMAGE, ambientModeMinutesPerImage);					
+				AmbientMode ambientMode(input_, Configuration::absolutePath, ambientModeMinutesPerImage);
+				ambientMode.activate(); // blocks until user exits					
+				currentPage_->start();	// ... and we're back! Restart the page, and continue normally
+				state_ = RETROFE_IDLE;
+				// START: honestly, I'm not sure how much of this is needed, but adding it solved problems with a blank screen on exiting from ambient mode.
+				currentPage_->setIsLaunched(false);
+				currentPage_->updateReloadables(0);
+				currentPage_->onNewItemSelected();
+				currentPage_->reallocateMenuSpritePoints(false);
+				currentTime_ = static_cast<float>(SDL_GetTicks()) / 1000;
+				keyLastTime_ = currentTime_;
+				lastLaunchReturnTime_ = currentTime_;
+				// END
 #ifdef WIN32
-					// restart music
-					Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 76, 0);
+				// restart music
+				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 76, 0);
 #endif			
-					l.LEDBlinky(6); // 6= "Screensaver Stop Event" per https://ledblinky.net/downloads/readme.txt
-					break;
-				}
+				l.LEDBlinky(6); // 6= "Screensaver Stop Event" per https://ledblinky.net/downloads/readme.txt
+				break;
 			}
+		}
 
 
 		// Handle screen updates and attract mode
