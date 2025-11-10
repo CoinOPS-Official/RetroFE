@@ -133,7 +133,7 @@ void AmbientMode::activate() {
         while (SDL_PollEvent(&e)) input_.update(e);
 		input_.updateKeystate();
 
-        if (input_.keystate(UserInput::KeyCodeSelect) || 
+        if (input_.keystate(UserInput::KeyCodeSelect) || input_.keystate(UserInput::KeyCodeQuit) ||
                 (input_.keystate(UserInput::KeyCodeQuitCombo1) && input_.keystate(UserInput::KeyCodeQuitCombo2))) {
 
             input_.resetStates();
