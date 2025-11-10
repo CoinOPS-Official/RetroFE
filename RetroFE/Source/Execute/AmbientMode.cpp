@@ -130,8 +130,8 @@ void AmbientMode::activate() {
         }
         
         // Check events to see if it's time to exit ambient mode
-        SDL_PollEvent(&e);
-        input_.update(e);
+        while (SDL_PollEvent(&e)) input_.update(e);
+		input_.updateKeystate();
 
         if (input_.keystate(UserInput::KeyCodeSelect) || 
                 (input_.keystate(UserInput::KeyCodeQuitCombo1) && input_.keystate(UserInput::KeyCodeQuitCombo2))) {
