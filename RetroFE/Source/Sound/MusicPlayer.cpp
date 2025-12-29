@@ -32,6 +32,8 @@
 
 namespace fs = std::filesystem;
 
+constexpr int MIX_MAX_VOLUME = 128; // For API compatibility
+
 namespace {
 	inline int clampInt(int v, int lo, int hi) { return std::max(lo, std::min(hi, v)); }
 
@@ -58,7 +60,12 @@ MusicPlayer* MusicPlayer::getInstance() {
 
 MusicPlayer::MusicPlayer()
 	: config_(nullptr)
-	, currentMusic_(nullptr)
+	, pipeline_(nullptr)
+	, playbin_(nullptr)
+	, bus_(nullptr)
+	, bus_watch_id_(0)
+	, isPipelinePlaying_(false)
+	, gstInitialized_(false)
 	, musicFiles_()               // default empty vector
 	, musicNames_()               // default empty vector
 	, shuffledIndices_()          // default empty vector
@@ -97,21 +104,182 @@ MusicPlayer::MusicPlayer()
 	rng_.seed(seq);
 
 	audioLevels_.resize(audioChannels_, 0.0f);
-
+	
+	// Initialize GStreamer
+	initGStreamer();
 }
 
 MusicPlayer::~MusicPlayer() {
 	isShuttingDown_ = true;
-	if (currentMusic_)
-	{
-		Mix_FreeMusic(currentMusic_);
-		currentMusic_ = nullptr;
-	}
+	cleanupGStreamer();
 	stopMusic();
+}
+
+void MusicPlayer::initGStreamer() {
+	if (gstInitialized_) return;
+	
+	GError* error = nullptr;
+	if (!gst_init_check(nullptr, nullptr, &error)) {
+		if (error) {
+			LOG_ERROR("MusicPlayer", std::string("Failed to initialize GStreamer: ") + error->message);
+			g_error_free(error);
+		}
+		return;
+	}
+	
+	gstInitialized_ = true;
+	LOG_INFO("MusicPlayer", "GStreamer initialized successfully");
+}
+
+void MusicPlayer::cleanupGStreamer() {
+	destroyPipeline();
+	
+	if (gstInitialized_) {
+		gst_deinit();
+		gstInitialized_ = false;
+	}
+}
+
+void MusicPlayer::createPipeline() {
+	if (pipeline_) {
+		destroyPipeline();
+	}
+	
+	pipeline_ = gst_pipeline_new("music-pipeline");
+	playbin_ = gst_element_factory_make("playbin", "playbin");
+	
+	if (!pipeline_ || !playbin_) {
+		LOG_ERROR("MusicPlayer", "Failed to create GStreamer pipeline elements");
+		if (pipeline_) {
+			gst_object_unref(pipeline_);
+			pipeline_ = nullptr;
+		}
+		if (playbin_) {
+			gst_object_unref(playbin_);
+			playbin_ = nullptr;
+		}
+		return;
+	}
+	
+	// Add playbin to pipeline
+	gst_bin_add(GST_BIN(pipeline_), playbin_);
+	
+	// Set up bus watch
+	bus_ = gst_pipeline_get_bus(GST_PIPELINE(pipeline_));
+	bus_watch_id_ = gst_bus_add_watch(bus_, busCallback, this);
+	
+	// Set initial volume
+	setGstVolume(volume_.load(std::memory_order_relaxed) / static_cast<double>(MIX_MAX_VOLUME));
+	
+	LOG_INFO("MusicPlayer", "GStreamer pipeline created successfully");
+}
+
+void MusicPlayer::destroyPipeline() {
+	if (pipeline_) {
+		gst_element_set_state(pipeline_, GST_STATE_NULL);
+		
+		if (bus_watch_id_ > 0) {
+			g_source_remove(bus_watch_id_);
+			bus_watch_id_ = 0;
+		}
+		
+		if (bus_) {
+			gst_object_unref(bus_);
+			bus_ = nullptr;
+		}
+		
+		gst_object_unref(pipeline_);
+		pipeline_ = nullptr;
+		playbin_ = nullptr;
+	}
+	
+	isPipelinePlaying_ = false;
+}
+
+gboolean MusicPlayer::busCallback(GstBus* bus, GstMessage* msg, gpointer data) {
+	MusicPlayer* player = static_cast<MusicPlayer*>(data);
+	
+	switch (GST_MESSAGE_TYPE(msg)) {
+		case GST_MESSAGE_EOS:
+			player->onEndOfStream();
+			break;
+			
+		case GST_MESSAGE_ERROR: {
+			GError* err = nullptr;
+			gchar* debug_info = nullptr;
+			gst_message_parse_error(msg, &err, &debug_info);
+			LOG_ERROR("MusicPlayer", std::string("GStreamer error: ") + err->message);
+			if (debug_info) {
+				LOG_ERROR("MusicPlayer", std::string("Debug info: ") + debug_info);
+				g_free(debug_info);
+			}
+			g_error_free(err);
+			break;
+		}
+		
+		case GST_MESSAGE_STATE_CHANGED:
+			if (GST_MESSAGE_SRC(msg) == GST_OBJECT(player->pipeline_)) {
+				GstState old_state, new_state;
+				gst_message_parse_state_changed(msg, &old_state, &new_state, nullptr);
+				player->isPipelinePlaying_ = (new_state == GST_STATE_PLAYING);
+			}
+			break;
+			
+		default:
+			break;
+	}
+	
+	return TRUE;
+}
+
+void MusicPlayer::onEndOfStream() {
+	if (isShuttingDown_) return;
+	
+	// Check if this is a pause operation
+	if (isPendingPause_) {
+		LOG_INFO("MusicPlayer", "Music paused after fade-out");
+		return;
+	}
+	
+	// Check if we're waiting to change tracks
+	if (isPendingTrackChange_ && pendingTrackIndex_ >= 0) {
+		int indexToPlay = pendingTrackIndex_;
+		isPendingTrackChange_ = false;
+		pendingTrackIndex_ = -1;
+		
+		LOG_INFO("MusicPlayer", "Playing next track after fade: " + std::to_string(indexToPlay));
+		playMusic(indexToPlay, fadeMs_);
+		return;
+	}
+	
+	// Normal track finished playing
+	LOG_INFO("MusicPlayer", "Track finished playing: " + getCurrentTrackName());
+	
+	if (!loopMode_) {
+		nextTrack();
+	}
+}
+
+void MusicPlayer::setGstVolume(double volume) {
+	if (playbin_) {
+		g_object_set(playbin_, "volume", volume, nullptr);
+	}
+}
+
+double MusicPlayer::getGstVolume() const {
+	if (playbin_) {
+		double vol = 0.0;
+		g_object_get(playbin_, "volume", &vol, nullptr);
+		return vol;
+	}
+	return 0.0;
 }
 
 bool MusicPlayer::initialize(Configuration& config) {
 	this->config_ = &config;
+
+	// Create GStreamer pipeline
+	createPipeline();
 
 	// Get volume from config if available
 	int configVolume = 100;
@@ -122,14 +290,8 @@ bool MusicPlayer::initialize(Configuration& config) {
 	// IMPORTANT: this is the UI/bar value (0-128), derived from the human 0-100
 	logicalVolume_ = pctTo128(configVolume);
 
-	// Apply your curve -> sets Mix_VolumeMusic(...) and keeps volume_ in sync
+	// Apply your curve -> sets GStreamer volume and keeps volume_ in sync
 	setLogicalVolume(logicalVolume_);
-
-	// Set the music callback for handling when music finishes
-	Mix_HookMusicFinished(MusicPlayer::musicFinishedCallback);
-
-	// Set music volume
-	Mix_VolumeMusic(volume_.load(std::memory_order_relaxed));
 
 	LOG_INFO("MusicPlayer", "Initialized with volume: " +
 		std::to_string(volume_.load(std::memory_order_relaxed)) +
@@ -201,9 +363,8 @@ bool MusicPlayer::initialize(Configuration& config) {
 
 void MusicPlayer::reinitialize() {
 	LOG_INFO("MusicPlayer", "Re-initializing hooks after SDL cycle.");
-	Mix_HookMusicFinished(MusicPlayer::musicFinishedCallback);
-	Mix_VolumeMusic(volume_.load(std::memory_order_relaxed));
-	// No Mix_SetPostMix here anymore.
+	// GStreamer pipeline is persistent, just ensure volume is correct
+	setGstVolume(volume_.load(std::memory_order_relaxed) / static_cast<double>(MIX_MAX_VOLUME));
 }
 
 void MusicPlayer::onGameLaunchStart() {
@@ -568,13 +729,6 @@ bool MusicPlayer::isValidAudioFile(const std::string& filePath) const {
 }
 
 void MusicPlayer::loadTrack(int index) {
-	// Free any currently playing music
-	if (currentMusic_)
-	{
-		Mix_FreeMusic(currentMusic_);
-		currentMusic_ = nullptr;
-	}
-
 	if (index < 0 || index >= static_cast<int>(musicFiles_.size()))
 	{
 		LOG_ERROR("MusicPlayer", "Invalid track index: " + std::to_string(index));
@@ -582,14 +736,20 @@ void MusicPlayer::loadTrack(int index) {
 		return;
 	}
 
-	// Load the specified track
-	currentMusic_ = Mix_LoadMUS(musicFiles_[index].c_str());
-	if (!currentMusic_)
-	{
-		LOG_ERROR("MusicPlayer", "Failed to load music file: " + musicFiles_[index] + ", Error: " + Mix_GetError());
+	// Make sure we have a pipeline
+	if (!pipeline_) {
+		createPipeline();
+	}
+
+	if (!playbin_) {
+		LOG_ERROR("MusicPlayer", "No playbin element available");
 		currentIndex_ = -1;
 		return;
 	}
+
+	// Set the URI for the track
+	std::string uri = "file://" + musicFiles_[index];
+	g_object_set(playbin_, "uri", uri.c_str(), nullptr);
 
 	currentIndex_ = index;
 	LOG_INFO("MusicPlayer", "Loaded track: " + musicNames_[index]);
@@ -900,8 +1060,8 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
 	// Clear any pending pause state
 	isPendingPause_ = false;
 
-	// If music is already playing or fading, fade it out first
-	if (Mix_PlayingMusic() || isFading())
+	// If music is already playing, handle track change
+	if (isPlaying() || isFading())
 	{
 		if (useFadeMs > 0)
 		{
@@ -910,27 +1070,20 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
 			pendingTrackIndex_ = index;
 
 			// Fade out current music
-			if (Mix_FadeOutMusic(useFadeMs) == 0)
-			{
-				LOG_WARNING("MusicPlayer", "Failed to fade out music, stopping immediately");
-				Mix_HaltMusic();
-			}
-			else
-			{
-				LOG_INFO("MusicPlayer", "Fading out current track before changing to new track");
-				return true; // The actual track change will happen in the callback
-			}
+			fadeToVolume(0, useFadeMs);
+			LOG_INFO("MusicPlayer", "Fading out current track before changing to new track");
+			return true; // The actual track change will happen in the callback
 		}
 		else
 		{
-			Mix_HaltMusic();
+			stopMusic(0);
 		}
 	}
 
-	// No fade or music was halted immediately, so load and play the new track
+	// Load and play the new track
 	loadTrack(index);
 
-	if (!currentMusic_)
+	if (!playbin_)
 	{
 		isPendingTrackChange_ = false;
 		return false;
@@ -950,68 +1103,31 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
 		}
 	}
 
-	int result = 0;
+	// Set position if requested
 	bool usePosition = (position >= 0.0);
+	if (usePosition) {
+		if (!gst_element_seek_simple(pipeline_, GST_FORMAT_TIME,
+			static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT),
+			static_cast<gint64>(position * GST_SECOND))) {
+			LOG_WARNING("MusicPlayer", "Failed to seek to position: " + std::to_string(position));
+		}
+	}
 
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-	if (useFadeMs > 0)
+	// Start playback
+	GstStateChangeReturn ret = gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+	if (ret == GST_STATE_CHANGE_FAILURE)
 	{
-		if (usePosition)
-		{
-			result = Mix_FadeInMusicPos(currentMusic_, loopMode_ ? -1 : 1, useFadeMs, position);
-			LOG_INFO("MusicPlayer", "Fading in track: " + musicNames_[index] + " at position: " + std::to_string(position) + "s over " + std::to_string(useFadeMs) + "ms");
-		}
-		else
-		{
-			result = Mix_FadeInMusic(currentMusic_, loopMode_ ? -1 : 1, useFadeMs);
-			LOG_INFO("MusicPlayer", "Fading in track: " + musicNames_[index] + " over " + std::to_string(useFadeMs) + "ms");
-		}
-	}
-	else
-	{
-		result = Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
-		LOG_INFO("MusicPlayer", (usePosition ? "Playing track with seek: " : "Playing track: ") + musicNames_[index]);
-		if (result != -1 && usePosition)
-		{
-			if (Mix_SetMusicPosition(position) == -1)
-			{
-				LOG_WARNING("MusicPlayer", "Seeking not supported for this format or in this mode: " + std::to_string(position));
-			}
-			else
-			{
-				LOG_INFO("MusicPlayer", "Seeked to position: " + std::to_string(position) + "s after starting playback");
-			}
-		}
-	}
-#else
-	// SDL_mixer < 2.6.0 does NOT support position on fade-in
-	if (useFadeMs > 0)
-	{
-		result = Mix_FadeInMusic(currentMusic_, loopMode_ ? -1 : 1, useFadeMs);
-		LOG_INFO("MusicPlayer", "Fading in track: " + musicNames_[index] + " over " + std::to_string(useFadeMs) + "ms");
-	}
-	else
-	{
-		result = Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
-		LOG_INFO("MusicPlayer", (usePosition ? "Playing track with seek: " : "Playing track: ") + musicNames_[index]);
-		if (result != -1 && usePosition)
-		{
-			if (Mix_SetMusicPosition(position) == -1)
-			{
-				LOG_WARNING("MusicPlayer", "Seeking not supported for this format or in this mode: " + std::to_string(position));
-			}
-			else
-			{
-				LOG_INFO("MusicPlayer", "Seeked to position: " + std::to_string(position) + "s after starting playback");
-			}
-		}
-	}
-#endif
-
-	if (result == -1)
-	{
-		LOG_ERROR("MusicPlayer", "Failed to play music: " + std::string(Mix_GetError()));
+		LOG_ERROR("MusicPlayer", "Failed to start playback");
 		return false;
+	}
+
+	// Handle fade-in if requested
+	if (useFadeMs > 0) {
+		// Start with volume at 0, then fade to target
+		int targetVol = volume_.load(std::memory_order_relaxed);
+		setGstVolume(0.0);
+		fadeToVolume(targetVol, useFadeMs);
+		LOG_INFO("MusicPlayer", "Fading in track: " + musicNames_[index] + " over " + std::to_string(useFadeMs) + "ms");
 	}
 
 	setPlaybackState(PlaybackState::PLAYING);
@@ -1027,16 +1143,12 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
 }
 
 double MusicPlayer::saveCurrentMusicPosition() {
-	if (currentMusic_)
+	if (pipeline_)
 	{
-		// Get the current position in the music in seconds
-		// If your SDL_mixer version doesn't support this, you'll need to track time manually
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-		return Mix_GetMusicPosition(currentMusic_);
-#else
-// For older SDL_mixer versions, we can't get the position
-		return 0.0;
-#endif
+		gint64 pos;
+		if (gst_element_query_position(pipeline_, GST_FORMAT_TIME, &pos)) {
+			return static_cast<double>(pos) / GST_SECOND;
+		}
 	}
 	return 0.0;
 }
@@ -1050,7 +1162,7 @@ bool MusicPlayer::pauseMusic(int customFadeMs) {
 	// Use default fade if -1 is passed
 	int useFadeMs = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
-	// Save current position before pausing (for possible resume with fade)
+	// Save current position before pausing
 	pausedMusicPosition_ = saveCurrentMusicPosition();
 
 	if (useFadeMs > 0)
@@ -1061,23 +1173,16 @@ bool MusicPlayer::pauseMusic(int customFadeMs) {
 		pendingTrackIndex_ = -1;
 
 		// Fade out and then pause
-		if (Mix_FadeOutMusic(useFadeMs) == 0)
-		{
-			// Failed to fade out, pause immediately
-			LOG_WARNING("MusicPlayer", "Failed to fade out before pause, pausing immediately");
-			Mix_PauseMusic();
-			isPendingPause_ = false;
-		}
-		else
-		{
-			LOG_INFO("MusicPlayer", "Fading out music before pausing over " + std::to_string(useFadeMs) + "ms");
-			// The actual pause will be handled in the musicFinishedCallback
-		}
+		fadeToVolume(0, useFadeMs);
+		LOG_INFO("MusicPlayer", "Fading out music before pausing over " + std::to_string(useFadeMs) + "ms");
+		// The actual pause will be handled when fade completes
 	}
 	else
 	{
 		// No fade, pause immediately
-		Mix_PauseMusic();
+		if (pipeline_) {
+			gst_element_set_state(pipeline_, GST_STATE_PAUSED);
+		}
 		LOG_INFO("MusicPlayer", "Music paused");
 	}
 	setPlaybackState(PlaybackState::PAUSED);
@@ -1102,14 +1207,13 @@ bool MusicPlayer::resumeMusic(int customFadeMs) {
 			// Load the track
 			loadTrack(currentIndex_);
 
-			if (!currentMusic_)
+			if (!playbin_)
 			{
 				LOG_ERROR("MusicPlayer", "Failed to reload track for resume");
 				return false;
 			}
 
 			// Calculate the adjusted position - add the fade duration in seconds
-			// This ensures we don't repeat music that was playing during the fade-out
 			double adjustedPosition = pausedMusicPosition_;
 
 			// Only add the fade time if it was a non-zero fade and if we're not at the beginning
@@ -1119,40 +1223,40 @@ bool MusicPlayer::resumeMusic(int customFadeMs) {
 				adjustedPosition += useFadeMs / 1000.0;
 
 				// Get the music length if possible to avoid going past the end
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-				double musicLength = Mix_MusicDuration(currentMusic_);
-				// If we have a valid duration and our adjusted position exceeds it
-				if (musicLength > 0 && adjustedPosition >= musicLength)
-				{
-					// If looping is on, wrap around
-					if (loopMode_)
+				gint64 duration;
+				if (gst_element_query_duration(pipeline_, GST_FORMAT_TIME, &duration)) {
+					double musicLength = static_cast<double>(duration) / GST_SECOND;
+					if (musicLength > 0 && adjustedPosition >= musicLength)
 					{
-						adjustedPosition = std::fmod(adjustedPosition, musicLength);
-					}
-					// Otherwise cap at just before the end
-					else
-					{
-						LOG_INFO("MusicPlayer", "Adjusted position would exceed track length, playing next track instead");
-						return nextTrack(useFadeMs);
+						// If looping is on, wrap around
+						if (loopMode_)
+						{
+							adjustedPosition = std::fmod(adjustedPosition, musicLength);
+						}
+						else
+						{
+							LOG_INFO("MusicPlayer", "Adjusted position would exceed track length, playing next track instead");
+							return nextTrack(useFadeMs);
+						}
 					}
 				}
-#endif
 			}
 
-			// Start playback from the adjusted position with fade-in
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-			if (Mix_FadeInMusicPos(currentMusic_, loopMode_ ? -1 : 1, useFadeMs, adjustedPosition) == -1)
-			{
-				LOG_ERROR("MusicPlayer", "Failed to resume music with fade: " + std::string(Mix_GetError()));
-				return false;
+			// Seek to the adjusted position
+			if (!gst_element_seek_simple(pipeline_, GST_FORMAT_TIME,
+				static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT),
+				static_cast<gint64>(adjustedPosition * GST_SECOND))) {
+				LOG_WARNING("MusicPlayer", "Failed to seek to resume position");
 			}
-#else
-			if (Mix_FadeInMusic(currentMusic_, loopMode_ ? -1 : 1, useFadeMs) == -1)
-			{
-				LOG_ERROR("MusicPlayer", "Failed to resume music with fade: " + std::string(Mix_GetError()));
-				return false;
+
+			// Start playback with fade-in
+			gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+			
+			if (useFadeMs > 0) {
+				int targetVol = volume_.load(std::memory_order_relaxed);
+				setGstVolume(0.0);
+				fadeToVolume(targetVol, useFadeMs);
 			}
-#endif
 
 			LOG_INFO("MusicPlayer", "Resuming track: " + musicNames_[currentIndex_] + " from adjusted position " +
 				std::to_string(adjustedPosition) + " (original: " + std::to_string(pausedMusicPosition_) +
@@ -1174,7 +1278,9 @@ bool MusicPlayer::resumeMusic(int customFadeMs) {
 	else if (isPaused())
 	{
 		// Regular pause (not after fade-out), just resume
-		Mix_ResumeMusic();
+		if (pipeline_) {
+			gst_element_set_state(pipeline_, GST_STATE_PLAYING);
+		}
 		LOG_INFO("MusicPlayer", "Music resumed");
 		setPlaybackState(PlaybackState::PLAYING);
 		return true;
@@ -1184,7 +1290,7 @@ bool MusicPlayer::resumeMusic(int customFadeMs) {
 }
 
 bool MusicPlayer::stopMusic(int customFadeMs) {
-	if (!Mix_PlayingMusic() && !Mix_PausedMusic() && !isPendingPause_)
+	if (!isPlaying() && !isPaused() && !isPendingPause_)
 	{
 		return false;
 	}
@@ -1200,21 +1306,23 @@ bool MusicPlayer::stopMusic(int customFadeMs) {
 	if (useFadeMs > 0 && !isShuttingDown_)
 	{
 		// Fade out music
-		if (Mix_FadeOutMusic(useFadeMs) == 0)
-		{
-			// Failed to fade out, stop immediately
-			LOG_WARNING("MusicPlayer", "Failed to fade out music, stopping immediately");
-			Mix_HaltMusic();
-		}
-		else
-		{
-			LOG_INFO("MusicPlayer", "Fading out music over " + std::to_string(useFadeMs) + "ms");
-		}
+		fadeToVolume(0, useFadeMs);
+		LOG_INFO("MusicPlayer", "Fading out music over " + std::to_string(useFadeMs) + "ms");
+		
+		// After fade, stop the pipeline
+		std::thread([this, useFadeMs]() {
+			std::this_thread::sleep_for(std::chrono::milliseconds(useFadeMs));
+			if (pipeline_) {
+				gst_element_set_state(pipeline_, GST_STATE_NULL);
+			}
+		}).detach();
 	}
 	else
 	{
 		// Stop immediately
-		Mix_HaltMusic();
+		if (pipeline_) {
+			gst_element_set_state(pipeline_, GST_STATE_NULL);
+		}
 		LOG_INFO("MusicPlayer", "Music stopped immediately");
 	}
 
@@ -1296,11 +1404,19 @@ bool MusicPlayer::previousTrack(int customFadeMs) {
 }
 
 bool MusicPlayer::isPlaying() const {
-	return Mix_PlayingMusic() == 1 && !Mix_PausedMusic();
+	if (!pipeline_) return false;
+	
+	GstState state;
+	gst_element_get_state(pipeline_, &state, nullptr, 0);
+	return state == GST_STATE_PLAYING && !isPendingPause_;
 }
 
 bool MusicPlayer::isPaused() const {
-	return Mix_PausedMusic() == 1 || isPendingPause_;
+	if (!pipeline_) return isPendingPause_;
+	
+	GstState state;
+	gst_element_get_state(pipeline_, &state, nullptr, 0);
+	return state == GST_STATE_PAUSED || isPendingPause_;
 }
 
 void MusicPlayer::changeVolume(bool increase) {
@@ -1328,7 +1444,7 @@ void MusicPlayer::setVolume(int newVolume) {
 	const int v = std::clamp(newVolume, 0, MIX_MAX_VOLUME);
 
 	volume_.store(v, std::memory_order_relaxed);
-	Mix_VolumeMusic(v);
+	setGstVolume(v / static_cast<double>(MIX_MAX_VOLUME));
 
 	// Keep the bar consistent if this path is used:
 	logicalVolume_.store(v, std::memory_order_relaxed);
@@ -1359,7 +1475,7 @@ void MusicPlayer::setLogicalVolume(int v) {
 	}
 
 	volume_.store(finalVolume, std::memory_order_relaxed);
-	Mix_VolumeMusic(finalVolume);
+	setGstVolume(finalVolume / static_cast<double>(MIX_MAX_VOLUME));
 }
 
 
@@ -1395,7 +1511,7 @@ void MusicPlayer::fadeToVolume(int targetVolume, int customFadeMs) {
             float t = static_cast<float>(i) / steps;
             int newVolume = static_cast<int>(startVolume + t * (targetVolume - startVolume));
 
-            Mix_VolumeMusic(newVolume);
+            setGstVolume(newVolume / static_cast<double>(MIX_MAX_VOLUME));
             volume_.store(newVolume, std::memory_order_relaxed);
 
             if (sleepDuration > 0)
@@ -1404,7 +1520,7 @@ void MusicPlayer::fadeToVolume(int targetVolume, int customFadeMs) {
 
         // lock final value
         if (mySerial == fadeSerial_.load(std::memory_order_relaxed) && !isShuttingDown_.load()) {
-            Mix_VolumeMusic(targetVolume);
+            setGstVolume(targetVolume / static_cast<double>(MIX_MAX_VOLUME));
             volume_.store(targetVolume, std::memory_order_relaxed);
         }
     }).detach();
@@ -1468,12 +1584,8 @@ int MusicPlayer::getTrackCount() const {
 void MusicPlayer::setLoop(bool loop) {
 	loopMode_ = loop;
 
-	// If music is currently playing, adjust the loop setting
-	if (isPlaying() && currentMusic_)
-	{
-		Mix_HaltMusic();
-		Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 1);
-	}
+	// GStreamer handles looping internally via EOS callback
+	// No need to restart playback
 
 	// Save to config if available
 	if (config_)
@@ -1547,52 +1659,6 @@ bool MusicPlayer::getShuffle() const {
 	return shuffleMode_;
 }
 
-void MusicPlayer::musicFinishedCallback() {
-	// This is a static callback, so we need to get the instance
-	if (instance_)
-	{
-		instance_->onMusicFinished();
-	}
-}
-
-void MusicPlayer::onMusicFinished() {
-	// Don't proceed if shutting down
-	if (isShuttingDown_)
-	{
-		return;
-	}
-
-	// Check if this is a pause operation
-	if (isPendingPause_)
-	{
-		// This was a fade-to-pause operation
-		Mix_PauseMusic();  // Ensure paused state is set
-		LOG_INFO("MusicPlayer", "Music paused after fade-out");
-		return;  // Don't continue to next track
-	}
-
-	// Check if we're waiting to change tracks after a fade
-	if (isPendingTrackChange_ && pendingTrackIndex_ >= 0)
-	{
-		int indexToPlay = pendingTrackIndex_;
-		isPendingTrackChange_ = false;
-		pendingTrackIndex_ = -1;
-
-		LOG_INFO("MusicPlayer", "Playing next track after fade: " + std::to_string(indexToPlay));
-		playMusic(indexToPlay, fadeMs_);
-		return;
-	}
-
-	// Normal track finished playing
-	LOG_INFO("MusicPlayer", "Track finished playing: " + getCurrentTrackName());
-
-	if (!loopMode_)  // In loop mode SDL_mixer handles looping internally
-	{
-		// Play the next track
-		nextTrack();
-	}
-}
-
 void MusicPlayer::setFadeDuration(int ms) {
 	fadeMs_ = std::max(0, ms);
 
@@ -1618,28 +1684,22 @@ void MusicPlayer::shutdown() {
 	isShuttingDown_ = true;
 
 	// If music is playing, fade out synchronously
-	if (Mix_PlayingMusic()) {
+	if (isPlaying()) {
 		int steps = 50;
 		int fadeMs = fadeMs_; // or use a custom fade for shutdown
-		int startVolume = Mix_VolumeMusic(-1);
+		int startVolume = volume_.load(std::memory_order_relaxed);
 
 		for (int i = 0; i <= steps; ++i) {
-			if (!Mix_PlayingMusic()) break; // music stopped early
+			if (!isPlaying()) break; // music stopped early
 			float t = static_cast<float>(i) / steps;
 			int newVolume = static_cast<int>(startVolume * (1.0f - t));
-			Mix_VolumeMusic(newVolume);
+			setGstVolume(newVolume / static_cast<double>(MIX_MAX_VOLUME));
 			std::this_thread::sleep_for(std::chrono::milliseconds(fadeMs / steps));
 		}
 	}
-	Mix_HaltMusic();
-
-
-	// Free resources
-	if (currentMusic_)
-	{
-		Mix_FreeMusic(currentMusic_);
-		currentMusic_ = nullptr;
-	}
+	
+	stopMusic(0);
+	cleanupGStreamer();
 
 	// Clear playlists
 	musicFiles_.clear();
@@ -2046,31 +2106,50 @@ bool MusicPlayer::getAlbumArt(int trackIndex, std::vector<unsigned char>& albumA
 }
 
 double MusicPlayer::getCurrent() {
-	if (!currentMusic_) {
+	if (!pipeline_) {
 		return -1.0;
 	}
 
-	return Mix_GetMusicPosition(currentMusic_);
+	gint64 pos;
+	if (gst_element_query_position(pipeline_, GST_FORMAT_TIME, &pos)) {
+		return static_cast<double>(pos) / GST_SECOND;
+	}
+	return -1.0;
 }
 
 double MusicPlayer::getDuration() {
-	if (!currentMusic_) {
+	if (!pipeline_) {
 		return -1.0;
 	}
 
-	return Mix_MusicDuration(currentMusic_);
+	gint64 duration;
+	if (gst_element_query_duration(pipeline_, GST_FORMAT_TIME, &duration)) {
+		return static_cast<double>(duration) / GST_SECOND;
+	}
+	return -1.0;
 }
 
 std::pair<int, int> MusicPlayer::getCurrentAndDurationSec() {
-	if (!currentMusic_) return { -1, -1 };
-	return {
-		static_cast<int>(Mix_GetMusicPosition(currentMusic_)),
-		static_cast<int>(Mix_MusicDuration(currentMusic_))
-	};
+	if (!pipeline_) return { -1, -1 };
+	
+	gint64 pos, duration;
+	int current = -1, dur = -1;
+	
+	if (gst_element_query_position(pipeline_, GST_FORMAT_TIME, &pos)) {
+		current = static_cast<int>(pos / GST_SECOND);
+	}
+	if (gst_element_query_duration(pipeline_, GST_FORMAT_TIME, &duration)) {
+		dur = static_cast<int>(duration / GST_SECOND);
+	}
+	
+	return { current, dur };
 }
 
 bool MusicPlayer::isFading() const {
-	return Mix_FadingMusic() != MIX_NO_FADING;
+	// Check if a fade operation is in progress via fadeSerial
+	// Since we're using threaded fades, we can track this with a flag
+	return fadeSerial_.load(std::memory_order_relaxed) > 0 && 
+	       volume_.load(std::memory_order_relaxed) != previousVolume_.load(std::memory_order_relaxed);
 }
 
 bool MusicPlayer::hasStartedPlaying() const {

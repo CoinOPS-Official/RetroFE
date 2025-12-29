@@ -25,13 +25,9 @@
 #include <deque>
 #include <mutex>
 
-#if __has_include(<SDL2/SDL_mixer.h>)
-#include <SDL2/SDL_mixer.h>
-#elif __has_include(<SDL2_mixer/SDL_mixer.h>)
-#include <SDL2_mixer/SDL_mixer.h>
-#else
-#error "Cannot find SDL_mixer header"
-#endif
+#include <gst/gst.h>
+#include <gst/audio/audio.h>
+
 #if __has_include(<SDL2/SDL_image.h>)
 #include <SDL2/SDL_image.h>
 #elif __has_include(<SDL2_image/SDL_image.h>)
@@ -108,7 +104,7 @@ public:
     void setButtonPressed(bool buttonPressed);
 
     // Volume & Loop Settings
-    void setVolume(int volume);  // 0-128 (SDL_Mixer range)
+    void setVolume(int volume);  // 0-128 (for API compatibility)
     void setLogicalVolume(int v);
     int getLogicalVolume();
     int getVolume() const;
@@ -189,18 +185,39 @@ private:
     // Singleton Instance
     static MusicPlayer* instance_;
 
+    // GStreamer elements
+    GstElement* pipeline_;
+    GstElement* playbin_;
+    GstBus* bus_;
+    guint bus_watch_id_;
+    
+    // Track state
+    bool isPipelinePlaying_;
+    bool gstInitialized_;
+    
+    // Helper methods for GStreamer
+    void initGStreamer();
+    void cleanupGStreamer();
+    void createPipeline();
+    void destroyPipeline();
+    static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer data);
+    static void padAddedCallback(GstElement* element, GstPad* pad, gpointer data);
+    static GstPadProbeReturn audioProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
+    void onEndOfStream();
+    void setGstVolume(double volume);
+    double getGstVolume() const;
+
     // Configuration & Playback State
     Configuration* config_;
-    Mix_Music* currentMusic_;
     std::vector<std::string> musicFiles_;
     std::vector<std::string> musicNames_;
     std::vector<TrackMetadata> trackMetadata_;
     std::vector<int> shuffledIndices_;
     int currentShufflePos_;
     int currentIndex_;
-    std::atomic<int> volume_{ MIX_MAX_VOLUME };        // actual mixer vol 0..128
-    std::atomic<int> logicalVolume_{ MIX_MAX_VOLUME }; // UI/bar vol 0..128
-    std::atomic<int> previousVolume_{ MIX_MAX_VOLUME };
+    std::atomic<int> volume_{ 128 };        // actual vol 0..128 (for API compatibility)
+    std::atomic<int> logicalVolume_{ 128 }; // UI/bar vol 0..128
+    std::atomic<int> previousVolume_{ 128 };
     bool loopMode_;
     bool shuffleMode_;
     std::atomic<bool> isShuttingDown_;
