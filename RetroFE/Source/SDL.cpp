@@ -524,7 +524,7 @@ bool SDL::initialize(Configuration& config) {
 				MusicPlayer* mp;   // nullptr if music player disabled
 			};
 
-			// … during init …
+			// ï¿½ during init ï¿½
 			bool musicPlayerEnabled = false;
 			config.getProperty("musicPlayer.enabled", musicPlayerEnabled);
 
@@ -1529,28 +1529,10 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 		return SDL_RenderCopyF(renderer_[m], texture, &srcRect, &dPx) == 0;
 	}
 
-	// === MID PATH (per-item angle only; no mirror, no reflection, no global rot) ===
-	if (!mir && !viewInfo.hasReflection && rot == 0 && viewInfo.Angle != 0.0f) {
-		SDL_Rect  s = srcRect;
-		SDL_FRect d = dstRect;
-
-		if (hasContainer) {
-			const float rx0 = d.x, ry0 = d.y, rx1 = d.x + d.w, ry1 = d.y + d.h;
-			const float cx0 = container.x, cy0 = container.y;
-			const float cx1 = cx0 + container.w, cy1 = cy0 + container.h;
-			if (rx1 <= cx0 || ry1 <= cy0 || rx0 >= cx1 || ry0 >= cy1) return true;
-
-			const SDL_Rect  sCopy = s; const SDL_FRect dCopy = d;
-			clip_to_container(s, d, sCopy, dCopy);
-			if (d.w <= 0.f || d.h <= 0.f || s.w <= 0 || s.h <= 0) return true;
-		}
-
-		SDL_FRect dPx = to_pixels(d);
-		set_alpha_if_needed(clamp_u8(alpha));
-		return SDL_RenderCopyExF(renderer_[m], texture, &s, &dPx, viewInfo.Angle, nullptr, SDL_FLIP_NONE) == 0;
-	}
-
-	// === GEOMETRY PATH (mirror and/or global rotation and/or reflections) ===
+	// === GEOMETRY PATH (mirror and/or global rotation and/or reflections, or any non-zero angle) ===
+	// SDL_RenderCopyExF is avoided for rotation: SDL's OpenGL renderer has a Y-axis inversion
+	// bug when rendering to a texture render target, which causes rotated elements to be placed
+	// off-screen. SDL_RenderGeometry with manually-computed vertices is used instead.
 	const SDL_Rect  src0 = srcRect;
 	const SDL_FRect dst0 = dstRect;
 

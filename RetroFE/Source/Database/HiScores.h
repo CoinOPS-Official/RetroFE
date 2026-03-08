@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <string>
 #include <vector>
 #include <unordered_map>
@@ -76,7 +77,7 @@ public:
     // Direct upsert (if caller already has rows for an id)
     void upsertIScoredGame(const std::string& gameId,
         const std::string& gameName,
-        const std::vector<GlobalRow>& rows);              // replaces that id’s rows
+        const std::vector<GlobalRow>& rows);              // replaces that idï¿½s rows
 
     // Shutdown cleanup (persist if you want, then clear)
     void deinitialize();

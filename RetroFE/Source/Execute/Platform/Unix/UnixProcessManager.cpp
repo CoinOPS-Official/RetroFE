@@ -69,7 +69,8 @@ bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::
             }
         }
 
-        std::string commandLine = executable + " " + args;
+        std::string quotedExecutable = "\"" + executable + "\"";
+        std::string commandLine = quotedExecutable + " " + args;
         WordExpWrapper we;
         if (wordexp(commandLine.c_str(), &we.p, WRDE_NOCMD) != 0) {
             _exit(EXIT_FAILURE);
@@ -98,7 +99,8 @@ bool UnixProcessManager::launch(const std::string& executable,
     }
 
     // Build argv via wordexp (blocks command substitution)
-    std::string commandLine = executable + " " + args;
+    std::string quotedExecutable = "\"" + executable + "\"";
+    std::string commandLine = quotedExecutable + " " + args;
     WordExpWrapper we;
     if (wordexp(commandLine.c_str(), &we.p, WRDE_NOCMD) != 0) {
         LOG_ERROR("ProcessManager", "Failed to parse command line: " + commandLine);
@@ -204,7 +206,7 @@ bool UnixProcessManager::launch(const std::string& executable,
         return false;
     }
 
-    // Short/partial read: unexpected—treat as failure.
+    // Short/partial read: unexpectedï¿½treat as failure.
     {
         int status = 0; (void)waitpid(pid_, &status, 0);
         LOG_ERROR("ProcessManager", "Launch status unknown (short read). Treating as failure.");
@@ -246,7 +248,7 @@ WaitResult UnixProcessManager::wait(double timeoutSeconds, const std::function<b
                 // NEW: capture a meaningful exit code
                 if (WIFEXITED(status))      lastExitCode_ = WEXITSTATUS(status);
                 else if (WIFSIGNALED(status)) lastExitCode_ = 128 + WTERMSIG(status);
-                else                          lastExitCode_ = 0; // generic “ended” code
+                else                          lastExitCode_ = 0; // generic ï¿½endedï¿½ code
 
                 LOG_INFO("ProcessManager", "Process " + std::to_string(pid_) + " has exited with code " + std::to_string(lastExitCode_) + ".");
                 pid_ = -1;
@@ -310,8 +312,7 @@ void UnixProcessManager::terminate() {
         return false;
         };
 
-    auto reapAllChildrenNonBlocking = [&]() {
-    int_total:
+    auto reapAllChildrenNonBlocking = [&]() {    
         int total = 0;
         for (;;) {
             int status = 0;

@@ -28,6 +28,7 @@
 #include "../Utility/Utils.h"
 
 // --- C++ Standard Library ---
+#include <algorithm>
 #include <chrono>
 #include <cstdlib> // For getenv
 #include <filesystem>
@@ -35,6 +36,7 @@
 #include <memory>  // For std::unique_ptr
 #include <optional>
 #include <sstream>
+#include <thread>
 
 // --- New Refactored Components ---
 #include "Input/InputMonitor.h"
@@ -365,7 +367,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                         break;
                     }
                     case PreWaitMode::UpToMs: {
-                        // IMPORTANT: use simpleLaunch() so job-close doesn’t kill it
+                        // IMPORTANT: use simpleLaunch() so job-close doesnï¿½t kill it
                         LOG_INFO("Launcher", std::string("Waiting up to ") + std::to_string(preWaitMs) + " ms for pre-hook (non-blocking)...");
                         if (!preMgr->simpleLaunch(pExe.string(), preArgs, pCwd.string())) {
                             LOG_ERROR("Launcher", "Pre-hook failed to start: " + pExe.string());
@@ -379,14 +381,14 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                             // ~30fps
                             std::this_thread::sleep_for(std::chrono::milliseconds(33));
                         }
-                        // We can’t know exit code in this mode (no handle by design)
+                        // We canï¿½t know exit code in this mode (no handle by design)
                         LOG_INFO("Launcher", std::string("Pre-hook still running after ")
                             + std::to_string(preWaitMs) + " ms; continuing.");
                         break;
                     }
                     case PreWaitMode::NoWait:
                     default: {
-                        // IMPORTANT: use simpleLaunch() so job-close doesn’t kill it
+                        // IMPORTANT: use simpleLaunch() so job-close doesnï¿½t kill it
                         if (!preMgr->simpleLaunch(pExe.string(), preArgs, pCwd.string())) {
                             LOG_ERROR("Launcher", "Pre-hook failed to start: " + pExe.string());
                             return false;

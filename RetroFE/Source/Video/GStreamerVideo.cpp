@@ -1958,13 +1958,21 @@ bool GStreamerVideo::hasFinishedLoops() const {
 }
 
 void GStreamerVideo::detectStreamTypes() {
-	if (!playbin_) return;
+	if (!playbin_ || !videoSink_) return;
 
-	gint n_video = 0;
-	g_object_get(playbin_, "n-video", &n_video, nullptr);
+	bool hasVideo = false;
+	GstPad *pad = gst_element_get_static_pad(videoSink_, "sink");
+	if (pad) {
+		GstCaps *caps = gst_pad_get_current_caps(pad);
+		if (caps) {
+			hasVideo = true;
+			gst_caps_unref(caps);
+		}
+		gst_object_unref(pad);
+	}
 
-	hasVideoStream_.store(n_video > 0, std::memory_order_release);
+	hasVideoStream_.store(hasVideo, std::memory_order_release);
 
 	LOG_DEBUG("GStreamerVideo", "Stream detection for " + currentFile_ +
-		": video streams=" + std::to_string(n_video));
+		": hasVideo=" + std::string(hasVideo ? "true" : "false"));
 }

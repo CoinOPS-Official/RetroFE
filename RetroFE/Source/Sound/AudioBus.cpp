@@ -6,9 +6,10 @@
 #elif defined(__ARM_NEON)
 #include <arm_neon.h>
 #endif
-#include <memory>
-#include <atomic>
 #include <algorithm>
+#include <atomic>
+#include <cstring>
+#include <memory>
 
 #include "../Utility/Log.h"
 
@@ -70,7 +71,7 @@ int AudioBus::SpscRing::write(const uint8_t* data, int bytes) {
     if ((size_t)bytes > free) {
         size_t need = (size_t)bytes - free;
         need = align_up(need, align_);          // drop whole frames
-        if (need > used) need = used;           // don’t jump past head
+        if (need > used) need = used;           // donï¿½t jump past head
         tail_.store(t + need, std::memory_order_release);
         t += need;
     }
