@@ -100,6 +100,7 @@ bool g_isRestrictorCheckDone = false;
 namespace fs = std::filesystem;
 
 #ifdef __linux
+#include <libusb.h>
 
 bool InitializeServoStik() {
 	libusb_context* ctx = NULL;
