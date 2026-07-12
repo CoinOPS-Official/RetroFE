@@ -46,7 +46,10 @@ ReloadableGlobalHiscores::ReloadableGlobalHiscores(
     int displayOffset,
     FontManager* font,
     float baseColumnPadding,
-    float baseRowPadding)
+    float baseRowPadding,
+    std::string renderType,
+    float qrDelaySec,
+    float qrFadeSec)
     : Component(p)
     , fontInst_(font)
     , textFormat_(std::move(textFormat))
@@ -88,7 +91,29 @@ ReloadableGlobalHiscores::ReloadableGlobalHiscores(
     , qrDelaySec_(2.0f)
     , qrFadeSec_(1.0f)
     , qrPlacement_(QrPlacement::TopLeft)
-    , qrMarginPx_(8) {
+    , qrMarginPx_(8)
+    , renderMode_(RenderMode::Both)
+    , renderTable_(true)
+    , renderQr_(true) {
+
+    const std::string mode = Utils::toLower(Utils::trimEnds(renderType));
+    if (mode == "qr") {
+        renderMode_ = RenderMode::QrOnly;
+        renderTable_ = false;
+        renderQr_ = true;
+    }
+    else if (mode == "table") {
+        renderMode_ = RenderMode::TableOnly;
+        renderTable_ = true;
+        renderQr_ = false;
+    }
+
+    if (std::isfinite(qrDelaySec) && qrDelaySec >= 0.0f) {
+        qrDelaySec_ = qrDelaySec;
+    }
+    if (std::isfinite(qrFadeSec) && qrFadeSec >= 0.0f) {
+        qrFadeSec_ = qrFadeSec;
+    }
 }
 
 ReloadableGlobalHiscores::~ReloadableGlobalHiscores() {
@@ -1181,59 +1206,62 @@ void ReloadableGlobalHiscores::reloadTexture() {
         return;
     }
 
-    // --- Resolve the list of QR IDs for the selected game ---
-    std::vector<std::string> gameIds;
-    if (!selectedItem->iscoredId.empty()) {
-        Utils::listToVector(selectedItem->iscoredId, gameIds, ',');
-    }
-
-    // Check QR cache validity by IDs
-    bool qrCacheValid = (cachedQrGameIds_.size() == gameIds.size());
-    if (qrCacheValid) {
-        for (size_t i = 0; i < gameIds.size(); ++i) {
-            if (i >= cachedQrGameIds_.size() || cachedQrGameIds_[i] != gameIds[i]) {
-                qrCacheValid = false; break;
-            }
-        }
-    }
-
-    // (Re)load QR textures only if IDs changed
-    if (!qrCacheValid) {
-        for (SDL_Texture* tex : cachedQrTextures_) if (tex) SDL_DestroyTexture(tex);
-        cachedQrTextures_.clear();
-        cachedQrSizes_.clear();
-        cachedQrGameIds_.clear();
-
-        cachedQrTextures_.resize(gameIds.size(), nullptr);
-        cachedQrSizes_.resize(gameIds.size(), { 0,0 });
-
-        for (size_t i = 0; i < gameIds.size(); ++i) {
-            if (gameIds[i].empty()) continue;
-            const std::string path = Configuration::absolutePath + "/iScored/qr/" + gameIds[i] + ".png";
-            if (SDL_Surface* surf = IMG_Load(path.c_str())) {
-                if (SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf)) {
-                    SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
-                    SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND); // set once
-                    cachedQrTextures_[i] = tex;
-                    cachedQrSizes_[i] = { surf->w, surf->h };
-                }
-                SDL_FreeSurface(surf);
-            }
-        }
-
-        cachedQrGameIds_ = gameIds;
-        // IDs changed → sizes likely changed somewhere; mark all dirty
-        for (auto& L : cachedTableLayouts_) L.qrDstDirty = true;
-    }
-
-    // Map cached QR textures/sizes to the visible range
     std::vector<SDL_Texture*> qrTextures(Nvisible, nullptr);
     std::vector<std::pair<int, int>> qrSizes(Nvisible, { 0,0 });
-    for (int t = 0; t < Nvisible; ++t) {
-        const int gi = startIdx + t;
-        if (gi < (int)cachedQrTextures_.size()) {
-            qrTextures[t] = cachedQrTextures_[gi];
-            qrSizes[t] = cachedQrSizes_[gi];
+
+    // --- Resolve the list of QR IDs for the selected game ---
+    if (renderQr_) {
+        std::vector<std::string> gameIds;
+        if (!selectedItem->iscoredId.empty()) {
+            Utils::listToVector(selectedItem->iscoredId, gameIds, ',');
+        }
+
+        // Check QR cache validity by IDs
+        bool qrCacheValid = (cachedQrGameIds_.size() == gameIds.size());
+        if (qrCacheValid) {
+            for (size_t i = 0; i < gameIds.size(); ++i) {
+                if (i >= cachedQrGameIds_.size() || cachedQrGameIds_[i] != gameIds[i]) {
+                    qrCacheValid = false; break;
+                }
+            }
+        }
+
+        // (Re)load QR textures only if IDs changed
+        if (!qrCacheValid) {
+            for (SDL_Texture* tex : cachedQrTextures_) if (tex) SDL_DestroyTexture(tex);
+            cachedQrTextures_.clear();
+            cachedQrSizes_.clear();
+            cachedQrGameIds_.clear();
+
+            cachedQrTextures_.resize(gameIds.size(), nullptr);
+            cachedQrSizes_.resize(gameIds.size(), { 0,0 });
+
+            for (size_t i = 0; i < gameIds.size(); ++i) {
+                if (gameIds[i].empty()) continue;
+                const std::string path = Configuration::absolutePath + "/iScored/qr/" + gameIds[i] + ".png";
+                if (SDL_Surface* surf = IMG_Load(path.c_str())) {
+                    if (SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf)) {
+                        SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+                        SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND); // set once
+                        cachedQrTextures_[i] = tex;
+                        cachedQrSizes_[i] = { surf->w, surf->h };
+                    }
+                    SDL_FreeSurface(surf);
+                }
+            }
+
+            cachedQrGameIds_ = gameIds;
+            // IDs changed → sizes likely changed somewhere; mark all dirty
+            for (auto& L : cachedTableLayouts_) L.qrDstDirty = true;
+        }
+
+        // Map cached QR textures/sizes to the visible range
+        for (int t = 0; t < Nvisible; ++t) {
+            const int gi = startIdx + t;
+            if (gi < (int)cachedQrTextures_.size()) {
+                qrTextures[t] = cachedQrTextures_[gi];
+                qrSizes[t] = cachedQrSizes_[gi];
+            }
         }
     }
 
@@ -1537,7 +1565,17 @@ void ReloadableGlobalHiscores::reloadTexture() {
                 L.qrDstDirty = true; // size change → re-place
             }
             if (L.qrDstDirty) {
-                L.qrDst = placeQrInPanel(L.panelRect, L.qrSrcW, L.qrSrcH);
+                if (renderMode_ == RenderMode::QrOnly) {
+                    L.qrDst = {
+                        0.0f,
+                        0.0f,
+                        static_cast<float>(compositeW),
+                        static_cast<float>(compositeH)
+                    };
+                }
+                else {
+                    L.qrDst = placeQrInPanel(L.panelRect, L.qrSrcW, L.qrSrcH);
+                }
                 L.qrDstDirty = false;
             }
         }
@@ -1560,12 +1598,12 @@ void ReloadableGlobalHiscores::reloadTexture() {
     SDL_RenderClear(renderer);
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
-    if (tableTexture_) {
+    if (renderTable_ && tableTexture_) {
         SDL_RenderCopy(renderer, tableTexture_, nullptr, nullptr);
     }
 
     // Add QRs on top (if QR phase allows)
-    if (qrPhase_ == QrPhase::FadingIn || qrPhase_ == QrPhase::Visible) {
+    if (renderQr_ && (qrPhase_ == QrPhase::FadingIn || qrPhase_ == QrPhase::Visible)) {
         float qrAlphaF = 1.0f;
         if (qrPhase_ == QrPhase::FadingIn && qrFadeSec_ > 0.f) {
             qrAlphaF = std::clamp(qrT_ / qrFadeSec_, 0.f, 1.f);
