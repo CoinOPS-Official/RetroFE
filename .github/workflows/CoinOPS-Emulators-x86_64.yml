@@ -1,0 +1,419 @@
+name: CoinOPS Emulators - Linux x86_64
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on:
+      - self-hosted
+      - linux
+      - x64
+
+    name: Build CoinOPS Emulator Bundle x86_64
+
+    steps:
+      # ============================================================
+      # Current CoinOPS repository
+      #
+      # This contains the curated shared RetroArch config, per-core
+      # configs/options, package contract and common validation tools.
+      # ============================================================
+
+      - name: Checkout current CoinOPS repository
+        uses: actions/checkout@v6
+        with:
+          path: CoinOPSRepo
+          clean: true
+
+      # ============================================================
+      # Host / SDK setup
+      # ============================================================
+
+      - name: Verify host tools
+        run: |
+          set -euo pipefail
+          git --version
+          flatpak --version
+          cmake --version
+          tar --version | head -1
+          command -v zstd >/dev/null || {
+            echo "ERROR: zstd is required on the self-hosted runner."
+            echo "Install with: sudo pacman -S --needed zstd"
+            exit 1
+          }
+          zstd --version
+
+      - name: Configure Flathub
+        run: |
+          flatpak remote-add \
+            --user \
+            --if-not-exists \
+            flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+
+      - name: Install Freedesktop 25.08 SDK
+        run: |
+          flatpak install \
+            --user \
+            --noninteractive \
+            flathub \
+            org.freedesktop.Sdk//25.08
+
+      # ============================================================
+      # Build staging bundle
+      #
+      # Future libretro cores and standalone emulators are added to
+      # this same bundle. It is an internal superset: extract, delete
+      # emulator folders not needed by a CoinOPS build, then ship.
+      # ============================================================
+
+      - name: Create emulator bundle staging tree
+        run: |
+          set -euo pipefail
+
+          rm -rf CoinOPS-Emulators-x86_64
+
+          mkdir -p \
+            CoinOPS-Emulators-x86_64/emulators/libretro/autoconfig \
+            CoinOPS-Emulators-x86_64/emulators/libretro/shaders \
+            CoinOPS-Emulators-x86_64/emulators/libretro/overlays \
+            CoinOPS-Emulators-x86_64/emulators/libretro/cores
+
+          cp \
+            CoinOPSRepo/Packaging/Emulators/libretro/retroarch.cfg \
+            CoinOPS-Emulators-x86_64/emulators/libretro/retroarch.cfg
+
+          touch \
+            CoinOPS-Emulators-x86_64/emulators/libretro/autoconfig/.keep \
+            CoinOPS-Emulators-x86_64/emulators/libretro/shaders/.keep \
+            CoinOPS-Emulators-x86_64/emulators/libretro/overlays/.keep
+
+      # ============================================================
+      # Flycast reference core
+      # ============================================================
+
+      - name: Checkout CoinOPS Flycast source
+        uses: actions/checkout@v6
+        with:
+          repository: CoinOPS-Official/flycast
+          ref: e7426bb864157a4c45866d6253bd24ae89f7d046
+          path: FlycastCore
+          clean: true
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Show Flycast revision
+        run: |
+          echo "============================================================"
+          echo "Flycast source"
+          echo "============================================================"
+          git -C FlycastCore rev-parse HEAD
+          git -C FlycastCore describe --tags --always || true
+
+      - name: Build Flycast libretro core
+        run: |
+          set -euo pipefail
+
+          rm -rf FlycastCore/build-libretro
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              cd "$GITHUB_WORKSPACE/FlycastCore"
+
+              cmake \
+                -S . \
+                -B build-libretro \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DLIBRETRO=ON \
+                -DUSE_VULKAN=ON \
+                -DUSE_OPENGL=ON \
+                -DUSE_OPENMP=ON \
+                -DUSE_HOST_GLSLANG=OFF \
+                -DUSE_HOST_LIBZIP=OFF \
+                -DUSE_HOST_LIBCHDR=OFF \
+                -DUSE_BREAKPAD=OFF \
+                -DUSE_LUA=OFF \
+                -DUSE_LIBCDIO=OFF \
+                -DENABLE_CTEST=OFF
+
+              cmake --build build-libretro --parallel 10
+
+              test -f build-libretro/flycast_libretro.so
+              strip --strip-unneeded build-libretro/flycast_libretro.so
+            '
+
+          ls -lh FlycastCore/build-libretro/flycast_libretro.so
+          sha256sum FlycastCore/build-libretro/flycast_libretro.so
+
+      - name: Validate Flycast ABI and dependencies
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              CORE="$GITHUB_WORKSPACE/FlycastCore/build-libretro/flycast_libretro.so"
+
+              echo "============================================================"
+              echo "ELF dependencies"
+              echo "============================================================"
+              ldd "$CORE"
+              if ldd "$CORE" | grep -q "not found"; then
+                echo "ERROR: unresolved Flycast dependency"
+                exit 1
+              fi
+
+              echo
+              echo "============================================================"
+              echo "Required libretro exports"
+              echo "============================================================"
+              for symbol in \
+                retro_api_version \
+                retro_init \
+                retro_deinit \
+                retro_load_game \
+                retro_unload_game \
+                retro_run
+              do
+                nm -D "$CORE" | grep -Eq "[[:space:]]${symbol}$" || {
+                  echo "ERROR: missing export: $symbol"
+                  exit 1
+                }
+                echo "found: $symbol"
+              done
+
+              echo
+              echo "============================================================"
+              echo "dlopen smoke test"
+              echo "============================================================"
+              python3 -c "import ctypes, os, sys; core=sys.argv[1]; lib=ctypes.CDLL(core, mode=os.RTLD_NOW | os.RTLD_LOCAL); lib.retro_api_version.restype=ctypes.c_uint; print(\"Loaded %s; libretro API version %u\" % (core, lib.retro_api_version()))" "$CORE"
+            '
+
+      # ============================================================
+      # Verify checked-in Flycast core options against exact binary
+      # ============================================================
+
+      - name: Verify Flycast core options are current
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              cc \
+                -O2 \
+                -o "$GITHUB_WORKSPACE/dump-core-options" \
+                "$GITHUB_WORKSPACE/CoinOPSRepo/Packaging/Emulators/tools/dump-core-options.c" \
+                -ldl
+
+              "$GITHUB_WORKSPACE/dump-core-options" \
+                "$GITHUB_WORKSPACE/FlycastCore/build-libretro/flycast_libretro.so" \
+                > "$GITHUB_WORKSPACE/flycast-generated-options.txt" \
+                2> "$GITHUB_WORKSPACE/flycast-option-values.txt"
+            '
+
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          cfg = Path("CoinOPSRepo/Packaging/Emulators/libretro/cores/flycast/core-options.cfg")
+          out = Path("flycast-checked-options.txt")
+
+          values = []
+          pattern = re.compile(r'^\s*([A-Za-z0-9_-]+)\s*=\s*"(.*)"\s*$')
+          for line in cfg.read_text().splitlines():
+              m = pattern.match(line)
+              if m:
+                  values.append(f"{m.group(1)}={m.group(2)}")
+
+          out.write_text("\n".join(sorted(values)) + "\n")
+          print(f"Checked-in options: {len(values)}")
+          PY
+
+          sort flycast-generated-options.txt > flycast-generated-options.sorted.txt
+
+          echo "Generated options: $(wc -l < flycast-generated-options.sorted.txt)"
+
+          if ! diff -u \
+            flycast-checked-options.txt \
+            flycast-generated-options.sorted.txt
+          then
+            echo
+            echo "ERROR: checked-in Flycast core-options.cfg no longer matches"
+            echo "the exact option defaults registered by the pinned core."
+            exit 1
+          fi
+
+          echo "Flycast core-options.cfg exactly matches the pinned core."
+
+      # ============================================================
+      # Package Flycast into the shared emulator staging tree
+      # ============================================================
+
+      - name: Package Flycast
+        run: |
+          set -euo pipefail
+
+          CORE_ROOT="CoinOPS-Emulators-x86_64/emulators/libretro/cores/flycast"
+
+          mkdir -p \
+            "$CORE_ROOT/system/dc" \
+            "$CORE_ROOT/saves" \
+            "$CORE_ROOT/states" \
+            "$CORE_ROOT/remaps"
+
+          cp \
+            FlycastCore/build-libretro/flycast_libretro.so \
+            "$CORE_ROOT/flycast_libretro.so"
+
+          cp \
+            CoinOPSRepo/Packaging/Emulators/libretro/cores/flycast/core.cfg \
+            "$CORE_ROOT/core.cfg"
+
+          cp \
+            CoinOPSRepo/Packaging/Emulators/libretro/cores/flycast/core-options.cfg \
+            "$CORE_ROOT/core-options.cfg"
+
+          cp FlycastCore/LICENSE "$CORE_ROOT/LICENSE.txt"
+
+          touch \
+            "$CORE_ROOT/saves/.keep" \
+            "$CORE_ROOT/states/.keep" \
+            "$CORE_ROOT/remaps/.keep"
+
+          cat > "$CORE_ROOT/system/dc/README-BIOS.txt" <<'EOF'
+          Flycast firmware / arcade BIOS directory
+
+          Common filenames:
+            dc_boot.bin   Dreamcast BIOS (optional; HLE BIOS is available)
+            dc_flash.bin  Dreamcast flash
+            naomi.zip     NAOMI BIOS
+            naomi2.zip    NAOMI 2 BIOS
+            awbios.zip    Atomiswave BIOS
+            segasp.zip    Sega System SP BIOS
+
+          BIOS files are not distributed with CoinOPS.
+
+          Flycast also writes VMU/NVRAM-style system data below this managed
+          system directory, so this directory must remain writable.
+          EOF
+
+          CORE_SHA256="$(sha256sum "$CORE_ROOT/flycast_libretro.so" | awk '{print $1}')"
+
+          cat > "$CORE_ROOT/manifest.json" <<EOF
+          {
+            "name": "Flycast",
+            "package_name": "flycast",
+            "type": "libretro-core",
+            "platform": "linux-x86_64",
+            "source_repository": "CoinOPS-Official/flycast",
+            "source_commit": "e7426bb864157a4c45866d6253bd24ae89f7d046",
+            "upstream_base": "Flycast v2.6",
+            "runtime_abi": "org.freedesktop.Platform/25.08",
+            "core_path": "cores/flycast/flycast_libretro.so",
+            "core_config": "cores/flycast/core.cfg",
+            "core_options": "cores/flycast/core-options.cfg",
+            "sha256": "$CORE_SHA256"
+          }
+          EOF
+
+      - name: Validate packaged Flycast contract
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              "$GITHUB_WORKSPACE/CoinOPSRepo/Packaging/Emulators/tools/validate-libretro-core.sh" \
+                "$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/flycast"
+            '
+
+      # ============================================================
+      # Future emulators go here
+      #
+      # Add each core/standalone into CoinOPS-Emulators-x86_64/emulators/.
+      # Do not create a new user-facing package for every emulator unless
+      # there is a concrete reason to do so.
+      # ============================================================
+
+      - name: Finalize internal emulator bundle
+        run: |
+          set -euo pipefail
+
+          cp \
+            CoinOPSRepo/Packaging/Emulators/PACKAGE-CONTRACT.txt \
+            CoinOPS-Emulators-x86_64/PACKAGE-CONTRACT.txt
+
+          cat > CoinOPS-Emulators-x86_64/README.txt <<'EOF'
+          CoinOPS emulator staging bundle - Linux x86_64
+
+          This is an internal superset bundle, not a required end-user package.
+
+          Workflow:
+            1. Extract into the CoinOPS data tree.
+            2. Delete emulator/core directories not needed by that build.
+            3. Ship what remains with the CoinOPS build.
+
+          MAME is intentionally NOT included here. MAME is mandatory for every
+          CoinOPS build and is part of org.coinops.Runtime.
+
+          Current contents:
+            - Shared libretro RetroArch configuration
+            - Flycast libretro core
+
+          Future optional libretro cores and standalone emulators are added to
+          this same staging bundle.
+          EOF
+
+          echo "============================================================"
+          echo "Emulator staging tree"
+          echo "============================================================"
+          find CoinOPS-Emulators-x86_64 -maxdepth 8 -printf '%p\n' | sort
+          echo
+          du -sh CoinOPS-Emulators-x86_64
+
+      - name: Build emulator tarball
+        run: |
+          set -euo pipefail
+
+          rm -f CoinOPS-Emulators-x86_64.tar.zst
+
+          tar \
+            --zstd \
+            -cf CoinOPS-Emulators-x86_64.tar.zst \
+            -C CoinOPS-Emulators-x86_64 \
+            .
+
+          echo "============================================================"
+          echo "Bundle"
+          echo "============================================================"
+          ls -lh CoinOPS-Emulators-x86_64.tar.zst
+          sha256sum CoinOPS-Emulators-x86_64.tar.zst
+
+      - name: Upload internal emulator bundle
+        uses: actions/upload-artifact@v7
+        with:
+          name: CoinOPS-Emulators-x86_64
+          path: CoinOPS-Emulators-x86_64.tar.zst
+          if-no-files-found: error
+          compression-level: 0
