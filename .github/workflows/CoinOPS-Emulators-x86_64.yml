@@ -811,13 +811,27 @@ jobs:
           cp -a \
             PPSSPPCore/assets/flash0 \
             PPSSPPCore/assets/lang \
-            PPSSPPCore/assets/shaders \
             "$PPSSPP_SYSTEM/"
+
+          # The libretro core exposes only three PPSSPP-internal Vulkan
+          # texture shaders. Do not package the standalone application's
+          # post-processing shader collection.
+          mkdir -p "$PPSSPP_SYSTEM/shaders"
+          cp \
+            PPSSPPCore/assets/shaders/defaultshaders.ini \
+            PPSSPPCore/assets/shaders/tex_2xbrz.csh \
+            PPSSPPCore/assets/shaders/tex_4xbrz.csh \
+            PPSSPPCore/assets/shaders/tex_mmpx.csh \
+            "$PPSSPP_SYSTEM/shaders/"
 
           test -f "$PPSSPP_SYSTEM/compat.ini"
           test -d "$PPSSPP_SYSTEM/flash0"
           test -d "$PPSSPP_SYSTEM/lang"
-          test -d "$PPSSPP_SYSTEM/shaders"
+          test -f "$PPSSPP_SYSTEM/shaders/defaultshaders.ini"
+          test -f "$PPSSPP_SYSTEM/shaders/tex_2xbrz.csh"
+          test -f "$PPSSPP_SYSTEM/shaders/tex_4xbrz.csh"
+          test -f "$PPSSPP_SYSTEM/shaders/tex_mmpx.csh"
+          test "$(find "$PPSSPP_SYSTEM/shaders" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 4
 
           touch \
             "$CORE_ROOT/saves/.keep" \
@@ -827,9 +841,10 @@ jobs:
           cat > "$CORE_ROOT/system/PPSSPP/README-COINOPS.txt" <<'EOF_ASSETS'
           PPSSPP libretro system assets
 
-          This directory contains the runtime subset required by the libretro
-          core: compat.ini, flash0, language files and texture shaders. The
-          standalone PPSSPP UI/debugger assets are intentionally omitted.
+          This directory contains the runtime subset used by the libretro core:
+          compat.ini, flash0, language files, and only the three PPSSPP-internal
+          Vulkan texture shaders exposed through its core options. Standalone
+          PPSSPP UI, debugger and post-processing assets are intentionally omitted.
 
           PPSSPP does not require a PSP BIOS. Save data and the emulated Memory
           Stick are written to the core's managed saves directory by the
@@ -873,7 +888,11 @@ jobs:
               test -f "$PPSSPP_SYSTEM/compat.ini"
               test -d "$PPSSPP_SYSTEM/flash0"
               test -d "$PPSSPP_SYSTEM/lang"
-              test -d "$PPSSPP_SYSTEM/shaders"
+              test -f "$PPSSPP_SYSTEM/shaders/defaultshaders.ini"
+              test -f "$PPSSPP_SYSTEM/shaders/tex_2xbrz.csh"
+              test -f "$PPSSPP_SYSTEM/shaders/tex_4xbrz.csh"
+              test -f "$PPSSPP_SYSTEM/shaders/tex_mmpx.csh"
+              test "$(find "$PPSSPP_SYSTEM/shaders" -mindepth 1 -maxdepth 1 -type f | wc -l)" -eq 4
               test ! -e "$PPSSPP_SYSTEM/debugger"
               test ! -e "$PPSSPP_SYSTEM/gamecontrollerdb.txt"
             '
