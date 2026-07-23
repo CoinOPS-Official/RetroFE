@@ -606,6 +606,263 @@ jobs:
             '
 
       # ============================================================
+      # PPSSPP - PlayStation Portable libretro core
+      # ============================================================
+
+      - name: Checkout PPSSPP source
+        uses: actions/checkout@v6
+        with:
+          repository: hrydgard/ppsspp
+          ref: c119d9b258289a4602691a6f97a8dc4091a94221
+          path: PPSSPPCore
+          clean: true
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Show PPSSPP revision
+        run: |
+          echo "============================================================"
+          echo "PPSSPP source"
+          echo "============================================================"
+          git -C PPSSPPCore rev-parse HEAD
+          git -C PPSSPPCore describe --tags --always || true
+
+      - name: Build PPSSPP libretro core
+        run: |
+          set -euo pipefail
+
+          rm -rf PPSSPPCore/build-libretro
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              cd "$GITHUB_WORKSPACE/PPSSPPCore"
+
+              cmake \
+                -S . \
+                -B build-libretro \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
+                -DLIBRETRO=ON \
+                -DHEADLESS=OFF \
+                -DATLAS_TOOL=OFF \
+                -DUNITTEST=OFF \
+                -DUSE_DISCORD=OFF \
+                -DUSE_SYSTEM_FFMPEG=OFF \
+                -DBUILD_BUNDLED_FFMPEG=OFF \
+                -DUSE_SYSTEM_SNAPPY=OFF \
+                -DUSE_SYSTEM_FREETYPE=OFF \
+                -DUSE_SYSTEM_LIBCHDR=OFF \
+                -DUSE_SYSTEM_LIBZIP=OFF \
+                -DUSE_SYSTEM_RAPIDJSON=OFF \
+                -DUSE_SYSTEM_ZSTD=OFF \
+                -DUSE_SYSTEM_MINIUPNPC=OFF
+
+              cmake \
+                --build build-libretro \
+                --target ppsspp_libretro \
+                --parallel 10
+
+              test -f build-libretro/ppsspp_libretro.so
+              strip --strip-unneeded build-libretro/ppsspp_libretro.so
+            '
+
+          ls -lh PPSSPPCore/build-libretro/ppsspp_libretro.so
+          sha256sum PPSSPPCore/build-libretro/ppsspp_libretro.so
+
+      - name: Validate PPSSPP ABI and dependencies
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              CORE="$GITHUB_WORKSPACE/PPSSPPCore/build-libretro/ppsspp_libretro.so"
+
+              echo "============================================================"
+              echo "ELF dependencies"
+              echo "============================================================"
+              ldd "$CORE"
+              if ldd "$CORE" | grep -q "not found"; then
+                echo "ERROR: unresolved PPSSPP dependency"
+                exit 1
+              fi
+
+              echo
+              echo "============================================================"
+              echo "Required libretro exports"
+              echo "============================================================"
+              for symbol in \
+                retro_api_version \
+                retro_init \
+                retro_deinit \
+                retro_load_game \
+                retro_unload_game \
+                retro_run
+              do
+                nm -D "$CORE" | grep -Eq "[[:space:]]${symbol}$" || {
+                  echo "ERROR: missing export: $symbol"
+                  exit 1
+                }
+                echo "found: $symbol"
+              done
+
+              echo
+              echo "============================================================"
+              echo "dlopen smoke test"
+              echo "============================================================"
+              python3 -c "import ctypes, os, sys; core=sys.argv[1]; lib=ctypes.CDLL(core, mode=os.RTLD_NOW | os.RTLD_LOCAL); lib.retro_api_version.restype=ctypes.c_uint; print(\"Loaded %s; libretro API version %u\" % (core, lib.retro_api_version()))" "$CORE"
+            '
+
+      - name: Generate PPSSPP core options from exact binary
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              cc \
+                -O2 \
+                -o "$GITHUB_WORKSPACE/dump-core-options" \
+                "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/dump-core-options.c" \
+                -ldl
+
+              "$GITHUB_WORKSPACE/dump-core-options" \
+                "$GITHUB_WORKSPACE/PPSSPPCore/build-libretro/ppsspp_libretro.so" \
+                > "$GITHUB_WORKSPACE/ppsspp-generated-options.txt" \
+                2> "$GITHUB_WORKSPACE/ppsspp-option-values.txt"
+            '
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("ppsspp-generated-options.txt")
+          output = Path("ppsspp-core-options.cfg")
+
+          options = []
+          for raw in source.read_text().splitlines():
+              if "=" not in raw:
+                  continue
+              key, value = raw.split("=", 1)
+              key = key.strip()
+              value = value.strip()
+              if not key or not value:
+                  continue
+
+              escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+              options.append((key, escaped))
+
+          if len(options) < 40:
+              raise SystemExit(
+                  f"ERROR: PPSSPP registered only {len(options)} non-empty options"
+              )
+
+          with output.open("w", encoding="utf-8") as f:
+              f.write("# CoinOPS PPSSPP core options\n")
+              f.write("# Generated from the exact pinned PPSSPP binary.\n\n")
+              for key, value in options:
+                  f.write(f'{key} = "{value}"\n')
+
+          print(f"Generated PPSSPP options: {len(options)}")
+          PY
+
+          sed -n '1,40p' ppsspp-core-options.cfg
+
+      - name: Package PPSSPP
+        run: |
+          set -euo pipefail
+
+          CORE_ROOT="CoinOPS-Emulators-x86_64/emulators/libretro/cores/ppsspp"
+
+          mkdir -p \
+            "$CORE_ROOT/system/PPSSPP" \
+            "$CORE_ROOT/saves" \
+            "$CORE_ROOT/states" \
+            "$CORE_ROOT/remaps"
+
+          cp \
+            PPSSPPCore/build-libretro/ppsspp_libretro.so \
+            "$CORE_ROOT/ppsspp_libretro.so"
+
+          cp \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/ppsspp/core.cfg \
+            "$CORE_ROOT/core.cfg"
+
+          cp ppsspp-core-options.cfg "$CORE_ROOT/core-options.cfg"
+          cp PPSSPPCore/LICENSE.TXT "$CORE_ROOT/LICENSE.txt"
+
+          # The libretro core treats system/PPSSPP as its complete asset root
+          # and warns when compat.ini is absent. Keep the assets synchronized
+          # with the exact source revision used to build the core.
+          cp -a PPSSPPCore/assets/. "$CORE_ROOT/system/PPSSPP/"
+          test -f "$CORE_ROOT/system/PPSSPP/compat.ini"
+
+          touch \
+            "$CORE_ROOT/saves/.keep" \
+            "$CORE_ROOT/states/.keep" \
+            "$CORE_ROOT/remaps/.keep"
+
+          cat > "$CORE_ROOT/system/PPSSPP/README-COINOPS.txt" <<'EOF_ASSETS'
+          PPSSPP system assets
+
+          These files are copied from the exact PPSSPP source revision used to
+          build ppsspp_libretro.so. PPSSPP does not require a PSP BIOS.
+
+          Save data and the emulated Memory Stick are written to the core's
+          managed saves directory by the CoinOPS libretro launcher.
+          EOF_ASSETS
+
+          CORE_SHA256="$(sha256sum "$CORE_ROOT/ppsspp_libretro.so" | awk '{print $1}')"
+
+          cat > "$CORE_ROOT/manifest.json" <<EOF_MANIFEST
+          {
+            "name": "PPSSPP",
+            "package_name": "ppsspp",
+            "type": "libretro-core",
+            "platform": "linux-x86_64",
+            "source_repository": "hrydgard/ppsspp",
+            "source_commit": "c119d9b258289a4602691a6f97a8dc4091a94221",
+            "upstream_base": "PPSSPP",
+            "runtime_abi": "org.freedesktop.Platform/25.08",
+            "core_path": "cores/ppsspp/ppsspp_libretro.so",
+            "core_config": "cores/ppsspp/core.cfg",
+            "core_options": "cores/ppsspp/core-options.cfg",
+            "system_assets": "cores/ppsspp/system/PPSSPP",
+            "sha256": "$CORE_SHA256"
+          }
+          EOF_MANIFEST
+
+      - name: Validate packaged PPSSPP contract
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              bash "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/validate-libretro-core.sh" \
+                "$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/ppsspp"
+              test -f "$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/ppsspp/system/PPSSPP/compat.ini"
+            '
+
+      # ============================================================
       # Future emulators go here
       #
       # Add each core/standalone into CoinOPS-Emulators-x86_64/emulators/.
@@ -638,6 +895,7 @@ jobs:
             - Shared libretro RetroArch configuration
             - Flycast libretro core
             - LRPS2 PlayStation 2 libretro core
+            - PPSSPP PlayStation Portable libretro core
 
           Future optional libretro cores and standalone emulators are added to
           this same staging bundle.
