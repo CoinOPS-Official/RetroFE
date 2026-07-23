@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: RetroFE
-          clean: true
+          clean: false
 
       # ============================================================
       # Checkout custom MAME fork
@@ -42,7 +42,7 @@ jobs:
           ref: mame0285-local
           path: MAME
           token: ${{ secrets.MAME_REPO_TOKEN }}
-          clean: true
+          clean: false
           fetch-depth: 1
 
       # ============================================================
