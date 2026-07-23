@@ -344,7 +344,7 @@ jobs:
             org.freedesktop.Sdk//25.08 \
             -c '
               set -eu
-              "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/validate-libretro-core.sh" \
+              bash "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/validate-libretro-core.sh" \
                 "$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/flycast"
             '
 
