@@ -389,6 +389,7 @@ jobs:
                 -S . \
                 -B build-libretro \
                 -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5 \
                 -DLIBRETRO=ON \
                 -DUSE_OPENGL=ON \
                 -DUSE_VULKAN=ON
