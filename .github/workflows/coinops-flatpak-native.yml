@@ -272,6 +272,7 @@ jobs:
       #   minizip
       #   RetroFE
       #   stripped RetroArch runtime
+      #   CoinOPS libretro launcher/config contract
       #   runtime-cleanup
       #   launcher metadata
       #
@@ -836,6 +837,246 @@ jobs:
                   url: https://github.com/libretro/RetroArch.git
                   commit: 69a4f0ea1e8aaf442ae4858f2e7f2b31a1776576
             # ======================================================
+            # CoinOPS libretro launcher/config contract
+            #
+            # Kept in a tiny module after RetroArch so launcher/config
+            # changes never invalidate the expensive RetroArch build.
+            # ======================================================
+            - name: coinops-libretro-launcher
+              buildsystem: simple
+              build-commands:
+                - |
+                  install -d /app/bin /app/share/coinops/libretro
+                  cat > /app/bin/coinops-libretro <<'COINOPS_LIBRETRO_SCRIPT'
+                  #!/usr/bin/env bash
+                  set -euo pipefail
+                  
+                  usage() {
+                      echo "Usage: coinops-libretro <core-name> <content> [additional content arguments...]" >&2
+                      exit 2
+                  }
+                  
+                  [[ $# -ge 2 ]] || usage
+                  
+                  CORE_NAME="$1"
+                  shift
+                  
+                  # Core names are directory names below emulators/libretro/cores. Reject path
+                  # separators/traversal so callers cannot escape the managed core root.
+                  if [[ ! "$CORE_NAME" =~ ^[A-Za-z0-9._-]+$ ]] || [[ "$CORE_NAME" == "." ]] || [[ "$CORE_NAME" == ".." ]]; then
+                      echo "coinops-libretro: invalid core name: $CORE_NAME" >&2
+                      exit 2
+                  fi
+                  
+                  # Production launches inherit RETROFE_PATH from coinops-launcher. COINOPS_ROOT
+                  # is accepted as an explicit diagnostic/manual-launch fallback.
+                  COINOPS_ROOT="${RETROFE_PATH:-${COINOPS_ROOT:-}}"
+                  if [[ -z "$COINOPS_ROOT" ]]; then
+                      echo "coinops-libretro: RETROFE_PATH is not set" >&2
+                      echo "Set RETROFE_PATH (or COINOPS_ROOT for manual testing) to the CoinOPS data root." >&2
+                      exit 1
+                  fi
+                  
+                  # Normalize the root without requiring that every child already exists.
+                  if ! COINOPS_ROOT="$(cd "$COINOPS_ROOT" 2>/dev/null && pwd -P)"; then
+                      echo "coinops-libretro: CoinOPS root does not exist: ${RETROFE_PATH:-${COINOPS_ROOT:-}}" >&2
+                      exit 1
+                  fi
+                  
+                  LIBRETRO_ROOT="$COINOPS_ROOT/emulators/libretro"
+                  CORE_ROOT="$LIBRETRO_ROOT/cores/$CORE_NAME"
+                  GLOBAL_CFG="$LIBRETRO_ROOT/retroarch.cfg"
+                  CORE_CFG="$CORE_ROOT/core.cfg"
+                  CORE_OPTIONS="$CORE_ROOT/core-options.cfg"
+                  RUNTIME_CFG="$CORE_ROOT/.coinops-runtime.cfg"
+                  
+                  if [[ ! -d "$CORE_ROOT" ]]; then
+                      echo "coinops-libretro: core package not found: $CORE_ROOT" >&2
+                      exit 1
+                  fi
+                  
+                  # If the movable data tree does not yet contain the shared config, seed it from
+                  # the immutable runtime template. Existing user/project config is never replaced.
+                  if [[ ! -f "$GLOBAL_CFG" ]]; then
+                      TEMPLATE_CFG="/app/share/coinops/libretro/retroarch.cfg"
+                      if [[ ! -f "$TEMPLATE_CFG" ]]; then
+                          echo "coinops-libretro: shared RetroArch config missing: $GLOBAL_CFG" >&2
+                          exit 1
+                      fi
+                      mkdir -p "$LIBRETRO_ROOT"
+                      cp "$TEMPLATE_CFG" "$GLOBAL_CFG"
+                  fi
+                  
+                  [[ -f "$CORE_CFG" ]] || {
+                      echo "coinops-libretro: required core config missing: $CORE_CFG" >&2
+                      exit 1
+                  }
+                  
+                  [[ -f "$CORE_OPTIONS" ]] || {
+                      echo "coinops-libretro: required core options missing: $CORE_OPTIONS" >&2
+                      exit 1
+                  }
+                  
+                  # These paths are owned by the generic launcher. A core package must not hardcode
+                  # them in core.cfg because doing so would break portability/containment.
+                  if grep -Eq '^[[:space:]]*(system_directory|savefile_directory|savestate_directory|core_options_path|input_remapping_directory)[[:space:]]*=' "$CORE_CFG"; then
+                      echo "coinops-libretro: core.cfg contains launcher-managed path settings:" >&2
+                      grep -En '^[[:space:]]*(system_directory|savefile_directory|savestate_directory|core_options_path|input_remapping_directory)[[:space:]]*=' "$CORE_CFG" >&2 || true
+                      exit 1
+                  fi
+                  
+                  mapfile -t CORE_LIBS < <(
+                      find "$CORE_ROOT" -maxdepth 1 -type f -name '*_libretro.so' -print | sort
+                  )
+                  
+                  if [[ ${#CORE_LIBS[@]} -ne 1 ]]; then
+                      echo "coinops-libretro: expected exactly one *_libretro.so in $CORE_ROOT; found ${#CORE_LIBS[@]}" >&2
+                      printf '  %s\n' "${CORE_LIBS[@]:-}" >&2
+                      exit 1
+                  fi
+                  
+                  CORE_LIBRARY="${CORE_LIBS[0]}"
+                  
+                  # Required mutable per-core locations. mkdir -p is intentional: empty
+                  # directories are not always preserved by archive formats.
+                  mkdir -p \
+                      "$CORE_ROOT/system" \
+                      "$CORE_ROOT/saves" \
+                      "$CORE_ROOT/states" \
+                      "$CORE_ROOT/remaps" \
+                      "$LIBRETRO_ROOT/autoconfig" \
+                      "$LIBRETRO_ROOT/shaders" \
+                      "$LIBRETRO_ROOT/overlays"
+                  
+                  # Create one deterministic generated append-config. It is rewritten atomically on
+                  # every launch, so moving the entire CoinOPS tree requires no config editing.
+                  RUNTIME_TMP="${RUNTIME_CFG}.tmp.$$"
+                  trap 'rm -f "$RUNTIME_TMP"' EXIT
+                  
+                  {
+                      cat "$CORE_CFG"
+                      cat <<CFG
+                  
+                  # ------------------------------------------------------------------
+                  # Generated by coinops-libretro. Do not edit; rewritten every launch.
+                  # ------------------------------------------------------------------
+                  system_directory = "$CORE_ROOT/system"
+                  savefile_directory = "$CORE_ROOT/saves"
+                  savestate_directory = "$CORE_ROOT/states"
+                  core_options_path = "$CORE_OPTIONS"
+                  input_remapping_directory = "$CORE_ROOT/remaps"
+                  joypad_autoconfig_dir = "$LIBRETRO_ROOT/autoconfig"
+                  video_shader_dir = "$LIBRETRO_ROOT/shaders"
+                  overlay_directory = "$LIBRETRO_ROOT/overlays"
+                  CFG
+                  } > "$RUNTIME_TMP"
+                  
+                  mv -f "$RUNTIME_TMP" "$RUNTIME_CFG"
+                  trap - EXIT
+                  
+                  # Do not change working directory: RetroFE may pass relative content paths that
+                  # are relative to the movable CoinOPS root. Every managed RetroArch/core path
+                  # above is absolute, so no cwd trickery is required.
+                  exec /app/bin/coinops-retroarch \
+                      --config "$GLOBAL_CFG" \
+                      --appendconfig "$RUNTIME_CFG" \
+                      -L "$CORE_LIBRARY" \
+                      "$@"
+                  COINOPS_LIBRETRO_SCRIPT
+                  chmod 0755 /app/bin/coinops-libretro
+                - |
+                  cat > /app/share/coinops/libretro/retroarch.cfg <<'COINOPS_RETROARCH_CFG'
+                  # CoinOPS shared RetroArch configuration
+                  #
+                  # This file contains settings shared by every CoinOPS libretro core.
+                  # Core-specific RetroArch overrides belong in:
+                  #   emulators/libretro/cores/<core-name>/core.cfg
+                  #
+                  # Per-core directories (system, saves, states, remaps and core options)
+                  # are injected by /app/bin/coinops-libretro at launch time so the entire
+                  # CoinOPS data tree remains movable.
+                  
+                  # Never rewrite this curated configuration on exit.
+                  config_save_on_exit = false
+                  
+                  # CoinOPS launches content directly; RetroArch is an invisible host.
+                  video_fullscreen = true
+                  video_windowed_fullscreen = true
+                  
+                  # The Flatpak exposes PulseAudio. On PipeWire systems this is serviced by
+                  # the PulseAudio compatibility layer.
+                  audio_driver = "pulse"
+                  
+                  # CoinOPS owns application lifecycle and should continue running content
+                  # if desktop focus changes transiently.
+                  pause_nonactive = false
+                  
+                  # Do not create implicit automatic savestates behind the frontend's back.
+                  savestate_auto_save = false
+                  savestate_auto_load = false
+                  
+                  # Menu/history/runtime bookkeeping is unnecessary for direct CoinOPS launches.
+                  history_list_enable = false
+                  content_runtime_log = false
+                  COINOPS_RETROARCH_CFG
+                - |
+                  cat > /app/share/coinops/libretro/PACKAGE-CONTRACT.txt <<'COINOPS_LIBRETRO_CONTRACT'
+                  CoinOPS libretro core package contract
+                  ======================================
+                  
+                  Shared RetroArch host layer:
+                  
+                    emulators/libretro/
+                      retroarch.cfg
+                      autoconfig/
+                      shaders/
+                      overlays/
+                      cores/
+                  
+                  Every core is a self-contained package below:
+                  
+                    emulators/libretro/cores/<core-name>/
+                      <core>_libretro.so      exactly one *_libretro.so
+                      core.cfg                RetroArch overrides for this core
+                      core-options.cfg        libretro core options/defaults
+                      manifest.json           package/source metadata
+                      LICENSE.txt             core license
+                      system/                 BIOS/firmware/core writable system data
+                      saves/                  save RAM / memory-card-style frontend saves
+                      states/                 RetroArch save states
+                      remaps/                 RetroArch input remaps for this core
+                  
+                  Launcher-managed keys MUST NOT appear in core.cfg:
+                  
+                    system_directory
+                    savefile_directory
+                    savestate_directory
+                    core_options_path
+                    input_remapping_directory
+                  
+                  /app/bin/coinops-libretro injects those paths using an absolute generated
+                  .coinops-runtime.cfg on every launch. This guarantees that moving the entire
+                  CoinOPS data root never requires rewriting stored configuration.
+                  
+                  Shared resource directories are also injected by the launcher:
+                  
+                    joypad_autoconfig_dir -> emulators/libretro/autoconfig
+                    video_shader_dir      -> emulators/libretro/shaders
+                    overlay_directory     -> emulators/libretro/overlays
+                  
+                  Launch interface:
+                  
+                    coinops-libretro <core-name> <content> [additional content arguments...]
+                  
+                  Example:
+                  
+                    coinops-libretro flycast "/roms/Crazy Taxi (USA).chd"
+                  
+                  Future core packages should be rejected by CI unless they satisfy this layout
+                  and pass validate-libretro-core.sh (exports + runtime dependency checks).
+                  COINOPS_LIBRETRO_CONTRACT
+
+            # ======================================================
             # Final runtime cleanup
             #
             # At this point MAME, RetroFE and RetroArch are fully built.
@@ -1118,6 +1359,9 @@ jobs:
               echo
               echo "coinops-retroarch:"
               command -v coinops-retroarch
+              echo "coinops-libretro:"
+              command -v coinops-libretro
+              test -f /app/share/coinops/libretro/retroarch.cfg
               echo
               echo "coinops-launcher:"
               command -v coinops-launcher
@@ -1353,49 +1597,352 @@ jobs:
 
           rm -rf "$TEST_DIR"
 
+      - name: Package shared CoinOPS libretro base
+        run: |
+          set -euo pipefail
+
+          PACKAGE_ROOT="CoinOPS-Libretro-Base-linux-x86_64"
+          LIBRETRO_ROOT="$PACKAGE_ROOT/emulators/libretro"
+
+          rm -rf "$PACKAGE_ROOT"
+          mkdir -p \
+            "$LIBRETRO_ROOT/autoconfig" \
+            "$LIBRETRO_ROOT/shaders" \
+            "$LIBRETRO_ROOT/overlays" \
+            "$LIBRETRO_ROOT/cores" \
+            "$PACKAGE_ROOT/tools"
+
+          cat > "$LIBRETRO_ROOT/retroarch.cfg" <<'EOF'
+          # CoinOPS shared RetroArch configuration
+          #
+          # This file contains settings shared by every CoinOPS libretro core.
+          # Core-specific RetroArch overrides belong in:
+          #   emulators/libretro/cores/<core-name>/core.cfg
+          #
+          # Per-core directories (system, saves, states, remaps and core options)
+          # are injected by /app/bin/coinops-libretro at launch time so the entire
+          # CoinOPS data tree remains movable.
+          
+          # Never rewrite this curated configuration on exit.
+          config_save_on_exit = false
+          
+          # CoinOPS launches content directly; RetroArch is an invisible host.
+          video_fullscreen = true
+          video_windowed_fullscreen = true
+          
+          # The Flatpak exposes PulseAudio. On PipeWire systems this is serviced by
+          # the PulseAudio compatibility layer.
+          audio_driver = "pulse"
+          
+          # CoinOPS owns application lifecycle and should continue running content
+          # if desktop focus changes transiently.
+          pause_nonactive = false
+          
+          # Do not create implicit automatic savestates behind the frontend's back.
+          savestate_auto_save = false
+          savestate_auto_load = false
+          
+          # Menu/history/runtime bookkeeping is unnecessary for direct CoinOPS launches.
+          history_list_enable = false
+          content_runtime_log = false
+          EOF
+
+          # Preserve intentionally empty shared directories in artifacts.
+          touch \
+            "$LIBRETRO_ROOT/autoconfig/.keep" \
+            "$LIBRETRO_ROOT/shaders/.keep" \
+            "$LIBRETRO_ROOT/overlays/.keep" \
+            "$LIBRETRO_ROOT/cores/.keep"
+
+          cat > "$PACKAGE_ROOT/tools/validate-libretro-core.sh" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          
+          [[ $# -eq 1 ]] || { echo "Usage: $0 <core-package-directory>" >&2; exit 2; }
+          CORE_ROOT="$1"
+          
+          fail() { echo "[FAIL] $*" >&2; exit 1; }
+          pass() { echo "[PASS] $*"; }
+          
+          [[ -d "$CORE_ROOT" ]] || fail "core directory missing: $CORE_ROOT"
+          [[ -f "$CORE_ROOT/core.cfg" ]] || fail "core.cfg missing"
+          [[ -f "$CORE_ROOT/core-options.cfg" ]] || fail "core-options.cfg missing"
+          
+          for dir in system saves states remaps; do
+              [[ -d "$CORE_ROOT/$dir" ]] || fail "$dir/ missing"
+              pass "$dir/ exists"
+          done
+          
+          if grep -Eq '^[[:space:]]*(system_directory|savefile_directory|savestate_directory|core_options_path|input_remapping_directory)[[:space:]]*=' "$CORE_ROOT/core.cfg"; then
+              fail "core.cfg contains launcher-managed path keys"
+          fi
+          pass "core.cfg contains no launcher-managed path keys"
+          
+          mapfile -t libs < <(find "$CORE_ROOT" -maxdepth 1 -type f -name '*_libretro.so' -print | sort)
+          [[ ${#libs[@]} -eq 1 ]] || fail "expected exactly one *_libretro.so; found ${#libs[@]}"
+          CORE="${libs[0]}"
+          pass "exactly one libretro core: $(basename "$CORE")"
+          
+          SYMBOLS_TMP="$(mktemp)"
+          trap 'rm -f "$SYMBOLS_TMP"' EXIT
+          nm -D "$CORE" | awk '{print $3}' > "$SYMBOLS_TMP"
+          
+          for symbol in retro_api_version retro_init retro_deinit retro_load_game retro_unload_game retro_run; do
+              grep -Fxq "$symbol" "$SYMBOLS_TMP" || fail "missing export: $symbol"
+              pass "export $symbol"
+          done
+          
+          DEP_REPORT="$(ldd "$CORE" 2>&1 || true)"
+          if grep -q 'not found' <<<"$DEP_REPORT"; then
+              printf '%s\n' "$DEP_REPORT" >&2
+              fail "unresolved shared-library dependency"
+          fi
+          pass "shared-library dependencies resolve"
+          EOF
+          chmod 0755 "$PACKAGE_ROOT/tools/validate-libretro-core.sh"
+
+          cat > "$PACKAGE_ROOT/PACKAGE-CONTRACT.txt" <<'EOF'
+          CoinOPS libretro core package contract
+          ======================================
+          
+          Shared RetroArch host layer:
+          
+            emulators/libretro/
+              retroarch.cfg
+              autoconfig/
+              shaders/
+              overlays/
+              cores/
+          
+          Every core is a self-contained package below:
+          
+            emulators/libretro/cores/<core-name>/
+              <core>_libretro.so      exactly one *_libretro.so
+              core.cfg                RetroArch overrides for this core
+              core-options.cfg        libretro core options/defaults
+              manifest.json           package/source metadata
+              LICENSE.txt             core license
+              system/                 BIOS/firmware/core writable system data
+              saves/                  save RAM / memory-card-style frontend saves
+              states/                 RetroArch save states
+              remaps/                 RetroArch input remaps for this core
+          
+          Launcher-managed keys MUST NOT appear in core.cfg:
+          
+            system_directory
+            savefile_directory
+            savestate_directory
+            core_options_path
+            input_remapping_directory
+          
+          /app/bin/coinops-libretro injects those paths using an absolute generated
+          .coinops-runtime.cfg on every launch. This guarantees that moving the entire
+          CoinOPS data root never requires rewriting stored configuration.
+          
+          Shared resource directories are also injected by the launcher:
+          
+            joypad_autoconfig_dir -> emulators/libretro/autoconfig
+            video_shader_dir      -> emulators/libretro/shaders
+            overlay_directory     -> emulators/libretro/overlays
+          
+          Launch interface:
+          
+            coinops-libretro <core-name> <content> [additional content arguments...]
+          
+          Example:
+          
+            coinops-libretro flycast "/roms/Crazy Taxi (USA).chd"
+          
+          Future core packages should be rejected by CI unless they satisfy this layout
+          and pass validate-libretro-core.sh (exports + runtime dependency checks).
+          EOF
+
+          cat > "$PACKAGE_ROOT/README.txt" <<'EOF'
+          CoinOPS libretro base - Linux x86_64
+
+          Merge the included "emulators" directory into the movable CoinOPS
+          data root once. This installs the shared RetroArch configuration and
+          shared libretro resource directories.
+
+          Future core packages install only below:
+            <CoinOPS>/emulators/libretro/cores/<core-name>/
+
+          /app/bin/coinops-libretro also contains an immutable copy of the base
+          configuration and will seed retroarch.cfg if it is ever missing; it
+          never overwrites an existing mutable configuration.
+          EOF
+
+          echo "============================================================"
+          echo "CoinOPS libretro base package"
+          echo "============================================================"
+          find "$PACKAGE_ROOT" -maxdepth 6 -printf '%p\n' | sort
+
       - name: Package mutable Flycast core
         run: |
           set -euo pipefail
 
           PACKAGE_ROOT="CoinOPS-Libretro-Flycast-linux-x86_64"
-          MUTABLE_ROOT="$PACKAGE_ROOT/emulators/libretro"
+          CORE_ROOT="$PACKAGE_ROOT/emulators/libretro/cores/flycast"
 
           rm -rf "$PACKAGE_ROOT"
 
           mkdir -p \
-            "$MUTABLE_ROOT/cores" \
-            "$MUTABLE_ROOT/system/dc" \
-            "$MUTABLE_ROOT/manifests" \
-            "$PACKAGE_ROOT/licenses"
+            "$CORE_ROOT/system/dc" \
+            "$CORE_ROOT/saves" \
+            "$CORE_ROOT/states" \
+            "$CORE_ROOT/remaps"
 
           cp \
             FlycastCore/build-libretro/flycast_libretro.so \
-            "$MUTABLE_ROOT/cores/flycast_libretro.so"
+            "$CORE_ROOT/flycast_libretro.so"
 
-          cp \
-            FlycastCore/LICENSE \
-            "$PACKAGE_ROOT/licenses/Flycast-GPL-2.0.txt"
+          cp FlycastCore/LICENSE "$CORE_ROOT/LICENSE.txt"
+
+          cat > "$CORE_ROOT/core.cfg" <<'EOF'
+          # CoinOPS Flycast RetroArch overrides
+          #
+          # This file contains frontend settings specific to the Flycast core only.
+          # The following keys are launcher-managed and must NOT be set here:
+          #   system_directory
+          #   savefile_directory
+          #   savestate_directory
+          #   core_options_path
+          #   input_remapping_directory
+          #
+          # Intentionally no active overrides yet. The restructure should preserve the
+          # known-working RetroArch/Flycast behavior first; renderer/performance tuning
+          # belongs here once it has been tested deliberately.
+          EOF
+
+          cat > "$CORE_ROOT/core-options.cfg" <<'EOF'
+          # CoinOPS Flycast libretro core options
+          #
+          # Generated from the option definitions exported by the exact core built from:
+          #   CoinOPS-Official/flycast
+          #   commit e7426bb864157a4c45866d6253bd24ae89f7d046
+          #   upstream base Flycast v2.6
+          #
+          # These are the core's registered defaults, pinned explicitly so CoinOPS
+          # behavior remains reproducible. Update this file when the pinned core changes.
+          
+          reicast_region = "USA"
+          reicast_language = "English"
+          reicast_hle_bios = "disabled"
+          reicast_enable_dsp = "enabled"
+          reicast_allow_service_buttons = "disabled"
+          reicast_force_freeplay = "enabled"
+          reicast_emulate_bba = "disabled"
+          reicast_upnp = "enabled"
+          reicast_dcnet = "disabled"
+          reicast_internal_resolution = "640x480"
+          reicast_cable_type = "TV (Composite)"
+          reicast_broadcast = "NTSC"
+          reicast_screen_rotation = "horizontal"
+          reicast_alpha_sorting = "per-triangle (normal)"
+          reicast_oit_abuffer_size = "512MB"
+          reicast_oit_layers = "32"
+          reicast_emulate_framebuffer = "disabled"
+          reicast_enable_rttb = "disabled"
+          reicast_mipmapping = "enabled"
+          reicast_fog = "enabled"
+          reicast_volume_modifier_enable = "enabled"
+          reicast_anisotropic_filtering = "4"
+          reicast_texture_filtering = "0"
+          reicast_delay_frame_swapping = "enabled"
+          reicast_detect_vsync_swap_interval = "disabled"
+          reicast_pvr2_filtering = "disabled"
+          reicast_texupscale = "1"
+          reicast_texupscale_max_filtered_texture_size = "256"
+          reicast_native_depth_interpolation = "disabled"
+          reicast_fix_upscale_bleeding_edge = "enabled"
+          reicast_threaded_rendering = "enabled"
+          reicast_auto_skip_frame = "disabled"
+          reicast_frame_skipping = "disabled"
+          reicast_widescreen_cheats = "disabled"
+          reicast_widescreen_hack = "disabled"
+          reicast_gdrom_fast_loading = "disabled"
+          reicast_dc_32mb_mod = "disabled"
+          reicast_sh4clock = "200"
+          reicast_custom_textures = "disabled"
+          reicast_preload_custom_textures = "disabled"
+          reicast_dump_textures = "disabled"
+          reicast_dump_replaced_textures = "disabled"
+          reicast_analog_stick_deadzone = "15%"
+          reicast_trigger_deadzone = "0%"
+          reicast_digital_triggers = "disabled"
+          reicast_network_output = "disabled"
+          reicast_show_lightgun_settings = "disabled"
+          reicast_lightgun_crosshair_size_scaling = "100%"
+          reicast_lightgun1_crosshair = "disabled"
+          reicast_lightgun2_crosshair = "disabled"
+          reicast_lightgun3_crosshair = "disabled"
+          reicast_lightgun4_crosshair = "disabled"
+          reicast_device_port1_slot1 = "VMU"
+          reicast_device_port1_slot2 = "Purupuru"
+          reicast_device_port2_slot1 = "VMU"
+          reicast_device_port2_slot2 = "Purupuru"
+          reicast_device_port3_slot1 = "VMU"
+          reicast_device_port3_slot2 = "Purupuru"
+          reicast_device_port4_slot1 = "VMU"
+          reicast_device_port4_slot2 = "Purupuru"
+          reicast_per_content_vmus = "disabled"
+          reicast_vmu_sound = "disabled"
+          reicast_show_vmu_screen_settings = "disabled"
+          reicast_vmu1_screen_display = "disabled"
+          reicast_vmu1_screen_position = "Upper Left"
+          reicast_vmu1_screen_size_mult = "1x"
+          reicast_vmu1_pixel_on_color = "DEFAULT_ON 00"
+          reicast_vmu1_pixel_off_color = "DEFAULT_OFF 01"
+          reicast_vmu1_screen_opacity = "100%"
+          reicast_vmu2_screen_display = "disabled"
+          reicast_vmu2_screen_position = "Upper Right"
+          reicast_vmu2_screen_size_mult = "1x"
+          reicast_vmu2_pixel_on_color = "DEFAULT_ON 00"
+          reicast_vmu2_pixel_off_color = "DEFAULT_OFF 01"
+          reicast_vmu2_screen_opacity = "100%"
+          reicast_vmu3_screen_display = "disabled"
+          reicast_vmu3_screen_position = "Lower Left"
+          reicast_vmu3_screen_size_mult = "1x"
+          reicast_vmu3_pixel_on_color = "DEFAULT_ON 00"
+          reicast_vmu3_pixel_off_color = "DEFAULT_OFF 01"
+          reicast_vmu3_screen_opacity = "100%"
+          reicast_vmu4_screen_display = "disabled"
+          reicast_vmu4_screen_position = "Lower Right"
+          reicast_vmu4_screen_size_mult = "1x"
+          reicast_vmu4_pixel_on_color = "DEFAULT_ON 00"
+          reicast_vmu4_pixel_off_color = "DEFAULT_OFF 01"
+          reicast_vmu4_screen_opacity = "100%"
+          EOF
+
+          # Preserve intentionally empty mutable directories in artifacts.
+          touch \
+            "$CORE_ROOT/saves/.keep" \
+            "$CORE_ROOT/states/.keep" \
+            "$CORE_ROOT/remaps/.keep"
 
           CORE_SHA256="$(
-            sha256sum "$MUTABLE_ROOT/cores/flycast_libretro.so" \
+            sha256sum "$CORE_ROOT/flycast_libretro.so" \
               | awk "{print \$1}"
           )"
 
-          cat > "$MUTABLE_ROOT/manifests/flycast.json" <<EOF
+          cat > "$CORE_ROOT/manifest.json" <<EOF
           {
             "name": "Flycast",
+            "package_name": "flycast",
             "type": "libretro-core",
             "platform": "linux-x86_64",
             "source_repository": "CoinOPS-Official/flycast",
             "source_commit": "e7426bb864157a4c45866d6253bd24ae89f7d046",
             "upstream_base": "Flycast v2.6",
             "flatpak_runtime": "org.freedesktop.Platform/25.08",
-            "core_path": "cores/flycast_libretro.so",
+            "core_path": "cores/flycast/flycast_libretro.so",
+            "core_config": "cores/flycast/core.cfg",
+            "core_options": "cores/flycast/core-options.cfg",
             "sha256": "$CORE_SHA256"
           }
           EOF
 
-          cat > "$MUTABLE_ROOT/system/dc/README-BIOS.txt" <<'EOF'
+          cat > "$CORE_ROOT/system/dc/README-BIOS.txt" <<'EOF'
           Flycast firmware / arcade BIOS directory
 
           Place required firmware in this directory.
@@ -1409,20 +1956,31 @@ jobs:
             segasp.zip    Sega System SP BIOS
 
           BIOS files are not distributed with CoinOPS.
+
+          Flycast also writes VMU/NVRAM-style system data below this managed
+          system directory. Keep it writable.
           EOF
 
           cat > "$PACKAGE_ROOT/README.txt" <<'EOF'
           CoinOPS Flycast libretro core - Linux x86_64
 
-          This package is intentionally separate from the immutable CoinOPS
-          Flatpak runtime.
-
-          Merge the included "emulators" directory into the movable CoinOPS
-          data root.
+          Install the CoinOPS libretro base package once, then merge this
+          package's "emulators" directory into the movable CoinOPS data root.
 
           Result:
-            <CoinOPS>/emulators/libretro/cores/flycast_libretro.so
-            <CoinOPS>/emulators/libretro/system/dc/
+            <CoinOPS>/emulators/libretro/cores/flycast/
+              flycast_libretro.so
+              core.cfg
+              core-options.cfg
+              manifest.json
+              LICENSE.txt
+              system/
+              saves/
+              states/
+              remaps/
+
+          Launch contract:
+            coinops-libretro flycast <content>
 
           The core was built against the same Freedesktop 25.08 SDK used by
           org.coinops.Runtime and was dlopen-tested inside the assembled
@@ -1430,12 +1988,54 @@ jobs:
           EOF
 
           echo "============================================================"
-          echo "Flycast mutable package"
+          echo "Validating Flycast package contract"
           echo "============================================================"
-          find "$PACKAGE_ROOT" -maxdepth 6 -type f -printf '%p\n'
+
+          test -f "$CORE_ROOT/core.cfg"
+          test -f "$CORE_ROOT/core-options.cfg"
+          test -f "$CORE_ROOT/manifest.json"
+          test -f "$CORE_ROOT/LICENSE.txt"
+          test -d "$CORE_ROOT/system"
+          test -d "$CORE_ROOT/saves"
+          test -d "$CORE_ROOT/states"
+          test -d "$CORE_ROOT/remaps"
+
+          if grep -Eq '^[[:space:]]*(system_directory|savefile_directory|savestate_directory|core_options_path|input_remapping_directory)[[:space:]]*=' "$CORE_ROOT/core.cfg"; then
+            echo "ERROR: core.cfg contains launcher-managed path settings"
+            exit 1
+          fi
+
+          CORE_COUNT="$(find "$CORE_ROOT" -maxdepth 1 -type f -name '*_libretro.so' | wc -l)"
+          test "$CORE_COUNT" -eq 1
+
+          # Verify that the pre-populated options file came from the exact
+          # registered Flycast option namespace and contains the expected set.
+          grep -q '^reicast_region = "USA"$' "$CORE_ROOT/core-options.cfg"
+          grep -q '^reicast_threaded_rendering = "enabled"$' "$CORE_ROOT/core-options.cfg"
+          OPTION_COUNT="$(grep -Ec '^reicast_[A-Za-z0-9_]+ = ' "$CORE_ROOT/core-options.cfg")"
+          test "$OPTION_COUNT" -eq 87
+
+          echo "Flycast core package contains $OPTION_COUNT pinned core options."
+          echo
+          find "$PACKAGE_ROOT" -maxdepth 8 -printf '%p\n' | sort
           echo
           du -sh "$PACKAGE_ROOT"
-          sha256sum "$MUTABLE_ROOT/cores/flycast_libretro.so"
+          sha256sum "$CORE_ROOT/flycast_libretro.so"
+
+      - name: Validate packaged Flycast core contract in Freedesktop SDK
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              "$GITHUB_WORKSPACE/CoinOPS-Libretro-Base-linux-x86_64/tools/validate-libretro-core.sh" \
+                "$GITHUB_WORKSPACE/CoinOPS-Libretro-Flycast-linux-x86_64/emulators/libretro/cores/flycast"
+            '
 
       # ============================================================
       # Build distributable Flatpak bundle
@@ -1480,6 +2080,14 @@ jobs:
           path: CoinOPS-Runtime-Native-x86_64.flatpak
           if-no-files-found: error
 
+      - name: Upload shared CoinOPS libretro base
+        uses: actions/upload-artifact@v7
+        with:
+          name: CoinOPS-Libretro-Base-linux-x86_64
+          path: CoinOPS-Libretro-Base-linux-x86_64
+          if-no-files-found: error
+          compression-level: 6
+
       - name: Upload mutable Flycast libretro core
         uses: actions/upload-artifact@v7
         with:
@@ -1487,4 +2095,3 @@ jobs:
           path: CoinOPS-Libretro-Flycast-linux-x86_64
           if-no-files-found: error
           compression-level: 6
-
