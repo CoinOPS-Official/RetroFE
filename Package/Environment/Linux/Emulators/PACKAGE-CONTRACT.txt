@@ -1,0 +1,51 @@
+CoinOPS emulator bundle / libretro core contract
+================================================
+
+The internal emulator bundle is a superset. Build it with every supported
+optional emulator, extract it into a CoinOPS build, delete what that build does
+not need, and ship the remainder.
+
+Shared libretro host data:
+
+  emulators/libretro/
+    retroarch.cfg
+    autoconfig/
+    shaders/
+    overlays/
+    cores/
+
+Every libretro core is self-contained below:
+
+  emulators/libretro/cores/<core-name>/
+    <core>_libretro.so      exactly one *_libretro.so
+    core.cfg                RetroArch overrides for this core
+    core-options.cfg        libretro core options/defaults
+    manifest.json           source/build metadata
+    LICENSE.txt             core license
+    system/                 BIOS/firmware + writable core system data
+    saves/                  frontend-managed save data
+    states/                 save states
+    remaps/                 input remaps
+
+Optional core-private shared libraries may live below lib/, but they should be
+linked with a relative RUNPATH (for example $ORIGIN/lib) rather than relying on
+a process-wide LD_LIBRARY_PATH.
+
+Launcher-managed keys MUST NOT appear in core.cfg:
+
+  system_directory
+  savefile_directory
+  savestate_directory
+  core_options_path
+  input_remapping_directory
+
+/app/bin/coinops-libretro injects those absolute paths into a generated runtime
+config on every launch, keeping the complete CoinOPS data tree movable.
+
+Launch interface:
+
+  coinops-libretro <core-name> <content> [additional arguments...]
+
+Example:
+
+  coinops-libretro flycast "/roms/Crazy Taxi (USA).chd"
