@@ -99,7 +99,7 @@ jobs:
           repository: CoinOPS-Official/flycast
           ref: e7426bb864157a4c45866d6253bd24ae89f7d046
           path: FlycastCore
-          clean: true
+          clean: false
           fetch-depth: 1
           submodules: recursive
 
@@ -114,8 +114,6 @@ jobs:
       - name: Build Flycast libretro core
         run: |
           set -euo pipefail
-
-          rm -rf FlycastCore/build-libretro
 
           flatpak run \
             --filesystem="$GITHUB_WORKSPACE" \
@@ -358,7 +356,7 @@ jobs:
           repository: libretro/ps2
           ref: 43129ad5ccbde21b022dd3b3fad1862f72a109bf
           path: LRPS2Core
-          clean: true
+          clean: false
           fetch-depth: 1
           submodules: recursive
 
@@ -373,8 +371,6 @@ jobs:
       - name: Build LRPS2 libretro core
         run: |
           set -euo pipefail
-
-          rm -rf LRPS2Core/build-libretro
 
           flatpak run \
             --filesystem="$GITHUB_WORKSPACE" \
@@ -615,7 +611,7 @@ jobs:
           repository: hrydgard/ppsspp
           ref: c119d9b258289a4602691a6f97a8dc4091a94221
           path: PPSSPPCore
-          clean: true
+          clean: false
           fetch-depth: 1
           submodules: recursive
 
@@ -630,8 +626,6 @@ jobs:
       - name: Build PPSSPP libretro core
         run: |
           set -euo pipefail
-
-          rm -rf PPSSPPCore/build-libretro
 
           flatpak run \
             --filesystem="$GITHUB_WORKSPACE" \
@@ -805,11 +799,25 @@ jobs:
           cp ppsspp-core-options.cfg "$CORE_ROOT/core-options.cfg"
           cp PPSSPPCore/LICENSE.TXT "$CORE_ROOT/LICENSE.txt"
 
-          # The libretro core treats system/PPSSPP as its complete asset root
-          # and warns when compat.ini is absent. Keep the assets synchronized
-          # with the exact source revision used to build the core.
-          cp -a PPSSPPCore/assets/. "$CORE_ROOT/system/PPSSPP/"
-          test -f "$CORE_ROOT/system/PPSSPP/compat.ini"
+          # The libretro core uses system/PPSSPP as its asset root, but the
+          # full upstream assets tree also contains standalone UI/debugger
+          # resources. Package only the runtime data used by the core.
+          PPSSPP_SYSTEM="$CORE_ROOT/system/PPSSPP"
+
+          cp \
+            PPSSPPCore/assets/compat.ini \
+            "$PPSSPP_SYSTEM/compat.ini"
+
+          cp -a \
+            PPSSPPCore/assets/flash0 \
+            PPSSPPCore/assets/lang \
+            PPSSPPCore/assets/shaders \
+            "$PPSSPP_SYSTEM/"
+
+          test -f "$PPSSPP_SYSTEM/compat.ini"
+          test -d "$PPSSPP_SYSTEM/flash0"
+          test -d "$PPSSPP_SYSTEM/lang"
+          test -d "$PPSSPP_SYSTEM/shaders"
 
           touch \
             "$CORE_ROOT/saves/.keep" \
@@ -817,13 +825,15 @@ jobs:
             "$CORE_ROOT/remaps/.keep"
 
           cat > "$CORE_ROOT/system/PPSSPP/README-COINOPS.txt" <<'EOF_ASSETS'
-          PPSSPP system assets
+          PPSSPP libretro system assets
 
-          These files are copied from the exact PPSSPP source revision used to
-          build ppsspp_libretro.so. PPSSPP does not require a PSP BIOS.
+          This directory contains the runtime subset required by the libretro
+          core: compat.ini, flash0, language files and texture shaders. The
+          standalone PPSSPP UI/debugger assets are intentionally omitted.
 
-          Save data and the emulated Memory Stick are written to the core's
-          managed saves directory by the CoinOPS libretro launcher.
+          PPSSPP does not require a PSP BIOS. Save data and the emulated Memory
+          Stick are written to the core's managed saves directory by the
+          CoinOPS libretro launcher.
           EOF_ASSETS
 
           CORE_SHA256="$(sha256sum "$CORE_ROOT/ppsspp_libretro.so" | awk '{print $1}')"
@@ -859,7 +869,13 @@ jobs:
               set -eu
               bash "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/validate-libretro-core.sh" \
                 "$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/ppsspp"
-              test -f "$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/ppsspp/system/PPSSPP/compat.ini"
+              PPSSPP_SYSTEM="$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/ppsspp/system/PPSSPP"
+              test -f "$PPSSPP_SYSTEM/compat.ini"
+              test -d "$PPSSPP_SYSTEM/flash0"
+              test -d "$PPSSPP_SYSTEM/lang"
+              test -d "$PPSSPP_SYSTEM/shaders"
+              test ! -e "$PPSSPP_SYSTEM/debugger"
+              test ! -e "$PPSSPP_SYSTEM/gamecontrollerdb.txt"
             '
 
       # ============================================================
