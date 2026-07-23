@@ -17,7 +17,7 @@ jobs:
       # Current CoinOPS repository
       #
       # This contains the curated shared RetroArch config, per-core
-      # configs/options, package contract and common validation tools.
+      # frontend configs, package contract and validation/generation tools.
       # ============================================================
 
       - name: Checkout current CoinOPS repository
@@ -349,6 +349,262 @@ jobs:
             '
 
       # ============================================================
+      # LRPS2 - PlayStation 2 libretro core
+      # ============================================================
+
+      - name: Checkout LRPS2 source
+        uses: actions/checkout@v6
+        with:
+          repository: libretro/ps2
+          ref: 43129ad5ccbde21b022dd3b3fad1862f72a109bf
+          path: LRPS2Core
+          clean: true
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Show LRPS2 revision
+        run: |
+          echo "============================================================"
+          echo "LRPS2 source"
+          echo "============================================================"
+          git -C LRPS2Core rev-parse HEAD
+          git -C LRPS2Core describe --tags --always || true
+
+      - name: Build LRPS2 libretro core
+        run: |
+          set -euo pipefail
+
+          rm -rf LRPS2Core/build-libretro
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              cd "$GITHUB_WORKSPACE/LRPS2Core"
+
+              cmake \
+                -S . \
+                -B build-libretro \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DLIBRETRO=ON \
+                -DUSE_OPENGL=ON \
+                -DUSE_VULKAN=ON
+
+              cmake \
+                --build build-libretro \
+                --target pcsx2_libretro \
+                --parallel 10
+
+              test -f build-libretro/bin/pcsx2_libretro.so
+              strip --strip-unneeded build-libretro/bin/pcsx2_libretro.so
+            '
+
+          ls -lh LRPS2Core/build-libretro/bin/pcsx2_libretro.so
+          sha256sum LRPS2Core/build-libretro/bin/pcsx2_libretro.so
+
+      - name: Validate LRPS2 ABI and dependencies
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              CORE="$GITHUB_WORKSPACE/LRPS2Core/build-libretro/bin/pcsx2_libretro.so"
+
+              echo "============================================================"
+              echo "ELF dependencies"
+              echo "============================================================"
+              ldd "$CORE"
+              if ldd "$CORE" | grep -q "not found"; then
+                echo "ERROR: unresolved LRPS2 dependency"
+                exit 1
+              fi
+
+              echo
+              echo "============================================================"
+              echo "Required libretro exports"
+              echo "============================================================"
+              for symbol in \
+                retro_api_version \
+                retro_init \
+                retro_deinit \
+                retro_load_game \
+                retro_unload_game \
+                retro_run
+              do
+                nm -D "$CORE" | grep -Eq "[[:space:]]${symbol}$" || {
+                  echo "ERROR: missing export: $symbol"
+                  exit 1
+                }
+                echo "found: $symbol"
+              done
+
+              echo
+              echo "============================================================"
+              echo "dlopen smoke test"
+              echo "============================================================"
+              python3 -c "import ctypes, os, sys; core=sys.argv[1]; lib=ctypes.CDLL(core, mode=os.RTLD_NOW | os.RTLD_LOCAL); lib.retro_api_version.restype=ctypes.c_uint; print(\"Loaded %s; libretro API version %u\" % (core, lib.retro_api_version()))" "$CORE"
+            '
+
+      - name: Generate LRPS2 core options from exact binary
+        run: |
+          set -euo pipefail
+
+          rm -rf lrps2-options-system
+          mkdir -p lrps2-options-system/pcsx2/bios
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --env=COINOPS_CORE_OPTIONS_SYSTEM_DIR="$GITHUB_WORKSPACE/lrps2-options-system" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              cc \
+                -O2 \
+                -o "$GITHUB_WORKSPACE/dump-core-options" \
+                "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/dump-core-options.c" \
+                -ldl
+
+              "$GITHUB_WORKSPACE/dump-core-options" \
+                --init \
+                "$GITHUB_WORKSPACE/LRPS2Core/build-libretro/bin/pcsx2_libretro.so" \
+                > "$GITHUB_WORKSPACE/lrps2-generated-options.txt" \
+                2> "$GITHUB_WORKSPACE/lrps2-option-values.txt"
+            '
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("lrps2-generated-options.txt")
+          output = Path("lrps2-core-options.cfg")
+
+          options = []
+          for raw in source.read_text().splitlines():
+              if "=" not in raw:
+                  continue
+              key, value = raw.split("=", 1)
+              key = key.strip()
+              value = value.strip()
+
+              # pcsx2_bios is populated dynamically after LRPS2 scans
+              # system/pcsx2/bios. With no BIOS in the CI fixture its default
+              # is intentionally empty, so do not pin it in core-options.cfg.
+              if not key or not value:
+                  continue
+
+              escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+              options.append((key, escaped))
+
+          if len(options) < 20:
+              raise SystemExit(
+                  f"ERROR: LRPS2 registered only {len(options)} non-empty options"
+              )
+
+          with output.open("w", encoding="utf-8") as f:
+              f.write("# CoinOPS LRPS2 core options\n")
+              f.write("# Generated from the exact pinned LRPS2 binary.\n")
+              f.write("# pcsx2_bios is intentionally omitted because LRPS2 fills it\n")
+              f.write("# dynamically from system/pcsx2/bios at runtime.\n\n")
+              for key, value in options:
+                  f.write(f'{key} = "{value}"\n')
+
+          print(f"Generated LRPS2 options: {len(options)}")
+          PY
+
+          sed -n '1,40p' lrps2-core-options.cfg
+
+      - name: Package LRPS2
+        run: |
+          set -euo pipefail
+
+          CORE_ROOT="CoinOPS-Emulators-x86_64/emulators/libretro/cores/lrps2"
+
+          mkdir -p \
+            "$CORE_ROOT/system/pcsx2/bios" \
+            "$CORE_ROOT/system/pcsx2/cheats" \
+            "$CORE_ROOT/system/pcsx2/cheats_ws" \
+            "$CORE_ROOT/system/pcsx2/memcards" \
+            "$CORE_ROOT/system/pcsx2/textures" \
+            "$CORE_ROOT/saves" \
+            "$CORE_ROOT/states" \
+            "$CORE_ROOT/remaps"
+
+          cp \
+            LRPS2Core/build-libretro/bin/pcsx2_libretro.so \
+            "$CORE_ROOT/pcsx2_libretro.so"
+
+          cp \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/lrps2/core.cfg \
+            "$CORE_ROOT/core.cfg"
+
+          cp lrps2-core-options.cfg "$CORE_ROOT/core-options.cfg"
+          cp LRPS2Core/COPYING.GPLv3 "$CORE_ROOT/LICENSE.txt"
+
+          touch \
+            "$CORE_ROOT/system/pcsx2/cheats/.keep" \
+            "$CORE_ROOT/system/pcsx2/cheats_ws/.keep" \
+            "$CORE_ROOT/system/pcsx2/memcards/.keep" \
+            "$CORE_ROOT/system/pcsx2/textures/.keep" \
+            "$CORE_ROOT/saves/.keep" \
+            "$CORE_ROOT/states/.keep" \
+            "$CORE_ROOT/remaps/.keep"
+
+          cat > "$CORE_ROOT/system/pcsx2/bios/README-BIOS.txt" <<'EOF_BIOS'
+          LRPS2 PlayStation 2 BIOS directory
+
+          Place legally dumped PlayStation 2 BIOS files in this directory.
+          LRPS2 scans this directory during core initialization and exposes valid
+          4-8 MiB BIOS images through its dynamic pcsx2_bios core option.
+
+          BIOS files are not distributed with CoinOPS.
+          EOF_BIOS
+
+          CORE_SHA256="$(sha256sum "$CORE_ROOT/pcsx2_libretro.so" | awk '{print $1}')"
+
+          cat > "$CORE_ROOT/manifest.json" <<EOF_MANIFEST
+          {
+            "name": "LRPS2",
+            "package_name": "lrps2",
+            "type": "libretro-core",
+            "platform": "linux-x86_64",
+            "source_repository": "libretro/ps2",
+            "source_commit": "43129ad5ccbde21b022dd3b3fad1862f72a109bf",
+            "upstream_base": "PCSX2",
+            "runtime_abi": "org.freedesktop.Platform/25.08",
+            "core_path": "cores/lrps2/pcsx2_libretro.so",
+            "core_config": "cores/lrps2/core.cfg",
+            "core_options": "cores/lrps2/core-options.cfg",
+            "sha256": "$CORE_SHA256"
+          }
+          EOF_MANIFEST
+
+      - name: Validate packaged LRPS2 contract
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              bash "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/validate-libretro-core.sh" \
+                "$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/lrps2"
+            '
+
+      # ============================================================
       # Future emulators go here
       #
       # Add each core/standalone into CoinOPS-Emulators-x86_64/emulators/.
@@ -380,6 +636,7 @@ jobs:
           Current contents:
             - Shared libretro RetroArch configuration
             - Flycast libretro core
+            - LRPS2 PlayStation 2 libretro core
 
           Future optional libretro cores and standalone emulators are added to
           this same staging bundle.
