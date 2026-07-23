@@ -667,12 +667,12 @@ jobs:
                 --target ppsspp_libretro \
                 --parallel 10
 
-              test -f build-libretro/ppsspp_libretro.so
-              strip --strip-unneeded build-libretro/ppsspp_libretro.so
+              test -f build-libretro/lib/ppsspp_libretro.so
+              strip --strip-unneeded build-libretro/lib/ppsspp_libretro.so
             '
 
-          ls -lh PPSSPPCore/build-libretro/ppsspp_libretro.so
-          sha256sum PPSSPPCore/build-libretro/ppsspp_libretro.so
+          ls -lh PPSSPPCore/build-libretro/lib/ppsspp_libretro.so
+          sha256sum PPSSPPCore/build-libretro/lib/ppsspp_libretro.so
 
       - name: Validate PPSSPP ABI and dependencies
         run: |
@@ -686,7 +686,7 @@ jobs:
             -c '
               set -eu
 
-              CORE="$GITHUB_WORKSPACE/PPSSPPCore/build-libretro/ppsspp_libretro.so"
+              CORE="$GITHUB_WORKSPACE/PPSSPPCore/build-libretro/lib/ppsspp_libretro.so"
 
               echo "============================================================"
               echo "ELF dependencies"
@@ -742,7 +742,7 @@ jobs:
                 -ldl
 
               "$GITHUB_WORKSPACE/dump-core-options" \
-                "$GITHUB_WORKSPACE/PPSSPPCore/build-libretro/ppsspp_libretro.so" \
+                "$GITHUB_WORKSPACE/PPSSPPCore/build-libretro/lib/ppsspp_libretro.so" \
                 > "$GITHUB_WORKSPACE/ppsspp-generated-options.txt" \
                 2> "$GITHUB_WORKSPACE/ppsspp-option-values.txt"
             '
@@ -795,7 +795,7 @@ jobs:
             "$CORE_ROOT/remaps"
 
           cp \
-            PPSSPPCore/build-libretro/ppsspp_libretro.so \
+            PPSSPPCore/build-libretro/lib/ppsspp_libretro.so \
             "$CORE_ROOT/ppsspp_libretro.so"
 
           cp \
