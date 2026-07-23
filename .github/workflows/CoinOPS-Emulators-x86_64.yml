@@ -81,7 +81,7 @@ jobs:
             CoinOPS-Emulators-x86_64/emulators/libretro/cores
 
           cp \
-            CoinOPSRepo/Packaging/Emulators/libretro/retroarch.cfg \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/retroarch.cfg \
             CoinOPS-Emulators-x86_64/emulators/libretro/retroarch.cfg
 
           touch \
@@ -219,7 +219,7 @@ jobs:
               cc \
                 -O2 \
                 -o "$GITHUB_WORKSPACE/dump-core-options" \
-                "$GITHUB_WORKSPACE/CoinOPSRepo/Packaging/Emulators/tools/dump-core-options.c" \
+                "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/dump-core-options.c" \
                 -ldl
 
               "$GITHUB_WORKSPACE/dump-core-options" \
@@ -232,7 +232,7 @@ jobs:
           from pathlib import Path
           import re
 
-          cfg = Path("CoinOPSRepo/Packaging/Emulators/libretro/cores/flycast/core-options.cfg")
+          cfg = Path("CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/flycast/core-options.cfg")
           out = Path("flycast-checked-options.txt")
 
           values = []
@@ -283,11 +283,11 @@ jobs:
             "$CORE_ROOT/flycast_libretro.so"
 
           cp \
-            CoinOPSRepo/Packaging/Emulators/libretro/cores/flycast/core.cfg \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/flycast/core.cfg \
             "$CORE_ROOT/core.cfg"
 
           cp \
-            CoinOPSRepo/Packaging/Emulators/libretro/cores/flycast/core-options.cfg \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/flycast/core-options.cfg \
             "$CORE_ROOT/core-options.cfg"
 
           cp FlycastCore/LICENSE "$CORE_ROOT/LICENSE.txt"
@@ -344,7 +344,7 @@ jobs:
             org.freedesktop.Sdk//25.08 \
             -c '
               set -eu
-              "$GITHUB_WORKSPACE/CoinOPSRepo/Packaging/Emulators/tools/validate-libretro-core.sh" \
+              "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/validate-libretro-core.sh" \
                 "$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/flycast"
             '
 
@@ -361,7 +361,7 @@ jobs:
           set -euo pipefail
 
           cp \
-            CoinOPSRepo/Packaging/Emulators/PACKAGE-CONTRACT.txt \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/PACKAGE-CONTRACT.txt \
             CoinOPS-Emulators-x86_64/PACKAGE-CONTRACT.txt
 
           cat > CoinOPS-Emulators-x86_64/README.txt <<'EOF'
