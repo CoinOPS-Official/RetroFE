@@ -898,6 +898,245 @@ jobs:
             '
 
       # ============================================================
+      # SwanStation - PlayStation libretro core
+      #
+      # Asset rule: package only files the libretro core actually consumes.
+      # SwanStation embeds OpenBIOS and its internal renderer resources, so
+      # no upstream data/ or BIOS assets are copied into the bundle.
+      # Optional real BIOS files are user-provided directly in system/.
+      # ============================================================
+
+      - name: Checkout SwanStation source
+        uses: actions/checkout@v6
+        with:
+          repository: libretro/swanstation
+          ref: 5430a4a53b89fa5827c97b84ada29d23317245bc
+          path: SwanStationCore
+          clean: false
+          fetch-depth: 1
+
+      - name: Show SwanStation revision
+        run: |
+          echo "============================================================"
+          echo "SwanStation source"
+          echo "============================================================"
+          git -C SwanStationCore rev-parse HEAD
+          git -C SwanStationCore describe --tags --always || true
+
+      - name: Build SwanStation libretro core
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              cd "$GITHUB_WORKSPACE/SwanStationCore"
+
+              cmake \
+                -S . \
+                -B build-libretro \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_POLICY_VERSION_MINIMUM=3.5
+
+              cmake \
+                --build build-libretro \
+                --target swanstation_libretro \
+                --parallel 10
+
+              test -f build-libretro/swanstation_libretro.so
+              strip --strip-unneeded build-libretro/swanstation_libretro.so
+            '
+
+          ls -lh SwanStationCore/build-libretro/swanstation_libretro.so
+          sha256sum SwanStationCore/build-libretro/swanstation_libretro.so
+
+      - name: Validate SwanStation ABI and dependencies
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              CORE="$GITHUB_WORKSPACE/SwanStationCore/build-libretro/swanstation_libretro.so"
+
+              echo "============================================================"
+              echo "ELF dependencies"
+              echo "============================================================"
+              ldd "$CORE"
+              if ldd "$CORE" | grep -q "not found"; then
+                echo "ERROR: unresolved SwanStation dependency"
+                exit 1
+              fi
+
+              echo
+              echo "============================================================"
+              echo "Required libretro exports"
+              echo "============================================================"
+              for symbol in \
+                retro_api_version \
+                retro_init \
+                retro_deinit \
+                retro_load_game \
+                retro_unload_game \
+                retro_run
+              do
+                nm -D "$CORE" | grep -Eq "[[:space:]]${symbol}$" || {
+                  echo "ERROR: missing export: $symbol"
+                  exit 1
+                }
+                echo "found: $symbol"
+              done
+
+              echo
+              echo "============================================================"
+              echo "dlopen smoke test"
+              echo "============================================================"
+              python3 -c "import ctypes, os, sys; core=sys.argv[1]; lib=ctypes.CDLL(core, mode=os.RTLD_NOW | os.RTLD_LOCAL); lib.retro_api_version.restype=ctypes.c_uint; print(\"Loaded %s; libretro API version %u\" % (core, lib.retro_api_version()))" "$CORE"
+            '
+
+      - name: Generate SwanStation core options from exact binary
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              cc \
+                -O2 \
+                -o "$GITHUB_WORKSPACE/dump-core-options" \
+                "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/dump-core-options.c" \
+                -ldl
+
+              "$GITHUB_WORKSPACE/dump-core-options" \
+                "$GITHUB_WORKSPACE/SwanStationCore/build-libretro/swanstation_libretro.so" \
+                > "$GITHUB_WORKSPACE/swanstation-generated-options.txt" \
+                2> "$GITHUB_WORKSPACE/swanstation-option-values.txt"
+            '
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("swanstation-generated-options.txt")
+          output = Path("swanstation-core-options.cfg")
+
+          options = []
+          for raw in source.read_text().splitlines():
+              if "=" not in raw:
+                  continue
+              key, value = raw.split("=", 1)
+              key = key.strip()
+              value = value.strip()
+              if not key or not value:
+                  continue
+
+              escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+              options.append((key, escaped))
+
+          if len(options) < 40:
+              raise SystemExit(
+                  f"ERROR: SwanStation registered only {len(options)} non-empty options"
+              )
+
+          with output.open("w", encoding="utf-8") as f:
+              f.write("# CoinOPS SwanStation core options\n")
+              f.write("# Generated from the exact pinned SwanStation binary.\n\n")
+              for key, value in options:
+                  f.write(f'{key} = "{value}"\n')
+
+          print(f"Generated SwanStation options: {len(options)}")
+          PY
+
+          sed -n '1,40p' swanstation-core-options.cfg
+
+      - name: Package SwanStation
+        run: |
+          set -euo pipefail
+
+          CORE_ROOT="CoinOPS-Emulators-x86_64/emulators/libretro/cores/swanstation"
+
+          mkdir -p \
+            "$CORE_ROOT/system" \
+            "$CORE_ROOT/saves" \
+            "$CORE_ROOT/states" \
+            "$CORE_ROOT/remaps"
+
+          cp \
+            SwanStationCore/build-libretro/swanstation_libretro.so \
+            "$CORE_ROOT/swanstation_libretro.so"
+
+          cp \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/swanstation/core.cfg \
+            "$CORE_ROOT/core.cfg"
+
+          cp swanstation-core-options.cfg "$CORE_ROOT/core-options.cfg"
+          cp SwanStationCore/LICENSE "$CORE_ROOT/LICENSE.txt"
+
+          # No upstream runtime assets are copied here.
+          # - OpenBIOS is embedded in the core.
+          # - Internal renderer resources/shaders are compiled into the core.
+          # - Optional real PlayStation BIOS images are user-provided directly
+          #   in this managed system directory.
+          test -z "$(find "$CORE_ROOT/system" -mindepth 1 -print -quit)"
+
+          touch \
+            "$CORE_ROOT/saves/.keep" \
+            "$CORE_ROOT/states/.keep" \
+            "$CORE_ROOT/remaps/.keep"
+
+          CORE_SHA256="$(sha256sum "$CORE_ROOT/swanstation_libretro.so" | awk '{print $1}')"
+
+          cat > "$CORE_ROOT/manifest.json" <<EOF_MANIFEST
+          {
+            "name": "SwanStation",
+            "package_name": "swanstation",
+            "type": "libretro-core",
+            "platform": "linux-x86_64",
+            "source_repository": "libretro/swanstation",
+            "source_commit": "5430a4a53b89fa5827c97b84ada29d23317245bc",
+            "upstream_base": "DuckStation",
+            "runtime_abi": "org.freedesktop.Platform/25.08",
+            "core_path": "cores/swanstation/swanstation_libretro.so",
+            "core_config": "cores/swanstation/core.cfg",
+            "core_options": "cores/swanstation/core-options.cfg",
+            "sha256": "$CORE_SHA256"
+          }
+          EOF_MANIFEST
+
+      - name: Validate packaged SwanStation contract
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              CORE_ROOT="$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/swanstation"
+
+              bash "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/validate-libretro-core.sh" \
+                "$CORE_ROOT"
+
+              test -d "$CORE_ROOT/system"
+              test -z "$(find "$CORE_ROOT/system" -mindepth 1 -print -quit)"
+            '
+
+      # ============================================================
       # Future emulators go here
       #
       # Add each core/standalone into CoinOPS-Emulators-x86_64/emulators/.
@@ -931,6 +1170,7 @@ jobs:
             - Flycast libretro core
             - LRPS2 PlayStation 2 libretro core
             - PPSSPP PlayStation Portable libretro core
+            - SwanStation PlayStation libretro core
 
           Future optional libretro cores and standalone emulators are added to
           this same staging bundle.
