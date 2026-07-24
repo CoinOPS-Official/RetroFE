@@ -25,3 +25,8 @@ RetroFE/xcode/retrofe.xcodeproj/project.xcworkspace/xcuserdata/aiden.xcuserdatad
 !RetroFE/ThirdPartyMac/libminizip.dylib
 !RetroFE/ThirdPartyMac/libusb-1.0.0.dylib
 RetroFE/Source/autogen/versioning.h
+RetroFE/Source/build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile

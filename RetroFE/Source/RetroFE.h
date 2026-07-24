@@ -169,7 +169,7 @@ private:
     CollectionInfo *getMenuCollection( const std::string& collectionName );
 	void            saveRetroFEState( ) const;
     std::string getLayoutFileName();
-    void resetInfoToggle();
+    RETROFE_STATE resetInfoToggle();
 
     Configuration     &config_;
     DB                *db_;
@@ -195,6 +195,7 @@ private:
     bool                buildInfo_;
     bool                collectionInfo_;
     bool                gameInfo_;
+    RETROFE_STATE       pendingScrollState_;
 	std::string        firstPlaylist_;
     std::map<std::string, bool> lkupAttractModeSkipPlaylist_;
     std::map<std::string, size_t> lastMenuOffsets_;
