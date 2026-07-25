@@ -345,6 +345,9 @@ jobs:
             - --socket=fallback-x11
             - --socket=pulseaudio
             - --device=all
+            # RetroFE uses flatpak-spawn --host for AppImage launchers.
+            # This is intentionally host-command access and must remain explicit.
+            - --talk-name=org.freedesktop.Flatpak
             - --filesystem=/run/udev:ro
             - --filesystem=home
             - --filesystem=/run/media
@@ -1275,6 +1278,25 @@ jobs:
 
       - name: Smoke test native Flatpak
         run: |
+          set -euo pipefail
+
+          echo "============================================================"
+          echo "Host AppImage launch bridge"
+          echo "============================================================"
+          # flatpak-builder --run applies the final app permissions (except
+          # filesystem permissions), so this verifies both that flatpak-spawn
+          # is available and that org.freedesktop.Flatpak D-Bus access works.
+          flatpak-builder \
+            --run \
+            build-dir \
+            org.coinops.Runtime.yml \
+            flatpak-spawn \
+            --host \
+            --watch-bus \
+            --directory=/tmp \
+            /usr/bin/true
+          echo "flatpak-spawn host bridge: OK"
+          echo
           echo "============================================================"
           echo "RetroFE version"
           echo "============================================================"
