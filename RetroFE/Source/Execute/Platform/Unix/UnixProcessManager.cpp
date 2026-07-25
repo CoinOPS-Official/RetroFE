@@ -161,6 +161,8 @@ UnixProcessManager::~UnixProcessManager() {
 // --- Public Interface Implementation ---
 
 bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::string& args, const std::string& currentDirectory) {
+    const bool useFlatpakHostSpawn = shouldUseFlatpakHostSpawn(executable);
+
     pid_t pid = fork();
     if (pid == 0) { // Child process
         // Detach from the parent's session completely.
@@ -169,7 +171,9 @@ bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::
             _exit(EXIT_FAILURE);
         }
 
-        if (!currentDirectory.empty()) {
+        // Host launches use flatpak-spawn --directory, so the working
+        // directory does not also need to exist inside the sandbox.
+        if (!useFlatpakHostSpawn && !currentDirectory.empty()) {
             if (chdir(currentDirectory.c_str()) != 0) {
                 perror("simpleLaunch: chdir failed");
                 _exit(EXIT_FAILURE);
@@ -183,7 +187,6 @@ bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::
             _exit(EXIT_FAILURE);
         }
 
-        const bool useFlatpakHostSpawn = shouldUseFlatpakHostSpawn(executable);
         std::vector<std::string> command = prepareCommand(we, currentDirectory, useFlatpakHostSpawn);
         std::vector<char*> commandArgv = makeArgv(command);
         execvp(commandArgv[0], commandArgv.data());
@@ -260,7 +263,11 @@ bool UnixProcessManager::launch(const std::string& executable,
             int e = errno; (void)!write(fds[1], &e, sizeof(e)); _exit(127);
         }
 
-        if (!currentDirectory.empty() && chdir(currentDirectory.c_str()) != 0) {
+        // Host launches use flatpak-spawn --directory, so the working
+        // directory does not also need to exist inside the sandbox.
+        if (!usingFlatpakHostSpawn_ &&
+            !currentDirectory.empty() &&
+            chdir(currentDirectory.c_str()) != 0) {
             int e = errno; (void)!write(fds[1], &e, sizeof(e)); _exit(127);
         }
 
