@@ -28,6 +28,7 @@
 #include <fcntl.h> // For open, O_WRONLY
 #include <cstring> // For strerror
 #include <cerrno>  // For errno
+#include <cstdlib> // For getenv
 
 #include "../../../Utility/Log.h"
 #include "../../../Utility/Utils.h"
@@ -42,6 +43,64 @@ struct WordExpWrapper {
     WordExpWrapper() { p.we_wordc = 0; }
     ~WordExpWrapper() { if (p.we_wordc > 0) wordfree(&p); }
 };
+
+namespace {
+bool shouldUseFlatpakHostSpawn(const std::string& executable) {
+#if defined(__linux__)
+    const bool runningInFlatpak =
+        std::getenv("FLATPAK_ID") != nullptr ||
+        access("/.flatpak-info", F_OK) == 0;
+
+    if (!runningInFlatpak) {
+        return false;
+    }
+
+    return Utils::toLower(fs::path(executable).extension().string()) == ".appimage";
+#else
+    (void)executable;
+    return false;
+#endif
+}
+
+std::vector<std::string> prepareCommand(const WordExpWrapper& expanded,
+    const std::string& currentDirectory,
+    bool useFlatpakHostSpawn) {
+    std::vector<std::string> command;
+
+    if (useFlatpakHostSpawn) {
+        command.emplace_back("flatpak-spawn");
+        command.emplace_back("--host");
+        command.emplace_back("--watch-bus");
+        if (!currentDirectory.empty()) {
+            command.emplace_back("--directory=" + currentDirectory);
+        }
+        command.emplace_back(expanded.p.we_wordv[0]);
+
+        // wordexp entry zero is the original executable. Preserve its existing
+        // expansion as the host AppImage path, followed by its arguments.
+        for (std::size_t i = 1; i < expanded.p.we_wordc; ++i) {
+            command.emplace_back(expanded.p.we_wordv[i]);
+        }
+    }
+    else {
+        for (std::size_t i = 0; i < expanded.p.we_wordc; ++i) {
+            command.emplace_back(expanded.p.we_wordv[i]);
+        }
+    }
+
+    return command;
+}
+
+std::vector<char*> makeArgv(std::vector<std::string>& command) {
+    std::vector<char*> argv;
+    argv.reserve(command.size() + 1);
+    for (std::string& value : command) {
+        argv.push_back(value.data());
+    }
+    argv.push_back(nullptr);
+    return argv;
+}
+}
 
 bool UnixProcessManager::isMameExeName(const std::string& exeName) {
     std::string lowerName = Utils::toLower(exeName);
@@ -85,7 +144,11 @@ bool UnixProcessManager::simpleLaunch(const std::string& executable, const std::
         if (wordexp(commandLine.c_str(), &we.p, WRDE_NOCMD) != 0) {
             _exit(EXIT_FAILURE);
         }
-        execvp(we.p.we_wordv[0], we.p.we_wordv);
+
+        const bool useFlatpakHostSpawn = shouldUseFlatpakHostSpawn(executable);
+        std::vector<std::string> command = prepareCommand(we, currentDirectory, useFlatpakHostSpawn);
+        std::vector<char*> commandArgv = makeArgv(command);
+        execvp(commandArgv[0], commandArgv.data());
         perror("simpleLaunch: execvp failed");
         _exit(EXIT_FAILURE);
     }
@@ -111,6 +174,11 @@ bool UnixProcessManager::launch(const std::string& executable,
     // Store executable base name and working directory for use in terminate()
     executableName_ = fs::path(executable).filename().string();
     workingDirectory_ = currentDirectory;
+    usingFlatpakHostSpawn_ = shouldUseFlatpakHostSpawn(executable);
+
+    if (usingFlatpakHostSpawn_) {
+        LOG_INFO("ProcessManager", "Flatpak AppImage detected; launching on host via flatpak-spawn.");
+    }
 
     // Build argv via wordexp (blocks command substitution)
     std::string quotedExecutable = "\"" + executable + "\"";
@@ -120,6 +188,9 @@ bool UnixProcessManager::launch(const std::string& executable,
         LOG_ERROR("ProcessManager", "Failed to parse command line: " + commandLine);
         return false;
     }
+
+    std::vector<std::string> command = prepareCommand(we, currentDirectory, usingFlatpakHostSpawn_);
+    std::vector<char*> commandArgv = makeArgv(command);
 
     // Pipe for exec result: child writes errno on failure; on success CLOEXEC closes it.
     int fds[2];
@@ -163,7 +234,7 @@ bool UnixProcessManager::launch(const std::string& executable,
         }
 
         // Exec. On success, CLOEXEC will close fds[1] so parent sees EOF.
-        execvp(we.p.we_wordv[0], we.p.we_wordv);
+        execvp(commandArgv[0], commandArgv.data());
 
         // If we got here, exec failed. Send errno to parent, then exit.
         {
@@ -207,7 +278,12 @@ bool UnixProcessManager::launch(const std::string& executable,
 
     if (nread == 0) {
         // EOF: exec succeeded (CLOEXEC closed the fd in the child).
-        LOG_INFO("ProcessManager", "Successfully forked & exec'd; group PID: " + std::to_string(pid_));
+        if (usingFlatpakHostSpawn_) {
+            LOG_INFO("ProcessManager", "Successfully started flatpak-spawn host proxy; group PID: " + std::to_string(pid_));
+        }
+        else {
+            LOG_INFO("ProcessManager", "Successfully forked & exec'd; group PID: " + std::to_string(pid_));
+        }
         return true;
     }
 
@@ -291,6 +367,9 @@ void UnixProcessManager::terminate() {
     const pid_t target_pid = pid_;
 
     LOG_INFO("ProcessManager", "Attempting graceful termination of process group " + std::to_string(target_pgid) + " (child pid " + std::to_string(target_pid) + ") with SIGTERM.");
+    if (usingFlatpakHostSpawn_) {
+        LOG_INFO("ProcessManager", "Terminating flatpak-spawn; --watch-bus will terminate the host AppImage.");
+    }
 
     auto waitChildExitTimed = [&](int ms_timeout) -> bool {
         int status = 0;
