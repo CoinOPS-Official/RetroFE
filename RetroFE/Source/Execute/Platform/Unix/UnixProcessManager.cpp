@@ -31,6 +31,7 @@
 #include <cstdlib> // For getenv
 #include <array>
 
+#include "../../../Database/Configuration.h"
 #include "../../../Utility/Log.h"
 #include "../../../Utility/Utils.h"
 #include <filesystem>
@@ -57,6 +58,42 @@ constexpr std::array<XdgEnvironmentMapping, 4> hostXdgMappings{{
     { "HOST_XDG_CACHE_HOME",  "XDG_CACHE_HOME" },
     { "HOST_XDG_STATE_HOME",  "XDG_STATE_HOME" },
 }};
+
+constexpr std::array<const char*, 20> appImageDiagnosticEnvironment{{
+    "DISPLAY",
+    "WAYLAND_DISPLAY",
+    "XDG_RUNTIME_DIR",
+    "XAUTHORITY",
+    "PULSE_SERVER",
+    "PIPEWIRE_REMOTE",
+    "DBUS_SESSION_BUS_ADDRESS",
+    "SDL_VIDEODRIVER",
+    "GAMESCOPE_WAYLAND_DISPLAY",
+    "SteamAppId",
+    "SteamGameId",
+    "STEAM_RUNTIME",
+    "STEAM_COMPAT_CLIENT_INSTALL_PATH",
+    "STEAM_COMPAT_DATA_PATH",
+    "LD_LIBRARY_PATH",
+    "LD_PRELOAD",
+    "HOST_XDG_CONFIG_HOME",
+    "HOST_XDG_DATA_HOME",
+    "HOST_XDG_CACHE_HOME",
+    "HOST_XDG_STATE_HOME",
+}};
+
+std::string appImageDiagnosticLogPath() {
+    return Utils::combinePath(Configuration::absolutePath, "appimage-launch.log");
+}
+
+void logAppImageDiagnosticEnvironment() {
+    for (const char* variable : appImageDiagnosticEnvironment) {
+        const char* value = std::getenv(variable);
+        LOG_INFO("ProcessManager",
+            std::string("AppImage environment: ") + variable + "=" +
+            (value != nullptr ? value : "<unset>"));
+    }
+}
 
 bool shouldUseFlatpakHostSpawn(const std::string& executable) {
 #if defined(__linux__)
@@ -219,6 +256,10 @@ bool UnixProcessManager::launch(const std::string& executable,
 
     if (usingFlatpakHostSpawn_) {
         LOG_INFO("ProcessManager", "Flatpak AppImage detected; launching on host via flatpak-spawn.");
+        LOG_INFO("ProcessManager",
+            "AppImage stdout/stderr will be captured at: " +
+            appImageDiagnosticLogPath());
+        logAppImageDiagnosticEnvironment();
     }
 
     // Build argv via wordexp (blocks command substitution)
@@ -271,11 +312,19 @@ bool UnixProcessManager::launch(const std::string& executable,
             int e = errno; (void)!write(fds[1], &e, sizeof(e)); _exit(127);
         }
 
-        // Silence child stdout/stderr.
-        if (int devnull = open("/dev/null", O_WRONLY); devnull != -1) {
-            dup2(devnull, STDOUT_FILENO);
-            dup2(devnull, STDERR_FILENO);
-            close(devnull);
+        // Capture host AppImage diagnostics while preserving the existing
+        // silent behavior for every other kind of launch.
+        const std::string childOutputPath = usingFlatpakHostSpawn_
+            ? appImageDiagnosticLogPath()
+            : "/dev/null";
+        const int childOutputFlags = usingFlatpakHostSpawn_
+            ? O_WRONLY | O_CREAT | O_TRUNC
+            : O_WRONLY;
+        if (int childOutput = open(childOutputPath.c_str(), childOutputFlags, 0644);
+            childOutput != -1) {
+            dup2(childOutput, STDOUT_FILENO);
+            dup2(childOutput, STDERR_FILENO);
+            close(childOutput);
         }
 
         // Exec. On success, CLOEXEC will close fds[1] so parent sees EOF.
