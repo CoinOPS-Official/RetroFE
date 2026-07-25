@@ -1411,11 +1411,56 @@ void Page::update(float dt) {
 		playlistNameChanged = true;
 	}
 
+	// Update page-level components first.
+	// This allows standalone <video> components to begin prerolling
+	// before videos belonging to menu items.
+	bool graphicsIdle = true;
+	bool graphicsAttractIdle = true;
+
+	for (auto& layer : LayerComponents_) {
+		for (auto it = layer.begin(); it != layer.end();) {
+			Component* component = *it;
+
+			if (!component) {
+				++it;
+				continue;
+			}
+
+			if (playlistNameChanged) {
+				component->playlistName = lastPlaylistName_;
+			}
+
+			const bool done = component->update(dt);
+
+			if (!component->isIdle()) {
+				graphicsIdle = false;
+			}
+
+			if (!component->isAttractIdle()) {
+				graphicsAttractIdle = false;
+			}
+
+			if (done && component->getAnimationDoneRemove()) {
+				component->freeGraphicsMemory();
+				delete component;
+				it = layer.erase(it);
+			}
+			else {
+				++it;
+			}
+		}
+	}
+
+	// Update menu components after page-level components.
 	bool menuIdle = true;
 	bool menuAttractIdle = true;
 
 	for (auto& menuList : menus_) {
-		for (auto* menu : menuList) {
+		for (ScrollingList* menu : menuList) {
+			if (!menu) {
+				continue;
+			}
+
 			if (playlistNameChanged) {
 				menu->playlistName = lastPlaylistName_;
 			}
@@ -1432,56 +1477,26 @@ void Page::update(float dt) {
 		}
 	}
 
-	bool graphicsIdle = true;
-	bool graphicsAttractIdle = true;
-
-	for (auto& layer : LayerComponents_) {
-		for (auto it = layer.begin(); it != layer.end();) {
-			if (*it) {
-				if (playlistNameChanged) {
-					(*it)->playlistName = lastPlaylistName_;
-				}
-
-				bool done = (*it)->update(dt);
-
-				if (!(*it)->isIdle()) {
-					graphicsIdle = false;
-				}
-
-				if (!(*it)->isAttractIdle()) {
-					graphicsAttractIdle = false;
-				}
-
-				if (done && (*it)->getAnimationDoneRemove()) {
-					(*it)->freeGraphicsMemory();
-					delete* it;
-					it = layer.erase(it);
-				}
-				else {
-					++it;
-				}
-			}
-			else {
-				++it;
-			}
-		}
-	}
-
+	// Commit aggregate state only after both component groups update.
 	cachedIsMenuIdle_ = menuIdle;
 	cachedIsGraphicsIdle_ = graphicsIdle;
 	cachedIsIdle_ = menuIdle && graphicsIdle;
-	cachedIsAttractIdle_ = menuAttractIdle && graphicsAttractIdle;
+	cachedIsAttractIdle_ =
+		menuAttractIdle && graphicsAttractIdle;
 
 	if (pendingScrollSelect_ && cachedIsMenuIdle_) {
 		pendingScrollSelect_ = false;
 		onNewScrollItemSelected();
 	}
 
-	// Detect the transition from held scroll input to released scroll input.
+	// Detect the transition from held scroll input to released input.
 	const bool releasedScrollInput =
-		wasUserScrollInputActive_ && !userScrollInputActive_;
+		wasUserScrollInputActive_ &&
+		!userScrollInputActive_;
 
-	if (releasedScrollInput && scrolling_ != ScrollDirectionIdle) {
+	if (releasedScrollInput &&
+		scrolling_ != ScrollDirectionIdle)
+	{
 		if (canBeginMenuCoast()) {
 			beginMenuCoast();
 		}
@@ -1493,8 +1508,9 @@ void Page::update(float dt) {
 	wasUserScrollInputActive_ = userScrollInputActive_;
 
 	// Centralized scroll physics.
-	// Runs once per completed visual jump, not every frame of the tween.
-	if (scrolling_ != ScrollDirectionIdle && cachedIsMenuIdle_) {
+	if (scrolling_ != ScrollDirectionIdle &&
+		cachedIsMenuIdle_)
+	{
 		const bool forward =
 			scrolling_ == ScrollDirectionForward ||
 			scrolling_ == ScrollDirectionPlaylistForward;
@@ -1504,10 +1520,7 @@ void Page::update(float dt) {
 			scrolling_ == ScrollDirectionPlaylistBack;
 
 		if (userScrollInputActive_) {
-			// Move first using the current period.
 			scroll(forward, playlist);
-
-			// Accelerate only for the next jump.
 			updateScrollPeriod();
 		}
 		else {
