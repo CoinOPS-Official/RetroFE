@@ -1241,13 +1241,52 @@ jobs:
       # ============================================================
 
       - name: Checkout Mupen64Plus-Next source
-        uses: actions/checkout@v6
-        with:
-          repository: libretro/mupen64plus-libretro-nx
-          ref: 98c1b0d877542b01314b3b04272282ba223b65b3
-          path: Mupen64PlusNextCore
-          clean: true
-          fetch-depth: 1
+        run: |
+          set -euo pipefail
+
+          # Do not use actions/checkout for this repository. The pinned source
+          # contains a nested Lightning gnulib gitlink whose .gitmodules mapping
+          # is below the repository root. actions/checkout runs root-level
+          # recursive submodule cleanup and reports a false failure.
+          REPO_DIR="$GITHUB_WORKSPACE/Mupen64PlusNextCore"
+          REPO_URL="https://github.com/libretro/mupen64plus-libretro-nx.git"
+          PIN="98c1b0d877542b01314b3b04272282ba223b65b3"
+
+          if [ -d "$REPO_DIR/.git" ]; then
+            CURRENT_URL="$(git -C "$REPO_DIR" remote get-url origin 2>/dev/null || true)"
+            if [ "$CURRENT_URL" != "$REPO_URL" ]; then
+              echo "Existing Mupen source has a different origin; recreating it."
+              rm -rf "$REPO_DIR"
+            fi
+          elif [ -e "$REPO_DIR" ]; then
+            echo "Existing Mupen source is not a Git repository; recreating it."
+            rm -rf "$REPO_DIR"
+          fi
+
+          if [ ! -d "$REPO_DIR/.git" ]; then
+            git init "$REPO_DIR"
+            git -C "$REPO_DIR" remote add origin "$REPO_URL"
+          fi
+
+          rm -f             "$REPO_DIR/.git/index.lock"             "$REPO_DIR/.git/shallow.lock"
+
+          git -C "$REPO_DIR" remote set-url origin "$REPO_URL"
+
+          # Fetch only the exact pinned commit. Explicitly disable recursive
+          # submodule behavior; gnulib is not needed by this libretro build.
+          git -C "$REPO_DIR"             -c submodule.recurse=false             fetch               --depth=1               --no-tags               --force               origin               "$PIN"
+
+          git -C "$REPO_DIR"             -c submodule.recurse=false             checkout               --detach               --force               FETCH_HEAD
+
+          # Match the previous clean checkout behavior without invoking any
+          # submodule command.
+          git -C "$REPO_DIR" clean -ffdx
+
+          ACTUAL="$(git -C "$REPO_DIR" rev-parse HEAD)"
+          if [ "$ACTUAL" != "$PIN" ]; then
+            echo "ERROR: expected Mupen64Plus-Next $PIN, got $ACTUAL"
+            exit 1
+          fi
 
       - name: Show Mupen64Plus-Next revision
         run: |
