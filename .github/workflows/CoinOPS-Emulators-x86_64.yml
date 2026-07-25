@@ -1516,10 +1516,10 @@ jobs:
       # It is packaged as system/dolphin-emu/Sys, matching the core's
       # reported library name and documented libretro system layout.
       #
-      # Dolphin registers core options from retro_load_game(), so the
-      # generic build-time option dumper cannot extract them without
-      # attempting to boot content. CoinOPS therefore ships a checked-in
-      # override-only core-options.cfg; omitted keys use Dolphin defaults.
+      # Dolphin registers core options from retro_load_game(). The CoinOPS
+      # dumper's --load-game mode terminates from the environment callback
+      # immediately after capturing those definitions, before Dolphin reaches
+      # audio/video/input initialization or attempts to boot the dummy content.
       # ============================================================
 
       - name: Checkout Dolphin source
@@ -1630,6 +1630,89 @@ jobs:
               python3 -c "import ctypes, os, sys; core=sys.argv[1]; lib=ctypes.CDLL(core, mode=os.RTLD_NOW | os.RTLD_LOCAL); lib.retro_api_version.restype=ctypes.c_uint; print(\"Loaded %s; libretro API version %u\" % (core, lib.retro_api_version()))" "$CORE"
             '
 
+      - name: Generate Dolphin core options from exact binary
+        run: |
+          set -euo pipefail
+
+          rm -rf dolphin-options-system
+          mkdir -p dolphin-options-system/dolphin-emu
+
+          # Supply Dolphin's source-matched Sys tree even though the dumper exits
+          # immediately when the core publishes its options. This keeps the
+          # synthetic frontend environment structurally identical to runtime.
+          cp -a \
+            DolphinCore/Data/Sys \
+            dolphin-options-system/dolphin-emu/Sys
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --env=COINOPS_CORE_OPTIONS_SYSTEM_DIR="$GITHUB_WORKSPACE/dolphin-options-system" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              cc \
+                -O2 \
+                -o "$GITHUB_WORKSPACE/dump-core-options" \
+                "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/dump-core-options.c" \
+                -ldl
+
+              timeout 30s \
+                "$GITHUB_WORKSPACE/dump-core-options" \
+                --load-game \
+                "$GITHUB_WORKSPACE/DolphinCore/build-libretro/dolphin_libretro.so" \
+                > "$GITHUB_WORKSPACE/dolphin-generated-options.txt" \
+                2> "$GITHUB_WORKSPACE/dolphin-option-values.txt"
+            '
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          source = Path("dolphin-generated-options.txt")
+          output = Path("dolphin-core-options.cfg")
+
+          options = []
+          seen = set()
+
+          for raw in source.read_text(encoding="utf-8").splitlines():
+              if "=" not in raw:
+                  continue
+
+              key, value = raw.split("=", 1)
+              key = key.strip()
+              value = value.strip()
+
+              if not key:
+                  continue
+              if key in seen:
+                  raise SystemExit(f"ERROR: duplicate Dolphin option: {key}")
+
+              seen.add(key)
+              escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+              options.append((key, escaped))
+
+          if len(options) < 50:
+              raise SystemExit(
+                  f"ERROR: Dolphin registered only {len(options)} options"
+              )
+
+          with output.open("w", encoding="utf-8") as f:
+              f.write("# CoinOPS Dolphin core options\n")
+              f.write("# Generated from the exact pinned Dolphin binary.\n")
+              f.write("# Dolphin publishes these definitions from retro_load_game();\n")
+              f.write("# dump-core-options exits immediately after capturing them.\n\n")
+
+              for key, value in options:
+                  f.write(f'{key} = "{value}"\n')
+
+          print(f"Generated Dolphin options: {len(options)}")
+          PY
+
+          grep -Fx 'dolphin_renderer = "Hardware"' dolphin-core-options.cfg
+          sed -n '1,50p' dolphin-core-options.cfg
+
       - name: Package Dolphin
         run: |
           set -euo pipefail
@@ -1652,7 +1735,7 @@ jobs:
             "$CORE_ROOT/core.cfg"
 
           cp \
-            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/dolphin/core-options.cfg \
+            dolphin-core-options.cfg \
             "$CORE_ROOT/core-options.cfg"
 
           cp DolphinCore/COPYING "$CORE_ROOT/LICENSE.txt"
@@ -1735,6 +1818,8 @@ jobs:
               test -f "$DOLPHIN_SYSTEM/Sys/Shaders/default_pre_post_process.glsl"
               test "$(find "$DOLPHIN_SYSTEM/Sys" -type f | wc -l)" -gt 100
               test -d "$CORE_ROOT/LICENSES"
+              test "$(grep -Ec '^[A-Za-z0-9_-]+ = "' "$CORE_ROOT/core-options.cfg")" -ge 50
+              grep -Fx 'dolphin_renderer = "Hardware"' "$CORE_ROOT/core-options.cfg"
             '
 
       # ============================================================
