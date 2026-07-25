@@ -1471,6 +1471,234 @@ jobs:
             '
 
       # ============================================================
+      # Dolphin - Nintendo GameCube / Wii libretro core
+      #
+      # Dolphin requires its source-matched Data/Sys tree at runtime.
+      # It is packaged as system/dolphin-emu/Sys, matching the core's
+      # reported library name and documented libretro system layout.
+      #
+      # Dolphin registers core options from retro_load_game(), so the
+      # generic build-time option dumper cannot extract them without
+      # attempting to boot content. CoinOPS therefore ships a checked-in
+      # override-only core-options.cfg; omitted keys use Dolphin defaults.
+      # ============================================================
+
+      - name: Checkout Dolphin source
+        uses: actions/checkout@v6
+        with:
+          repository: libretro/dolphin
+          ref: c6b869102f6b9f450f0a9878330d00484754879d
+          path: DolphinCore
+          clean: true
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Show Dolphin revision
+        run: |
+          echo "============================================================"
+          echo "Dolphin source"
+          echo "============================================================"
+          git -C DolphinCore rev-parse HEAD
+          git -C DolphinCore describe --tags --always || true
+
+      - name: Build Dolphin libretro core
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              cd "$GITHUB_WORKSPACE/DolphinCore"
+
+              cmake \
+                -S . \
+                -B build-libretro \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DLIBRETRO=ON \
+                -DENABLE_QT=OFF \
+                -DENABLE_CLI_TOOL=OFF \
+                -DENABLE_TESTS=OFF \
+                -DENABLE_AUTOUPDATE=OFF \
+                -DENABLE_ANALYTICS=OFF \
+                -DUSE_DISCORD_PRESENCE=OFF \
+                -DUSE_RETRO_ACHIEVEMENTS=OFF \
+                -DUSE_UPNP=OFF \
+                -DENABLE_VULKAN=ON \
+                -DUSE_SYSTEM_LIBS=OFF
+
+              cmake \
+                --build build-libretro \
+                --target dolphin_libretro \
+                --parallel 10
+
+              test -f build-libretro/dolphin_libretro.so
+              strip --strip-unneeded build-libretro/dolphin_libretro.so
+            '
+
+          ls -lh DolphinCore/build-libretro/dolphin_libretro.so
+          sha256sum DolphinCore/build-libretro/dolphin_libretro.so
+
+      - name: Validate Dolphin ABI and dependencies
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+
+              CORE="$GITHUB_WORKSPACE/DolphinCore/build-libretro/dolphin_libretro.so"
+
+              echo "============================================================"
+              echo "ELF dependencies"
+              echo "============================================================"
+              ldd "$CORE"
+              if ldd "$CORE" | grep -q "not found"; then
+                echo "ERROR: unresolved Dolphin dependency"
+                exit 1
+              fi
+
+              echo
+              echo "============================================================"
+              echo "Required libretro exports"
+              echo "============================================================"
+              for symbol in \
+                retro_api_version \
+                retro_init \
+                retro_deinit \
+                retro_load_game \
+                retro_unload_game \
+                retro_run
+              do
+                nm -D "$CORE" | grep -Eq "[[:space:]]${symbol}$" || {
+                  echo "ERROR: missing export: $symbol"
+                  exit 1
+                }
+                echo "found: $symbol"
+              done
+
+              echo
+              echo "============================================================"
+              echo "dlopen smoke test"
+              echo "============================================================"
+              python3 -c "import ctypes, os, sys; core=sys.argv[1]; lib=ctypes.CDLL(core, mode=os.RTLD_NOW | os.RTLD_LOCAL); lib.retro_api_version.restype=ctypes.c_uint; print(\"Loaded %s; libretro API version %u\" % (core, lib.retro_api_version()))" "$CORE"
+            '
+
+      - name: Package Dolphin
+        run: |
+          set -euo pipefail
+
+          CORE_ROOT="CoinOPS-Emulators-x86_64/emulators/libretro/cores/dolphin"
+          DOLPHIN_SYSTEM="$CORE_ROOT/system/dolphin-emu"
+
+          mkdir -p \
+            "$DOLPHIN_SYSTEM" \
+            "$CORE_ROOT/saves" \
+            "$CORE_ROOT/states" \
+            "$CORE_ROOT/remaps"
+
+          cp \
+            DolphinCore/build-libretro/dolphin_libretro.so \
+            "$CORE_ROOT/dolphin_libretro.so"
+
+          cp \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/dolphin/core.cfg \
+            "$CORE_ROOT/core.cfg"
+
+          cp \
+            CoinOPSRepo/Package/Environment/Linux/Emulators/libretro/cores/dolphin/core-options.cfg \
+            "$CORE_ROOT/core-options.cfg"
+
+          cp DolphinCore/COPYING "$CORE_ROOT/LICENSE.txt"
+          cp -a DolphinCore/LICENSES "$CORE_ROOT/LICENSES"
+
+          # Dolphin's source-matched Sys tree is required at runtime. It holds
+          # per-game compatibility settings, Wii system data and renderer files.
+          cp -a DolphinCore/Data/Sys "$DOLPHIN_SYSTEM/Sys"
+
+          test -d "$DOLPHIN_SYSTEM/Sys/GameSettings"
+          test -d "$DOLPHIN_SYSTEM/Sys/Shaders"
+          test -f "$DOLPHIN_SYSTEM/Sys/Shaders/default_pre_post_process.glsl"
+          test "$(find "$DOLPHIN_SYSTEM/Sys" -type f | wc -l)" -gt 100
+
+          touch \
+            "$CORE_ROOT/saves/.keep" \
+            "$CORE_ROOT/states/.keep" \
+            "$CORE_ROOT/remaps/.keep"
+
+          cat > "$DOLPHIN_SYSTEM/README-COINOPS.txt" <<'EOF_DOLPHIN'
+          Dolphin libretro system data
+
+          Sys/ is copied from the exact pinned Dolphin source revision. It is a
+          required runtime dependency containing Dolphin's per-game compatibility
+          settings, Wii system data, shaders and other core-consumed resources.
+
+          The CoinOPS launcher supplies cores/dolphin/saves as Dolphin's save
+          directory. Dolphin therefore creates its writable user tree below:
+            cores/dolphin/saves/User
+
+          Optional legally dumped GameCube IPL files may be placed below:
+            saves/User/GC/USA/IPL.bin
+            saves/User/GC/EUR/IPL.bin
+            saves/User/GC/JAP/IPL.bin
+
+          BIOS files are not distributed with CoinOPS.
+          EOF_DOLPHIN
+
+          CORE_SHA256="$(sha256sum "$CORE_ROOT/dolphin_libretro.so" | awk '{print $1}')"
+
+          cat > "$CORE_ROOT/manifest.json" <<EOF_MANIFEST
+          {
+            "name": "Dolphin",
+            "package_name": "dolphin",
+            "type": "libretro-core",
+            "platform": "linux-x86_64",
+            "systems": ["Nintendo GameCube", "Nintendo Wii"],
+            "source_repository": "libretro/dolphin",
+            "source_commit": "c6b869102f6b9f450f0a9878330d00484754879d",
+            "upstream_base": "Dolphin",
+            "runtime_abi": "org.freedesktop.Platform/25.08",
+            "core_path": "cores/dolphin/dolphin_libretro.so",
+            "core_config": "cores/dolphin/core.cfg",
+            "core_options": "cores/dolphin/core-options.cfg",
+            "system_assets": "cores/dolphin/system/dolphin-emu/Sys",
+            "user_data": "cores/dolphin/saves/User",
+            "sha256": "$CORE_SHA256"
+          }
+          EOF_MANIFEST
+
+      - name: Validate packaged Dolphin contract
+        run: |
+          set -euo pipefail
+
+          flatpak run \
+            --filesystem="$GITHUB_WORKSPACE" \
+            --env=GITHUB_WORKSPACE="$GITHUB_WORKSPACE" \
+            --command=sh \
+            org.freedesktop.Sdk//25.08 \
+            -c '
+              set -eu
+              CORE_ROOT="$GITHUB_WORKSPACE/CoinOPS-Emulators-x86_64/emulators/libretro/cores/dolphin"
+              DOLPHIN_SYSTEM="$CORE_ROOT/system/dolphin-emu"
+
+              bash "$GITHUB_WORKSPACE/CoinOPSRepo/Package/Environment/Linux/Emulators/tools/validate-libretro-core.sh" \
+                "$CORE_ROOT"
+
+              test -d "$DOLPHIN_SYSTEM/Sys/GameSettings"
+              test -d "$DOLPHIN_SYSTEM/Sys/Shaders"
+              test -f "$DOLPHIN_SYSTEM/Sys/Shaders/default_pre_post_process.glsl"
+              test "$(find "$DOLPHIN_SYSTEM/Sys" -type f | wc -l)" -gt 100
+              test -d "$CORE_ROOT/LICENSES"
+            '
+
+      # ============================================================
       # Future emulators go here
       #
       # Add each core/standalone into CoinOPS-Emulators-x86_64/emulators/.
@@ -1507,6 +1735,7 @@ jobs:
             - PPSSPP PlayStation Portable libretro core
             - SwanStation PlayStation libretro core
             - Mupen64Plus-Next Nintendo 64 libretro core
+            - Dolphin Nintendo GameCube / Wii libretro core
 
           Future optional libretro cores and standalone emulators are added to
           this same staging bundle.
