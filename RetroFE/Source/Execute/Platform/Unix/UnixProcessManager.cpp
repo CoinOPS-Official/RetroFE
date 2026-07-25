@@ -29,6 +29,7 @@
 #include <cstring> // For strerror
 #include <cerrno>  // For errno
 #include <cstdlib> // For getenv
+#include <array>
 
 #include "../../../Utility/Log.h"
 #include "../../../Utility/Utils.h"
@@ -45,6 +46,18 @@ struct WordExpWrapper {
 };
 
 namespace {
+struct XdgEnvironmentMapping {
+    const char* hostName;
+    const char* targetName;
+};
+
+constexpr std::array<XdgEnvironmentMapping, 4> hostXdgMappings{{
+    { "HOST_XDG_CONFIG_HOME", "XDG_CONFIG_HOME" },
+    { "HOST_XDG_DATA_HOME",   "XDG_DATA_HOME" },
+    { "HOST_XDG_CACHE_HOME",  "XDG_CACHE_HOME" },
+    { "HOST_XDG_STATE_HOME",  "XDG_STATE_HOME" },
+}};
+
 bool shouldUseFlatpakHostSpawn(const std::string& executable) {
 #if defined(__linux__)
     const bool runningInFlatpak =
@@ -74,6 +87,31 @@ std::vector<std::string> prepareCommand(const WordExpWrapper& expanded,
         if (!currentDirectory.empty()) {
             command.emplace_back("--directory=" + currentDirectory);
         }
+
+        std::vector<std::string> variablesToUnset{ "FLATPAK_ID" };
+        for (const XdgEnvironmentMapping& mapping : hostXdgMappings) {
+            const char* hostValue = std::getenv(mapping.hostName);
+            if (hostValue != nullptr && *hostValue != '\0') {
+                command.emplace_back(
+                    std::string("--env=") + mapping.targetName + "=" + hostValue);
+            }
+            else {
+                // An empty XDG variable is not equivalent to an unset one.
+                // Remove the sandbox value so the host application uses its
+                // standard HOME-relative fallback.
+                variablesToUnset.emplace_back(mapping.targetName);
+            }
+        }
+
+        // flatpak-spawn has no per-variable unset option. Host /usr/bin/env
+        // removes only the Flatpak identity and XDG values which have no host
+        // equivalent, then execs the AppImage without adding a lasting proxy.
+        command.emplace_back("/usr/bin/env");
+        for (const std::string& variable : variablesToUnset) {
+            command.emplace_back("-u");
+            command.emplace_back(variable);
+        }
+        command.emplace_back("--");
         command.emplace_back(expanded.p.we_wordv[0]);
 
         // wordexp entry zero is the original executable. Preserve its existing
