@@ -175,11 +175,32 @@ void RetroFE::render() {
 
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
 		SDL_Renderer* rr = SDL::getRenderer(i);
-		SDL_Texture* rt = SDL::getRenderTarget(i);
 
-		if (!rr || !rt) {
+		if (!rr) {
 			continue;
 		}
+
+		const int layoutWidth =
+			currentPage_
+			? currentPage_->getLayoutWidthByMonitor(i)
+			: SDL::getWindowWidth(i);
+
+		const int layoutHeight =
+			currentPage_
+			? currentPage_->getLayoutHeightByMonitor(i)
+			: SDL::getWindowHeight(i);
+
+		if (!SDL::ensureRenderTarget(
+			i,
+			layoutWidth,
+			layoutHeight))
+		{
+			reboot_ = true;
+			setState(RETROFE_QUIT_REQUEST);
+			break;
+		}
+
+		SDL_Texture* rt = SDL::getRenderTarget(i);
 
 		if (SDL_SetRenderTarget(rr, rt) < 0) {
 			LOG_ERROR(
@@ -227,7 +248,7 @@ void RetroFE::render() {
 	}
 
 	// ---------------------------------------------------------
-	// 2. Blit to backbuffer, mask Fit bars, draw HUD, present
+	// 2. Present the logical scene, draw the physical HUD, and display it
 	// ---------------------------------------------------------
 
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
@@ -250,20 +271,29 @@ void RetroFE::render() {
 			break;
 		}
 
+		const int layoutWidth =
+			currentPage_
+			? currentPage_->getLayoutWidthByMonitor(i)
+			: SDL::getWindowWidth(i);
+
+		const int layoutHeight =
+			currentPage_
+			? currentPage_->getLayoutHeightByMonitor(i)
+			: SDL::getWindowHeight(i);
+
 		/*
-		 * Copy the completed virtual-screen render target to the
-		 * physical output.
+		 * Present the completed logical scene. This is the only place
+		 * monitor-wide scaling, output rotation, and mirror duplication
+		 * are applied.
 		 */
-		if (SDL_RenderCopy(
-			rr,
-			rt,
-			nullptr,
-			nullptr
-		) < 0)
+		if (!SDL::presentRenderTarget(
+			i,
+			layoutWidth,
+			layoutHeight))
 		{
 			LOG_ERROR(
 				"SDL",
-				"Final RenderCopy failed: " +
+				"Final logical target presentation failed: " +
 				std::string(SDL_GetError())
 			);
 
@@ -273,34 +303,9 @@ void RetroFE::render() {
 		}
 
 		/*
-		 * Mask anything extending outside the virtual screen when
-		 * layoutScaleMode == Fit.
-		 *
-		 * Page owns the authoritative per-monitor virtual layout
-		 * dimensions. If currentPage_ is null, the render target was
-		 * already cleared to black, so no masking is necessary.
-		 *
-		 * Stretch -> drawFitBars() is a no-op.
-		 * Fill    -> drawFitBars() is a no-op.
-		 * Fit     -> black letterbox/pillarbox masks are drawn.
-		 */
-		if (currentPage_) {
-			const int layoutWidth =
-				currentPage_->getLayoutWidthByMonitor(i);
-
-			const int layoutHeight =
-				currentPage_->getLayoutHeightByMonitor(i);
-
-			SDL::drawFitBars(
-				i,
-				layoutWidth,
-				layoutHeight
-			);
-		}
-
-		/*
 		 * Debug FPS overlay is physical-screen UI.
-		 * Draw it after Fit masking so the bars cannot cover it.
+		 * Draw it after logical scene presentation so it is unaffected
+		 * by layout scaling or output rotation.
 		 */
 		if (showFps_ &&
 			i == 0 &&

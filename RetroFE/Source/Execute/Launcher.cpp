@@ -265,6 +265,21 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             if (animateDuringGame && multiple_display) {
                 for (int i = 0; i < SDL::getScreenCount(); ++i) {
                     SDL_Renderer* r = SDL::getRenderer(i);
+
+                    const int layoutWidth =
+                        currentPage->getLayoutWidthByMonitor(i);
+
+                    const int layoutHeight =
+                        currentPage->getLayoutHeightByMonitor(i);
+
+                    if (!SDL::ensureRenderTarget(
+                        i,
+                        layoutWidth,
+                        layoutHeight))
+                    {
+                        continue;
+                    }
+
                     SDL_Texture* t = SDL::getRenderTarget(i);
                     if (!r || !t) continue;
                     SDL_SetRenderTarget(r, t);
@@ -272,7 +287,11 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                     SDL_RenderClear(r);
                     currentPage->draw(i);
                     SDL_SetRenderTarget(r, nullptr);
-                    SDL_RenderCopy(r, t, nullptr, nullptr);
+                    SDL::presentRenderTarget(
+                        i,
+                        layoutWidth,
+                        layoutHeight
+                    );
                     SDL_RenderPresent(r);
                 }
             }

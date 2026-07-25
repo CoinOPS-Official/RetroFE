@@ -35,7 +35,8 @@ public:
     static std::string getRendererBackend(int index);
     static SDL_Window *getWindow( int index );
     static SDL_Texture* getRenderTarget(int index);
-    static void drawFitBars(int monitor, int layoutWidth, int layoutHeight);
+    static bool ensureRenderTarget(int index, int layoutWidth, int layoutHeight);
+    static bool presentRenderTarget(int index, int layoutWidth, int layoutHeight);
     static bool renderCopy( SDL_Texture *texture, float alpha, SDL_Rect const *src, SDL_Rect const *dest, ViewInfo &viewInfo, int layoutWidth, int layoutHeight );
     static bool renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight);
     static int getScreenCount( ) 
