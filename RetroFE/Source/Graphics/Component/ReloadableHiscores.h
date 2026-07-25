@@ -63,6 +63,7 @@ private:
     void buildCurrentPage_();
     void freePagePanels_();
     void drawPages_();
+    bool ensureCompositeTexture_(SDL_Renderer* renderer, int width, int height);
     void renderPanels_(SDL_Renderer* renderer, float originX, float originY, Uint8 alpha) const;
     void beginPageTransition_();
     float measureNaturalWidth_(FontManager* font, const HighScoreTableView& table,
@@ -135,9 +136,12 @@ private:
     size_t currentPageIndex_ = 0;
     float pageElapsed_ = 0.0f;
     float pageEndPause_ = 0.0f;
-	SDL_Texture* headerTexture_;
-	SDL_Texture* tableRowsTexture_;
+    SDL_Texture* headerTexture_;
+    SDL_Texture* tableRowsTexture_;
     SDL_Texture* previousTableTexture_;
-	int tableRowsTextureHeight_;
+    SDL_Texture* compositeTexture_;
+    int compositeTextureWidth_;
+    int compositeTextureHeight_;
+    int tableRowsTextureHeight_;
 	int headerTextureHeight_;
 };

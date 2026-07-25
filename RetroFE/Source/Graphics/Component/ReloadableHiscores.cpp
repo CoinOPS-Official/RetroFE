@@ -258,6 +258,9 @@ ReloadableHiscores::ReloadableHiscores(Configuration& config, std::string textFo
 	, headerTexture_(nullptr)
 	, tableRowsTexture_(nullptr)
 	, previousTableTexture_(nullptr)
+	, compositeTexture_(nullptr)
+	, compositeTextureWidth_(0)
+	, compositeTextureHeight_(0)
 	, tableRowsTextureHeight_(0)
 	, headerTextureHeight_(0) {
 	// Parse the excluded columns
@@ -516,6 +519,9 @@ void ReloadableHiscores::freeGraphicsMemory() {
 	if (headerTexture_) { SDL_DestroyTexture(headerTexture_); headerTexture_ = nullptr; }
 	if (tableRowsTexture_) { SDL_DestroyTexture(tableRowsTexture_); tableRowsTexture_ = nullptr; }
 	if (previousTableTexture_) { SDL_DestroyTexture(previousTableTexture_); previousTableTexture_ = nullptr; }
+	if (compositeTexture_) { SDL_DestroyTexture(compositeTexture_); compositeTexture_ = nullptr; }
+	compositeTextureWidth_ = 0;
+	compositeTextureHeight_ = 0;
 	freePagePanels_();
 	tableCrossfading_ = false;
 	showingNoData_ = false;
@@ -1160,94 +1166,225 @@ bool ReloadableHiscores::updatePages_(float dt) {
 	return componentDone;
 }
 
+bool ReloadableHiscores::ensureCompositeTexture_(
+	SDL_Renderer* renderer,
+	int width,
+	int height) {
+
+	if (!renderer || width <= 0 || height <= 0) {
+		return false;
+	}
+
+	if (compositeTexture_ &&
+		compositeTextureWidth_ == width &&
+		compositeTextureHeight_ == height)
+	{
+		return true;
+	}
+
+	SDL_Texture* replacement =
+		SDL_CreateTexture(
+			renderer,
+			SDL_PIXELFORMAT_RGBA8888,
+			SDL_TEXTUREACCESS_TARGET,
+			width,
+			height
+		);
+
+	if (!replacement) {
+		LOG_ERROR(
+			"ReloadableHiscores",
+			"Failed to create foreground composite texture: " +
+			std::string(SDL_GetError())
+		);
+		return false;
+	}
+
+	SDL_SetTextureBlendMode(replacement, SDL_BLENDMODE_BLEND);
+	SDL_SetTextureScaleMode(replacement, SDL_ScaleModeLinear);
+
+	if (compositeTexture_) {
+		SDL_DestroyTexture(compositeTexture_);
+	}
+
+	compositeTexture_ = replacement;
+	compositeTextureWidth_ = width;
+	compositeTextureHeight_ = height;
+	return true;
+}
+
 void ReloadableHiscores::drawPages_() {
 	Component::draw();
-	if (baseViewInfo.Alpha <= 0.0f) return;
 
-	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
-	if (!renderer) return;
-
-	const Uint8 baseAlpha = static_cast<Uint8>(
-		std::clamp(baseViewInfo.Alpha, 0.0f, 1.0f) * 255.0f);
-
-	if (pagePanels_.empty()) {
-		if (!headerTexture_) return;
-
-		float opacity = 1.0f;
-		if (showingNoData_ && noDataElapsed_ > kNoDataHoldSeconds) {
-			opacity = 1.0f - std::clamp(
-				(noDataElapsed_ - kNoDataHoldSeconds) / kNoDataFadeSeconds,
-				0.0f, 1.0f);
-		}
-		if (opacity <= 0.0f) return;
-
-		renderCurrentTable_(renderer,
-			baseViewInfo.XRelativeToOrigin(),
-			baseViewInfo.YRelativeToOrigin(),
-			static_cast<Uint8>(baseAlpha * opacity));
+	if (baseViewInfo.Alpha <= 0.0f) {
 		return;
 	}
 
-	const float fade = tableCrossfading_ && tableCrossfadeDuration_ > 0.0f
-		? std::clamp(tableCrossfadeTimer_ / tableCrossfadeDuration_, 0.0f, 1.0f)
-		: 1.0f;
-	if (tableCrossfading_ && previousTableTexture_) {
-		SDL_SetTextureAlphaMod(previousTableTexture_, static_cast<Uint8>(baseAlpha * (1.0f - fade)));
-		SDL_FRect destination{
-			baseViewInfo.XRelativeToOrigin(),
-			baseViewInfo.YRelativeToOrigin(),
-			(baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth)
-				? baseViewInfo.Width : baseViewInfo.MaxWidth,
-			baseViewInfo.ScaledHeight()
-		};
-		SDL_RenderCopyF(renderer, previousTableTexture_, nullptr, &destination);
+	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+
+	if (!renderer) {
+		return;
 	}
 
-	renderPanels_(renderer,
+	const float componentWidth =
+		(baseViewInfo.Width > 0.0f &&
+			baseViewInfo.Width < baseViewInfo.MaxWidth)
+		? baseViewInfo.Width
+		: baseViewInfo.MaxWidth;
+
+	const float componentHeight = baseViewInfo.ScaledHeight();
+
+	if (!std::isfinite(componentWidth) ||
+		!std::isfinite(componentHeight) ||
+		componentWidth <= 0.0f ||
+		componentHeight <= 0.0f)
+	{
+		return;
+	}
+
+	const int compositeWidth =
+		std::max(1, static_cast<int>(std::ceil(componentWidth)));
+
+	const int compositeHeight =
+		std::max(1, static_cast<int>(std::ceil(componentHeight)));
+
+	if (!ensureCompositeTexture_(
+		renderer,
+		compositeWidth,
+		compositeHeight))
+	{
+		return;
+	}
+
+	float noDataOpacity = 1.0f;
+
+	if (pagePanels_.empty()) {
+		if (!headerTexture_) {
+			return;
+		}
+
+		if (showingNoData_ &&
+			noDataElapsed_ > kNoDataHoldSeconds)
+		{
+			noDataOpacity =
+				1.0f -
+				std::clamp(
+					(noDataElapsed_ - kNoDataHoldSeconds) /
+						kNoDataFadeSeconds,
+					0.0f,
+					1.0f
+				);
+		}
+
+		if (noDataOpacity <= 0.0f) {
+			return;
+		}
+	}
+
+	SDL_Texture* previousTarget = SDL_GetRenderTarget(renderer);
+
+	if (SDL_SetRenderTarget(renderer, compositeTexture_) != 0) {
+		LOG_ERROR(
+			"ReloadableHiscores",
+			"Failed to select foreground composite target: " +
+			std::string(SDL_GetError())
+		);
+		return;
+	}
+
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+	SDL_RenderClear(renderer);
+
+	if (pagePanels_.empty()) {
+		renderCurrentTable_(
+			renderer,
+			0.0f,
+			0.0f,
+			static_cast<Uint8>(
+				std::lround(noDataOpacity * 255.0f)
+				)
+		);
+	}
+	else {
+		const float fade =
+			tableCrossfading_ &&
+			tableCrossfadeDuration_ > 0.0f
+			? std::clamp(
+				tableCrossfadeTimer_ /
+					tableCrossfadeDuration_,
+				0.0f,
+				1.0f
+			)
+			: 1.0f;
+
+		if (tableCrossfading_ && previousTableTexture_) {
+			SDL_SetTextureAlphaMod(
+				previousTableTexture_,
+				static_cast<Uint8>(
+					std::lround((1.0f - fade) * 255.0f)
+					)
+			);
+
+			const SDL_FRect previousDestination{
+				0.0f,
+				0.0f,
+				componentWidth,
+				componentHeight
+			};
+
+			SDL_RenderCopyF(
+				renderer,
+				previousTableTexture_,
+				nullptr,
+				&previousDestination
+			);
+		}
+
+		renderPanels_(
+			renderer,
+			0.0f,
+			0.0f,
+			static_cast<Uint8>(
+				std::lround(fade * 255.0f)
+				)
+		);
+	}
+
+	if (SDL_SetRenderTarget(renderer, previousTarget) != 0) {
+		LOG_ERROR(
+			"ReloadableHiscores",
+			"Failed to restore page render target: " +
+			std::string(SDL_GetError())
+		);
+		return;
+	}
+
+	SDL_FRect destination{
 		baseViewInfo.XRelativeToOrigin(),
 		baseViewInfo.YRelativeToOrigin(),
-		static_cast<Uint8>(baseAlpha * fade));
+		componentWidth,
+		componentHeight
+	};
+
+	ViewInfo foregroundView = baseViewInfo;
+	foregroundView.ImageWidth =
+		static_cast<float>(compositeWidth);
+	foregroundView.ImageHeight =
+		static_cast<float>(compositeHeight);
+
+	SDL::renderCopyF(
+		compositeTexture_,
+		baseViewInfo.Alpha,
+		nullptr,
+		&destination,
+		foregroundView,
+		page.getLayoutWidthByMonitor(baseViewInfo.Monitor),
+		page.getLayoutHeightByMonitor(baseViewInfo.Monitor)
+	);
 }
 
 void ReloadableHiscores::draw() {
 	drawPages_();
-	return;
-#if 0
-	Component::draw();
-
-	if (baseViewInfo.Alpha <= 0.0f) return;
-
-	const bool hasTable = (!highScoreTable_.tables.empty());
-	if (hasTable) {
-		if (!headerTexture_ || !tableRowsTexture_) return;
-	}
-	else {
-		if (!headerTexture_) return;
-	}
-
-	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
-	if (!renderer) return;
-
-	const Uint8 baseAlpha = static_cast<Uint8>(std::clamp(baseViewInfo.Alpha, 0.0f, 1.0f) * 255.0f);
-	float fade = tableCrossfading_ && tableCrossfadeDuration_ > 0.0f
-		? std::clamp(tableCrossfadeTimer_ / tableCrossfadeDuration_, 0.0f, 1.0f) : 1.0f;
-	if (tableCrossfading_ && previousTableTexture_) {
-		SDL_SetTextureAlphaMod(previousTableTexture_, static_cast<Uint8>(baseAlpha * (1.0f - fade)));
-		SDL_FRect oldDst{ baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
-			static_cast<float>(std::max(1, static_cast<int>(std::ceil((baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth) ? baseViewInfo.Width : baseViewInfo.MaxWidth)))),
-			baseViewInfo.ScaledHeight() };
-		SDL_RenderCopyF(renderer, previousTableTexture_, nullptr, &oldDst);
-	}
-	renderCurrentTable_(renderer, baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(),
-		static_cast<Uint8>(baseAlpha * fade));
-
-#ifndef NDEBUG
-	SDL_SetRenderDrawColor(renderer, 0, 255, 0, 255);
-	float effectiveViewWidth = (baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth) ? baseViewInfo.Width : baseViewInfo.MaxWidth;
-	SDL_FRect outlineRect = { baseViewInfo.XRelativeToOrigin(), baseViewInfo.YRelativeToOrigin(), effectiveViewWidth, baseViewInfo.ScaledHeight() };
-	SDL_RenderDrawRectF(renderer, &outlineRect);
-#endif
-#endif
 }
 
 // Returns final scale and updates column widths and total width
