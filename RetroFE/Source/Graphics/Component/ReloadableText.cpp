@@ -77,7 +77,7 @@ bool ReloadableText::update(float dt)
             ReloadTexture();
         }
 
-        // Important: consume flags so we donít ìdouble reloadî later in the frame
+        // Important: consume flags so we don‚Äôt ‚Äúdouble reload‚Äù later in the frame
         newItemSelected = false;
         newScrollItemSelected = false;
 
@@ -90,6 +90,7 @@ bool ReloadableText::update(float dt)
     {
         ReloadTexture();
         newItemSelected = false;
+        newScrollItemSelected = false;
     }
     else if (type_ == "file")
     {

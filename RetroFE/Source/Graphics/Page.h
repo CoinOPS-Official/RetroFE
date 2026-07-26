@@ -17,6 +17,7 @@
 
 #include "../Collection/CollectionInfo.h"
 
+#include <array>
 #include <map>
 #include <string>
 #include <list>
@@ -114,12 +115,13 @@ public:
     void freeGraphicsMemory();
     void allocateGraphicsMemory();
     void pumpGraphicsPreparation();
+    void waitForGraphicsPreparation();
     bool isGraphicsReadyForFirstRender() const;
     void deInitializeFonts( ) const;
     void initializeFonts( ) const;
     void playSelect();
     bool isSelectPlaying();
-    void allocateMenuSpritePoints(bool updatePlaylistMenu) const;
+    void allocateMenuSpritePoints(bool updatePlaylistMenu);
     std::string getCollectionName();
     CollectionInfo *getCollection();
     void  setMinShowTime(float value);
@@ -155,7 +157,7 @@ public:
     void  removePlaylist();
     void  togglePlaylist();
     void consumeDirtyPlaylistsForActiveCollection();
-    void  reallocateMenuSpritePoints(bool updatePlaylistMenu = true) const;
+    void  reallocateMenuSpritePoints(bool updatePlaylistMenu = true);
     bool  isMenuScrolling() const;
     bool  isUserScrollInputActive() const;
     void  setUserScrollInputActive(bool active);
@@ -235,7 +237,15 @@ private:
     CollectionVector_T deleteCollections_;
 
     static const unsigned int NUM_LAYERS = 20;
+    static const unsigned int NUM_PREPARATION_TIERS = 3;
     std::vector<std::vector<Component*>> LayerComponents_; // Grouped by layer
+    std::array<
+        std::array<std::vector<Component*>, NUM_LAYERS>,
+        NUM_PREPARATION_TIERS
+    > preparationLayers_;
+    std::array<std::vector<Component*>, NUM_LAYERS> pageDrawLayers_;
+    std::array<std::vector<Component*>, NUM_LAYERS> menuDrawLayers_;
+    bool frameLayerBucketsValid_{ false };
     std::list<ScrollingList *> deleteMenuList_;
     std::list<CollectionInfo *> deleteCollectionList_;
     std::map<std::string, size_t> lastPlaylistOffsets_;
@@ -268,5 +278,8 @@ private:
 	bool pendingScrollSelect_{ false };
 
     void invalidateIdleCache(); // Helper to flag state as active
+    void invalidateFrameLayerBuckets_();
+    void rebuildFrameLayerBuckets_();
+    void prepareGraphicsByLayer_();
 
 };

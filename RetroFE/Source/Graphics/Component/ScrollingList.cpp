@@ -48,8 +48,12 @@
 #include <cctype>
 #include <iomanip>
 #include <algorithm>
+#include <cmath>
 
 int ScrollingList::nextListId = 0;
+size_t ScrollingList::activeImagePreloads_ = 0;
+std::unordered_map<std::string, ScrollingList::SharedResolvedMedia>
+    ScrollingList::sharedMediaCache_;
 
 ScrollingList::ScrollingList( Configuration &c,
                               Page          &p,
@@ -82,6 +86,74 @@ ScrollingList::ScrollingList( Configuration &c,
     // Pre-build the base paths so they are only calculated ONCE
     layoutCollectionsBase_ = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName_, "collections");
     commonCollectionsBase_ = Utils::combinePath(Configuration::absolutePath, "collections", "_common");
+}
+
+ScrollingList::ScrollingList(const ScrollingList& other)
+    : Component(other)
+    , listId_(nextListId++)
+    , layoutMode_(other.layoutMode_)
+    , commonMode_(other.commonMode_)
+    , playlistType_(other.playlistType_)
+    , selectedImage_(other.selectedImage_)
+    , textFallback_(other.textFallback_)
+    , tweenPoints_(other.tweenPoints_)
+    , itemIndex_(other.itemIndex_)
+    , selectedOffsetIndex_(other.selectedOffsetIndex_)
+    , scrollAcceleration_(other.scrollAcceleration_)
+    , startScrollTime_(other.startScrollTime_)
+    , minScrollTime_(other.minScrollTime_)
+    , scrollPeriod_(other.scrollPeriod_)
+    , letterSkipTimer_(other.letterSkipTimer_)
+    , coastFriction_(other.coastFriction_)
+    , currentDt_(other.currentDt_)
+    , coasting_(other.coasting_)
+    , coastElapsed_(other.coastElapsed_)
+    , coastStartPeriod_(other.coastStartPeriod_)
+    , config_(other.config_)
+    , fontInst_(other.fontInst_)
+    , layoutKey_(other.layoutKey_)
+    , imageType_(other.imageType_)
+    , videoType_(other.videoType_)
+    , layoutName_(other.layoutName_)
+    , imageTypeLC_(other.imageTypeLC_)
+    , layoutCollectionsBase_(other.layoutCollectionsBase_)
+    , commonCollectionsBase_(other.commonCollectionsBase_)
+    , items_(other.items_)
+    , components_(other.components_)
+    , useTextureCaching_(other.useTextureCaching_)
+    , mediaCache_(other.mediaCache_)
+    , letterAnchors_(other.letterAnchors_)
+    , perspectiveCornersInitialized_(other.perspectiveCornersInitialized_)
+    , cachedIdle_(other.cachedIdle_)
+    , cachedAttractIdle_(other.cachedAttractIdle_)
+{
+    horizontalScroll = other.horizontalScroll;
+    std::fill(
+        components_.raw().begin(),
+        components_.raw().end(),
+        nullptr);
+    std::copy(
+        std::begin(other.perspectiveCorners_),
+        std::end(other.perspectiveCorners_),
+        std::begin(perspectiveCorners_));
+
+    if (other.scrollPoints_) {
+        scrollPoints_ = new std::vector<ViewInfo*>();
+        scrollPoints_->reserve(other.scrollPoints_->size());
+        try {
+            for (const ViewInfo* point : *other.scrollPoints_) {
+                scrollPoints_->push_back(point ? new ViewInfo(*point) : nullptr);
+            }
+        }
+        catch (...) {
+            clearPoints();
+            throw;
+        }
+    }
+
+    // Retain the circular view's logical head, but never share its owned
+    // component pointers with the source list.
+    rebuildSlotTopology_(false);
 }
 
 
@@ -117,140 +189,576 @@ const std::vector<Item*>& ScrollingList::getItems() const
 }
 
 void ScrollingList::setItems(std::vector<Item*>* items) {
+    resetImagePreload_();
     items_ = items;
+    mediaCache_.clear();
     if (!items_) return;
 
     const size_t size = items_->size();
-    itemIndex_ = loopDecrement(size, selectedOffsetIndex_, size);
+    itemIndex_ = size == 0
+        ? 0
+        : loopDecrement(size, selectedOffsetIndex_, size);
+    mediaCache_.resize(size);
 
     resetScrollPeriod();
-
-    // ---- warm name-candidate caches for the types this list actually uses ----
-    const std::string imageTypeLC = Utils::toLower(imageType_);
-    const std::string videoTypeLC = Utils::toLower(videoType_);
-
-    std::vector<std::string> types;
-    types.reserve(2);
-    if (!imageTypeLC.empty()) types.push_back(imageTypeLC);
-    if (!videoTypeLC.empty() && videoTypeLC != "null" && videoTypeLC != imageTypeLC)
-        types.push_back(videoTypeLC);
-
-    if (!types.empty()) {
-        for (Item* it : *items_) {
-            if (!it) continue;
-            it->precomputeNameCandidates(types);   // builds once; selection-agnostic
-        }
-    }
-    precalculateMediaPaths();
-
+    rebuildLetterAnchors_();
+    refreshImagePreloadQueue_();
 }
 
-void ScrollingList::precalculateMediaPaths() {
-    if (!items_ || items_->empty()) return;
+void ScrollingList::clearSharedMediaCache() {
+    sharedMediaCache_.clear();
+}
 
-    mediaCache_.clear();
-    mediaCache_.resize(items_->size());
+void ScrollingList::rebuildLetterAnchors_() {
+    letterAnchors_.clear();
+    if (!items_ || items_->empty()) {
+        return;
+    }
 
-    const std::string& selectedItemName = getSelectedItemName();
+    bool haveGroup = false;
+    int previousGroup = 0;
 
     for (size_t i = 0; i < items_->size(); ++i) {
-        Item* item = (*items_)[i];
-        ResolvedMedia media;
-
-        const bool isSelectedItem = (selectedImage_ && item->name == selectedItemName);
-        const std::vector<std::string_view>& cachedNames = item->baseNameCandidates(imageTypeLC_);
-
-        for (size_t iter = 0; iter <= cachedNames.size(); ++iter) {
-            std::string name = (iter < cachedNames.size()) ? std::string(cachedNames[iter]) : "default";
-            std::string imagePath, videoPath;
-
-            if (layoutMode_) {
-                std::string subPath = commonMode_ ? "_common" : collectionName;
-                buildPaths(imagePath, videoPath, layoutCollectionsBase_, subPath, imageType_, videoType_);
-            }
-            else {
-                if (commonMode_) {
-                    buildPaths(imagePath, videoPath, commonCollectionsBase_, "", imageType_, videoType_);
-                }
-                else {
-                    config_.getMediaPropertyAbsolutePath(collectionName, imageType_, false, imagePath);
-                    config_.getMediaPropertyAbsolutePath(collectionName, videoType_, false, videoPath);
-                }
-            }
-
-            // Try resolving primary paths
-            if (media.videoPath.empty() && videoType_ != "null") {
-                VideoBuilder::resolveVideoPath(videoPath, name, media.videoPath);
-            }
-            if (media.idleImagePath.empty() && !imageType_.empty()) {
-                ImageBuilder::resolveImagePath(imagePath, name, media.idleImagePath);
-                if (isSelectedItem) {
-                    ImageBuilder::resolveImagePath(imagePath, name + "-selected", media.selectedImagePath);
-                }
-            }
-
-            // If we found both, stop searching
-            if (!media.videoPath.empty() && !media.idleImagePath.empty()) break;
-
-            // Try Item-specific paths
-            std::string itemImagePath, itemVideoPath;
-            if (layoutMode_) {
-                buildPaths(itemImagePath, itemVideoPath, layoutCollectionsBase_, item->collectionInfo->name, imageType_, videoType_);
-            }
-            else {
-                config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, imageType_, false, itemImagePath);
-                config_.getMediaPropertyAbsolutePath(item->collectionInfo->name, videoType_, false, itemVideoPath);
-            }
-
-            if (media.videoPath.empty() && videoType_ != "null") {
-                VideoBuilder::resolveVideoPath(itemVideoPath, name, media.videoPath);
-            }
-            if (media.idleImagePath.empty() && !imageType_.empty()) {
-                ImageBuilder::resolveImagePath(itemImagePath, name, media.idleImagePath);
-                if (isSelectedItem) {
-                    ImageBuilder::resolveImagePath(itemImagePath, name + "-selected", media.selectedImagePath);
-                }
-            }
-
-            if (!media.videoPath.empty() || !media.idleImagePath.empty()) break;
+        const Item* item = (*items_)[i];
+        if (!item || item->fullTitle.empty()) {
+            continue;
         }
 
-        // Fallback: System Artwork
-        if (media.videoPath.empty() && media.idleImagePath.empty()) {
-            std::string sysImgPath, sysVidPath;
-            if (layoutMode_) {
-                sysImgPath = Utils::combinePath(layoutCollectionsBase_, commonMode_ ? "_common" : item->name, "system_artwork");
+        const unsigned char first =
+            static_cast<unsigned char>(item->fullTitle.front());
+        const int group = std::isalpha(first)
+            ? 1 + std::tolower(first)
+            : 0;
+
+        if (!haveGroup || group != previousGroup) {
+            letterAnchors_.push_back(i);
+            previousGroup = group;
+            haveGroup = true;
+        }
+    }
+}
+
+void ScrollingList::refreshImagePreloadQueue_(
+    bool directionKnown,
+    bool forward)
+{
+    constexpr size_t MAX_PRELOAD_CANDIDATES = 192;
+    constexpr size_t LETTER_ANCHORS_EACH_WAY = 2;
+
+    imagePreloadQueue_.clear();
+
+    if (!useTextureCaching_ || !items_ || items_->empty() ||
+        !scrollPoints_ || scrollPoints_->empty() ||
+        imageType_.empty()) {
+        return;
+    }
+
+    const size_t itemCount = items_->size();
+    const size_t slotCount = scrollPoints_->size();
+    const size_t selected = getSelectedIndex();
+    imagePreloadQueued_.clear();
+    if (imagePreloadQueued_.bucket_count() <
+        MAX_PRELOAD_CANDIDATES) {
+        imagePreloadQueued_.reserve(MAX_PRELOAD_CANDIDATES);
+    }
+
+    auto addCandidate = [&](size_t index, bool idleOnly) {
+        if (imagePreloadQueue_.size() >= MAX_PRELOAD_CANDIDATES ||
+            imagePreloadAttempted_.find(index) !=
+                imagePreloadAttempted_.end() ||
+            !imagePreloadQueued_.insert(index).second) {
+            return;
+        }
+
+        imagePreloadQueue_.push_back({ index, idleOnly });
+    };
+
+    size_t highPriorityRadius = 0;
+
+    if (directionKnown) {
+        const size_t ahead = std::max(slotCount * 4, size_t{ 24 });
+        const size_t behind = std::max(slotCount * 2, size_t{ 12 });
+        highPriorityRadius = std::max(ahead, behind);
+
+        for (size_t distance = 1;
+            distance <= highPriorityRadius;
+            ++distance)
+        {
+            if (distance <= ahead) {
+                addCandidate(
+                    forward
+                        ? loopIncrement(selected, distance, itemCount)
+                        : loopDecrement(selected, distance, itemCount),
+                    false
+                );
+            }
+            if (distance <= behind) {
+                addCandidate(
+                    forward
+                        ? loopDecrement(selected, distance, itemCount)
+                        : loopIncrement(selected, distance, itemCount),
+                    false
+                );
+            }
+        }
+    }
+    else {
+        highPriorityRadius =
+            std::max(slotCount * 3, size_t{ 16 });
+
+        for (size_t distance = 1;
+            distance <= highPriorityRadius;
+            ++distance)
+        {
+            addCandidate(
+                loopIncrement(selected, distance, itemCount),
+                false
+            );
+            addCandidate(
+                loopDecrement(selected, distance, itemCount),
+                false
+            );
+        }
+    }
+
+    // Warm the complete slot windows for the next and previous letter
+    // landings. This predicts sequential letter navigation without
+    // touching the items that would be skipped over.
+    if (letterAnchors_.size() > 1) {
+        const auto afterCurrent = std::upper_bound(
+            letterAnchors_.begin(),
+            letterAnchors_.end(),
+            selected
+        );
+        const size_t currentGroup =
+            afterCurrent == letterAnchors_.begin()
+            ? letterAnchors_.size() - 1
+            : static_cast<size_t>(
+                std::distance(
+                    letterAnchors_.begin(),
+                    afterCurrent
+                ) - 1
+            );
+
+        auto addLandingWindow = [&](size_t anchor) {
+            const size_t firstSlot = loopDecrement(
+                anchor,
+                selectedOffsetIndex_,
+                itemCount
+            );
+            for (size_t slot = 0; slot < slotCount; ++slot) {
+                addCandidate(
+                    loopIncrement(firstSlot, slot, itemCount),
+                    false
+                );
+            }
+        };
+
+        for (size_t step = 1;
+            step <= LETTER_ANCHORS_EACH_WAY;
+            ++step)
+        {
+            addLandingWindow(
+                letterAnchors_[
+                    loopIncrement(
+                        currentGroup,
+                        step,
+                        letterAnchors_.size()
+                    )
+                ]
+            );
+            addLandingWindow(
+                letterAnchors_[
+                    loopDecrement(
+                        currentGroup,
+                        step,
+                        letterAnchors_.size()
+                    )
+                ]
+            );
+        }
+    }
+
+    // Use true idle time to expand the warm neighborhood, while keeping
+    // active-navigation work limited to the candidates above.
+    for (size_t distance = 1;
+        distance < itemCount &&
+        imagePreloadQueue_.size() < MAX_PRELOAD_CANDIDATES;
+        ++distance)
+    {
+        addCandidate(
+            loopIncrement(selected, distance, itemCount),
+            true
+        );
+        addCandidate(
+            loopDecrement(selected, distance, itemCount),
+            true
+        );
+    }
+}
+
+void ScrollingList::pumpImagePreload_() {
+    constexpr unsigned int MAX_CACHE_HITS_PER_FRAME = 8;
+
+    if (!useTextureCaching_ || !items_ || items_->empty()) {
+        return;
+    }
+
+    for (unsigned int pass = 0;
+        pass < MAX_CACHE_HITS_PER_FRAME;
+        ++pass)
+    {
+        const bool allowIdleWork =
+            cachedIdle_ && letterSkipTimer_ <= 0.0f;
+
+        if (imagePreload_) {
+            imagePreload_->pumpGraphicsPreparation();
+            if (!imagePreload_->isGraphicsReadyForFirstRender()) {
+                return;
+            }
+
+            releaseImagePreload_();
+            return;
+        }
+
+        if (imagePreloadQueue_.empty()) {
+            return;
+        }
+
+        const ImagePreloadCandidate candidate =
+            imagePreloadQueue_.front();
+        if (candidate.idleOnly && !allowIdleWork) {
+            return;
+        }
+        imagePreloadQueue_.pop_front();
+
+        if (!imagePreloadAttempted_.insert(
+            candidate.itemIndex).second) {
+            continue;
+        }
+
+        const ResolvedMedia& media =
+            resolveMediaAt_(candidate.itemIndex);
+
+        // Video-backed entries already have their own pool and preroll
+        // policy. Only warm the normal, non-selected image path here.
+        if (!media.videoPath.empty() ||
+            media.idleImagePath.empty()) {
+            continue;
+        }
+
+        if (activeImagePreloads_ >= 1) {
+            imagePreloadQueue_.push_front(candidate);
+            return;
+        }
+
+        ++activeImagePreloads_;
+        ownsImagePreloadSlot_ = true;
+        imagePreloadIdleOnly_ = candidate.idleOnly;
+        imagePreload_ = std::make_shared<Image>(
+            media.idleImagePath,
+            "",
+            page,
+            baseViewInfo.Monitor,
+            baseViewInfo.Additive,
+            true
+        );
+        imagePreload_->allocateGraphicsMemory();
+        imagePreload_->pumpGraphicsPreparation();
+
+        if (!imagePreload_->isGraphicsReadyForFirstRender()) {
+            return;
+        }
+
+        releaseImagePreload_();
+        return;
+    }
+}
+
+void ScrollingList::releaseImagePreload_() {
+    imagePreload_.reset();
+    imagePreloadIdleOnly_ = false;
+
+    if (ownsImagePreloadSlot_) {
+        if (activeImagePreloads_ > 0) {
+            --activeImagePreloads_;
+        }
+        ownsImagePreloadSlot_ = false;
+    }
+}
+
+void ScrollingList::resetImagePreload_() {
+    releaseImagePreload_();
+    imagePreloadQueue_.clear();
+    imagePreloadAttempted_.clear();
+    imagePreloadQueued_.clear();
+    letterAnchors_.clear();
+}
+
+std::string ScrollingList::mediaCacheKey_(const Item& item) const {
+    const auto& names = item.baseNameCandidates(imageTypeLC_);
+    const std::string itemCollection =
+        item.collectionInfo ? item.collectionInfo->name : "";
+
+    std::string key;
+    key.reserve(
+        layoutCollectionsBase_.size() +
+        commonCollectionsBase_.size() +
+        collectionName.size() +
+        imageType_.size() +
+        videoType_.size() +
+        itemCollection.size() +
+        item.filepath.size() +
+        item.name.size() +
+        64
+    );
+
+    auto appendField = [&key](std::string_view value) {
+        key.append(std::to_string(value.size()));
+        key.push_back(':');
+        key.append(value);
+        key.push_back('|');
+    };
+
+    key.push_back(layoutMode_ ? 'L' : 'M');
+    key.push_back(commonMode_ ? 'C' : 'S');
+    key.push_back(selectedImage_ ? 'X' : 'I');
+    key.push_back('|');
+    appendField(layoutCollectionsBase_);
+    appendField(commonCollectionsBase_);
+    appendField(collectionName);
+    appendField(imageType_);
+    appendField(videoType_);
+    appendField(itemCollection);
+    appendField(item.filepath);
+    appendField(item.name);
+
+    for (std::string_view name : names) {
+        appendField(name);
+    }
+
+    return key;
+}
+
+ScrollingList::ResolvedMedia ScrollingList::resolveMediaForItem_(
+    const Item& item) const
+{
+    ResolvedMedia media;
+    const std::vector<std::string_view>& cachedNames =
+        item.baseNameCandidates(imageTypeLC_);
+    const std::string itemCollection =
+        item.collectionInfo ? item.collectionInfo->name : "";
+
+    for (size_t iter = 0; iter <= cachedNames.size(); ++iter) {
+        std::string name =
+            iter < cachedNames.size()
+            ? std::string(cachedNames[iter])
+            : "default";
+        std::string imagePath;
+        std::string videoPath;
+
+        if (layoutMode_) {
+            const std::string subPath =
+                commonMode_ ? "_common" : collectionName;
+            buildPaths(
+                imagePath,
+                videoPath,
+                layoutCollectionsBase_,
+                subPath,
+                imageType_,
+                videoType_
+            );
+        }
+        else {
+            if (commonMode_) {
+                buildPaths(
+                    imagePath,
+                    videoPath,
+                    commonCollectionsBase_,
+                    "",
+                    imageType_,
+                    videoType_
+                );
+            }
+            else {
+                config_.getMediaPropertyAbsolutePath(
+                    collectionName, imageType_, false, imagePath);
+                config_.getMediaPropertyAbsolutePath(
+                    collectionName, videoType_, false, videoPath);
+            }
+        }
+
+        if (media.videoPath.empty() && videoType_ != "null") {
+            VideoBuilder::resolveVideoPath(
+                videoPath, name, media.videoPath);
+        }
+        if (media.idleImagePath.empty() && !imageType_.empty()) {
+            ImageBuilder::resolveImagePath(
+                imagePath, name, media.idleImagePath);
+            if (selectedImage_) {
+                ImageBuilder::resolveImagePath(
+                    imagePath,
+                    name + "-selected",
+                    media.selectedImagePath
+                );
+            }
+        }
+
+        if (!media.videoPath.empty() && !media.idleImagePath.empty()) {
+            break;
+        }
+
+        std::string itemImagePath;
+        std::string itemVideoPath;
+        if (layoutMode_) {
+            buildPaths(
+                itemImagePath,
+                itemVideoPath,
+                layoutCollectionsBase_,
+                itemCollection,
+                imageType_,
+                videoType_
+            );
+        }
+        else {
+            if (commonMode_) {
+                buildPaths(
+                    itemImagePath,
+                    itemVideoPath,
+                    commonCollectionsBase_,
+                    "",
+                    imageType_,
+                    videoType_
+                );
+            }
+            else {
+                config_.getMediaPropertyAbsolutePath(
+                    itemCollection, imageType_, false, itemImagePath);
+                config_.getMediaPropertyAbsolutePath(
+                    itemCollection, videoType_, false, itemVideoPath);
+            }
+        }
+
+        if (media.videoPath.empty() && videoType_ != "null") {
+            VideoBuilder::resolveVideoPath(
+                itemVideoPath, name, media.videoPath);
+        }
+        if (media.idleImagePath.empty() && !imageType_.empty()) {
+            ImageBuilder::resolveImagePath(
+                itemImagePath, name, media.idleImagePath);
+            if (selectedImage_) {
+                ImageBuilder::resolveImagePath(
+                    itemImagePath,
+                    name + "-selected",
+                    media.selectedImagePath
+                );
+            }
+        }
+
+        if (!media.videoPath.empty() || !media.idleImagePath.empty()) {
+            break;
+        }
+    }
+
+    if (media.videoPath.empty() && media.idleImagePath.empty()) {
+        std::string sysImgPath;
+        std::string sysVidPath;
+        if (layoutMode_) {
+            sysImgPath = Utils::combinePath(
+                layoutCollectionsBase_,
+                commonMode_ ? "_common" : item.name,
+                "system_artwork"
+            );
+            sysVidPath = sysImgPath;
+        }
+        else {
+            if (commonMode_) {
+                sysImgPath = Utils::combinePath(
+                    commonCollectionsBase_, "system_artwork");
                 sysVidPath = sysImgPath;
             }
             else {
-                if (commonMode_) {
-                    sysImgPath = Utils::combinePath(commonCollectionsBase_, "system_artwork");
-                    sysVidPath = sysImgPath;
-                }
-                else {
-                    config_.getMediaPropertyAbsolutePath(item->name, imageType_, true, sysImgPath);
-                    config_.getMediaPropertyAbsolutePath(item->name, videoType_, true, sysVidPath);
-                }
-            }
-
-            if (videoType_ != "null") VideoBuilder::resolveVideoPath(sysVidPath, videoType_, media.videoPath);
-            if (!imageType_.empty()) {
-                ImageBuilder::resolveImagePath(sysImgPath, imageType_, media.idleImagePath);
-                if (isSelectedItem) ImageBuilder::resolveImagePath(sysImgPath, imageType_ + "-selected", media.selectedImagePath);
+                config_.getMediaPropertyAbsolutePath(
+                    item.name, imageType_, true, sysImgPath);
+                config_.getMediaPropertyAbsolutePath(
+                    item.name, videoType_, true, sysVidPath);
             }
         }
 
-        // Fallback: ROM Path
-        if (media.videoPath.empty() && media.idleImagePath.empty()) {
-            if (videoType_ != "null") VideoBuilder::resolveVideoPath(item->filepath, videoType_, media.videoPath);
-            if (!imageType_.empty()) {
-                ImageBuilder::resolveImagePath(item->filepath, imageType_, media.idleImagePath);
-                if (isSelectedItem) ImageBuilder::resolveImagePath(item->filepath, imageType_ + "-selected", media.selectedImagePath);
+        if (videoType_ != "null") {
+            VideoBuilder::resolveVideoPath(
+                sysVidPath, videoType_, media.videoPath);
+        }
+        if (!imageType_.empty()) {
+            ImageBuilder::resolveImagePath(
+                sysImgPath, imageType_, media.idleImagePath);
+            if (selectedImage_) {
+                ImageBuilder::resolveImagePath(
+                    sysImgPath,
+                    imageType_ + "-selected",
+                    media.selectedImagePath
+                );
             }
         }
-
-        mediaCache_[i] = media;
     }
+
+    if (media.videoPath.empty() && media.idleImagePath.empty()) {
+        if (videoType_ != "null") {
+            VideoBuilder::resolveVideoPath(
+                item.filepath, videoType_, media.videoPath);
+        }
+        if (!imageType_.empty()) {
+            ImageBuilder::resolveImagePath(
+                item.filepath, imageType_, media.idleImagePath);
+            if (selectedImage_) {
+                ImageBuilder::resolveImagePath(
+                    item.filepath,
+                    imageType_ + "-selected",
+                    media.selectedImagePath
+                );
+            }
+        }
+    }
+
+    return media;
+}
+
+const ScrollingList::ResolvedMedia& ScrollingList::resolveMediaAt_(
+    size_t fullListIndex)
+{
+    static const ResolvedMedia emptyMedia;
+
+    if (!items_ || fullListIndex >= items_->size() ||
+        fullListIndex >= mediaCache_.size()) {
+        return emptyMedia;
+    }
+
+    if (mediaCache_[fullListIndex]) {
+        return *mediaCache_[fullListIndex];
+    }
+
+    const Item* item = (*items_)[fullListIndex];
+    if (!item) {
+        return emptyMedia;
+    }
+
+    const std::string key = mediaCacheKey_(*item);
+    auto shared = sharedMediaCache_.find(key);
+
+    if (shared == sharedMediaCache_.end()) {
+        if (sharedMediaCache_.size() >= 16384) {
+            sharedMediaCache_.clear();
+        }
+
+        auto resolved =
+            std::make_shared<const ResolvedMedia>(
+                resolveMediaForItem_(*item)
+            );
+        shared = sharedMediaCache_.emplace(key, resolved).first;
+    }
+
+    mediaCache_[fullListIndex] = shared->second;
+    return *mediaCache_[fullListIndex];
 }
 
 void ScrollingList::selectItemByName(std::string_view name)
@@ -342,9 +850,8 @@ void ScrollingList::allocateSpritePoints() {
     if (components_.empty()) return;
 
     size_t itemsSize = items_->size();
-    size_t scrollPointsSize = scrollPoints_->size();
 
-    for (size_t i = 0; i < scrollPointsSize; ++i) {
+    for (size_t i : visualPriorityOrder_()) {
         const size_t index = loopIncrement(itemIndex_, i, itemsSize);
 
         allocateTexture(i, index);
@@ -354,6 +861,8 @@ void ScrollingList::allocateSpritePoints() {
             resetTweens(c, (*tweenPoints_)[i], view, view, 0);
         }
     }
+
+    refreshPreparationPriorityHints_();
 }
 
 void ScrollingList::reallocateSpritePoints() {
@@ -392,7 +901,7 @@ void ScrollingList::reallocateSpritePoints() {
     }
 
     // --- Step 4: Reallocate components and assign tweens ---
-    for (size_t i = 0; i < scrollPointsSize; ++i) {
+    for (size_t i : visualPriorityOrder_()) {
         size_t index = loopIncrement(itemIndex_, i, itemsSize);
 
         // allocateTexture will now call VideoPool::acquireVideo, which 
@@ -406,6 +915,8 @@ void ScrollingList::reallocateSpritePoints() {
             resetTweens(c, (*tweenPoints_)[i], view, view, 0);
         }
     }
+
+    refreshPreparationPriorityHints_();
 }
 
 void ScrollingList::destroyItems() {
@@ -425,6 +936,7 @@ void ScrollingList::destroyItems() {
 void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints) {
     
+    resetImagePreload_();
     deallocateSpritePoints();
 
     clearPoints();
@@ -433,13 +945,27 @@ void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     scrollPoints_ = scrollPoints;
     tweenPoints_ = std::move(tweenPoints);
 
+    if (items_ && !items_->empty()) {
+        itemIndex_ = loopDecrement(0, selectedOffsetIndex_, items_->size());
+    }
+    else {
+        itemIndex_ = 0;
+    }
+
+    rebuildSlotTopology_();
+
+    // Allocate and initialize components (existing behavior)
+    allocateSpritePoints();
+    rebuildLetterAnchors_();
+    refreshImagePreloadQueue_();
+}
+
+void ScrollingList::rebuildSlotTopology_(bool initializeComponents) {
     const size_t N = (scrollPoints_ ? scrollPoints_->size() : 0);
 
-    // Reset circular buffer (fills with nullptrs)
-    components_.initialize(N);
-
-    if (items_) {
-        itemIndex_ = loopDecrement(0, selectedOffsetIndex_, items_->size());
+    if (initializeComponents || components_.size() != N) {
+        // Reset circular buffer (fills with nullptrs)
+        components_.initialize(N);
     }
 
     // --- Precompute neighbor index maps ---
@@ -455,7 +981,10 @@ void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     forwardTween_.resize(N);
     backwardTween_.resize(N);
 
-    if (N > 0 && tweenPoints_ && scrollPoints_) {
+    if (N > 0 &&
+        tweenPoints_ &&
+        tweenPoints_->size() >= N &&
+        scrollPoints_) {
         for (size_t i = 0; i < N; ++i) {
             const size_t jF = forwardMap_[i];
             const size_t jB = backwardMap_[i];
@@ -463,12 +992,24 @@ void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
             forwardTween_[i] = TweenNeighbor{
                 (*tweenPoints_)[jF],
                 (*scrollPoints_)[i],
-                (*scrollPoints_)[jF]
+                (*scrollPoints_)[jF],
+                buildTweenTemplate_(
+                    *(*scrollPoints_)[i],
+                    *(*scrollPoints_)[jF]
+                ),
+                (*scrollPoints_)[i]->Restart !=
+                    (*scrollPoints_)[jF]->Restart
             };
             backwardTween_[i] = TweenNeighbor{
                 (*tweenPoints_)[jB],
                 (*scrollPoints_)[i],
-                (*scrollPoints_)[jB]
+                (*scrollPoints_)[jB],
+                buildTweenTemplate_(
+                    *(*scrollPoints_)[i],
+                    *(*scrollPoints_)[jB]
+                ),
+                (*scrollPoints_)[i]->Restart !=
+                    (*scrollPoints_)[jB]->Restart
             };
         }
     }
@@ -481,9 +1022,6 @@ void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
         const size_t desiredTotal = N + VideoPool::POOL_BUFFER_INSTANCES;  // or N + POOL_BUFFER_INSTANCES
         VideoPool::reserveCapacity(baseViewInfo.Monitor, listId_, desiredTotal);
     }
-
-    // Allocate and initialize components (your existing behavior)
-    allocateSpritePoints();
 }
 
 
@@ -495,11 +1033,14 @@ size_t ScrollingList::getScrollOffsetIndex( ) const
 void ScrollingList::setScrollOffsetIndex( size_t index )
 {
     itemIndex_ = loopDecrement( index, selectedOffsetIndex_, items_->size());
+    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::setSelectedIndex( int selectedIndex )
 {
     selectedOffsetIndex_ = selectedIndex;
+    refreshPreparationPriorityHints_();
+    refreshImagePreloadQueue_();
 }
 
 Item *ScrollingList::getItemByOffset(int offset)
@@ -532,12 +1073,14 @@ void ScrollingList::pageUp()
 {
     if (components_.empty()) return; // More idiomatic
     itemIndex_ = loopDecrement(itemIndex_, components_.size(), items_->size());
+    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::pageDown()
 {
     if (components_.empty()) return; // More idiomatic
     itemIndex_ = loopIncrement(itemIndex_, components_.size(), items_->size());
+    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::random( )
@@ -546,6 +1089,7 @@ void ScrollingList::random( )
     size_t itemSize = items_->size();
     
     itemIndex_ = rand( ) % itemSize;
+    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::letterUp( )
@@ -667,6 +1211,7 @@ void ScrollingList::letterChange(bool increment) {
 
     // 5. Update the list's index
     itemIndex_ = newIndex;
+    refreshImagePreloadQueue_();
 }
 
 size_t ScrollingList::loopIncrement(size_t currentIndex, size_t incrementAmount, size_t N) const {
@@ -746,6 +1291,8 @@ void ScrollingList::metaChange(bool increment, const std::string& attribute)
             itemIndex_ = loopIncrement(itemIndex_, 1, itemSize);
         }
     }
+
+    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::subChange(bool increment)
@@ -787,6 +1334,8 @@ void ScrollingList::subChange(bool increment)
             itemIndex_ = loopIncrement(itemIndex_, 1, itemSize);
         }
     }
+
+    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::cfwLetterSubUp()
@@ -827,12 +1376,15 @@ void ScrollingList::allocateGraphicsMemory( )
     scrollPeriod_ = startScrollTime_;
 
     allocateSpritePoints( );
+    rebuildLetterAnchors_();
+    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::freeGraphicsMemory() {
     Component::freeGraphicsMemory();
 
     resetScrollPeriod();
+    resetImagePreload_();
 
     deallocateSpritePoints();
 
@@ -849,9 +1401,32 @@ void ScrollingList::pumpGraphicsPreparation() {
     }
 }
 
+void ScrollingList::waitForGraphicsPreparation() {
+    const size_t count = std::min(
+        components_.size(),
+        scrollPoints_ ? scrollPoints_->size() : size_t{ 0 }
+    );
+
+    for (size_t i = 0; i < count; ++i) {
+        Component* component = components_[i];
+        if (component && preparationTierForIndex_(i) <= 1) {
+            component->waitForGraphicsPreparation();
+        }
+    }
+}
+
 bool ScrollingList::isGraphicsReadyForFirstRender() const {
-    for (Component* c : components_.raw()) {
-        if (c && !c->isGraphicsReadyForFirstRender()) {
+    const size_t count = std::min(
+        components_.size(),
+        scrollPoints_ ? scrollPoints_->size() : size_t{ 0 }
+    );
+
+    for (size_t i = 0; i < count; ++i) {
+        Component* component = components_[i];
+        if (component &&
+            preparationTierForIndex_(i) <= 1 &&
+            !component->isGraphicsReadyForFirstRender())
+        {
             return false;
         }
     }
@@ -992,11 +1567,13 @@ bool ScrollingList::update(float dt) {
     }
 
     // 2. Child Component Updates (Evaluate idle state)
-    size_t scrollPointsSize = scrollPoints_ ? scrollPoints_->size() : 0;
+    const size_t scrollPointsSize =
+        scrollPoints_ ? scrollPoints_->size() : 0;
+
     bool allIdle = Component::isIdle();
     bool allAttractIdle = Component::isAttractIdle();
 
-    for (unsigned int i = 0; i < scrollPointsSize; i++) {
+    for (size_t i = 0; i < scrollPointsSize; ++i) {
         Component* c = components_[i];
         if (c) {
             done &= c->update(dt);
@@ -1007,6 +1584,7 @@ bool ScrollingList::update(float dt) {
 
     cachedIdle_ = allIdle;
     cachedAttractIdle_ = allAttractIdle;
+    pumpImagePreload_();
 
     // Notice: The movement logic is gone from here! It lives in Page.cpp now.
     return done;
@@ -1022,6 +1600,7 @@ void ScrollingList::setItemIndex( unsigned int index )
 {
      if ( !items_ ) return;
      itemIndex_ = loopDecrement( index, selectedOffsetIndex_, items_->size( ) );
+     refreshImagePreloadQueue_();
 }
 
 size_t ScrollingList::getSize() const
@@ -1030,7 +1609,86 @@ size_t ScrollingList::getSize() const
     return items_->size();
 }
 
-void ScrollingList::resetTweens(Component* c, const std::shared_ptr<AnimationEvents>& sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, float scrollTime) const {
+TweenSet ScrollingList::buildTweenTemplate_(
+    const ViewInfo& current,
+    const ViewInfo& next) const
+{
+    constexpr float EPSILON_FLOAT = 0.0001f;
+    TweenSet set;
+
+    auto addFloat = [&set](
+        TweenProperty property,
+        float start,
+        float end)
+    {
+        set.push(Tween(property, LINEAR, start, end, 0.0f));
+    };
+
+    if (std::abs(current.Height - next.Height) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_HEIGHT, current.Height, next.Height);
+    if (std::abs(current.Width - next.Width) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_WIDTH, current.Width, next.Width);
+    if (std::abs(current.Angle - next.Angle) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_ANGLE, current.Angle, next.Angle);
+    if (std::abs(current.Alpha - next.Alpha) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_ALPHA, current.Alpha, next.Alpha);
+    if (std::abs(current.X - next.X) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_X, current.X, next.X);
+    if (std::abs(current.Y - next.Y) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_Y, current.Y, next.Y);
+    if (std::abs(current.XOrigin - next.XOrigin) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_X_ORIGIN, current.XOrigin, next.XOrigin);
+    if (std::abs(current.YOrigin - next.YOrigin) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_Y_ORIGIN, current.YOrigin, next.YOrigin);
+    if (std::abs(current.XOffset - next.XOffset) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_X_OFFSET, current.XOffset, next.XOffset);
+    if (std::abs(current.YOffset - next.YOffset) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_Y_OFFSET, current.YOffset, next.YOffset);
+    if (std::abs(current.FontSize - next.FontSize) > EPSILON_FLOAT)
+        addFloat(
+            TWEEN_PROPERTY_FONT_SIZE,
+            current.FontSize,
+            next.FontSize
+        );
+    if (std::abs(current.MaxWidth - next.MaxWidth) > EPSILON_FLOAT)
+        addFloat(
+            TWEEN_PROPERTY_MAX_WIDTH,
+            current.MaxWidth,
+            next.MaxWidth
+        );
+    if (std::abs(current.MaxHeight - next.MaxHeight) > EPSILON_FLOAT)
+        addFloat(
+            TWEEN_PROPERTY_MAX_HEIGHT,
+            current.MaxHeight,
+            next.MaxHeight
+        );
+    if (current.Layer != next.Layer)
+        addFloat(
+            TWEEN_PROPERTY_LAYER,
+            static_cast<float>(current.Layer),
+            static_cast<float>(next.Layer)
+        );
+    if (std::abs(current.Volume - next.Volume) > EPSILON_FLOAT)
+        addFloat(TWEEN_PROPERTY_VOLUME, current.Volume, next.Volume);
+    if (current.Monitor != next.Monitor)
+        addFloat(
+            TWEEN_PROPERTY_MONITOR,
+            static_cast<float>(current.Monitor),
+            static_cast<float>(next.Monitor)
+        );
+
+    return set;
+}
+
+void ScrollingList::resetTweens(
+    Component* c,
+    const std::shared_ptr<AnimationEvents>& sets,
+    ViewInfo* currentViewInfo,
+    ViewInfo* nextViewInfo,
+    float scrollTime,
+    const TweenSet* transitionTemplate,
+    bool restartChanges) const
+{
     if (!c || !sets || !currentViewInfo || !nextViewInfo) return;
 
     c->setTweens(sets);
@@ -1048,6 +1706,8 @@ void ScrollingList::resetTweens(Component* c, const std::shared_ptr<AnimationEve
     const float oldNextImageHeight = nextViewInfo->ImageHeight;
     const float oldNextImageWidth = nextViewInfo->ImageWidth;
     const float oldNextBackgroundAlpha = nextViewInfo->BackgroundAlpha;
+    const float componentBackgroundAlpha =
+        c->baseViewInfo.BackgroundAlpha;
 
     // Temporary runtime patch for correct image rendering during this tween setup.
     currentViewInfo->ImageHeight = c->baseViewInfo.ImageHeight;
@@ -1062,64 +1722,41 @@ void ScrollingList::resetTweens(Component* c, const std::shared_ptr<AnimationEve
     c->baseViewInfo = *currentViewInfo;
 
 
-    // Allocate the TweenSet on the stack for cache efficiency
-    TweenSet set;
+    TweenSet set = transitionTemplate
+        ? *transitionTemplate
+        : buildTweenTemplate_(*currentViewInfo, *nextViewInfo);
     const float EPSILON_FLOAT = 0.0001f;
 
-    // Conditionally add Tweens only if properties differ
-    if (currentViewInfo->Restart != nextViewInfo->Restart && scrollTime > 0.0f) {
-        set.push(Tween(TWEEN_PROPERTY_RESTART, LINEAR, static_cast<float>(currentViewInfo->Restart), static_cast<float>(nextViewInfo->Restart), 0.0f));
+    for (size_t i = 0; i < set.size(); ++i) {
+        if (Tween* tween = set.getTween(static_cast<unsigned int>(i))) {
+            tween->duration = scrollTime;
+        }
     }
-    if (std::abs(currentViewInfo->Height - nextViewInfo->Height) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_HEIGHT, LINEAR, static_cast<float>(currentViewInfo->Height), static_cast<float>(nextViewInfo->Height), scrollTime));
+
+    if ((restartChanges ||
+        currentViewInfo->Restart != nextViewInfo->Restart) &&
+        scrollTime > 0.0f)
+    {
+        set.push(Tween(
+            TWEEN_PROPERTY_RESTART,
+            LINEAR,
+            static_cast<float>(currentViewInfo->Restart),
+            static_cast<float>(nextViewInfo->Restart),
+            0.0f
+        ));
     }
-    if (std::abs(currentViewInfo->Width - nextViewInfo->Width) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_WIDTH, LINEAR, static_cast<float>(currentViewInfo->Width), static_cast<float>(nextViewInfo->Width), scrollTime));
-    }
-    if (std::abs(currentViewInfo->Angle - nextViewInfo->Angle) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_ANGLE, LINEAR, static_cast<float>(currentViewInfo->Angle), static_cast<float>(nextViewInfo->Angle), scrollTime));
-    }
-    if (std::abs(currentViewInfo->Alpha - nextViewInfo->Alpha) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_ALPHA, LINEAR, static_cast<float>(currentViewInfo->Alpha), static_cast<float>(nextViewInfo->Alpha), scrollTime));
-    }
-    if (std::abs(currentViewInfo->X - nextViewInfo->X) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_X, LINEAR, static_cast<float>(currentViewInfo->X), static_cast<float>(nextViewInfo->X), scrollTime));
-    }
-    if (std::abs(currentViewInfo->Y - nextViewInfo->Y) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_Y, LINEAR, static_cast<float>(currentViewInfo->Y), static_cast<float>(nextViewInfo->Y), scrollTime));
-    }
-    if (std::abs(currentViewInfo->XOrigin - nextViewInfo->XOrigin) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_X_ORIGIN, LINEAR, static_cast<float>(currentViewInfo->XOrigin), static_cast<float>(nextViewInfo->XOrigin), scrollTime));
-    }
-    if (std::abs(currentViewInfo->YOrigin - nextViewInfo->YOrigin) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_Y_ORIGIN, LINEAR, static_cast<float>(currentViewInfo->YOrigin), static_cast<float>(nextViewInfo->YOrigin), scrollTime));
-    }
-    if (std::abs(currentViewInfo->XOffset - nextViewInfo->XOffset) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_X_OFFSET, LINEAR, static_cast<float>(currentViewInfo->XOffset), static_cast<float>(nextViewInfo->XOffset), scrollTime));
-    }
-    if (std::abs(currentViewInfo->YOffset - nextViewInfo->YOffset) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_Y_OFFSET, LINEAR, static_cast<float>(currentViewInfo->YOffset), static_cast<float>(nextViewInfo->YOffset), scrollTime));
-    }
-    if (std::abs(currentViewInfo->FontSize - nextViewInfo->FontSize) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_FONT_SIZE, LINEAR, static_cast<float>(currentViewInfo->FontSize), static_cast<float>(nextViewInfo->FontSize), scrollTime));
-    }
-    if (std::abs(currentViewInfo->BackgroundAlpha - nextViewInfo->BackgroundAlpha) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, static_cast<float>(currentViewInfo->BackgroundAlpha), static_cast<float>(nextViewInfo->BackgroundAlpha), scrollTime));
-    }
-    if (std::abs(currentViewInfo->MaxWidth - nextViewInfo->MaxWidth) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_MAX_WIDTH, LINEAR, static_cast<float>(currentViewInfo->MaxWidth), static_cast<float>(nextViewInfo->MaxWidth), scrollTime));
-    }
-    if (std::abs(currentViewInfo->MaxHeight - nextViewInfo->MaxHeight) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_MAX_HEIGHT, LINEAR, static_cast<float>(currentViewInfo->MaxHeight), static_cast<float>(nextViewInfo->MaxHeight), scrollTime));
-    }
-    if (currentViewInfo->Layer != nextViewInfo->Layer) {
-        set.push(Tween(TWEEN_PROPERTY_LAYER, LINEAR, static_cast<float>(currentViewInfo->Layer), static_cast<float>(nextViewInfo->Layer), scrollTime));
-    }
-    if (std::abs(currentViewInfo->Volume - nextViewInfo->Volume) > EPSILON_FLOAT) {
-        set.push(Tween(TWEEN_PROPERTY_VOLUME, LINEAR, static_cast<float>(currentViewInfo->Volume), static_cast<float>(nextViewInfo->Volume), scrollTime));
-    }
-    if (currentViewInfo->Monitor != nextViewInfo->Monitor) {
-        set.push(Tween(TWEEN_PROPERTY_MONITOR, LINEAR, static_cast<float>(currentViewInfo->Monitor), static_cast<float>(nextViewInfo->Monitor), scrollTime));
+
+    if (std::abs(
+        currentViewInfo->BackgroundAlpha -
+        componentBackgroundAlpha) > EPSILON_FLOAT)
+    {
+        set.push(Tween(
+            TWEEN_PROPERTY_BACKGROUND_ALPHA,
+            LINEAR,
+            currentViewInfo->BackgroundAlpha,
+            componentBackgroundAlpha,
+            scrollTime
+        ));
     }
 
     // C++20: Use std::move to trigger the rvalue overload and avoid deep-copying the vector
@@ -1138,12 +1775,13 @@ void ScrollingList::resetTweens(Component* c, const std::shared_ptr<AnimationEve
 }
 
 bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex) {
-    if (componentIndex >= components_.size() || fullListIndex >= mediaCache_.size()) return false;
+    if (!items_ || componentIndex >= components_.size() ||
+        fullListIndex >= items_->size()) return false;
 
     Component* existingComponent = components_[componentIndex];
     components_[componentIndex] = nullptr;
 
-    const ResolvedMedia& media = mediaCache_[fullListIndex];
+    const ResolvedMedia& media = resolveMediaAt_(fullListIndex);
     const Item* item = (*items_)[fullListIndex];
     Component* t = nullptr;
 
@@ -1152,6 +1790,7 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
 
     const std::string& selectedItemName = getSelectedItemName();
     const bool isSelectedItem = (selectedImage_ && item->name == selectedItemName);
+    bool loadedNormalImage = false;
 
     // 1. Instantly load Video from exact resolved path
     if (!media.videoPath.empty()) {
@@ -1164,6 +1803,8 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
         std::string imageToLoad = (isSelectedItem && !media.selectedImagePath.empty()) ? media.selectedImagePath : media.idleImagePath;
         if (!imageToLoad.empty()) {
             t = imageBuild.CreateImageFromResolved(imageToLoad, page, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_, existingComponent);
+            loadedNormalImage =
+                imageToLoad == media.idleImagePath;
         }
     }
 
@@ -1191,6 +1832,10 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
         }
 
         components_[componentIndex] = t;
+
+        if (media.videoPath.empty() && loadedNormalImage) {
+            imagePreloadAttempted_.insert(fullListIndex);
+        }
     }
 
     if (existingComponent != nullptr && existingComponent != t) {
@@ -1200,7 +1845,7 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
     return true;
 }
 
-void ScrollingList::buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) {
+void ScrollingList::buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) const {
     imagePath = Utils::combinePath(base, subPath, "medium_artwork", mediaType);
     videoPath = Utils::combinePath(base, subPath, "medium_artwork", videoType);
 }
@@ -1320,6 +1965,7 @@ void ScrollingList::syncToSelectedIndex(size_t selectedIndex) {
     }
 
     itemIndex_ = loopDecrement(selectedIndex, selectedOffsetIndex_, items_->size());
+    refreshImagePreloadQueue_();
 }
 
 float ScrollingList::getScrollPeriod() const {
@@ -1386,7 +2032,15 @@ void ScrollingList::scrollToSelectedIndex(size_t newSelectedIndex, bool forward,
 
             const TweenNeighbor& t = T[index];
 
-            resetTweens(component, t.tween, t.cur, t.next, scrollTime);
+            resetTweens(
+                component,
+                t.tween,
+                t.cur,
+                t.next,
+                scrollTime,
+                &t.transitionTemplate,
+                t.restartChanges
+            );
 
             if (component->baseViewInfo.font != t.next->font) {
                 component->baseViewInfo.font = t.next->font;
@@ -1397,8 +2051,10 @@ void ScrollingList::scrollToSelectedIndex(size_t newSelectedIndex, bool forward,
     }
 
     components_.rotate(forward);
+    refreshPreparationPriorityHints_();
 
     itemIndex_ = newItemIndex;
+    refreshImagePreloadQueue_(true, forward);
 
     cachedIdle_ = false;
     cachedAttractIdle_ = false;
@@ -1457,7 +2113,15 @@ void ScrollingList::scroll(bool forward) {
 
             const TweenNeighbor& t = T[index];
 
-            resetTweens(component, t.tween, t.cur, t.next, scrollPeriod_);
+            resetTweens(
+                component,
+                t.tween,
+                t.cur,
+                t.next,
+                scrollPeriod_,
+                &t.transitionTemplate,
+                t.restartChanges
+            );
 
             if (component->baseViewInfo.font != t.next->font) {
                 component->baseViewInfo.font = t.next->font;
@@ -1468,6 +2132,8 @@ void ScrollingList::scroll(bool forward) {
     }
 
     components_.rotate(forward);
+    refreshPreparationPriorityHints_();
+    refreshImagePreloadQueue_(true, forward);
 
     cachedIdle_ = false;
     cachedAttractIdle_ = false;
@@ -1481,4 +2147,177 @@ void ScrollingList::scroll(bool forward) {
 bool ScrollingList::isPlaylist() const
 {
     return playlistType_;
+}
+
+unsigned int ScrollingList::getVisualPriorityLayer() const {
+    const unsigned int bestTier = getVisualPriorityTier();
+    unsigned int highestLayer = 0;
+    bool found = false;
+
+    if (!scrollPoints_) {
+        return baseViewInfo.Layer;
+    }
+
+    const size_t count =
+        std::min(scrollPoints_->size(), components_.size());
+
+    for (size_t i = 0; i < count; ++i) {
+        if (preparationTierForIndex_(i) == bestTier) {
+            highestLayer = std::max(highestLayer, layerForIndex_(i));
+            found = true;
+        }
+    }
+
+    return found ? highestLayer : baseViewInfo.Layer;
+}
+
+unsigned int ScrollingList::getVisualPriorityTier() const {
+    constexpr unsigned int DORMANT_TIER = 2;
+    unsigned int bestTier = DORMANT_TIER;
+
+    if (!scrollPoints_) {
+        return bestTier;
+    }
+
+    const size_t count =
+        std::min(scrollPoints_->size(), components_.size());
+
+    for (size_t i = 0; i < count; ++i) {
+        bestTier = std::min(bestTier, preparationTierForIndex_(i));
+    }
+
+    return bestTier;
+}
+
+bool ScrollingList::isSlotVisible_(size_t index) const {
+    if (!scrollPoints_ || index >= scrollPoints_->size()) {
+        return false;
+    }
+
+    if (index < components_.size()) {
+        const Component* component = components_[index];
+        if (component) {
+            return component->isVisibleForGraphicsPreparation();
+        }
+    }
+
+    const ViewInfo* view = (*scrollPoints_)[index];
+    if (!view || view->Alpha <= 0.0f) {
+        return false;
+    }
+
+    const float width = view->ScaledWidth();
+    const float height = view->ScaledHeight();
+
+    if (!std::isfinite(width) || !std::isfinite(height) ||
+        width <= 0.0f || height <= 0.0f) {
+        return true;
+    }
+
+    const float viewportWidth =
+        static_cast<float>(page.getLayoutWidthByMonitor(view->Monitor));
+    const float viewportHeight =
+        static_cast<float>(page.getLayoutHeightByMonitor(view->Monitor));
+
+    if (viewportWidth <= 0.0f || viewportHeight <= 0.0f) {
+        return true;
+    }
+
+    const float x = view->XRelativeToOrigin();
+    const float y = view->YRelativeToOrigin();
+
+    return x + width > 0.0f && x < viewportWidth &&
+        y + height > 0.0f && y < viewportHeight;
+}
+
+unsigned int ScrollingList::preparationTierForIndex_(size_t index) const {
+    if (isSlotVisible_(index)) {
+        return 0;
+    }
+
+    if (index < components_.size()) {
+        const Component* component = components_[index];
+        if (component && !component->isIdle()) {
+            return 0;
+        }
+    }
+
+    return index == selectedOffsetIndex_ ? 1 : 2;
+}
+
+unsigned int ScrollingList::layerForIndex_(size_t index) const {
+    if (index < components_.size()) {
+        const Component* component = components_[index];
+        if (component) {
+            return component->baseViewInfo.Layer;
+        }
+    }
+
+    if (scrollPoints_ && index < scrollPoints_->size() &&
+        (*scrollPoints_)[index]) {
+        return (*scrollPoints_)[index]->Layer;
+    }
+
+    return baseViewInfo.Layer;
+}
+
+void ScrollingList::refreshPreparationPriorityHints_() {
+    for (size_t i = 0; i < components_.size(); ++i) {
+        Component* component = components_[i];
+        if (component) {
+            component->setHighPriority(i == selectedOffsetIndex_);
+        }
+    }
+}
+
+std::vector<size_t> ScrollingList::visualPriorityOrder_() const {
+    std::vector<size_t> order;
+
+    if (!scrollPoints_) {
+        return order;
+    }
+
+    const size_t count =
+        std::min(scrollPoints_->size(), components_.size());
+
+    order.reserve(count);
+
+    for (size_t i = 0; i < count; ++i) {
+        order.push_back(i);
+    }
+
+    std::stable_sort(
+        order.begin(),
+        order.end(),
+        [this](size_t lhs, size_t rhs) {
+            const unsigned int lhsTier =
+                preparationTierForIndex_(lhs);
+            const unsigned int rhsTier =
+                preparationTierForIndex_(rhs);
+
+            if (lhsTier != rhsTier) {
+                return lhsTier < rhsTier;
+            }
+
+            const unsigned int lhsLayer = layerForIndex_(lhs);
+            const unsigned int rhsLayer = layerForIndex_(rhs);
+
+            if (lhsLayer != rhsLayer) {
+                return lhsLayer > rhsLayer;
+            }
+
+            const bool lhsVisible = isSlotVisible_(lhs);
+            const bool rhsVisible = isSlotVisible_(rhs);
+
+            if (lhsVisible != rhsVisible) {
+                return lhsVisible;
+            }
+
+            const bool lhsSelected = lhs == selectedOffsetIndex_;
+            const bool rhsSelected = rhs == selectedOffsetIndex_;
+            return lhsSelected && !rhsSelected;
+        }
+    );
+
+    return order;
 }

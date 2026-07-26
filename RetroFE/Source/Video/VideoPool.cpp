@@ -112,7 +112,7 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
         return; // Early exit: reference drops to 0 and the pipeline is instantly destroyed
     }
 
-    // Eviction ceiling — destroy without unloading, stop() handles cleanup
+    // Eviction ceiling â€” destroy without unloading, stop() handles cleanup
     if (pool.initialCountLatched) {
         size_t totalCached = pool.ready.size() + pool.draining.size();
         if (totalCached >= pool.requiredInstanceCount) {
@@ -134,7 +134,10 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
     pool.draining.push_back(std::move(vid));
 
     if (!pool.initialCountLatched) {
-        pool.requiredInstanceCount = pool.observedMaxActive + POOL_BUFFER_INSTANCES;
+        pool.requiredInstanceCount = std::max(
+            pool.requiredInstanceCount,
+            pool.observedMaxActive + POOL_BUFFER_INSTANCES
+        );
         pool.initialCountLatched = true;
         LOG_DEBUG("VideoPool", "Release (LATCHED cap=" + std::to_string(pool.requiredInstanceCount) + ") " + poolStateStr(monitor, listId, pool));
     }

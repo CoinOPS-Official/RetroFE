@@ -19,6 +19,7 @@
 #include <map>
 #include <vector>
 #include <unordered_map>
+#include <shared_mutex>
 
 class Configuration
 {
@@ -64,5 +65,6 @@ private:
     typedef std::pair<std::string, std::string> PropertiesPair;
 
     PropertiesType properties_;
+    mutable std::shared_mutex propertiesMutex_;
 
 };

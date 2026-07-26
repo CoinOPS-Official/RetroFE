@@ -1065,7 +1065,7 @@ void MusicPlayer::addVisualizerListener(MusicPlayerComponent* listener) {
 
     if (std::find(visualizerListeners_.begin(), visualizerListeners_.end(), listener) == visualizerListeners_.end()) {
         visualizerListeners_.push_back(listener);
-        hasActiveVisualizers_ = true;
+        hasActiveVisualizers_.store(true, std::memory_order_release);
     }
 }
 
@@ -1073,20 +1073,34 @@ void MusicPlayer::removeVisualizerListener(MusicPlayerComponent* listener) {
     std::lock_guard<std::mutex> lock(visualizerMutex_);
     auto it = std::remove(visualizerListeners_.begin(), visualizerListeners_.end(), listener);
     visualizerListeners_.erase(it, visualizerListeners_.end());
-    hasActiveVisualizers_ = !visualizerListeners_.empty();
+    hasActiveVisualizers_.store(
+        !visualizerListeners_.empty(),
+        std::memory_order_release);
 }
 
 void MusicPlayer::processAudioData(Uint8* stream, int len) {
-    if (!hasActiveVisualizers_ || !stream || len <= 0) return;
-
+    if (!hasActiveVisualizers_.load(std::memory_order_acquire) ||
+        !stream ||
+        len <= 0)
     {
-        std::lock_guard<std::mutex> lock(visualizerMutex_);
-        for (auto* listener : visualizerListeners_) {
-            if (listener) listener->onPcmDataReceived(stream, len);
-        }
+        return;
     }
 
-    if (hasVuMeter_) {
+    // SDL_mixer invokes this from its postmix callback. Visualization data is
+    // transient, so never wait behind listener registration/removal on the UI
+    // thread.
+    std::unique_lock<std::mutex> lock(
+        visualizerMutex_,
+        std::try_to_lock);
+    if (!lock.owns_lock()) {
+        return;
+    }
+
+    for (auto* listener : visualizerListeners_) {
+        if (listener) listener->onPcmDataReceived(stream, len);
+    }
+
+    if (hasVuMeter_.load(std::memory_order_acquire)) {
         std::fill(audioLevels_.begin(), audioLevels_.end(), 0.0f);
 
         const int samplesPerChannel = len / (sampleSize_ * audioChannels_);
@@ -1121,6 +1135,11 @@ void MusicPlayer::processAudioData(Uint8* stream, int len) {
             audioLevels_[ch] = std::min(1.0f, std::sqrt(sum / samplesPerChannel));
         }
     }
+}
+
+std::vector<float> MusicPlayer::getAudioLevels() const {
+    std::lock_guard<std::mutex> lock(visualizerMutex_);
+    return audioLevels_;
 }
 
 // -------------------------------------------------------------------------

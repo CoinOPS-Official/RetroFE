@@ -39,7 +39,6 @@
 
 VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
     : Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), listId_(listId), currentPage_(&p) {
-    isHighPriority_ = (listId_ == -1);
     if (perspectiveCorners) {
         std::copy(perspectiveCorners, perspectiveCorners + 8, perspectiveCorners_);
         hasPerspective_ = true;
@@ -69,12 +68,14 @@ bool VideoComponent::recycleAsVideo(const std::string& path, const std::string&)
     hasBeenOnScreen_ = false;
     wasVisible_ = false;
     wasPlayingBeforeFastScroll_ = false;
-    isHighPriority_ = (listId_ == -1);
     desiredState_ = PlaybackTarget::Paused;
     pendingCommand_ = PlaybackCommand::None;
     pendingVideoRetry_ = false;
     retryAttempts_ = 0;
     nextRetryTime_ = 0;
+    preparationPendingUpdate_ = false;
+    preparedPipeline_ = false;
+    preparedVisible_ = false;
     lastVolume_ = -1.0f;
 
     // --- THE FIX ---
@@ -97,16 +98,7 @@ bool VideoComponent::recycleAsVideo(const std::string& path, const std::string&)
 }
 
 bool VideoComponent::checkVisibility() const {
-    float x = baseViewInfo.XRelativeToOrigin();
-    float y = baseViewInfo.YRelativeToOrigin();
-    float w = baseViewInfo.ScaledWidth();
-    float h = baseViewInfo.ScaledHeight();
-
-    float screenW = static_cast<float>(currentPage_->getLayoutWidthByMonitor(baseViewInfo.Monitor));
-    float screenH = static_cast<float>(currentPage_->getLayoutHeightByMonitor(baseViewInfo.Monitor));
-
-    bool physicallyOnScreen = (x + w > 0.0f) && (x < screenW) && (y + h > 0.0f) && (y < screenH);
-    return (baseViewInfo.Alpha > 0.0f) && physicallyOnScreen;
+    return isVisibleForGraphicsPreparation();
 }
 
 void VideoComponent::computeDesiredIntent(bool visibleNow, const VideoSnapshot& snap) {
@@ -181,70 +173,61 @@ void VideoComponent::syncPlaybackIntent(const VideoSnapshot& snap) {
     }
 }
 
-bool VideoComponent::update(float dt) {
-    bool visibleNow = checkVisibility();
+bool VideoComponent::preparePipeline_() {
+    /*
+     * Visibility determines preparation order, not eligibility. Scrolling
+     * lists reserve two buffer instances beyond their visible slot count,
+     * and GStreamer independently limits concurrent prerolls. Lower tiers
+     * can therefore use capacity left after visible/incoming components.
+     */
 
-    // 1. Fast-abort if hidden (Lazy Activation)
-    if (!visibleNow) {
-        pendingVideoRetry_ = false; // Drop retries if user scrolls past
-        if (!videoInst_) return Component::update(dt);
-    }
-
-    // 2. Enforce the Retry Backoff Timer!
-    // This stops the 60fps log spam if the pool OR the CPU is full.
+    // Respect the existing retry backoff without advancing animations.
     if (pendingVideoRetry_) {
         if (SDL_GetTicks64() < nextRetryTime_) {
-            return Component::update(dt); // Wait patiently
+            return false;
         }
     }
 
-    // 3. Opportunistic acquisition if pool was previously saturated
+    // Opportunistic acquisition if the pool was previously saturated.
     if (!videoInst_ && !videoFile_.empty()) {
         allocateGraphicsMemory();
         if (!videoInst_) {
-            // Pool is full! Trigger exponential backoff.
             pendingVideoRetry_ = true;
             retryAttempts_++;
             const uint32_t delay = std::min(250u, 16u * (1u << std::min(retryAttempts_, 4u)));
             nextRetryTime_ = SDL_GetTicks64() + delay;
-            return Component::update(dt);
+            return false;
         }
     }
 
     if (!videoInst_ || !currentPage_) {
-        return Component::update(dt);
+        return false;
     }
 
-    // 4. Retry / Initiate playback orchestrator
+    // Start preroll. Page prepares components from high layer to low layer,
+    // so limited GStreamer slots naturally go to covering media first.
     if (!instanceReady_ && !videoInst_->hasError()) {
-
         instanceReady_ = videoInst_->open(videoFile_);
 
         if (!instanceReady_) {
-            // CPU Preroll limit hit! Trigger exponential backoff.
             pendingVideoRetry_ = true;
-            retryAttempts_ = std::max(1u, retryAttempts_ + 1); // Use std::max to ensure we scale correctly
+            retryAttempts_ = std::max(1u, retryAttempts_ + 1);
             const uint32_t delay = std::min(250u, 16u * (1u << std::min(retryAttempts_, 4u)));
             nextRetryTime_ = SDL_GetTicks64() + delay;
-            return Component::update(dt);
+            return false;
         }
-        else {
-            // Success! Clear the retry state.
-            pendingVideoRetry_ = false;
-            retryAttempts_ = 0;
-        }
+
+        pendingVideoRetry_ = false;
+        retryAttempts_ = 0;
     }
 
-    // --- ATOMIC SNAPSHOT PULL ---
     const auto snap = videoInst_->getSnapshot();
-	currentSnapshot_ = snap; // Store it for draw() and future logic
+    currentSnapshot_ = snap;
 
-    // Wait for the pipeline to spin up
     if (!instanceReady_ || !snap.pipelineReady || snap.hasError) {
-        return Component::update(dt);
+        return false;
     }
 
-    // 5. Dimension Locking & Audio
     if (!dimensionsUpdated_) {
         if (!snap.hasVideoStream || (videoInst_->getDimensions().w > 0 && videoInst_->getDimensions().h > 0)) {
             if (snap.hasVideoStream) {
@@ -254,18 +237,46 @@ bool VideoComponent::update(float dt) {
             dimensionsUpdated_ = true;
         }
         else {
-            return Component::update(dt);
+            return false;
         }
     }
 
-    if (std::abs(baseViewInfo.Volume - lastVolume_) > 1e-4f) {
-        lastVolume_ = baseViewInfo.Volume;
-        videoInst_->setVolume(baseViewInfo.Volume);
+    // Upload a staged preroll/frame on the main thread before behavioral
+    // updates. draw() retains its opportunistic upload for frames arriving
+    // later in the same frame.
+    videoInst_->updateFrame();
+    return true;
+}
+
+void VideoComponent::pumpGraphicsPreparation() {
+    preparedVisible_ = checkVisibility();
+    preparedPipeline_ = preparePipeline_();
+    preparationPendingUpdate_ = true;
+}
+
+bool VideoComponent::update(float dt) {
+    bool visibleNow = false;
+    bool pipelinePrepared = false;
+
+    if (preparationPendingUpdate_) {
+        visibleNow = preparedVisible_;
+        pipelinePrepared = preparedPipeline_;
+        preparationPendingUpdate_ = false;
+    }
+    else {
+        visibleNow = checkVisibility();
+        pipelinePrepared = preparePipeline_();
     }
 
-    // 6. --- ORCHESTRATION PIPELINE ---
-    computeDesiredIntent(visibleNow, snap);
-    syncPlaybackIntent(snap);
+    if (pipelinePrepared) {
+        if (std::abs(baseViewInfo.Volume - lastVolume_) > 1e-4f) {
+            lastVolume_ = baseViewInfo.Volume;
+            videoInst_->setVolume(baseViewInfo.Volume);
+        }
+
+        computeDesiredIntent(visibleNow, currentSnapshot_);
+        syncPlaybackIntent(currentSnapshot_);
+    }
 
     return Component::update(dt);
 }
@@ -285,11 +296,16 @@ void VideoComponent::allocateGraphicsMemory() {
 
 std::shared_ptr<IVideo> VideoComponent::extractVideo() {
     instanceReady_ = false;
+    preparationPendingUpdate_ = false;
+    preparedPipeline_ = false;
     return std::move(videoInst_);
 }
 
 void VideoComponent::freeGraphicsMemory() {
     Component::freeGraphicsMemory();
+    preparationPendingUpdate_ = false;
+    preparedPipeline_ = false;
+    preparedVisible_ = false;
 
     if (!videoInst_) return;
 
@@ -312,24 +328,6 @@ void VideoComponent::draw() {
     }
 
     SDL_Texture* texture = videoInst_->getTexture();
-
-    // TEMP DEBUG: only log pirates to reduce spam and identify the real visible layer.
-    if (videoFile_.find("pirates.mp4") != std::string::npos) {
-        LOG_DEBUG("VideoComponent",
-            "draw file=" + videoFile_ +
-            " layer=" + std::to_string(baseViewInfo.Layer) +
-            " monitor=" + std::to_string(baseViewInfo.Monitor) +
-            " x=" + std::to_string(baseViewInfo.XRelativeToOrigin()) +
-            " y=" + std::to_string(baseViewInfo.YRelativeToOrigin()) +
-            " w=" + std::to_string(baseViewInfo.ScaledWidth()) +
-            " h=" + std::to_string(baseViewInfo.ScaledHeight()) +
-            " alpha=" + std::to_string(baseViewInfo.Alpha) +
-            " ready=" + std::to_string(instanceReady_) +
-            " pipelineReady=" + std::to_string(currentSnapshot_.pipelineReady) +
-            " actualState=" + std::to_string(static_cast<int>(currentSnapshot_.actualState)) +
-            " launched=" + std::to_string(currentPage_->getIsLaunched()) +
-            " texture=" + std::string(texture ? "yes" : "no"));
-    }
 
     if (texture) {
         SDL_FRect rect = {

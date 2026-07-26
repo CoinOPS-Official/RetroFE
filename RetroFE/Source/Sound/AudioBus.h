@@ -60,6 +60,9 @@ private:
         void clear();
         // AudioBus.h (inside SpscRing public)
         size_t available() const {
+            if (clearRequested_.load(std::memory_order_acquire)) {
+                return 0;
+            }
             size_t h = head_.load(std::memory_order_acquire);
             size_t t = tail_.load(std::memory_order_relaxed);
             return h - t;
@@ -69,7 +72,11 @@ private:
         std::vector<uint8_t> buf_;
         const size_t mask_;
         const size_t align_;          // bytes-per-frame alignment (>=1)
-        std::atomic<size_t> head_{ 0 }, tail_{ 0 };
+        // The producer owns head_ and the consumer owns tail_. Keeping them on
+        // separate cache lines avoids producer/consumer false sharing.
+        alignas(64) std::atomic<size_t> head_{ 0 };
+        alignas(64) std::atomic<size_t> tail_{ 0 };
+        std::atomic<bool> clearRequested_{ false };
     };
 
     struct Source {
@@ -79,7 +86,8 @@ private:
         std::atomic<float> gain{ 1.0f };
         // NEW: Fade-in state for handling DISCONT
         std::atomic<int> fadeSamplesLeft{ 0 };
-        static constexpr int kMaxFadeSamples = 256;  // ~5.3ms at 48kHz — adjustable
+        std::atomic<uint64_t> underrunCount{ 0 };
+        static constexpr int kMaxFadeSamples = 256;  // ~5.3ms at 48kHz - adjustable
 
         explicit Source(size_t cap, size_t align) : ring(cap, align) {}
     };

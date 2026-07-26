@@ -83,13 +83,10 @@ bool ReloadableScrollingText::loadFileText(const std::string& filePath) {
 	}
 
 	// Check if the file has been modified since the last read
-	if (currentWriteTime == lastWriteTime_ && !text_.empty()) {
+	if (currentWriteTime == lastWriteTime_) {
 		// No change in file, skip update
 		return false;  // File has not changed
 	}
-
-	// Store the current modification time
-	lastWriteTime_ = currentWriteTime;
 
 	// Reload the text from the file
 	std::ifstream fileStream(absolutePath);
@@ -118,6 +115,7 @@ bool ReloadableScrollingText::loadFileText(const std::string& filePath) {
 	}
 
 	fileStream.close();
+	lastWriteTime_ = currentWriteTime;
 
 	return true;  // File was modified, return true
 }
@@ -142,14 +140,20 @@ bool ReloadableScrollingText::update(float dt) {
 		}
 	}
 
-	// If the type is "file", always reload the text
+	// File modification checks are intentionally throttled. File-backed
+	// scrolling text otherwise performs filesystem work every frame.
 	if (type_ == "file") {
-		reloadTexture();
+		const Uint32 now = SDL_GetTicks();
+		if (now - lastFileCheckTime_ >= fileCheckInterval_) {
+			lastFileCheckTime_ = now;
+			reloadTexture();
+		}
 	}
 	// For non-file types, use the default behavior
 	else if (newItemSelected || (newScrollItemSelected && getMenuScrollReload())) {
 		reloadTexture();  // Reset scroll position as usual for non-file types
 		newItemSelected = false;
+		newScrollItemSelected = false;
 	}
 
 	return Component::update(dt);
@@ -186,13 +190,12 @@ void ReloadableScrollingText::reloadTexture(bool resetScroll) {
 	if (type_ == "file" && !location_.empty()) {
 		bool fileChanged = loadFileText(location_);  // Load text and check if file changed
 
-		// Reset the scroll only if the file has changed
-		if (fileChanged) {
-			resetScroll = true;
+		if (!fileChanged) {
+			return;
 		}
-		else {
-			resetScroll = false;
-		}
+
+		// A changed file is a new scrolling-text sequence.
+		resetScroll = true;
 	}
 
 	if (resetScroll) {
@@ -209,13 +212,12 @@ void ReloadableScrollingText::reloadTexture(bool resetScroll) {
 		waitEndTime_ = 0.0f;  // Reset to zero when scroll restarts
 	}
 
-	text_.clear();
-
 	// Load the appropriate text content
 	if (type_ == "file" && !location_.empty()) {
-		loadFileText(location_);  // Load the text from the file, but don't reset scroll
-		return;  // Since it's file-based, just return after loading the text
+		return;
 	}
+
+	text_.clear();
 
 	Item* selectedItem = page.getSelectedItem(displayOffset_);
 	if (!selectedItem) {

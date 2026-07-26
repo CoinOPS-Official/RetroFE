@@ -17,9 +17,13 @@
 
 
 #include <vector>
-#include <mutex>
+#include <deque>
+#include <memory>
+#include <unordered_map>
+#include <unordered_set>
 #include "Component.h"
 #include "../Animate/Tween.h"
+#include "../Animate/TweenSet.h"
 #include "../Page.h"
 #include "../ViewInfo.h"
 #include "../../Database/Configuration.h"
@@ -87,6 +91,7 @@ public:
 
 class Configuration;
 class FontManager;
+class Image;
 
 class ScrollingList : public Component
 {
@@ -105,6 +110,8 @@ public:
         const std::string& videoType,
         bool useTextureCaching);
 
+    ScrollingList(const ScrollingList& other);
+    ScrollingList& operator=(const ScrollingList&) = delete;
     ~ScrollingList() override;
     const std::vector<Item*>& getItems() const;
     
@@ -140,7 +147,7 @@ public:
     void triggerJukeboxJumpEvent(int menuIndex = -1);
     void triggerEventOnAll(const std::string& event, int menuIndex);;
     bool allocateTexture(size_t componentIndex, size_t fullListIndex);
-    void buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType);
+    void buildPaths(std::string& imagePath, std::string& videoPath, const std::string& base, const std::string& subPath, const std::string& mediaType, const std::string& videoType) const;
     void deallocateTexture(size_t index);
     void setItems(std::vector<Item*>* items);
     void selectItemByName(std::string_view name);
@@ -174,6 +181,7 @@ public:
     void allocateGraphicsMemory() override;
     void freeGraphicsMemory() override;
     void pumpGraphicsPreparation() override;
+    void waitForGraphicsPreparation() override;
     bool isGraphicsReadyForFirstRender() const override;
     bool update(float dt) override;
     const std::vector<Component*>& getComponents() const;
@@ -197,6 +205,9 @@ public:
     void scroll(bool forward);
     void scrollToSelectedIndex(size_t newSelectedIndex, bool forward, float scrollTime);
     bool isPlaylist() const;
+    unsigned int getVisualPriorityTier() const;
+    unsigned int getVisualPriorityLayer() const;
+    static void clearSharedMediaCache();
 
     void setPerspectiveCorners(const int corners[8]) {
         std::copy(corners, corners + 8, perspectiveCorners_);
@@ -207,16 +218,26 @@ public:
 
 
 private:
-
     static int nextListId;
-    static std::mutex listIdMutex;  // Add mutex for thread safety
     int listId_;
 
     void clearPoints();
     void clearTweenPoints();
+    void rebuildSlotTopology_(bool initializeComponents = true);
+    bool isSlotVisible_(size_t index) const;
+    unsigned int preparationTierForIndex_(size_t index) const;
+    unsigned int layerForIndex_(size_t index) const;
+    void refreshPreparationPriorityHints_();
+    std::vector<size_t> visualPriorityOrder_() const;
     
-    // Change to:
-    void resetTweens(Component* c, const std::shared_ptr<AnimationEvents>& sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, float scrollTime) const;
+    void resetTweens(
+        Component* c,
+        const std::shared_ptr<AnimationEvents>& sets,
+        ViewInfo* currentViewInfo,
+        ViewInfo* nextViewInfo,
+        float scrollTime,
+        const TweenSet* transitionTemplate = nullptr,
+        bool restartChanges = false) const;
     inline size_t loopIncrement(size_t offset, size_t index, size_t size) const;
     inline size_t loopDecrement(size_t offset, size_t index, size_t size) const;
 
@@ -226,8 +247,23 @@ private:
         std::string selectedImagePath;
     };
 
-    std::vector<ResolvedMedia> mediaCache_;
-    void precalculateMediaPaths();
+    using SharedResolvedMedia = std::shared_ptr<const ResolvedMedia>;
+    static std::unordered_map<std::string, SharedResolvedMedia>
+        sharedMediaCache_;
+    std::vector<SharedResolvedMedia> mediaCache_;
+    const ResolvedMedia& resolveMediaAt_(size_t fullListIndex);
+    ResolvedMedia resolveMediaForItem_(const Item& item) const;
+    std::string mediaCacheKey_(const Item& item) const;
+    TweenSet buildTweenTemplate_(
+        const ViewInfo& current,
+        const ViewInfo& next) const;
+    void rebuildLetterAnchors_();
+    void refreshImagePreloadQueue_(
+        bool directionKnown = false,
+        bool forward = true);
+    void pumpImagePreload_();
+    void releaseImagePreload_();
+    void resetImagePreload_();
 
     bool layoutMode_;
     bool commonMode_;
@@ -244,6 +280,8 @@ private:
         std::shared_ptr<AnimationEvents> tween;
         ViewInfo* cur;
         ViewInfo* next;
+        TweenSet transitionTemplate;
+        bool restartChanges{ false };
     };
 
     std::vector<size_t> forwardMap_;
@@ -276,6 +314,18 @@ private:
     RotatableView<Component*> components_;
 
     bool useTextureCaching_{ false };
+    struct ImagePreloadCandidate {
+        size_t itemIndex;
+        bool idleOnly;
+    };
+    std::deque<ImagePreloadCandidate> imagePreloadQueue_;
+    std::unordered_set<size_t> imagePreloadAttempted_;
+    std::unordered_set<size_t> imagePreloadQueued_;
+    std::shared_ptr<Image> imagePreload_;
+    std::vector<size_t> letterAnchors_;
+    bool imagePreloadIdleOnly_{ false };
+    bool ownsImagePreloadSlot_{ false };
+    static size_t activeImagePreloads_;
 
     bool perspectiveCornersInitialized_{ false };
     int perspectiveCorners_[8]; // stores x,y coordinates for all 4 corners in order: topLeft, topRight, bottomLeft, bottomRight

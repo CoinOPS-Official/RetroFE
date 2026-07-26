@@ -41,6 +41,7 @@ public:
 
     bool update(float dt) override;
     void draw() override;
+    void pumpGraphicsPreparation() override;
     void allocateGraphicsMemory() override;
     void freeGraphicsMemory() override;
     std::string_view filePath();
@@ -53,7 +54,6 @@ public:
     void pause();
     void resume();
     void restart();
-    void setHighPriority(bool isHigh) override { isHighPriority_ = isHigh; }
 
     // Properties
     unsigned long long getCurrent();
@@ -85,12 +85,13 @@ private:
 
     bool dimensionsUpdated_ = false;
     bool instanceReady_ = false;
-    bool isHighPriority_ = false;
-
     // --- Deferred Retry Logic ---
     bool pendingVideoRetry_ = false;
     uint32_t retryAttempts_ = 0;
     uint64_t nextRetryTime_ = 0;
+    bool preparationPendingUpdate_ = false;
+    bool preparedPipeline_ = false;
+    bool preparedVisible_ = false;
 
     // --- Clean Intent Orchestration State ---
     bool wasVisible_ = false;
@@ -107,4 +108,5 @@ private:
     bool checkVisibility() const;
     void computeDesiredIntent(bool visibleNow, const VideoSnapshot& snap);
     void syncPlaybackIntent(const VideoSnapshot& snap);
+    bool preparePipeline_();
 };

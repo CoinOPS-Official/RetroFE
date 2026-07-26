@@ -144,8 +144,6 @@ private:
     SDL_Texture* gstTexture_{ nullptr };
     int gstTexW_{ 0 };
     int gstTexH_{ 0 };
-    std::mutex gstMutex_; // To guard buffer exchange
-
     int totalSegments_;
     bool useSegmentedVolume_;
 

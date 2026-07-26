@@ -11,6 +11,7 @@
 #include <future>
 #include <memory>
 #include <limits>
+#include <cstdint>
 #include <SDL2/SDL_image.h>
 
 struct SDL_Texture;
@@ -27,6 +28,7 @@ public:
     void allocateGraphicsMemory() override;
     void freeGraphicsMemory() override;
     void pumpGraphicsPreparation() override;
+    void waitForGraphicsPreparation() override;
     bool isGraphicsReadyForFirstRender() const override;
     std::string_view filePath();
 
@@ -80,6 +82,8 @@ private:
     bool startAsyncLoad(const std::string& path);
     void finalizeLoad();
     bool loadFromCache(const std::string& filePath);
+    bool applyCachedImage(const CachedImage& cached);
+    void releaseLocalImageAssets();
 
     void resetAnimationState();
     bool createAnimatedStreamingTexture(int width, int height);
@@ -101,6 +105,8 @@ private:
     size_t currentFrame_ = 0;
     Uint32 animationStartTime_ = 0;
     size_t lastRenderedFrame_ = std::numeric_limits<size_t>::max();
+    std::vector<std::uint64_t> cumulativeFrameDelays_;
+    std::uint64_t totalAnimationDuration_ = 0;
 
     bool useTextureCaching_;
     bool isUsingCachedStaticTexture_ = false;

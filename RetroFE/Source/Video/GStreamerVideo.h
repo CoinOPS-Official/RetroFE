@@ -53,6 +53,7 @@ enum class PipelineLifecycle {
     Idle,      // Not currently processing a file
     Starting,  // URI set, waiting for Preroll
     Ready,     // Preroll complete, ready to stream data
+    Draining,  // Returning the pipeline to READY before pool reuse
     Failed     // Hard failure
 };
 
@@ -145,13 +146,14 @@ private:
     static void cbCtxUnref(gpointer data);
 
     // === Core Thread-Safe State & Epoch Validation ===
+    // Protects raw GStreamer pointers and state-changing operations reached
+    // from both the main thread and GLib callbacks.
+    mutable std::recursive_mutex pipelineMutex_;
     std::atomic<PipelineLifecycle> lifecycle_{ PipelineLifecycle::Idle };
     std::atomic<PlaybackState> playbackState_{ PlaybackState::None };
     std::atomic<uint64_t> playbackEpoch_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaybackEpoch_;
 
-    // The "Contract": True from open() until the first ASYNC_DONE
-    std::atomic<bool> awaitingInitialPreroll_{ false };
     // The "Truth": Updated via GST_MESSAGE_STATE_CHANGED
     std::atomic<GstState> actualGstState_{ GST_STATE_NULL };
 
@@ -170,7 +172,6 @@ private:
     std::atomic<VideoDim> dimensions_{};
     std::atomic<int> playCount_{ 0 };
     std::atomic<int> numLoops_{ 0 };
-    std::string currentFile_{};
     float volume_{ 0.0f };
 
     int allocatedWidth_{ 0 };
@@ -193,7 +194,6 @@ private:
     guint elementSetupHandlerId_{ 0 };
     guint busWatchId_{ 0 };
     guint padProbeId_{ 0 };
-    GValueArray* gva_{ nullptr };
     GValueArray* perspective_gva_{ nullptr };
 
     static bool initialized_;
@@ -201,8 +201,11 @@ private:
 
     // Validation helper mapped to new state
     inline bool isCurrentEpoch(uint64_t e) const {
+        const PipelineLifecycle lifecycle =
+            lifecycle_.load(std::memory_order_acquire);
         return e == playbackEpoch_.load(std::memory_order_acquire) &&
-            lifecycle_.load(std::memory_order_acquire) != PipelineLifecycle::Idle;
+            (lifecycle == PipelineLifecycle::Starting ||
+                lifecycle == PipelineLifecycle::Ready);
     }
 
     static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
@@ -226,9 +229,9 @@ private:
     // Tracks semantic discontinuity for audio crossfading
     std::atomic<uint64_t> lastFadedEpoch_{ 0 };
 
-    // Audio bus integration
+    // Audio bus integration. Source ID changes are serialized by the pipeline
+    // mutex; the shared handle is atomically published to streaming callbacks.
     AudioBus::SourceId videoSourceId_{ 0 };
     std::shared_ptr<AudioBus::Handle> audioHandle_;
     GstElement* audioSink_{ nullptr };
-    float lastVolume_ = -1.0f;
 };

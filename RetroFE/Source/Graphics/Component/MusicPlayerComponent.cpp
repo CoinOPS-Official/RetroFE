@@ -301,7 +301,10 @@ void MusicPlayerComponent::allocateGraphicsMemory() {
 void MusicPlayerComponent::onPcmDataReceived(const Uint8* data, int len) {
 	// If this component is any type of visualizer, queue the data.
 	if (isFftVisualizer() || gstreamerVisType_ != GStreamerVisType::None) {
-		std::lock_guard<std::mutex> lock(pcmMutex_);
+		// This runs in the real-time audio callback. Drop a transient
+		// visualization block if the render thread is draining the queue.
+		std::unique_lock<std::mutex> lock(pcmMutex_, std::try_to_lock);
+		if (!lock.owns_lock()) return;
 		pcmQueue_.emplace_back(data, data + len);
 		while (pcmQueue_.size() > 10) {
 			pcmQueue_.pop_front();
@@ -1008,10 +1011,11 @@ bool MusicPlayerComponent::fillPcmBuffer() {
 
 	// 2. Collect new PCM blocks from the queue
 	size_t buffered = pcmBuffer_.size();
-	while (buffered < FFT_SIZE && !pcmQueue_.empty()) {
+	while (buffered < FFT_SIZE) {
 		std::vector<Uint8> pcmBlock;
 		{
 			std::lock_guard<std::mutex> lock(pcmMutex_);
+			if (pcmQueue_.empty()) break;
 			pcmBlock = std::move(pcmQueue_.front());
 			pcmQueue_.pop_front();
 		}

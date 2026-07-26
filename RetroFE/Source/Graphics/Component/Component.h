@@ -37,6 +37,7 @@ public:
 	virtual void deInitializeFonts();
 	virtual void initializeFonts();
 	virtual void pumpGraphicsPreparation() {}
+	virtual void waitForGraphicsPreparation() {}
 	virtual bool isGraphicsReadyForFirstRender() const { return true; }
 	const std::string& getAnimationRequestedType() const;
 	void triggerEvent(const std::string_view& event, int menuIndex = -1);
@@ -78,7 +79,9 @@ public:
 	bool getPauseOnScroll() const;
 	virtual void setText(const std::string&, int = -1) {};
 	virtual void setImage(const std::string&, int = -1) {};
-	virtual void setHighPriority(bool /*isHigh*/) {};
+	virtual void setHighPriority(bool isHigh) { highPriority_ = isHigh; }
+	bool hasHighPriority() const { return highPriority_; }
+	bool isVisibleForGraphicsPreparation() const;
 	int getId() const;
 	std::string playlistName;
 
@@ -115,6 +118,7 @@ private:
 	bool isAttractIdleAnimationType_ = true;
     bool         menuScrollReload_;
     bool         animationDoneRemove_;
+	bool         highPriority_{ false };
     int          menuIndex_;
     int          id_;
 

@@ -19,6 +19,7 @@
 #include "Component.h"
 #include "../Page.h"
 #include <SDL.h>
+#include <cstdint>
 #include <vector>
 
 
@@ -31,8 +32,10 @@ class Text : public Component
     struct CachedGlyph {
         SDL_Rect srcOutline;
         SDL_Rect srcFill;
-        float dstOutlineX, dstOutlineY, dstOutlineW, dstOutlineH;
-        float dstFillX, dstFillY, dstFillW, dstFillH;
+        float advanceBefore;
+        float kerningBefore;
+        float advance;
+        float packedY;
         SDL_Texture* outlineTex;
         SDL_Texture* fillTex;
     };
@@ -49,7 +52,7 @@ public:
 private:
     std::string textData_;
     FontManager       *fontInst_;
-    void updateGlyphPositions(FontManager* font, float scale, float maxWidth);
+    void updateGlyphPositions(FontManager* font);
 
     bool recycleAsText(const std::string& newText) override;
 
@@ -57,8 +60,9 @@ private:
     std::vector<CachedGlyph> cachedPositions_;
     float cachedWidth_ = 0;
     float cachedHeight_ = 0;
-    float lastScale_ = 0;
-    float lastMaxWidth_ = 0;
+    FontManager* cachedFont_ = nullptr;
+    std::uint64_t cachedFontGeneration_ = 0;
+    int cachedMipFontSize_ = 0;
     bool needsUpdate_ = true;
 };
 

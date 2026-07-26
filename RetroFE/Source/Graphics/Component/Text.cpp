@@ -75,13 +75,53 @@ void Text::draw() {
         (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
         ? baseViewInfo.Width : baseViewInfo.MaxWidth;
 
-    if (needsUpdate_ || lastScale_ != scale || lastMaxWidth_ != maxW) {
-        updateGlyphPositions(font, scale, maxW);
+    if (needsUpdate_ ||
+        cachedFont_ != font ||
+        cachedFontGeneration_ != font->getGeneration() ||
+        cachedMipFontSize_ != mip->fontSize)
+    {
+        updateGlyphPositions(font);
         needsUpdate_ = false;
-        lastScale_ = scale;
-        lastMaxWidth_ = maxW;
+        cachedFont_ = font;
+        cachedFontGeneration_ = font->getGeneration();
+        cachedMipFontSize_ = mip->fontSize;
     }
     if (cachedPositions_.empty()) return;
+
+    const float kerningScale =
+        (font->getMaxFontSize() > 0)
+        ? static_cast<float>(targetFontSize) /
+            static_cast<float>(font->getMaxFontSize())
+        : 1.0f;
+
+    std::size_t visibleGlyphCount = 0;
+    cachedWidth_ = 0.0f;
+
+    for (const CachedGlyph& cg : cachedPositions_) {
+        const float penStart =
+            cg.advanceBefore * scale +
+            cg.kerningBefore * kerningScale;
+
+        const float nextPen =
+            penStart + cg.advance * scale;
+
+        if (maxW > 0.0f && nextPen > maxW) {
+            cachedWidth_ = penStart;
+            break;
+        }
+
+        cachedWidth_ = nextPen;
+        ++visibleGlyphCount;
+    }
+
+    if (visibleGlyphCount == 0) return;
+
+    const float outline =
+        static_cast<float>(font->getOutlinePx());
+
+    cachedHeight_ =
+        static_cast<float>(mip->height) * scale +
+        2.0f * outline * scale;
 
     // NEW: Apply on-the-fly texture color modulation before entering loops
     SDL_SetTextureColorMod(mip->fillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
@@ -108,37 +148,62 @@ void Text::draw() {
     const int layoutW = page.getLayoutWidthByMonitor(baseViewInfo.Monitor);
     const int layoutH = page.getLayoutHeightByMonitor(baseViewInfo.Monitor);
 
+    SDL::beginGeometryBatch(visibleGlyphCount * 2);
+
     // --- PASS 1: OUTLINE ---
-    for (const auto& cg : cachedPositions_) {
+    for (std::size_t i = 0; i < visibleGlyphCount; ++i) {
+        const CachedGlyph& cg = cachedPositions_[i];
         if (cg.outlineTex) {
+            const float penStart =
+                cg.advanceBefore * scale +
+                cg.kerningBefore * kerningScale;
+
             SDL_FRect dst = {
-                xOrigin + cg.dstOutlineX,
-                yOrigin + cg.dstOutlineY,
-                cg.dstOutlineW,
-                cg.dstOutlineH
+                xOrigin + penStart - outline * scale,
+                yOrigin + cg.packedY * scale,
+                cg.srcOutline.w * scale,
+                cg.srcOutline.h * scale
             };
             SDL::renderCopyF(cg.outlineTex, baseViewInfo.Alpha, &cg.srcOutline, &dst, baseViewInfo, layoutW, layoutH);
         }
     }
 
     // --- PASS 2: FILL ---
-    for (const auto& cg : cachedPositions_) {
+    for (std::size_t i = 0; i < visibleGlyphCount; ++i) {
+        const CachedGlyph& cg = cachedPositions_[i];
         if (cg.fillTex) {
+            const float penStart =
+                cg.advanceBefore * scale +
+                cg.kerningBefore * kerningScale;
+
             SDL_FRect dst = {
-                xOrigin + cg.dstFillX,
-                yOrigin + cg.dstFillY,
-                cg.dstFillW,
-                cg.dstFillH
+                xOrigin + penStart - outline * scale,
+                yOrigin + cg.packedY * scale,
+                cg.srcFill.w * scale,
+                cg.srcFill.h * scale
             };
+
+            dst.x +=
+                static_cast<float>(
+                    cg.srcFill.x - cg.srcOutline.x
+                ) * scale;
+
+            dst.y +=
+                static_cast<float>(
+                    cg.srcFill.y - cg.srcOutline.y
+                ) * scale;
+
             SDL::renderCopyF(cg.fillTex, baseViewInfo.Alpha, &cg.srcFill, &dst, baseViewInfo, layoutW, layoutH);
         }
     }
+
+    SDL::endGeometryBatch();
 
     baseViewInfo.ImageWidth = oldIW;
     baseViewInfo.ImageHeight = oldIH;
 }
 
-void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) {
+void Text::updateGlyphPositions(FontManager* font) {
     cachedPositions_.clear();
 
     if (!font) return;
@@ -149,15 +214,14 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
     const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
     if (!mip) return;
 
-    const float ascent_f = static_cast<float>(mip->ascent);
-    const float outline_f = static_cast<float>(font->getOutlinePx());
+    const float ascent =
+        static_cast<float>(mip->ascent);
 
-    const float kerningScale =
-    (font->getMaxFontSize() > 0)
-    ? static_cast<float>(targetFontSize) / static_cast<float>(font->getMaxFontSize())
-    : 1.0f;
+    const float outline =
+        static_cast<float>(font->getOutlinePx());
 
-    double penX = 0.0;
+    float cumulativeAdvance = 0.0f;
+    float cumulativeKerning = 0.0f;
     Uint32 prev = 0;
 
     const char* ptr = textData_.c_str();
@@ -231,32 +295,21 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
 
         const auto& g = it->second;
 
-        const int   kern_fp = font->getKerning(prev, ch);
-        const float kern_px = static_cast<float>(kern_fp) * kerningScale;
-        penX += static_cast<double>(kern_px);
-
-        const float packedX = static_cast<float>(penX) - (outline_f * scale);
-        const float packedY = (ascent_f - (static_cast<float>(g.maxY) + outline_f + static_cast<float>(g.topPad))) * scale;
-
-        const float adv_px = static_cast<float>(g.advance) * scale;
-        const double nextPen = penX + static_cast<double>(adv_px);
-
-        if (maxWidth > 0.0f && static_cast<float>(nextPen) > maxWidth) break;
+        cumulativeKerning +=
+            static_cast<float>(font->getKerning(prev, ch));
 
         // Build the fat cache entry
         CachedGlyph cg;
         cg.srcOutline = g.rect;
         cg.srcFill = { g.rect.x + g.fillX, g.rect.y + g.fillY, g.fillW, g.fillH };
-
-        cg.dstOutlineX = packedX;
-        cg.dstOutlineY = packedY;
-        cg.dstOutlineW = g.rect.w * scale;
-        cg.dstOutlineH = g.rect.h * scale;
-
-        cg.dstFillX = packedX + (g.fillX * scale);
-        cg.dstFillY = packedY + (g.fillY * scale);
-        cg.dstFillW = g.fillW * scale;
-        cg.dstFillH = g.fillH * scale;
+        cg.advanceBefore = cumulativeAdvance;
+        cg.kerningBefore = cumulativeKerning;
+        cg.advance = static_cast<float>(g.advance);
+        cg.packedY =
+            ascent -
+            (static_cast<float>(g.maxY) +
+                outline +
+                static_cast<float>(g.topPad));
 
         // 3. Use the boolean directly. No extra lookups!
         cg.outlineTex = isDynamic ? mip->dynamicOutlineTexture : mip->outlineTexture;
@@ -264,12 +317,11 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
 
         cachedPositions_.push_back(cg);
 
-        penX = nextPen;
+        cumulativeAdvance +=
+            static_cast<float>(g.advance);
+
         prev = ch;
     }
-
-    cachedWidth_ = static_cast<float>(penX);
-    cachedHeight_ = static_cast<float>(mip->height) * scale + (2.0f * outline_f * scale);
 }
 
 bool Text::recycleAsText(const std::string& newText) {

@@ -12,6 +12,7 @@
 #endif
 
 #include <string>
+#include <cstdint>
 #include <unordered_map>
 #include <map>
 #include <vector>  // NEW: needed for std::vector<TmpGlyph>
@@ -78,6 +79,7 @@ public:
     int       getMaxHeight()   const { return max_height_; }
     int       getMaxAscent()   const { return max_ascent_; }
     int       getMaxFontSize() const { return maxFontSize_; }
+    std::uint64_t getGeneration() const { return generation_; }
     SDL_Color getColor()       const { return color_; }
 
     // Metrics will now use the highest-resolution font for maximum precision.
@@ -120,6 +122,8 @@ private:
     // We only keep the TTF_Font handle for the largest size open for metrics.
     TTF_Font* max_font_ = nullptr;
     int max_height_ = 0, max_descent_ = 0, max_ascent_ = 0;
+    std::uint64_t generation_ = 0;
+    mutable std::unordered_map<std::uint64_t, int> kerningCache_;
 
     // std::map keeps the sizes sorted, which makes finding the best fit easy.
     std::map<int, MipLevel*> mipLevels_;

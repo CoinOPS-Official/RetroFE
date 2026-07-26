@@ -32,6 +32,7 @@
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <cstddef>
 
 std::vector<SDL_Window*>    SDL::window_;
 std::vector<SDL_Renderer*>  SDL::renderer_;
@@ -48,6 +49,132 @@ int                         SDL::numScreens_ = 1;
 int                         SDL::numDisplays_ = 1;
 int                         SDL::screenCount_;
 SDL::LayoutScaleMode SDL::layoutScaleMode_ = SDL::LayoutScaleMode::Stretch;
+
+namespace {
+	struct GeometryBatchState {
+		bool active = false;
+		bool succeeded = true;
+		SDL_Renderer* renderer = nullptr;
+		SDL_Texture* texture = nullptr;
+		std::vector<SDL_Vertex> vertices;
+		std::vector<int> indices;
+	};
+
+	GeometryBatchState geometryBatch;
+
+	bool flushGeometryBatch() {
+		if (geometryBatch.vertices.empty()) {
+			geometryBatch.renderer = nullptr;
+			geometryBatch.texture = nullptr;
+			return true;
+		}
+
+		const bool succeeded =
+			SDL_RenderGeometry(
+				geometryBatch.renderer,
+				geometryBatch.texture,
+				geometryBatch.vertices.data(),
+				static_cast<int>(geometryBatch.vertices.size()),
+				geometryBatch.indices.data(),
+				static_cast<int>(geometryBatch.indices.size())
+			) == 0;
+
+		geometryBatch.vertices.clear();
+		geometryBatch.indices.clear();
+		geometryBatch.renderer = nullptr;
+		geometryBatch.texture = nullptr;
+		geometryBatch.succeeded =
+			geometryBatch.succeeded && succeeded;
+
+		return succeeded;
+	}
+
+	bool submitGeometry(
+		SDL_Renderer* renderer,
+		SDL_Texture* texture,
+		const SDL_Vertex* vertices,
+		int vertexCount,
+		const int* indices,
+		int indexCount)
+	{
+		if (!geometryBatch.active) {
+			return SDL_RenderGeometry(
+				renderer,
+				texture,
+				vertices,
+				vertexCount,
+				indices,
+				indexCount
+			) == 0;
+		}
+
+		if (!geometryBatch.vertices.empty() &&
+			(geometryBatch.renderer != renderer ||
+				geometryBatch.texture != texture))
+		{
+			flushGeometryBatch();
+		}
+
+		geometryBatch.renderer = renderer;
+		geometryBatch.texture = texture;
+
+		const int vertexOffset =
+			static_cast<int>(geometryBatch.vertices.size());
+
+		geometryBatch.vertices.insert(
+			geometryBatch.vertices.end(),
+			vertices,
+			vertices + vertexCount
+		);
+
+		geometryBatch.indices.reserve(
+			geometryBatch.indices.size() +
+			static_cast<std::size_t>(indexCount)
+		);
+
+		for (int i = 0; i < indexCount; ++i) {
+			geometryBatch.indices.push_back(
+				indices[i] + vertexOffset
+			);
+		}
+
+		return geometryBatch.succeeded;
+	}
+}
+
+void SDL::beginGeometryBatch(std::size_t expectedQuads) {
+	if (geometryBatch.active) {
+		flushGeometryBatch();
+	}
+
+	geometryBatch.active = true;
+	geometryBatch.succeeded = true;
+	geometryBatch.renderer = nullptr;
+	geometryBatch.texture = nullptr;
+	geometryBatch.vertices.clear();
+	geometryBatch.indices.clear();
+
+	const std::size_t expectedVertices = expectedQuads * 4;
+	const std::size_t expectedIndices = expectedQuads * 6;
+
+	if (geometryBatch.vertices.capacity() < expectedVertices) {
+		geometryBatch.vertices.reserve(expectedVertices);
+	}
+
+	if (geometryBatch.indices.capacity() < expectedIndices) {
+		geometryBatch.indices.reserve(expectedIndices);
+	}
+}
+
+bool SDL::endGeometryBatch() {
+	if (!geometryBatch.active) {
+		return true;
+	}
+
+	flushGeometryBatch();
+	geometryBatch.active = false;
+	return geometryBatch.succeeded;
+}
 
 // Initialize SDL
 bool SDL::initialize(Configuration& config) {
@@ -578,7 +705,7 @@ bool SDL::initialize(Configuration& config) {
 				MusicPlayer* mp;   // nullptr if music player disabled
 			};
 
-			// … during init …
+			// During initialization.
 			bool musicPlayerEnabled = false;
 			config.getProperty("musicPlayer.enabled", musicPlayerEnabled);
 
@@ -2353,14 +2480,14 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 				0, 2, 3
 			};
 
-			return SDL_RenderGeometry(
+			return submitGeometry(
 				renderer_[m],
 				texture,
 				vertices,
 				4,
 				indices,
 				6
-			) == 0;
+			);
 		};
 
 	auto render_path =

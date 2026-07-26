@@ -127,6 +127,14 @@ void ReloadableMedia::pumpGraphicsPreparation() {
     }
 }
 
+void ReloadableMedia::waitForGraphicsPreparation() {
+    realizePendingMedia(false, 0.0f, false);
+
+    if (loadedComponent_) {
+        loadedComponent_->waitForGraphicsPreparation();
+    }
+}
+
 bool ReloadableMedia::isGraphicsReadyForFirstRender() const {
     if (!loadedComponent_) {
         return true;

@@ -2,6 +2,7 @@
 #include "../ViewInfo.h"
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
+#include <algorithm>
 #include <mutex>
 
 // -------------------- Static Storage --------------------
@@ -9,22 +10,30 @@ Image::PathCache Image::pathCache_;
 std::unordered_map<Image::PathCache::CacheKey, Image::CachedImage, Image::PathCache::CacheKeyHash> Image::textureCache_;
 std::unordered_map<std::string, std::shared_future<Image::AsyncLoadResult>> Image::loadingTasks_;
 
-// Global mutex to prevent multi-monitor/thread map corruption
-static std::mutex g_ImageCacheMutex;
+// Renderer-owned cache/path state and worker-owned load deduplication have
+// different contention domains. Keeping them separate prevents a completed
+// decode task from blocking a scrolling-list texture-cache hit.
+static std::mutex g_ImageTextureCacheMutex;
+static std::mutex g_ImageLoadTaskMutex;
 
 Image::PathCache::CacheKey Image::PathCache::getKey(const std::string& filePath, int monitor) {
-	// Note: fullPaths_ insertion is protected by the mutex in startAsyncLoad
+	// All callers hold the texture-cache mutex while interning cache keys.
 	const auto& interned = *fullPaths_.emplace(filePath).first;
 	return { interned, monitor };
 }
 
 void Image::ensureCacheReserved() {
-	static bool reserved = false;
-	if (reserved) return;
-	std::lock_guard<std::mutex> lock(g_ImageCacheMutex);
-	textureCache_.reserve(4096);
-	loadingTasks_.reserve(512);
-	reserved = true;
+	static std::once_flag reserveOnce;
+	std::call_once(reserveOnce, []() {
+		{
+			std::lock_guard<std::mutex> lock(g_ImageTextureCacheMutex);
+			textureCache_.reserve(4096);
+		}
+		{
+			std::lock_guard<std::mutex> lock(g_ImageLoadTaskMutex);
+			loadingTasks_.reserve(512);
+		}
+	});
 }
 
 // -------------------- Lifecycle --------------------
@@ -60,6 +69,12 @@ void Image::pumpGraphicsPreparation() {
 	}
 }
 
+void Image::waitForGraphicsPreparation() {
+	if (status_ == LoadStatus::Loading && loadTask_.valid()) {
+		loadTask_.wait();
+	}
+}
+
 bool Image::isGraphicsReadyForFirstRender() const {
 	if (status_ == LoadStatus::Error) {
 		return true;
@@ -73,13 +88,15 @@ bool Image::isGraphicsReadyForFirstRender() const {
 }
 
 bool Image::startAsyncLoad(const std::string& path) {
-	std::lock_guard<std::mutex> lock(g_ImageCacheMutex);
-
 	// 1. Check Monitor-Specific VRAM Cache
 	if (useTextureCaching_ && loadFromCache(path)) {
+		loadTask_ = {};
+		currentLoadingPath_.clear();
 		status_ = LoadStatus::Ready;
 		return true;
 	}
+
+	std::lock_guard<std::mutex> lock(g_ImageLoadTaskMutex);
 
 	// 2. Check for an already in-flight task for this path
 	auto it = loadingTasks_.find(path);
@@ -97,7 +114,7 @@ bool Image::startAsyncLoad(const std::string& path) {
 		AsyncLoadResult res;
 
 		auto cleanup = [&]() {
-			std::lock_guard<std::mutex> lock(g_ImageCacheMutex);
+			std::lock_guard<std::mutex> lock(g_ImageLoadTaskMutex);
 			loadingTasks_.erase(path);
 			};
 
@@ -141,6 +158,7 @@ void Image::finalizeLoad() {
 	std::string path = currentLoadingPath_;
 	AsyncLoadResult res = loadTask_.get();
 	loadTask_ = {};
+	currentLoadingPath_.clear();
 
 	if (!res.success) {
 		// Fallback to alt file logic
@@ -152,22 +170,28 @@ void Image::finalizeLoad() {
 		return;
 	}
 
+	// Another consumer of the same shared load may already have finalized
+	// and cached the renderer-specific texture. Adopt it instead of
+	// creating and then orphaning a duplicate texture.
+	if (useTextureCaching_ && loadFromCache(path)) {
+		status_ = LoadStatus::Ready;
+		return;
+	}
+
 	// Prepare new assets on the main thread (Renderer calls must be main thread)
 	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
 	SDL_Texture* newTexture = nullptr;
 	if (res.staticSurface) {
 		newTexture = SDL_CreateTextureFromSurface(renderer, res.staticSurface.get());
+		if (!newTexture) {
+			status_ = LoadStatus::Error;
+			return;
+		}
 	}
 
 	// --- THE ATOMIC SWAP ---
 	// Cleanup old local assets only now that we have the new ones
-	if (animatedTexture_) {
-		SDL_DestroyTexture(animatedTexture_);
-		animatedTexture_ = nullptr;
-	}
-	if (texture_ && !isUsingCachedStaticTexture_) {
-		SDL_DestroyTexture(texture_);
-	}
+	releaseLocalImageAssets();
 
 	// Assign new data
 	texture_ = newTexture;
@@ -175,19 +199,43 @@ void Image::finalizeLoad() {
 	frameDelays_ = res.frameDelays;
 	baseViewInfo.ImageWidth = (float)res.w;
 	baseViewInfo.ImageHeight = (float)res.h;
+	resetAnimationState();
 
 	if (!animatedSurfaces_.empty()) {
-		createAnimatedStreamingTexture(res.w, res.h);
+		if (!createAnimatedStreamingTexture(res.w, res.h)) {
+			releaseLocalImageAssets();
+			status_ = LoadStatus::Error;
+			return;
+		}
 		primeAnimatedTextureIfNeeded();
 	}
 
 	// Update Cache Status
 	if (useTextureCaching_) {
-		std::lock_guard<std::mutex> lock(g_ImageCacheMutex);
 		CachedImage ci = { texture_, animatedSurfaces_, frameDelays_, res.w, res.h };
-		textureCache_[pathCache_.getKey(path, baseViewInfo.Monitor)] = ci;
-		isUsingCachedStaticTexture_ = (texture_ != nullptr);
-		isUsingCachedSurfaces_ = !animatedSurfaces_.empty();
+		CachedImage existing;
+		bool inserted = false;
+
+		{
+			std::lock_guard<std::mutex> lock(g_ImageTextureCacheMutex);
+			auto [entry, didInsert] = textureCache_.try_emplace(
+				pathCache_.getKey(path, baseViewInfo.Monitor),
+				ci
+			);
+			inserted = didInsert;
+			if (!inserted) {
+				existing = entry->second;
+			}
+		}
+
+		if (inserted) {
+			isUsingCachedStaticTexture_ = (texture_ != nullptr);
+			isUsingCachedSurfaces_ = !animatedSurfaces_.empty();
+		}
+		else if (!applyCachedImage(existing)) {
+			status_ = LoadStatus::Error;
+			return;
+		}
 	}
 	else {
 		isUsingCachedStaticTexture_ = false;
@@ -195,56 +243,65 @@ void Image::finalizeLoad() {
 	}
 
 	status_ = LoadStatus::Ready;
-	resetAnimationState();
 }
 
 // -------------------- Render Logic --------------------
 bool Image::loadFromCache(const std::string& filePath) {
-	// This helper assumes a mutex lock is already held by the caller
-	auto it = textureCache_.find(pathCache_.getKey(filePath, baseViewInfo.Monitor));
-	if (it == textureCache_.end()) return false;
+	CachedImage cached;
 
-	const CachedImage& ci = it->second;
+	{
+		std::lock_guard<std::mutex> lock(g_ImageTextureCacheMutex);
+		auto it = textureCache_.find(
+			pathCache_.getKey(filePath, baseViewInfo.Monitor)
+		);
+		if (it == textureCache_.end()) {
+			return false;
+		}
+		cached = it->second;
+	}
 
-	// --- FIX THE LEAK ---
-	// 1. Destroy the current static texture if it's not a cached reference
+	return applyCachedImage(cached);
+}
+
+bool Image::applyCachedImage(const CachedImage& cached) {
+	releaseLocalImageAssets();
+
+	baseViewInfo.ImageWidth = static_cast<float>(cached.w);
+	baseViewInfo.ImageHeight = static_cast<float>(cached.h);
+
+	texture_ = cached.texture;
+	animatedSurfaces_ = cached.animatedSurfaces;
+	frameDelays_ = cached.frameDelays;
+	isUsingCachedStaticTexture_ = texture_ != nullptr;
+	isUsingCachedSurfaces_ = !animatedSurfaces_.empty();
+	resetAnimationState();
+
+	if (isUsingCachedSurfaces_) {
+		if (!createAnimatedStreamingTexture(cached.w, cached.h)) {
+			releaseLocalImageAssets();
+			return false;
+		}
+		primeAnimatedTextureIfNeeded();
+	}
+
+	return texture_ || animatedTexture_;
+}
+
+void Image::releaseLocalImageAssets() {
+	if (animatedTexture_) {
+		SDL_DestroyTexture(animatedTexture_);
+	}
 	if (texture_ && !isUsingCachedStaticTexture_) {
 		SDL_DestroyTexture(texture_);
 	}
+
 	texture_ = nullptr;
+	animatedTexture_ = nullptr;
+	animatedSurfaces_.clear();
+	frameDelays_.clear();
 	isUsingCachedStaticTexture_ = false;
-
-	// 2. Destroy the animated streaming texture if it exists
-	// (Animated streaming textures are always instance-local, never shared)
-	if (animatedTexture_) {
-		SDL_DestroyTexture(animatedTexture_);
-		animatedTexture_ = nullptr;
-	}
-	// --------------------
-
-	// Restore dimensions instantly
-	baseViewInfo.ImageWidth = (float)ci.w;
-	baseViewInfo.ImageHeight = (float)ci.h;
-
-	if (ci.texture) {
-		texture_ = ci.texture;
-		isUsingCachedStaticTexture_ = true;
-	}
-	else if (!ci.animatedSurfaces.empty()) {
-		animatedSurfaces_ = ci.animatedSurfaces;
-		frameDelays_ = ci.frameDelays;
-		isUsingCachedSurfaces_ = true;
-
-		// createAnimatedStreamingTexture will allocate a NEW texture
-		createAnimatedStreamingTexture((int)baseViewInfo.ImageWidth, (int)baseViewInfo.ImageHeight);
-	}
-
-	if (texture_ || animatedTexture_) {
-		primeAnimatedTextureIfNeeded();
-		return true;
-	}
-
-	return false;
+	isUsingCachedSurfaces_ = false;
+	resetAnimationState();
 }
 
 bool Image::update(float dt) {
@@ -273,30 +330,27 @@ void Image::draw() {
 		/* Initialize a stable timeline anchor once */
 		if (animationStartTime_ == 0) {
 			animationStartTime_ = now;
-			lastRenderedFrame_ = std::numeric_limits<size_t>::max(); // force upload
 		}
 
-		/* Compute total cycle time */
-		Uint32 totalCycleTime = 0;
-		for (int d : frameDelays_) totalCycleTime += (Uint32)d;
-
-		if (totalCycleTime > 0) {
+		if (totalAnimationDuration_ > 0) {
 			/* Resolve current phase in cycle */
-			Uint32 t = (now - animationStartTime_) % totalCycleTime;
+			const std::uint64_t t =
+				static_cast<std::uint64_t>(now - animationStartTime_) %
+				totalAnimationDuration_;
 
-			/* Map phase -> frame index */
-			Uint32 accum = 0;
-			size_t frameIndex = 0;
+			const auto frame = std::upper_bound(
+				cumulativeFrameDelays_.begin(),
+				cumulativeFrameDelays_.end(),
+				t
+			);
+			const size_t frameIndex = static_cast<size_t>(
+				std::distance(cumulativeFrameDelays_.begin(), frame)
+			);
 
-			for (size_t i = 0; i < frameDelays_.size(); ++i) {
-				accum += (Uint32)frameDelays_[i];
-				if (t < accum) {
-					frameIndex = i;
-					break;
-				}
-			}
-
-			currentFrame_ = frameIndex;
+			currentFrame_ = std::min(
+				frameIndex,
+				animatedSurfaces_.size() - 1
+			);
 
 			/* Upload only if frame changed */
 			if (currentFrame_ != lastRenderedFrame_) {
@@ -334,27 +388,29 @@ void Image::draw() {
 
 // -------------------- Helpers --------------------
 void Image::freeGraphicsMemory() {
-	if (animatedTexture_) SDL_DestroyTexture(animatedTexture_);
-	if (texture_ && !isUsingCachedStaticTexture_) SDL_DestroyTexture(texture_);
-
-	texture_ = nullptr;
-	animatedTexture_ = nullptr;
-	animatedSurfaces_.clear();
-	frameDelays_.clear();
-	isUsingCachedStaticTexture_ = isUsingCachedSurfaces_ = false;
+	releaseLocalImageAssets();
 	status_ = LoadStatus::Unloaded;
 
 	loadTask_ = {};
 
 	// Reset our local path so we don't accidentally check it later
 	currentLoadingPath_.clear();
-	resetAnimationState();
 }
 
 void Image::resetAnimationState() {
 	currentFrame_ = 0;
 	animationStartTime_ = 0;
 	lastRenderedFrame_ = std::numeric_limits<size_t>::max();
+	cumulativeFrameDelays_.clear();
+	cumulativeFrameDelays_.reserve(frameDelays_.size());
+	totalAnimationDuration_ = 0;
+
+	for (int delay : frameDelays_) {
+		totalAnimationDuration_ += static_cast<std::uint64_t>(
+			std::max(delay, 0)
+		);
+		cumulativeFrameDelays_.push_back(totalAnimationDuration_);
+	}
 }
 
 bool Image::createAnimatedStreamingTexture(int width, int height) {
@@ -375,12 +431,22 @@ bool Image::createAnimatedStreamingTexture(int width, int height) {
 void Image::primeAnimatedTextureIfNeeded() {
 	if (animatedTexture_ && !animatedSurfaces_.empty()) {
 		SDL_Surface* s = animatedSurfaces_[0].get();
-		if (s) SDL_UpdateTexture(animatedTexture_, nullptr, s->pixels, s->pitch);
+		if (s && SDL_UpdateTexture(
+			animatedTexture_,
+			nullptr,
+			s->pixels,
+			s->pitch) == 0)
+		{
+			currentFrame_ = 0;
+			lastRenderedFrame_ = 0;
+		}
 	}
 }
 
 void Image::cleanupTextureCache() {
-	std::lock_guard<std::mutex> lock(g_ImageCacheMutex);
+	std::scoped_lock lock(
+		g_ImageTextureCacheMutex,
+		g_ImageLoadTaskMutex);
 	for (auto& [key, entry] : textureCache_) {
 		if (entry.texture) SDL_DestroyTexture(entry.texture);
 	}
@@ -399,51 +465,15 @@ bool Image::recycleAsImage(const std::string& newFilePath, const std::string& ne
 
 	this->Component::freeGraphicsMemory();
 
-	// 2. Silent Cache Check: If found, swap immediately without a status change
-	{
-		std::lock_guard<std::mutex> lock(g_ImageCacheMutex);
-		auto it = textureCache_.find(pathCache_.getKey(newFilePath, baseViewInfo.Monitor));
-		if (it != textureCache_.end()) {
-			file_ = newFilePath;
-			altFile_ = newAltPath;
-
-			const CachedImage& ci = it->second;
-
-			// Cleanup current local assets BEFORE taking cached ones
-			// (Only if they aren't also from the cache)
-			if (animatedTexture_) {
-				SDL_DestroyTexture(animatedTexture_);
-				animatedTexture_ = nullptr;
-			}
-			if (texture_ && !isUsingCachedStaticTexture_) {
-				SDL_DestroyTexture(texture_);
-			}
-
-			texture_ = ci.texture;
-			animatedSurfaces_ = ci.animatedSurfaces;
-			frameDelays_ = ci.frameDelays;
-			baseViewInfo.ImageWidth = (float)ci.w;
-			baseViewInfo.ImageHeight = (float)ci.h;
-
-			isUsingCachedStaticTexture_ = (texture_ != nullptr);
-			isUsingCachedSurfaces_ = !animatedSurfaces_.empty();
-
-			if (isUsingCachedSurfaces_) {
-				createAnimatedStreamingTexture(ci.w, ci.h);
-				primeAnimatedTextureIfNeeded();
-				resetAnimationState();
-			}
-
-			status_ = LoadStatus::Ready; // Keep the engine happy
-			return true;
-		}
-	}
-
-	// 3. Uncached Path: Keep drawing the old image while the new one loads
 	file_ = newFilePath;
 	altFile_ = newAltPath;
 
-	if (!startAsyncLoad(file_)) {
+	const std::string& pathToLoad =
+		file_.empty() ? altFile_ : file_;
+
+	// Keep drawing the old image on a miss. startAsyncLoad() also owns the
+	// single cache-hit path, avoiding a duplicate lookup during recycling.
+	if (!startAsyncLoad(pathToLoad)) {
 		status_ = LoadStatus::Error;
 	}
 

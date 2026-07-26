@@ -18,6 +18,7 @@
 #include <string>
 #include <vector>
 #include <map>
+#include <memory>
 
 class Item;
 class Configuration;
@@ -56,4 +57,5 @@ private:
     Configuration& conf_;
     std::string metadataPath_;
     std::string extensions_;
+    std::vector<std::unique_ptr<CollectionInfo>> subcollections_;
 };

@@ -80,11 +80,15 @@ public:
     PlaybackState getPlaybackState() const { return playbackState_; }
 
     void processAudioData(Uint8* stream, int len);
-    const std::vector<float>& getAudioLevels() const { return audioLevels_; }
+    std::vector<float> getAudioLevels() const;
     int getAudioChannels() const { return audioChannels_; }
     int getAudioSampleRate() const { return audioSampleRate_; }
-    bool hasVuMeter() const { return hasVuMeter_; }
-    void setHasVuMeter(bool enable) { hasVuMeter_ = enable; }
+    bool hasVuMeter() const {
+        return hasVuMeter_.load(std::memory_order_acquire);
+    }
+    void setHasVuMeter(bool enable) {
+        hasVuMeter_.store(enable, std::memory_order_release);
+    }
     int getSampleSize() const;
     void addVisualizerListener(MusicPlayerComponent* listener);
     void removeVisualizerListener(MusicPlayerComponent* listener);
@@ -223,11 +227,11 @@ private:
     std::atomic<bool> isShuttingDown_;
 
     std::vector<MusicPlayerComponent*> visualizerListeners_;
-    std::mutex visualizerMutex_;
-    bool hasActiveVisualizers_ = false;
+    mutable std::mutex visualizerMutex_;
+    std::atomic<bool> hasActiveVisualizers_{ false };
     std::vector<float> audioLevels_;
     int audioChannels_;
     int audioSampleRate_;
-    bool hasVuMeter_;
+    std::atomic<bool> hasVuMeter_{ false };
     int sampleSize_;
 };

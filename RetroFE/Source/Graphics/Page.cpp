@@ -30,6 +30,50 @@
 #include <algorithm>
 #include <sstream>
 
+namespace {
+	unsigned int graphicsPreparationTier(const Component& component)
+	{
+		if (component.isVisibleForGraphicsPreparation() ||
+			!component.isIdle())
+		{
+			return 0;
+		}
+
+		return component.hasHighPriority() ? 1 : 2;
+	}
+
+	std::vector<ScrollingList*> menusByVisualPriority(
+		const std::vector<ScrollingList*>& menus)
+	{
+		std::vector<ScrollingList*> order;
+		order.reserve(menus.size());
+
+		for (ScrollingList* menu : menus) {
+			if (menu) {
+				order.push_back(menu);
+			}
+		}
+
+		std::stable_sort(
+			order.begin(),
+			order.end(),
+			[](const ScrollingList* lhs, const ScrollingList* rhs) {
+				if (lhs->getVisualPriorityTier() !=
+					rhs->getVisualPriorityTier())
+				{
+					return lhs->getVisualPriorityTier() <
+						rhs->getVisualPriorityTier();
+				}
+
+				return lhs->getVisualPriorityLayer() >
+					rhs->getVisualPriorityLayer();
+			}
+		);
+
+		return order;
+	}
+}
+
 
 Page::Page(Configuration& config, int layoutWidth, int layoutHeight)
 	: fromPreviousPlaylist(false)
@@ -66,7 +110,9 @@ Page::Page(Configuration& config, int layoutWidth, int layoutHeight)
 }
 
 
-Page::~Page() = default;
+Page::~Page() {
+	deInitialize();
+}
 
 
 void Page::deInitialize() {
@@ -177,6 +223,9 @@ void Page::setActiveMenuItemsFromPlaylist(MenuInfo_S info, ScrollingList* menu) 
 void Page::onNewItemSelected() {
 	if (!getAnActiveMenu()) return;
 
+	pendingScrollSelect_ = false;
+	setSelectedItem();
+
 	for (auto it = menus_.begin(); it != menus_.end(); ++it) {
 		for (auto it2 = it->begin(); it2 != it->end(); ++it2) {
 			ScrollingList* menu = *it2;
@@ -206,7 +255,6 @@ void Page::returnToRememberSelectedItem() {
 		if (it != lastPlaylistOffsets_.end())
 		{
 			setScrollOffsetIndex(it->second);
-			setSelectedItem();
 			onNewItemSelected();
 		}
 	}
@@ -258,6 +306,9 @@ CollectionInfo* Page::detachCollection() {
 void Page::onNewScrollItemSelected() {
 	if (!getAnActiveMenu()) return;
 
+	pendingScrollSelect_ = false;
+	setSelectedItem();
+
 	for (auto& layer : LayerComponents_) {
 		for (Component* component : layer) {
 			if (component) {
@@ -299,6 +350,7 @@ void Page::pushMenu(ScrollingList* s, int index) {
 	}
 
 	menus_[index].push_back(s);
+	invalidateFrameLayerBuckets_();
 }
 
 
@@ -316,6 +368,7 @@ bool Page::addComponent(Component* c) {
 	if (c->baseViewInfo.Layer < NUM_LAYERS) {
 		// No need to resize�guaranteed by constructor
 		LayerComponents_[c->baseViewInfo.Layer].push_back(c);
+		invalidateFrameLayerBuckets_();
 		return true;
 	}
 	else {
@@ -463,6 +516,10 @@ void Page::setControlsType(const std::string& type) {
 }
 
 void Page::playlistChange() {
+	// A playlist switch supersedes any delayed notification from the
+	// previously active scrolling transaction.
+	pendingScrollSelect_ = false;
+
 	std::string playlistName = getPlaylistName();
 
 	for (auto it = activeMenu_.begin(); it != activeMenu_.end(); it++) {
@@ -732,7 +789,6 @@ void Page::selectRandom() {
 	}
 
 	// 3. Trigger UI updates
-	setSelectedItem();
 	onNewScrollItemSelected();
 	if (highlightSoundChunk_) {
 		highlightSoundChunk_->play();
@@ -863,6 +919,7 @@ bool Page::pushCollection(CollectionInfo* collection) {
 	if (!collection) {
 		return false;
 	}
+	invalidateFrameLayerBuckets_();
 
 	// Before creating new menus, cleanup existing ones at base level
 	if (menus_.size() <= menuDepth_ && getAnActiveMenu()) {
@@ -945,6 +1002,7 @@ bool Page::popCollection() {
 	if (!getAnActiveMenu()) return false;
 	if (menuDepth_ <= 1) return false;
 	if (collections_.size() <= 1) return false;
+	invalidateFrameLayerBuckets_();
 
 	// Correctly target the current depth and shrink the vector!
 	if (menuDepth_ <= menus_.size() && menuDepth_ > 1) {
@@ -979,10 +1037,10 @@ bool Page::popCollection() {
 	activeMenu_ = menus_[menuDepth_ - 1];
 
 	// Reallocate graphics memory for the menu we're returning to
-	for (ScrollingList* menu : activeMenu_) {
-		if (menu) {
-			menu->allocateGraphicsMemory();
-		}
+	for (ScrollingList* menu :
+		menusByVisualPriority(activeMenu_))
+	{
+		menu->allocateGraphicsMemory();
 	}
 
 	anActiveMenu_ = nullptr;
@@ -1394,11 +1452,15 @@ void Page::prevCyclePlaylist(const std::vector<std::string>& list) {
 }
 
 bool Page::playlistExists(const std::string& playlist) {
-	MenuInfo_S& info = collections_.back();
-	CollectionInfo::Playlists_T p = info.collection->playlists;
+	const MenuInfo_S& info = collections_.back();
+	const CollectionInfo::Playlists_T& playlists =
+		info.collection->playlists;
+	const auto found = playlists.find(playlist);
 
 	// playlist exists in cycle and contains items
-	return p.end() != p.find(playlist) && !info.collection->playlists[playlist]->empty();
+	return found != playlists.end() &&
+		found->second &&
+		!found->second->empty();
 }
 
 
@@ -1410,6 +1472,8 @@ void Page::update(float dt) {
 		lastPlaylistName_ = playlistName;
 		playlistNameChanged = true;
 	}
+
+	prepareGraphicsByLayer_();
 
 	// Update page-level components first.
 	// This allows standalone <video> components to begin prerolling
@@ -1538,9 +1602,13 @@ void Page::update(float dt) {
 
 	if (textStatusComponent_) {
 		std::string status;
-		config_.setProperty("status", status);
+		config_.getProperty("status", status);
 		textStatusComponent_->setText(status);
 	}
+
+	// Capture the post-animation layer state once for drawing this frame
+	// and for preparation at the beginning of the next frame.
+	rebuildFrameLayerBuckets_();
 }
 
 void Page::updateReloadables(float dt) {
@@ -1551,6 +1619,8 @@ void Page::updateReloadables(float dt) {
 			}
 		}
 	}
+
+	rebuildFrameLayerBuckets_();
 }
 
 void Page::cleanup() {
@@ -1577,42 +1647,142 @@ void Page::cleanup() {
 
 
 void Page::draw(int monitor) {
+	if (!frameLayerBucketsValid_) {
+		rebuildFrameLayerBuckets_();
+	}
+
 	for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
-		// Draw all components in this layer for the given monitor
-		for (Component* c : LayerComponents_[i]) {
+		for (Component* c : pageDrawLayers_[i]) {
 			if (c && c->baseViewInfo.Monitor == monitor) {
 				c->draw();
 			}
 		}
-		// Draw all menu components belonging to this layer and monitor
-		for (const auto& menuList : menus_) {
-			for (ScrollingList const* const menu : menuList) {
-				if (!menu) continue;
-				for (Component* c : menu->getComponents()) {
-					if (c && c->baseViewInfo.Layer == i && c->baseViewInfo.Monitor == monitor) {
-						c->draw();
-					}
-				}
+
+		for (Component* c : menuDrawLayers_[i]) {
+			if (c && c->baseViewInfo.Monitor == monitor) {
+				c->draw();
+			}
+		}
+	}
+}
+
+void Page::invalidateFrameLayerBuckets_() {
+	frameLayerBucketsValid_ = false;
+}
+
+void Page::rebuildFrameLayerBuckets_() {
+	for (auto& tier : preparationLayers_) {
+		for (auto& layer : tier) {
+			layer.clear();
+		}
+	}
+	for (auto& layer : pageDrawLayers_) {
+		layer.clear();
+	}
+	for (auto& layer : menuDrawLayers_) {
+		layer.clear();
+	}
+
+	auto queueComponent = [this](
+		Component* component,
+		std::array<std::vector<Component*>, NUM_LAYERS>& drawLayers,
+		bool queueForPreparation)
+	{
+		if (!component) {
+			return;
+		}
+
+		const unsigned int layer = component->baseViewInfo.Layer;
+		if (layer >= NUM_LAYERS) {
+			return;
+		}
+
+		const unsigned int tier =
+			graphicsPreparationTier(*component);
+
+		drawLayers[layer].push_back(component);
+		if (queueForPreparation) {
+			preparationLayers_[tier][layer].push_back(component);
+		}
+	};
+
+	// Preserve page-component XML order within each live layer.
+	for (const auto& ownershipLayer : LayerComponents_) {
+		for (Component* component : ownershipLayer) {
+			queueComponent(component, pageDrawLayers_, true);
+		}
+	}
+
+	// Menu children draw after page components on equal layers. Retained
+	// menu depths still draw as before, but only active depths prepare.
+	size_t menuDepth = 0;
+	for (const auto& menuList : menus_) {
+		const bool activeDepth = menuDepth < menuDepth_;
+		for (ScrollingList* menu : menuList) {
+			if (!menu) {
+				continue;
+			}
+
+			for (Component* component : menu->getComponents()) {
+				queueComponent(
+					component,
+					menuDrawLayers_,
+					activeDepth
+				);
+			}
+		}
+		++menuDepth;
+	}
+
+	frameLayerBucketsValid_ = true;
+}
+
+void Page::prepareGraphicsByLayer_() {
+	if (!frameLayerBucketsValid_) {
+		rebuildFrameLayerBuckets_();
+	}
+
+	for (unsigned int tier = 0;
+		tier < NUM_PREPARATION_TIERS;
+		++tier)
+	{
+		for (int layer = static_cast<int>(NUM_LAYERS) - 1;
+			layer >= 0;
+			--layer)
+		{
+			auto& components = preparationLayers_[tier][layer];
+
+			// Reverse draw order: topmost menu children prepare first,
+			// followed by page components on the same layer.
+			for (auto component = components.rbegin();
+				component != components.rend();
+				++component)
+			{
+				(*component)->pumpGraphicsPreparation();
 			}
 		}
 	}
 }
 
 void Page::pumpGraphicsPreparation() {
+	prepareGraphicsByLayer_();
+}
+
+void Page::waitForGraphicsPreparation() {
 	for (const auto& layerComponents : LayerComponents_) {
 		for (Component* component : layerComponents) {
 			if (component) {
-				component->pumpGraphicsPreparation();
+				component->waitForGraphicsPreparation();
 			}
 		}
 	}
 
 	int currentDepth = 0;
-	for (auto const& menuList : menus_) {
+	for (const auto& menuList : menus_) {
 		if (currentDepth < static_cast<int>(menuDepth_)) {
-			for (auto& menu : menuList) {
+			for (ScrollingList* menu : menuList) {
 				if (menu) {
-					menu->pumpGraphicsPreparation();
+					menu->waitForGraphicsPreparation();
 				}
 			}
 		}
@@ -1740,9 +1910,6 @@ void Page::removePlaylist() {
 		}
 	}
 
-	// Refresh Page's main selectedItem_
-	setSelectedItem();
-
 	// --- Save & standard UI update ---
 	collection->saveFavorites();
 	onNewItemSelected();
@@ -1813,6 +1980,8 @@ CollectionInfo* Page::getCollection() {
 
 
 void Page::freeGraphicsMemory() {
+	invalidateFrameLayerBuckets_();
+
 	for (auto const& menuVector : menus_) {
 		for (ScrollingList* menu : menuVector) {
 			menu->freeGraphicsMemory();
@@ -1835,25 +2004,85 @@ void Page::freeGraphicsMemory() {
 
 void Page::allocateGraphicsMemory() {
 	LOG_DEBUG("Page", "Allocating graphics memory");
+	invalidateFrameLayerBuckets_();
 
-	for (const auto& layerComponents : LayerComponents_) {
-		for (Component* component : layerComponents) {
-			if (component) {
-				component->allocateGraphicsMemory();
+	struct AllocationCandidate {
+		unsigned int tier;
+		unsigned int layer;
+		Component* component;
+		ScrollingList* menu;
+	};
+
+	std::vector<AllocationCandidate> candidates;
+
+	for (unsigned int layer = 0; layer < NUM_LAYERS; ++layer) {
+		const auto& components = LayerComponents_[layer];
+
+		for (auto component = components.rbegin();
+			component != components.rend();
+			++component)
+		{
+			if (*component) {
+				candidates.push_back(
+					{
+						graphicsPreparationTier(**component),
+						(*component)->baseViewInfo.Layer,
+						*component,
+						nullptr
+					}
+				);
 			}
 		}
 	}
 
 	int currentDepth = 0;
-	for (auto const& menuList : menus_) {
+	for (const auto& menuList : menus_) {
 		if (currentDepth < static_cast<int>(menuDepth_)) {
-			for (auto& menu : menuList) {
-				if (menu) {
-					menu->allocateGraphicsMemory();
+			for (auto menu = menuList.rbegin();
+				menu != menuList.rend();
+				++menu)
+			{
+				if (*menu) {
+					candidates.push_back(
+						{
+							(*menu)->getVisualPriorityTier(),
+							(*menu)->getVisualPriorityLayer(),
+							nullptr,
+							*menu
+						}
+					);
 				}
 			}
 		}
 		++currentDepth;
+	}
+
+	std::stable_sort(
+		candidates.begin(),
+		candidates.end(),
+		[](const AllocationCandidate& lhs,
+			const AllocationCandidate& rhs)
+		{
+			if (lhs.tier != rhs.tier) {
+				return lhs.tier < rhs.tier;
+			}
+
+			if (lhs.layer != rhs.layer) {
+				return lhs.layer > rhs.layer;
+			}
+
+			// Menu children draw after page components on equal layers.
+			return lhs.menu && !rhs.menu;
+		}
+	);
+
+	for (const AllocationCandidate& candidate : candidates) {
+		if (candidate.menu) {
+			candidate.menu->allocateGraphicsMemory();
+		}
+		else {
+			candidate.component->allocateGraphicsMemory();
+		}
 	}
 
 	if (loadSoundChunk_) loadSoundChunk_->allocate();
@@ -1915,18 +2144,26 @@ bool Page::isSelectPlaying() {
 }
 
 
-void Page::allocateMenuSpritePoints(bool updatePlaylistMenu) const {
-	for (ScrollingList* menu : activeMenu_) {
-		if (menu && (!menu->isPlaylist() || updatePlaylistMenu)) {
+void Page::allocateMenuSpritePoints(bool updatePlaylistMenu) {
+	invalidateFrameLayerBuckets_();
+
+	for (ScrollingList* menu :
+		menusByVisualPriority(activeMenu_))
+	{
+		if (!menu->isPlaylist() || updatePlaylistMenu) {
 			menu->allocateSpritePoints();
 		}
 	}
 }
 
 
-void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu) const {
-	for (ScrollingList* menu : activeMenu_) {
-		if (menu && (!menu->isPlaylist() || updatePlaylistMenu)) {
+void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu) {
+	invalidateFrameLayerBuckets_();
+
+	for (ScrollingList* menu :
+		menusByVisualPriority(activeMenu_))
+	{
+		if (!menu->isPlaylist() || updatePlaylistMenu) {
 			menu->reallocateSpritePoints();
 		}
 	}

@@ -17,6 +17,7 @@
 
 
 #include <SDL.h>
+#include <cstddef>
 #include <string>
 #include "Graphics/ViewInfo.h"
 #include <vector>
@@ -38,6 +39,8 @@ public:
     static void drawFitBars(int monitor, int layoutWidth, int layoutHeight);
     static bool renderCopy( SDL_Texture *texture, float alpha, SDL_Rect const *src, SDL_Rect const *dest, ViewInfo &viewInfo, int layoutWidth, int layoutHeight );
     static bool renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight);
+    static void beginGeometryBatch(std::size_t expectedQuads = 0);
+    static bool endGeometryBatch();
     static int getScreenCount( ) 
 	{
         return screenCount_;

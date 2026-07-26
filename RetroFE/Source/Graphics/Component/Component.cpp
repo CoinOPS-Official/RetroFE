@@ -19,6 +19,7 @@
 #include "../../Utility/Log.h"
 #include "../../SDL.h"
 #include "../PageBuilder.h"
+#include <cmath>
 
 std::map<int, SDL_Texture*> Component::sharedBackgroundTextures_;
 
@@ -36,6 +37,7 @@ Component::Component(Page &p)
     newItemSelected = false;
     newScrollItemSelected = false;
     menuIndex_ = -1;
+    pauseOnScroll_ = true;
 
     currentTweenIndex_ = 0;
     currentTweenComplete_ = true;
@@ -156,6 +158,37 @@ bool Component::isMenuScrolling() const
 bool Component::isPlaylistScrolling() const
 {
     return (!currentTweenComplete_ && animationType_ == "playlistScroll");
+}
+
+bool Component::isVisibleForGraphicsPreparation() const
+{
+    if (baseViewInfo.Alpha <= 0.0f) {
+        return false;
+    }
+
+    const float width = baseViewInfo.ScaledWidth();
+    const float height = baseViewInfo.ScaledHeight();
+
+    // Until intrinsic media dimensions are known, alpha is the safest
+    // indication that the component is intended to contribute visually.
+    if (!std::isfinite(width) || !std::isfinite(height) ||
+        width <= 0.0f || height <= 0.0f) {
+        return true;
+    }
+
+    const float x = baseViewInfo.XRelativeToOrigin();
+    const float y = baseViewInfo.YRelativeToOrigin();
+    const float viewportWidth =
+        static_cast<float>(page.getLayoutWidthByMonitor(baseViewInfo.Monitor));
+    const float viewportHeight =
+        static_cast<float>(page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+
+    if (viewportWidth <= 0.0f || viewportHeight <= 0.0f) {
+        return true;
+    }
+
+    return x + width > 0.0f && x < viewportWidth &&
+        y + height > 0.0f && y < viewportHeight;
 }
 
 void Component::setTweens(const std::shared_ptr<AnimationEvents>& set) {

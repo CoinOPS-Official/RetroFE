@@ -23,6 +23,7 @@
 #include <fstream>
 #include <algorithm>
 #include <exception>
+#include <unordered_set>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -57,17 +58,38 @@ CollectionInfo::CollectionInfo(
 }
 
 CollectionInfo::~CollectionInfo() {
+    std::unordered_set<std::vector<Item*>*> deletedPlaylists;
     for (auto& entry : playlists) {
-        if (entry.second != nullptr && entry.second != &items) {
+        if (entry.second != nullptr &&
+            entry.second != &items &&
+            deletedPlaylists.insert(entry.second).second) {
             delete entry.second;
         }
-        entry.second = nullptr; // <--- The Fix: Neutralize the pointer
+        entry.second = nullptr;
     }
     playlists.clear();
 
-    // Do NOT delete the Item* pointers here! 
-    // They are owned and deleted by MetadataDatabase/CollectionInfoBuilder.
+    std::unordered_set<Item*> deletedItems;
+    for (Item* item : items) {
+        // A parent collection also exposes items owned by its subcollections.
+        // Those are destroyed with their owning CollectionInfo below.
+        if (item &&
+            item->collectionInfo == this &&
+            deletedItems.insert(item).second) {
+            delete item;
+        }
+    }
+
+    for (Item* item : playlistItems) {
+        if (item &&
+            item->collectionInfo == this &&
+            deletedItems.insert(item).second) {
+            delete item;
+        }
+    }
+
     items.clear();
+    playlistItems.clear();
 }
 
 bool CollectionInfo::saveFavorites(Item* removed)
@@ -236,7 +258,12 @@ std::string CollectionInfo::lowercaseName() const
 
 void CollectionInfo::addSubcollection(CollectionInfo *newinfo)
 {
+    if (!newinfo) {
+        return;
+    }
+
     items.insert(items.begin(), newinfo->items.begin(), newinfo->items.end());
+    subcollections_.emplace_back(newinfo);
 }
 
 auto CollectionInfo::itemIsLess(const std::string& sortTypeParam, bool currentCollectionMenusort) const

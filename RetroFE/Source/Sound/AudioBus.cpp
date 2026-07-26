@@ -31,8 +31,6 @@ namespace {
         n++;
         return n;
     }
-    static inline size_t align_up(size_t n, size_t a) { return a ? ((n + (a - 1)) / a) * a : n; }
-
 }
 
 static inline int bytes_per_sample(SDL_AudioFormat f) noexcept {
@@ -70,11 +68,10 @@ int AudioBus::SpscRing::write(const uint8_t* data, int bytes) {
     size_t free = cap - used;
 
     if ((size_t)bytes > free) {
-        size_t need = (size_t)bytes - free;
-        need = align_up(need, align_);
-        if (need > used) need = used;
-        tail_.store(t + need, std::memory_order_release);
-        t += need;
+        // tail_ belongs exclusively to the consumer. Dropping this producer
+        // block preserves SPSC correctness; producer-side tail updates can
+        // otherwise overwrite a simultaneous consumer advance.
+        return 0;
     }
 
     size_t idx = h & mask_;
@@ -92,6 +89,12 @@ int AudioBus::SpscRing::read(uint8_t* out, int bytes) {
     if (!out || bytes <= 0) return 0;
 
     const size_t cap = buf_.size();
+
+    if (clearRequested_.exchange(false, std::memory_order_acq_rel)) {
+        const size_t h = head_.load(std::memory_order_acquire);
+        tail_.store(h, std::memory_order_release);
+        return 0;
+    }
 
     size_t h = head_.load(std::memory_order_acquire);
     size_t t = tail_.load(std::memory_order_relaxed);
@@ -111,8 +114,9 @@ int AudioBus::SpscRing::read(uint8_t* out, int bytes) {
 }
 
 void AudioBus::SpscRing::clear() {
-    size_t h = head_.load(std::memory_order_relaxed);
-    tail_.store(h, std::memory_order_release);
+    // Only the consumer mutates tail_. It applies this request at the start of
+    // its next read, avoiding a control-thread/consumer lost update.
+    clearRequested_.store(true, std::memory_order_release);
 }
 
 
@@ -195,9 +199,24 @@ void AudioBus::triggerFadeIn(const std::shared_ptr<Handle>& h, int durationSampl
 }
 
 void AudioBus::removeSource(SourceId id) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    sources_.erase(id);
-    rebuildSnapshotLocked();
+    std::shared_ptr<Source> removed;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        auto it = sources_.find(id);
+        if (it == sources_.end()) return;
+        removed = it->second;
+        sources_.erase(it);
+        rebuildSnapshotLocked();
+    }
+
+    const uint64_t underruns =
+        removed->underrunCount.load(std::memory_order_relaxed);
+    if (underruns > 0) {
+        LOG_DEBUG(
+            "AudioBus",
+            "Source '" + removed->name + "' had " +
+                std::to_string(underruns) + " partial-buffer underruns");
+    }
 }
 
 void AudioBus::setEnabled(SourceId id, bool on) {
@@ -462,19 +481,8 @@ void AudioBus::mixInto_s16(Uint8* dst, int lenBytes) {
     if (!snap || snap->empty() || want <= 0) return;
 
     static thread_local std::vector<Uint8> scratch;
-    static thread_local size_t tl_scratch_hwm_cap = 0;
-    static thread_local size_t tl_scratch_hwm_size = 0;
 
     if ((int)scratch.size() < want) scratch.resize(want);
-
-    if (scratch.capacity() > tl_scratch_hwm_cap || scratch.size() > tl_scratch_hwm_size) {
-        tl_scratch_hwm_cap = std::max(tl_scratch_hwm_cap, scratch.capacity());
-        tl_scratch_hwm_size = std::max(tl_scratch_hwm_size, scratch.size());
-
-        LOG_DEBUG("AudioBus", "mixInto_s16(): scratch grew: want=" + std::to_string(want) +
-            " size=" + std::to_string(scratch.size()) +
-            " cap=" + std::to_string(scratch.capacity()));
-    }
 
     Uint8* tmp = scratch.data();
 
@@ -489,12 +497,9 @@ void AudioBus::mixInto_s16(Uint8* dst, int lenBytes) {
             // Fill remainder with silence to prevent garbage/crackling
             std::memset(tmp + gotAligned, 0, want - gotAligned);
 
-            // Only log occasionally to avoid spam
-            static int underrunCount = 0;
-            if (++underrunCount % 100 == 0) {
-                LOG_WARNING("AudioBus", "Audio underrun on source '" + src->name +
-                    "': wanted " + std::to_string(want) + " got " + std::to_string(gotAligned));
-            }
+            // Never take the logger mutex or perform file I/O from the mixer
+            // callback. Control-plane code can inspect this counter later.
+            src->underrunCount.fetch_add(1, std::memory_order_relaxed);
         }
 
         mix_s16_sat(dst, tmp, want);

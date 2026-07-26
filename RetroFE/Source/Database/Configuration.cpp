@@ -26,6 +26,8 @@
 #include <set>
 #include <cstdio>
 #include <algorithm>
+#include <mutex>
+#include <shared_mutex>
 
 #ifdef WIN32
 #include <windows.h>
@@ -119,6 +121,7 @@ void Configuration::initialize()
 
 void Configuration::clearProperties( )
 {
+    std::unique_lock lock(propertiesMutex_);
     properties_.clear( );
 }
 
@@ -146,7 +149,7 @@ bool Configuration::import(const std::string& collection, const std::string& key
             retVal = retVal && parseLine(collection, "", line, lineCount);
 
             // Check if the line contains the log level setting
-            if (properties_.find(OPTION_LOG) != properties_.end()) {
+            if (propertyExists(OPTION_LOG)) {
                 StartLogging(this); // Start logging with the specified level
             }
         }
@@ -172,7 +175,7 @@ bool Configuration::import(const std::string& collection, const std::string& key
             retVal = retVal && parseLine(collection, keyPrefix, line, lineCount);
 
             // Check if the line contains the log level setting
-            if (properties_.find(OPTION_LOG) != properties_.end()) {
+            if (propertyExists(OPTION_LOG)) {
                 StartLogging(this); // Start logging with the specified level
             }
         }
@@ -223,7 +226,10 @@ bool Configuration::parseLine(const std::string& collection, std::string keyPref
             value = Utils::replace(value, "%ITEM_COLLECTION_NAME%", collection);
         }
 
-        properties_[key] = value;
+        {
+            std::unique_lock lock(propertiesMutex_);
+            properties_[key] = value;
+        }
 
         std::stringstream ss;
         ss << "Dump: "  << "\"" << key << "\" = \"" << value << "\"";
@@ -255,6 +261,7 @@ std::string Configuration::trimEnds(std::string str)
 
 bool Configuration::getRawProperty(const std::string& key, std::string& value)
 {
+    std::shared_lock lock(propertiesMutex_);
     auto it = properties_.find(key); // Use iterator to search for the key
     if (it != properties_.end()) {
         value = it->second; // Directly access the value from the iterator
@@ -268,22 +275,21 @@ bool Configuration::getProperty(const std::string& key, std::string& value)
     static std::string baseMediaPath = Utils::combinePath(absolutePath, "collections");
     static std::string baseItemPath = Utils::combinePath(absolutePath, "collections");
 
-    // Optional: If properties might override base paths, check this once
-    static bool basePathsInitialized = false;
-    if (!basePathsInitialized) {
+    // Preserve the existing one-time base-path lookup without racing when
+    // configuration is read by both the loader and render threads.
+    static std::once_flag basePathsOnce;
+    std::call_once(basePathsOnce, [this]() {
         getRawProperty("baseMediaPath", baseMediaPath);
         getRawProperty("baseItemPath", baseItemPath);
-        basePathsInitialized = true;
-    }
+    });
 
     bool retVal = getRawProperty(key, value);
-    std::string_view valueView(value);
 
     // Only perform replacement if necessary
-    if (valueView.find("%BASE_MEDIA_PATH%") != std::string_view::npos) {
+    if (value.find("%BASE_MEDIA_PATH%") != std::string::npos) {
         value = Utils::replace(value, "%BASE_MEDIA_PATH%", baseMediaPath);
     }
-    if (valueView.find("%BASE_ITEM_PATH%") != std::string_view::npos) {
+    if (value.find("%BASE_ITEM_PATH%") != std::string::npos) {
         value = Utils::replace(value, "%BASE_ITEM_PATH%", baseItemPath);
     }
 
@@ -344,16 +350,19 @@ bool Configuration::getProperty(const std::string& key, bool& value)
 
 void Configuration::setProperty(const std::string& key, const std::string& value)
 {
+    std::unique_lock lock(propertiesMutex_);
     properties_[key] = value;
 }
 
 void Configuration::setProperty(const std::string& key, const int& value)
 {
+    std::unique_lock lock(propertiesMutex_);
     properties_[key] = std::to_string(value);
 }
 
 void Configuration::setProperty(const std::string& key, const bool& value)
 {
+    std::unique_lock lock(propertiesMutex_);
     if (value)
         properties_[key] = "true";
     else
@@ -362,17 +371,20 @@ void Configuration::setProperty(const std::string& key, const bool& value)
 
 bool Configuration::propertiesEmpty() const
 {
+    std::shared_lock lock(propertiesMutex_);
     return properties_.empty();
 }
 
 bool Configuration::propertyExists(const std::string& key)
 {
+    std::shared_lock lock(propertiesMutex_);
     return (properties_.find(key) != properties_.end());
 }
 
 bool Configuration::propertyPrefixExists(const std::string& key)
 {
     std::string search = key + ".";
+    std::shared_lock lock(propertiesMutex_);
 
     for (const auto& [propertyKey, propertyValue] : properties_) {
         if (propertyKey.compare(0, search.length(), search) == 0) {
@@ -388,6 +400,7 @@ void Configuration::childKeyCrumbs(const std::string& parent, std::vector<std::s
 {
     std::string search = parent + ".";
     std::set<std::string> uniqueChildren;
+    std::shared_lock lock(propertiesMutex_);
 
     for (const auto& [propertyKey, propertyValue] : properties_) {
         if (propertyKey.compare(0, search.length(), search) == 0) {
@@ -501,12 +514,15 @@ bool Configuration::StartLogging(Configuration* config)
 void Configuration::printProperties() const {
     // Separate items with and without prefixes
     std::vector<std::pair<std::string, std::string>> withPrefix, withoutPrefix;
-    for (const auto& pair : properties_) {
-        if (pair.first.find('.') != std::string::npos) {
-            withPrefix.push_back(pair);
-        }
-        else {
-            withoutPrefix.push_back(pair);
+    {
+        std::shared_lock lock(propertiesMutex_);
+        for (const auto& pair : properties_) {
+            if (pair.first.find('.') != std::string::npos) {
+                withPrefix.push_back(pair);
+            }
+            else {
+                withoutPrefix.push_back(pair);
+            }
         }
     }
   
@@ -530,12 +546,15 @@ void Configuration::printProperties() const {
 void Configuration::dumpPropertiesToFile(const std::string& filename) {
     // Separate items with and without prefixes
     std::vector<std::pair<std::string, std::string>> withPrefix, withoutPrefix;
-    for (const auto& pair : properties_) {
-        if (pair.first.find('.') != std::string::npos) {
-            withPrefix.push_back(pair);
-        }
-        else {
-            withoutPrefix.push_back(pair);
+    {
+        std::shared_lock lock(propertiesMutex_);
+        for (const auto& pair : properties_) {
+            if (pair.first.find('.') != std::string::npos) {
+                withPrefix.push_back(pair);
+            }
+            else {
+                withoutPrefix.push_back(pair);
+            }
         }
     }
   

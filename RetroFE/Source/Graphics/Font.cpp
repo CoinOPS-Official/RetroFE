@@ -362,6 +362,15 @@ void FontManager::preloadGlyphRange(TTF_Font* font,
 }
 
 bool FontManager::initialize() {
+    if (!mipLevels_.empty() && max_font_) {
+        const MipLevel* mip = mipLevels_.rbegin()->second;
+        if (mip && mip->fillTexture) {
+            return true;
+        }
+    }
+
+    ++generation_;
+    kerningCache_.clear();
     clearMips();
 
     // We only initialize the specific size target requested by PageBuilder.
@@ -676,6 +685,12 @@ bool FontManager::loadGlyphOnDemand(Uint32 ch, MipLevel* mip) {
 }
 
 void FontManager::deInitialize() {
+    if (mipLevels_.empty() && !max_font_) {
+        return;
+    }
+
+    ++generation_;
+    kerningCache_.clear();
     clearMips();
     max_font_ = nullptr;
 }
@@ -724,7 +739,25 @@ const FontManager::MipLevel* FontManager::getMipLevelForSize(int targetSize) con
 // MODIFIED: Uses the max-resolution font handle for best precision
 int FontManager::getKerning(Uint32 prevChar, Uint32 curChar) const {  // ? was Uint16
     if (!max_font_ || prevChar == 0 || curChar == 0) return 0;
-    return TTF_GetFontKerningSizeGlyphs32(max_font_, prevChar, curChar);  // ? was GetFontKerningSizeGlyphs
+
+    const std::uint64_t key =
+        (static_cast<std::uint64_t>(prevChar) << 32) |
+        static_cast<std::uint64_t>(curChar);
+
+    const auto cached = kerningCache_.find(key);
+    if (cached != kerningCache_.end()) {
+        return cached->second;
+    }
+
+    const int kerning =
+        TTF_GetFontKerningSizeGlyphs32(
+            max_font_,
+            prevChar,
+            curChar
+        );
+
+    kerningCache_.emplace(key, kerning);
+    return kerning;
 }
 
 // MODIFIED: Calculates width based on the metrics of the highest-resolution font

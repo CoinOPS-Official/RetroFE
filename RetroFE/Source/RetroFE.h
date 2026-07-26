@@ -216,6 +216,7 @@ private:
     double              currentTime_;
     double              lastLaunchReturnTime_;
     Item              *nextPageItem_;
+    Item               syntheticNextPageItem_;
     FontCache          fontcache_;
     AttractMode        attract_;
     bool               menuMode_;

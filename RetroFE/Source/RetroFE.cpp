@@ -748,6 +748,7 @@ void RetroFE::launchEnter() {
 		ThreadPool::getInstance().wait(); // drain before proceeding
 		freeGraphicsMemory();
 		Image::cleanupTextureCache();
+		ScrollingList::clearSharedMediaCache();
 	}
 	else if (unloadSDL && reboot) {
 		LOG_INFO("RetroFE", "Skipping unloadSDL cycle; a full application reboot is scheduled.");
@@ -959,6 +960,7 @@ bool RetroFE::deInitialize() {
 
 	initialized = false;
 	Image::cleanupTextureCache();
+	ScrollingList::clearSharedMediaCache();
 	Component::clearSharedTextures();
 	VideoPool::shutdown();
 	ThreadPool::getInstance().wait();
@@ -989,7 +991,7 @@ void RetroFE::preparePageForFirstRender(Page* page, int maxPasses) {
 	}
 
 	for (int i = 0; i < maxPasses; ++i) {
-		waitForAsyncAssets();
+		page->waitForGraphicsPreparation();
 		page->pumpGraphicsPreparation();
 
 		if (page->isGraphicsReadyForFirstRender()) {
@@ -1691,7 +1693,8 @@ bool RetroFE::run() {
 			if ((quickListCollection == "" || currentPage_->getCollectionName() == quickListCollection) &&
 				(quickListPlaylist == "" || currentPage_->getPlaylistName() == quickListPlaylist))
 			{
-				nextPageItem_ = new Item();
+				syntheticNextPageItem_ = Item{};
+				nextPageItem_ = &syntheticNextPageItem_;
 				config_.getProperty("lastCollection", nextPageItem_->name);
 				if (currentPage_->getCollectionName() != nextPageItem_->name)
 				{
@@ -1757,7 +1760,8 @@ bool RetroFE::run() {
 			if ((settingsCollection == "" || currentPage_->getCollectionName() == settingsCollection) &&
 				(settingsPlaylist == "" || currentPage_->getPlaylistName() == settingsPlaylist))
 			{
-				nextPageItem_ = new Item();
+				syntheticNextPageItem_ = Item{};
+				nextPageItem_ = &syntheticNextPageItem_;
 				config_.getProperty("lastCollection", nextPageItem_->name);
 				if (currentPage_->getCollectionName() != nextPageItem_->name)
 				{
@@ -2060,6 +2064,8 @@ bool RetroFE::run() {
 
 				// --- UNWRAPPED FROM THE CONDITION: SAFE FOR BOTH PATHS ---
 				currentPage_->allocateGraphicsMemory();
+				// Menu slots are data-bound children. Rebind the active menus
+				// after the page allocation pass so image-only lists are armed.
 				currentPage_->allocateMenuSpritePoints(true);
 				preparePageForFirstRender(currentPage_);
 			}
@@ -2148,6 +2154,8 @@ bool RetroFE::run() {
 
 				// --- UNWRAPPED FROM THE CONDITION: SAFE FOR BOTH PATHS ---
 				currentPage_->allocateGraphicsMemory();
+				// Menu slots are data-bound children. Rebind the active menus
+				// after the page allocation pass so image-only lists are armed.
 				currentPage_->allocateMenuSpritePoints(true);
 				preparePageForFirstRender(currentPage_);
 			}
@@ -2248,7 +2256,6 @@ bool RetroFE::run() {
 						currentPage_->selectPlaylist("all");
 				}
 
-				currentPage_->setSelectedItem();
 				currentPage_->onNewItemSelected();
 				currentPage_->allocateGraphicsMemory();
 				preparePageForFirstRender(currentPage_);
@@ -2401,7 +2408,6 @@ bool RetroFE::run() {
 						currentPage_->selectPlaylist("all");
 				}
 
-				currentPage_->setSelectedItem();
 				currentPage_->onNewItemSelected();
 				currentPage_->reallocateMenuSpritePoints();
 				preparePageForFirstRender(currentPage_);
@@ -2604,7 +2610,6 @@ bool RetroFE::run() {
 						currentPage_->selectPlaylist("all");
 				}
 
-				currentPage_->setSelectedItem();
 				currentPage_->onNewItemSelected();
 				currentPage_->reallocateMenuSpritePoints();
 				preparePageForFirstRender(currentPage_);
@@ -2673,7 +2678,6 @@ bool RetroFE::run() {
 			case RETROFE_ATTRACT_LAUNCH_ENTER:
 			if (currentPage_ && currentPage_->isIdle())
 			{
-				currentPage_->setSelectedItem();
 				currentPage_->onNewItemSelected();
 				currentPage_->enterGame();  // Start onGameEnter animation
 				currentPage_->update(0.0f);
@@ -2817,7 +2821,6 @@ bool RetroFE::run() {
 
 						// The game just launched should now be the newest Last Played entry.
 						currentPage_->setScrollOffsetIndex(0);
-						currentPage_->setSelectedItem();
 						currentPage_->onNewItemSelected();
 					}
 
@@ -2965,7 +2968,6 @@ bool RetroFE::run() {
 						currentPage_->selectPlaylist("all");
 				}
 
-				currentPage_->setSelectedItem();
 				currentPage_->onNewItemSelected();
 				currentPage_->reallocateMenuSpritePoints();
 				preparePageForFirstRender(currentPage_);
@@ -3107,6 +3109,7 @@ bool RetroFE::run() {
 
 				// Flush cached textures so changed image files are reloaded
 				Image::cleanupTextureCache();
+				ScrollingList::clearSharedMediaCache();
 
 				// Build fresh page from XML on disk
 				currentPage_ = loadPage(colName);
@@ -3116,7 +3119,6 @@ bool RetroFE::run() {
 					currentPage_->setLastPlaylistOffsets(offsets);
 					currentPage_->selectPlaylist(playlist);
 					currentPage_->setScrollOffsetIndex(offset);
-					currentPage_->setSelectedItem();
 					currentPage_->onNewItemSelected();
 					currentPage_->setLocked(kioskLock_);
 					currentPage_->allocateGraphicsMemory();
@@ -3557,6 +3559,21 @@ inline bool RetroFE::state_accepts_input(RetroFE::RETROFE_STATE s) {
 		case RETROFE_LAUNCH_ENTER:
 		case RETROFE_LAUNCH_REQUEST:
 		case RETROFE_LAUNCH_EXIT:
+		case RETROFE_PLAYLIST_REQUEST:
+		case RETROFE_MENUJUMP_REQUEST:
+		case RETROFE_HIGHLIGHT_REQUEST:
+		case RETROFE_NEXT_PAGE_REQUEST:
+		case RETROFE_COLLECTION_UP_REQUEST:
+		case RETROFE_COLLECTION_HIGHLIGHT_REQUEST:
+		case RETROFE_COLLECTION_DOWN_REQUEST:
+		case RETROFE_HANDLE_MENUENTRY:
+		case RETROFE_BACK_REQUEST:
+		case RETROFE_MENUMODE_START_REQUEST:
+		case RETROFE_QUICKLIST_REQUEST:
+		case RETROFE_QUICKLIST_PAGE_REQUEST:
+		case RETROFE_SETTINGS_REQUEST:
+		case RETROFE_SETTINGS_PAGE_REQUEST:
+		case RETROFE_QUIT_REQUEST:
 		case RETROFE_NEXT_PAGE_MENU_EXIT:
 		case RETROFE_NEXT_PAGE_MENU_LOAD_ART:
 		case RETROFE_NEXT_PAGE_MENU_ENTER:
@@ -3588,17 +3605,13 @@ inline bool RetroFE::state_accepts_input(RetroFE::RETROFE_STATE s) {
 		case RETROFE_RELOAD_EXECUTE:
 		return false;
 
-		// safe places to read/apply input
+		// Safe places to read/apply input. Request states are intentionally
+		// excluded so a command accepted on the preceding frame cannot be
+		// overwritten before its state handler commits the transition.
 		case RETROFE_IDLE:
 		case RETROFE_NEW:
 		case RETROFE_LOAD_ART:
 		case RETROFE_ENTER:
-		case RETROFE_MENUMODE_START_REQUEST:
-		case RETROFE_SETTINGS_REQUEST:
-		case RETROFE_QUICKLIST_REQUEST:
-		case RETROFE_PLAYLIST_REQUEST:
-		case RETROFE_NEXT_PAGE_REQUEST:
-		case RETROFE_BACK_REQUEST:
 		default:
 		return true;
 	}
@@ -3788,7 +3801,6 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 
 		if (input_.newKeyPressed(UserInput::KeyCodeSelect) && !currentPage_->isMenuScrolling()) {
 			if (attractMode_ || attract_.isSet()) {
-				page->setSelectedItem();
 				page->onNewItemSelected();
 			}
 			attract_.reset();
@@ -3970,7 +3982,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 					collectionCycleIt_++;
 					if (collectionCycleIt_ == collectionCycle_.end()) collectionCycleIt_ = collectionCycle_.begin();
 					if (!pages_.empty() && pages_.size() > 1) pages_.pop();
-					nextPageItem_ = new Item();
+					syntheticNextPageItem_ = Item{};
+					nextPageItem_ = &syntheticNextPageItem_;
 					nextPageItem_->name = *collectionCycleIt_;
 					menuMode_ = false;
 					return RETROFE_NEXT_PAGE_REQUEST;
@@ -3982,7 +3995,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 					if (collectionCycleIt_ == collectionCycle_.begin()) collectionCycleIt_ = collectionCycle_.end();
 					collectionCycleIt_--;
 					if (!pages_.empty() && pages_.size() > 1) pages_.pop();
-					nextPageItem_ = new Item();
+					syntheticNextPageItem_ = Item{};
+					nextPageItem_ = &syntheticNextPageItem_;
 					nextPageItem_->name = *collectionCycleIt_;
 					menuMode_ = false;
 					return RETROFE_NEXT_PAGE_REQUEST;
@@ -4126,6 +4140,7 @@ CollectionInfo* RetroFE::getCollection(const std::string& collectionName) {
 	fs::path path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName);
 	if (!fs::exists(path) || !fs::is_directory(path)) {
 		LOG_ERROR("RetroFE", "Failed to load collection " + collectionName);
+		delete collection;
 		return nullptr;
 	}
 

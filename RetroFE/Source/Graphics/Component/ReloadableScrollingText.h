@@ -78,6 +78,8 @@ private:
     float lastImageMaxWidth_;
     float lastImageMaxHeight_;
     std::filesystem::file_time_type lastWriteTime_;
+    Uint32 lastFileCheckTime_ = 0;
+    static constexpr Uint32 fileCheckInterval_ = 1000;
     SDL_Texture* intermediateTexture_;
     bool needsTextureUpdate_;
 };
