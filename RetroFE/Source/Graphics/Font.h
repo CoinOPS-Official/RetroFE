@@ -13,6 +13,7 @@
 
 #include <string>
 #include <cstdint>
+#include <memory>
 #include <unordered_map>
 #include <map>
 #include <vector>  // NEW: needed for std::vector<TmpGlyph>
@@ -56,6 +57,20 @@ public:
         ~MipLevel();
     };
 
+    struct PositionedGlyph {
+        SDL_Rect srcOutline{ 0,0,0,0 };
+        SDL_Rect srcFill{ 0,0,0,0 };
+        float advanceBefore = 0.0f;
+        float kerningBefore = 0.0f;
+        float advance = 0.0f;
+        float packedY = 0.0f;
+        bool dynamicAtlas = false;
+    };
+
+    struct TextLayout {
+        std::vector<PositionedGlyph> glyphs;
+    };
+
     // MODIFIED: The constructor now takes a maximum font size.
     FontManager(std::string fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
     ~FontManager();
@@ -86,6 +101,10 @@ public:
     int getKerning(Uint32 prevChar, Uint32 curChar) const;  // ? was Uint16
     int getWidth(const std::string& text);
     int getOutlinePx() const;  // FIXED: removed trailing backslash
+    std::shared_ptr<const TextLayout> getTextLayout(
+        const std::string& text,
+        int targetSize,
+        bool* cacheHit = nullptr);
 
     const std::string& getFontPath() const { return fontPath_; }
     bool               getGradient() const { return gradient_; }
@@ -124,6 +143,13 @@ private:
     int max_height_ = 0, max_descent_ = 0, max_ascent_ = 0;
     std::uint64_t generation_ = 0;
     mutable std::unordered_map<std::uint64_t, int> kerningCache_;
+    std::unordered_map<
+        int,
+        std::unordered_map<
+            std::string,
+            std::shared_ptr<const TextLayout>
+        >
+    > textLayoutCache_;
 
     // std::map keeps the sizes sorted, which makes finding the best fit easy.
     std::map<int, MipLevel*> mipLevels_;

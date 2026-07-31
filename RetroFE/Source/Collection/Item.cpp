@@ -108,7 +108,7 @@ void Item::setInfo( std::string key, std::string value )
 }
 
 
-bool Item::getInfo(const std::string& key, std::string& value)
+bool Item::getInfo(const std::string& key, std::string& value) const
 {
     bool retVal = false;
     if (!info_.empty()) {

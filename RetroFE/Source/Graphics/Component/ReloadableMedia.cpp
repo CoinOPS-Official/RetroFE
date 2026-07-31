@@ -15,6 +15,7 @@
  */
 
 #include "ReloadableMedia.h"
+#include "../PresentationPreload.h"
 #include "ImageBuilder.h"
 #include "VideoBuilder.h"
 #include "ReloadableText.h"
@@ -25,12 +26,14 @@
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
+#include <cmath>
 #include <fstream>
-#include <vector>
 #include <iostream>
+#include <utility>
+#include <vector>
 
 ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, [[maybe_unused]] bool menuMode, const std::string& type, const std::string& imageType,
-    Page& p, int displayOffset, bool isVideo, FontManager* font, bool jukebox, int jukeboxNumLoops, int randomSelect)
+    Page& p, int displayOffset, bool isVideo, FontManager* font, bool jukebox, int jukeboxNumLoops, int randomSelect, bool useTextureCaching)
     : Component(p)
     , config_(config)
     , systemMode_(systemMode)
@@ -43,7 +46,8 @@ ReloadableMedia::ReloadableMedia(Configuration& config, bool systemMode, bool la
     , displayOffset_(displayOffset)
     , imageType_(imageType)
     , jukebox_(jukebox)
-    , jukeboxNumLoops_(jukeboxNumLoops) {
+    , jukeboxNumLoops_(jukeboxNumLoops)
+    , useTextureCaching_(useTextureCaching) {
     allocateGraphicsMemory();
     isPlaylistDriven_ = isPlaylistDrivenType_();
 }
@@ -56,10 +60,6 @@ ReloadableMedia::~ReloadableMedia() {
         delete loadedComponent_;
         loadedComponent_ = nullptr;
     }
-}
-
-void ReloadableMedia::enableTextureCache_(bool value) {
-    useTextureCache_ = value;
 }
 
 void ReloadableMedia::enableTextFallback_(bool value) {
@@ -161,6 +161,347 @@ void ReloadableMedia::freeGraphicsMemory() {
     }
 }
 
+std::vector<std::string> ReloadableMedia::buildNamesForItem_(
+    Item& item) const
+{
+    const std::string typeLC = Utils::toLower(type_);
+    std::vector<std::string> names;
+    names.reserve(7);
+    names.push_back(item.name);
+    names.push_back(item.fullTitle);
+    if (!item.cloneof.empty()) {
+        names.push_back(item.cloneof);
+    }
+
+    if (typeLC == "isfavorite") {
+        names.emplace_back(item.isFavorite ? "yes" : "no");
+    }
+    if (typeLC == "islastplayed") {
+        CollectionInfo* currentCollection = page.getCollection();
+        names.emplace_back(
+            currentCollection &&
+            currentCollection->isItemInLastPlayed(&item)
+                ? "yes"
+                : "no"
+        );
+    }
+    if (typeLC == "ispaused") {
+        names.emplace_back(page.isPaused() ? "yes" : "no");
+    }
+    if (typeLC == "islocked") {
+        names.emplace_back(page.isLocked() ? "yes" : "no");
+    }
+
+    names.emplace_back("default");
+    return names;
+}
+
+bool ReloadableMedia::resolveComponentFile_(
+    const std::string& collection,
+    const std::string& type,
+    const std::string& basename,
+    std::string_view filepath,
+    bool systemMode,
+    bool isVideo,
+    std::string& foundFilePath) const
+{
+    std::string mediaPath;
+
+    if (!filepath.empty()) {
+        mediaPath = filepath;
+    }
+    else if (layoutMode_) {
+        std::string layoutName;
+        config_.getProperty(
+            "collections." + collection + ".layout",
+            layoutName
+        );
+        if (layoutName.empty()) {
+            config_.getProperty(OPTION_LAYOUT, layoutName);
+        }
+
+        mediaPath = commonMode_
+            ? Utils::combinePath(
+                Configuration::absolutePath,
+                "layouts",
+                layoutName,
+                "collections",
+                "_common")
+            : Utils::combinePath(
+                Configuration::absolutePath,
+                "layouts",
+                layoutName,
+                "collections",
+                collection);
+        mediaPath = systemMode
+            ? Utils::combinePath(mediaPath, "system_artwork")
+            : Utils::combinePath(
+                mediaPath, "medium_artwork", type);
+    }
+    else if (commonMode_) {
+        mediaPath = Utils::combinePath(
+            Configuration::absolutePath,
+            "collections",
+            "_common"
+        );
+        mediaPath = systemMode
+            ? Utils::combinePath(mediaPath, "system_artwork")
+            : Utils::combinePath(
+                mediaPath, "medium_artwork", type);
+    }
+    else {
+        config_.getMediaPropertyAbsolutePath(
+            collection,
+            type,
+            systemMode,
+            mediaPath
+        );
+    }
+
+    if (mediaPath.empty()) {
+        return false;
+    }
+
+    const auto& extensions =
+        isVideo ? videoExtensions : imageExtensions;
+    return Utils::findMatchingFile(
+        Utils::combinePath(mediaPath, basename),
+        extensions,
+        foundFilePath
+    );
+}
+
+bool ReloadableMedia::resolveImagePathForItem_(
+    Item& item,
+    size_t selectedIndex,
+    bool chooseRandomVariant,
+    std::string& foundFilePath) const
+{
+    std::string typeLC =
+        Utils::toLower(isVideo_ ? imageType_ : type_);
+    const std::string type = isVideo_ ? imageType_ : type_;
+    std::vector<std::string> names = buildNamesForItem_(item);
+
+    for (std::string basename : names) {
+        bool defined = false;
+
+        if (basename == "default") {
+            defined = true;
+        }
+        else if (typeLC == "numberbuttons") {
+            basename = item.numberButtons;
+            defined = true;
+        }
+        else if (typeLC == "numberplayers") {
+            basename = item.numberPlayers;
+            defined = true;
+        }
+        else if (typeLC == "year") {
+            basename = item.year;
+            defined = true;
+        }
+        else if (typeLC == "title") {
+            basename = item.title;
+            defined = true;
+        }
+        else if (typeLC == "developer") {
+            basename = item.developer.empty()
+                ? item.manufacturer
+                : item.developer;
+            defined = true;
+        }
+        else if (typeLC == "manufacturer") {
+            basename = item.manufacturer;
+            defined = true;
+        }
+        else if (typeLC == "genre") {
+            basename = item.genre;
+            defined = true;
+        }
+        else if (typeLC == "ctrltype") {
+            basename = item.ctrlType;
+            defined = true;
+        }
+        else if (typeLC == "joyways") {
+            basename = item.joyWays;
+            defined = true;
+        }
+        else if (typeLC == "rating") {
+            basename = item.rating;
+            defined = true;
+        }
+        else if (typeLC == "score") {
+            basename = item.score;
+            defined = true;
+        }
+        else if (typeLC == "playcount") {
+            basename = std::to_string(item.playCount);
+            defined = true;
+        }
+        else if (typeLC.rfind("playlist", 0) == 0) {
+            basename = page.getPlaylistName();
+            defined = true;
+        }
+        else if (typeLC == "firstletter") {
+            basename = item.fullTitle.empty()
+                ? ""
+                : std::string(1, item.fullTitle.front());
+            defined = true;
+        }
+        else if (typeLC == "position" &&
+            item.collectionInfo &&
+            !item.collectionInfo->items.empty())
+        {
+            const size_t position = selectedIndex + 1;
+            if (position == 1) {
+                basename = "1";
+            }
+            else if (position == page.getCollectionSize()) {
+                basename = std::to_string(numberOfImages_);
+            }
+            else {
+                basename = std::to_string(
+                    static_cast<int>(std::ceil(
+                        static_cast<float>(position) /
+                        static_cast<float>(
+                            page.getCollectionSize()) *
+                        static_cast<float>(numberOfImages_)
+                    ))
+                );
+            }
+            defined = true;
+        }
+
+        if (!item.leaf) {
+            (void)config_.getProperty(
+                "collections." + item.name + "." + type,
+                basename
+            );
+        }
+
+        bool overwriteXML = false;
+        config_.getProperty(OPTION_OVERWRITEXML, overwriteXML);
+        if (!defined || overwriteXML) {
+            std::string configuredName;
+            item.getInfo(type, configuredName);
+            if (!configuredName.empty()) {
+                basename = std::move(configuredName);
+            }
+        }
+
+        Utils::replaceSlashesWithUnderscores(basename);
+
+        if (chooseRandomVariant && randomSelect_ > 0) {
+            basename += " - " +
+                std::to_string(1 + rand() % randomSelect_);
+        }
+
+        auto resolve = [&](const std::string& collection,
+            const std::string& name,
+            std::string_view filepath,
+            bool system) {
+            return resolveComponentFile_(
+                collection,
+                type,
+                name,
+                filepath,
+                system,
+                false,
+                foundFilePath
+            );
+        };
+
+        if (systemMode_) {
+            if (resolve(collectionName, type, "", true) ||
+                (item.collectionInfo &&
+                    resolve(
+                        item.collectionInfo->name,
+                        type,
+                        "",
+                        true)) ||
+                (!item.leaf &&
+                    resolve(item.name, type, "", true)))
+            {
+                return true;
+            }
+        }
+        else if (item.leaf) {
+            if (resolve(collectionName, basename, "", false) ||
+                (item.collectionInfo &&
+                    resolve(
+                        item.collectionInfo->name,
+                        basename,
+                        "",
+                        false)) ||
+                (item.collectionInfo &&
+                    resolve(
+                        item.collectionInfo->name,
+                        type,
+                        item.filepath,
+                        false)))
+            {
+                return true;
+            }
+        }
+        else {
+            if (resolve(collectionName, basename, "", false) ||
+                (item.collectionInfo &&
+                    resolve(
+                        item.collectionInfo->name,
+                        basename,
+                        "",
+                        false)) ||
+                resolve(item.name, type, "", true))
+            {
+                return true;
+            }
+        }
+    }
+
+    return false;
+}
+
+void ReloadableMedia::collectPresentationPreloads(
+    const PresentationPreloadContext& context,
+    PresentationPreloadCollector& collector) const
+{
+    // Video tags remain governed by VideoPool/GStreamer. Their image/text
+    // fallback is not warmed speculatively because the video lookup wins.
+    if (isVideo_ || randomSelect_ > 0) {
+        return;
+    }
+
+    Item* item = context.itemAtOffset(displayOffset_);
+    if (!item) {
+        return;
+    }
+
+    std::string imagePath;
+    if (resolveImagePathForItem_(
+        *item,
+        context.selectedIndex,
+        false,
+        imagePath))
+    {
+        if (useTextureCaching_) {
+            collector.addImage(
+                std::move(imagePath),
+                baseViewInfo.Monitor,
+                baseViewInfo.Additive,
+                baseViewInfo.Layer
+            );
+        }
+    }
+    else if (textFallback_ && FfntInst_) {
+        collector.addText(
+            FfntInst_,
+            item->fullTitle,
+            static_cast<int>(baseViewInfo.FontSize),
+            baseViewInfo.Layer
+        );
+    }
+}
+
 
 Component* ReloadableMedia::reloadTexture() {
     std::string typeLC = Utils::toLower(type_);
@@ -169,53 +510,8 @@ Component* ReloadableMedia::reloadTexture() {
     if (!selectedItem) return nullptr;
 
     // build clone list
-    std::vector<std::string> names;
-
-    names.push_back(selectedItem->name);
-    names.push_back(selectedItem->fullTitle);
-    if (selectedItem->cloneof.length() > 0) {
-        names.push_back(selectedItem->cloneof);
-    }
-
-    if (typeLC == "isfavorite") {
-        if (selectedItem->isFavorite) {
-            names.emplace_back("yes");
-        }
-        else {
-            names.emplace_back("no");
-        }
-    }
-    if (typeLC == "islastplayed") {
-        // Get the current collection from the page
-        CollectionInfo* currentCollection = page.getCollection();
-
-        // Check if the selected item is in the lastplayed playlist of the current collection
-        if (currentCollection && currentCollection->isItemInLastPlayed(selectedItem)) {
-            names.emplace_back("yes");
-        }
-        else {
-            names.emplace_back("no");
-        }
-    }
-
-    if (typeLC == "ispaused") {
-        if (page.isPaused()) {
-            names.emplace_back("yes");
-        }
-        else {
-            names.emplace_back("no");
-        }
-    }
-    if (typeLC == "islocked") {
-        if (page.isLocked()) {
-            names.emplace_back("yes");
-        }
-        else {
-            names.emplace_back("no");
-        }
-    }
-
-    names.emplace_back("default");
+    std::vector<std::string> names =
+        buildNamesForItem_(*selectedItem);
     // if same playlist then use existing loaded component
     Component* foundComponent = nullptr;
 
@@ -279,170 +575,34 @@ Component* ReloadableMedia::reloadTexture() {
         }
     }
 
-    // check for images, also if video could not be found (and was specified)
-    for (unsigned int n = 0; n < names.size() && !foundComponent; ++n) {
-        std::string basename = names[n];
-        bool        defined = false;
-        std::string type = type_;
-
-        if (isVideo_) {
-            typeLC = Utils::toLower(imageType_);
-            type = imageType_;
-        }
-
-        if (basename == "default") {
-            basename = "default";
-            defined = true;
-        }
-        else if (typeLC == "numberbuttons") {
-            basename = selectedItem->numberButtons;
-            defined = true;
-        }
-        else if (typeLC == "numberplayers") {
-            basename = selectedItem->numberPlayers;
-            defined = true;
-        }
-        else if (typeLC == "year") {
-            basename = selectedItem->year;
-            defined = true;
-        }
-        else if (typeLC == "title") {
-            basename = selectedItem->title;
-            defined = true;
-        }
-        else if (typeLC == "developer") {
-            basename = selectedItem->developer;
-            defined = true;
-            // Overwrite in case developer has not been specified
-            if (basename == "") {
-                basename = selectedItem->manufacturer;
-            }
-        }
-        else if (typeLC == "manufacturer") {
-            basename = selectedItem->manufacturer;
-            defined = true;
-        }
-        else if (typeLC == "genre") {
-            basename = selectedItem->genre;
-            defined = true;
-        }
-        else if (typeLC == "ctrltype") {
-            basename = selectedItem->ctrlType;
-            defined = true;
-        }
-        else if (typeLC == "joyways") {
-            basename = selectedItem->joyWays;
-            defined = true;
-        }
-        else if (typeLC == "rating") {
-            basename = selectedItem->rating;
-            defined = true;
-        }
-        else if (typeLC == "score") {
-            basename = selectedItem->score;
-            defined = true;
-        }
-        else if (typeLC == "playcount") {
-            basename = std::to_string(selectedItem->playCount);
-            defined = true;
-        }
-        else if (typeLC.rfind("playlist", 0) == 0) {
-            basename = page.getPlaylistName();
-            defined = true;
-        }
-        else if (typeLC == "firstletter") {
-            basename = selectedItem->fullTitle.at(0);
-            defined = true;
-        }
-        else if (typeLC == "position" && !selectedItem->collectionInfo->items.empty()) {
-            if (size_t position = page.getSelectedIndex() + 1; position == 1) {
-                basename = '1';
-            }
-            else if (position == page.getCollectionSize()) {
-                basename = std::to_string(numberOfImages_);
-            }
-            else {
-                basename = std::to_string(static_cast<int>(ceil(static_cast<float>(position) / static_cast<float>(page.getCollectionSize()) * static_cast<float>(numberOfImages_))));
-            }
-            defined = true;
-        }
-
-        if (!selectedItem->leaf) // item is not a leaf
+    // Check for images, including the fallback image for a video tag.
+    std::string imagePath;
+    if (resolveImagePathForItem_(
+        *selectedItem,
+        page.getSelectedIndex(),
+        true,
+        imagePath))
+    {
+        if (loadedComponent_ &&
+            loadedComponent_->filePath() == imagePath)
         {
-            (void)config_.getProperty("collections." + selectedItem->name + "." + type, basename);
+            return loadedComponent_;
         }
 
-        bool overwriteXML = false;
-        config_.getProperty(OPTION_OVERWRITEXML, overwriteXML);
-        if (!defined || overwriteXML) // No basename was found yet; check the info in stead
+        if (loadedComponent_ &&
+            loadedComponent_->recycleAsImage(imagePath))
         {
-            std::string basename_tmp;
-            selectedItem->getInfo(type, basename_tmp);
-            if (basename_tmp != "")
-            {
-                basename = basename_tmp;
-            }
+            return loadedComponent_;
         }
 
-        Utils::replaceSlashesWithUnderscores(basename);
-
-        // ability to randomly select image/video
-        if (randomSelect_) {
-            int randImage = 1 + rand() % randomSelect_;
-            basename = basename + " - " + std::to_string(randImage);
-        }
-
-        if (systemMode_) {
-            // check the master collection for the system artifact 
-            foundComponent = findComponent(collectionName, type, type, "", true, false);
-
-            // check collection for the system artifact
-            if (!foundComponent) {
-                foundComponent = findComponent(selectedItem->collectionInfo->name, type, type, "", true, false);
-            }
-
-            // check selected item that's a collection
-            if (!foundComponent && !selectedItem->leaf) {
-                foundComponent = findComponent(selectedItem->name, type, type, "", true, false);
-            }
-        }
-        else {
-            // are we looking at a leaf or a submenu
-            if (selectedItem->leaf) // item is a leaf 
-            {
-                // check the master collection for the artifact
-                foundComponent = findComponent(collectionName, type, basename, "", false, false);
-
-                // check the collection for the artifact
-                if (!foundComponent) {
-                    foundComponent = findComponent(selectedItem->collectionInfo->name, type, basename, "", false, false);
-                }
-
-                // check the rom directory for the artifact
-                if (!foundComponent) {
-                    foundComponent = findComponent(selectedItem->collectionInfo->name, type, type, selectedItem->filepath, false, false);
-                }
-            }
-            else // item is a submenu
-            {
-                // check the master collection for the artifact 
-                foundComponent = findComponent(collectionName, type, basename, "", false, false);
-
-                // check the collection for the artifact
-                if (!foundComponent) {
-                    foundComponent = findComponent(selectedItem->collectionInfo->name, type, basename, "", false, false);
-                }
-
-                // check the submenu collection for the system artifact
-                if (!foundComponent) {
-                    foundComponent = findComponent(selectedItem->name, type, type, "", true, false);
-                }
-            }
-        }
-
-        if (foundComponent != nullptr) {
-            return foundComponent;
-        }
+        return new Image(
+            imagePath,
+            "",
+            page,
+            baseViewInfo.Monitor,
+            baseViewInfo.Additive,
+            useTextureCaching_
+        );
     }
 
     // if image and artwork was not specified, fall back to displaying text
@@ -493,59 +653,20 @@ Component* ReloadableMedia::findComponent(
     std::string_view filepath,
     bool systemMode,
     bool isVideo) {
-    std::string imagePath;
     Component* component = nullptr;
     VideoBuilder videoBuild{};
     ImageBuilder imageBuild{};
 
-    if (filepath != "") {
-        imagePath = filepath;
-    }
-    else {
-        // check the system folder
-        if (layoutMode_) {
-            // check if collection's assets are in a different theme
-            std::string layoutName;
-            config_.getProperty("collections." + collection + ".layout", layoutName);
-            if (layoutName == "") {
-                config_.getProperty(OPTION_LAYOUT, layoutName);
-            }
-            if (commonMode_) {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", "_common");
-            }
-            else {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "layouts", layoutName, "collections", collection);
-            }
-            if (systemMode)
-                imagePath = Utils::combinePath(imagePath, "system_artwork");
-            else
-                imagePath = Utils::combinePath(imagePath, "medium_artwork", type);
-        }
-        else {
-            if (commonMode_) {
-                imagePath = Utils::combinePath(Configuration::absolutePath, "collections", "_common");
-                if (systemMode)
-                    imagePath = Utils::combinePath(imagePath, "system_artwork");
-                else
-                    imagePath = Utils::combinePath(imagePath, "medium_artwork", type);
-            }
-            else {
-                config_.getMediaPropertyAbsolutePath(collection, type, systemMode, imagePath);
-            }
-        }
-    }
-
-    // if file already loaded, don't load again
-    const std::vector<std::string>& extensions = isVideo ? ReloadableMedia::videoExtensions : ReloadableMedia::imageExtensions;
-
     std::string foundFilePath;
-    bool fileExists = false;
-
-    if (!imagePath.empty()) {
-        fileExists = Utils::findMatchingFile(Utils::combinePath(imagePath, basename), extensions, foundFilePath);
-    }
-
-    if (fileExists) {
+    if (resolveComponentFile_(
+        collection,
+        type,
+        basename,
+        filepath,
+        systemMode,
+        isVideo,
+        foundFilePath))
+    {
         // 1. The Super-Fast Path: It's the exact same file we are already showing
         if (loadedComponent_ != nullptr && foundFilePath == loadedComponent_->filePath()) {
             return loadedComponent_;
@@ -563,12 +684,39 @@ Component* ReloadableMedia::findComponent(
         // 3. The Slow Path (Fallback if we switch from Text to Image, or create for the first time)
         if (isVideo) {
             if (jukebox_)
-                component = videoBuild.createVideo(imagePath, page, basename, baseViewInfo.Monitor, jukeboxNumLoops_);
+                component = videoBuild.createVideoFromResolved(
+                    foundFilePath,
+                    basename,
+                    page,
+                    baseViewInfo.Monitor,
+                    jukeboxNumLoops_,
+                    false,
+                    -1,
+                    nullptr,
+                    nullptr
+                );
             else
-                component = videoBuild.createVideo(imagePath, page, basename, baseViewInfo.Monitor);
+                component = videoBuild.createVideoFromResolved(
+                    foundFilePath,
+                    basename,
+                    page,
+                    baseViewInfo.Monitor,
+                    -1,
+                    false,
+                    -1,
+                    nullptr,
+                    nullptr
+                );
         }
         else {
-            component = imageBuild.CreateImage(imagePath, page, basename, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCache_);
+            component = imageBuild.CreateImageFromResolved(
+                foundFilePath,
+                page,
+                baseViewInfo.Monitor,
+                baseViewInfo.Additive,
+                useTextureCaching_,
+                nullptr
+            );
         }
 
         return component;

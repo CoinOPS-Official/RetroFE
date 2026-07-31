@@ -65,7 +65,7 @@ public:
     using InfoPair = std::pair<std::string, std::string>;
     InfoType info_;
     void setInfo( std::string key, std::string value );
-    bool getInfo(const std::string& key, std::string& value);
+    bool getInfo(const std::string& key, std::string& value) const;
     void loadInfo(const std::string& path);
     bool static validSortType(std::string attribute);
     bool static isSortDesc(std::string attribute);

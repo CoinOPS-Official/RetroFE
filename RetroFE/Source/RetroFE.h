@@ -192,6 +192,7 @@ private:
     static void     handleSighup(int sig);
     static std::atomic<bool> reloadRequested_;
     static std::atomic<bool> sighupReceived_;
+    void waitForInitializationThread(int* status = nullptr);
 
     std::vector<std::string> collectionCycle_;
     std::vector<std::string>::iterator collectionCycleIt_;

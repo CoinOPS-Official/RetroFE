@@ -34,9 +34,15 @@ public:
     void     allocateGraphicsMemory();
     void     deInitializeFonts();
     void     initializeFonts();
+    void collectPresentationPreloads(
+        const PresentationPreloadContext& context,
+        PresentationPreloadCollector& collector) const override;
 
 private:
     bool isInTransition() const;
+    bool isItemDrivenType_() const;
+    std::string resolveItemText_(const Item& item) const;
+    std::string formatItemText_(std::string text) const;
     void ReloadTexture();
     std::string getTimeSince(std::string sinceTimestamp);
 

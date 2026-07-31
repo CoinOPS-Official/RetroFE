@@ -1931,7 +1931,14 @@ Component* MusicPlayerComponent::reloadComponent() {
 	}
 
 	ImageBuilder imageBuild{};
-	Component* newImageComponent = imageBuild.CreateImage(imagePathPrefix, page, basename, baseViewInfo.Monitor, baseViewInfo.Additive, true);
+	Component* newImageComponent = imageBuild.CreateImage(
+		imagePathPrefix,
+		page,
+		basename,
+		baseViewInfo.Monitor,
+		baseViewInfo.Additive,
+		false
+	);
 
 	if (newImageComponent) {
 		if (loadedComponent_ && loadedComponent_ != newImageComponent) { // If different or old one exists

@@ -17,29 +17,16 @@
 
 
 #include "Component.h"
+#include "../Font.h"
 #include "../Page.h"
 #include <SDL.h>
 #include <cstdint>
+#include <memory>
 #include <vector>
-
-
-class FontManager;
 
 
 class Text : public Component
 {
-
-    struct CachedGlyph {
-        SDL_Rect srcOutline;
-        SDL_Rect srcFill;
-        float advanceBefore;
-        float kerningBefore;
-        float advance;
-        float packedY;
-        SDL_Texture* outlineTex;
-        SDL_Texture* fillTex;
-    };
-
 public:
     Text( const std::string& text, Page &p, FontManager *font, int monitor );
     ~Text( ) override;
@@ -52,12 +39,10 @@ public:
 private:
     std::string textData_;
     FontManager       *fontInst_;
-    void updateGlyphPositions(FontManager* font);
 
     bool recycleAsText(const std::string& newText) override;
 
-
-    std::vector<CachedGlyph> cachedPositions_;
+    std::shared_ptr<const FontManager::TextLayout> cachedLayout_;
     float cachedWidth_ = 0;
     float cachedHeight_ = 0;
     FontManager* cachedFont_ = nullptr;

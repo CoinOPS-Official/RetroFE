@@ -15,11 +15,14 @@
  */
 
 #include "Page.h"
+#include "PresentationPreload.h"
 #include "ComponentItemBinding.h"
 #include "Component/Component.h"
 #include "../Collection/CollectionInfo.h"
 #include "../Collection/PlaylistDirtyRegistry.h"
 #include "Component/Text.h"
+#include "Component/Image.h"
+#include "Font.h"
 #include "../Utility/Log.h"
 #include "Component/ScrollingList.h"
 #include "../Sound/Sound.h"
@@ -28,6 +31,8 @@
 #include "../Utility/Utils.h"
 #include "../Database/GlobalOpts.h"
 #include <algorithm>
+#include <cctype>
+#include <cstdint>
 #include <sstream>
 
 namespace {
@@ -71,6 +76,31 @@ namespace {
 		);
 
 		return order;
+	}
+
+	std::string presentationImageKey(
+		const PresentationImageRequest& request)
+	{
+		std::string key;
+		key.reserve(request.path.size() + 24);
+		key.append(std::to_string(request.monitor));
+		key.push_back('|');
+		key.append(request.path);
+		return key;
+	}
+
+	std::string presentationTextKey(
+		const PresentationTextRequest& request)
+	{
+		std::string key;
+		key.reserve(request.text.size() + 48);
+		key.append(std::to_string(
+			reinterpret_cast<std::uintptr_t>(request.font)));
+		key.push_back('|');
+		key.append(std::to_string(request.fontSize));
+		key.push_back('|');
+		key.append(request.text);
+		return key;
 	}
 }
 
@@ -116,6 +146,7 @@ Page::~Page() {
 
 
 void Page::deInitialize() {
+	resetPresentationPreload_();
 	cleanup();
 
 	// Deinitialize and clear menus_
@@ -379,6 +410,10 @@ bool Page::addComponent(Component* c) {
 	}
 }
 
+void Page::invalidatePresentationPreload() {
+	resetPresentationPreload_();
+}
+
 void Page::invalidateIdleCache() {
 	cachedIsIdle_ = false;
 	cachedIsMenuIdle_ = false;
@@ -487,6 +522,13 @@ void Page::setScrollOffsetIndex(size_t i) {
 			menu->syncToSelectedIndex(i);
 		}
 	}
+
+	// selectPlaylist() changes the menu data before playlistChange() updates
+	// lastPlaylistName_. Let playlistChange() start the new playlist's work so
+	// that we do not briefly schedule the old presentation here.
+	if (getPlaylistName() == lastPlaylistName_) {
+		refreshPresentationPreloadQueue_();
+	}
 }
 
 
@@ -538,6 +580,9 @@ void Page::playlistChange() {
 	lastPlaylistName_ = playlistName;
 
 	updatePlaylistMenuPosition();
+	resetPresentationPreload_();
+	rebuildPresentationLetterAnchors_();
+	refreshPresentationPreloadQueue_();
 }
 
 void Page::menuScroll() {
@@ -766,6 +811,10 @@ void Page::pageScroll(ScrollDirection direction) {
 
 	// 3. Trigger UI updates
 	onNewScrollItemSelected();
+	refreshPresentationPreloadQueue_(
+		true,
+		direction == ScrollDirectionForward
+	);
 	if (highlightSoundChunk_) {
 		highlightSoundChunk_->play();
 	}
@@ -790,6 +839,7 @@ void Page::selectRandom() {
 
 	// 3. Trigger UI updates
 	onNewScrollItemSelected();
+	refreshPresentationPreloadQueue_();
 	if (highlightSoundChunk_) {
 		highlightSoundChunk_->play();
 	}
@@ -845,6 +895,10 @@ void Page::letterScroll(ScrollDirection direction) {
 	}
 
 	onNewScrollItemSelected();
+	refreshPresentationPreloadQueue_(
+		true,
+		direction == ScrollDirectionForward
+	);
 	if (highlightSoundChunk_) {
 		highlightSoundChunk_->play();
 	}
@@ -873,6 +927,10 @@ void Page::metaScroll(ScrollDirection direction, std::string attribute) {
 	}
 
 	onNewScrollItemSelected();
+	refreshPresentationPreloadQueue_(
+		true,
+		direction == ScrollDirectionForward
+	);
 	invalidateIdleCache();
 }
 
@@ -896,6 +954,10 @@ void Page::cfwLetterSubScroll(ScrollDirection direction) {
 	}
 
 	onNewScrollItemSelected();
+	refreshPresentationPreloadQueue_(
+		true,
+		direction == ScrollDirectionForward
+	);
 	invalidateIdleCache();
 }
 
@@ -1606,9 +1668,795 @@ void Page::update(float dt) {
 		textStatusComponent_->setText(status);
 	}
 
+	pumpPresentationPreload_(dt);
+
 	// Capture the post-animation layer state once for drawing this frame
 	// and for preparation at the beginning of the next frame.
 	rebuildFrameLayerBuckets_();
+}
+
+void Page::collectPresentationPreloads(
+	const PresentationPreloadContext& context,
+	PresentationPreloadCollector& collector) const
+{
+	// Match graphics preparation policy: describe higher-layer resources
+	// first so overlays are warm before lower-layer content.
+	for (auto layer = LayerComponents_.rbegin();
+		layer != LayerComponents_.rend();
+		++layer)
+	{
+		for (Component* component : *layer) {
+			if (component) {
+				component->collectPresentationPreloads(
+					context,
+					collector
+				);
+			}
+		}
+	}
+}
+
+bool Page::presentationPreloadEnabled_() const {
+	ScrollingList* master = getMasterMenuForScroll(false);
+	if (!master) {
+		return false;
+	}
+
+	const auto& items = master->getItems();
+	for (ScrollingList* menu : activeMenu_) {
+		if (menu && !menu->isPlaylist() &&
+			menu->enablesPresentationPreload() &&
+			menu->presentsItems(items))
+		{
+			return true;
+		}
+	}
+
+	for (const auto& layer : LayerComponents_) {
+		for (const Component* component : layer) {
+			if (component &&
+				component->enablesPresentationImagePreload())
+			{
+				return true;
+			}
+		}
+	}
+
+	return false;
+}
+
+void Page::rebuildPresentationLetterAnchors_() {
+	presentationLetterAnchors_.clear();
+
+	ScrollingList* master = getMasterMenuForScroll(false);
+	if (!master || master->getItems().empty()) {
+		return;
+	}
+
+	bool haveGroup = false;
+	int previousGroup = 0;
+	const auto& items = master->getItems();
+
+	for (size_t index = 0; index < items.size(); ++index) {
+		const Item* item = items[index];
+		if (!item || item->fullTitle.empty()) {
+			continue;
+		}
+
+		const unsigned char first =
+			static_cast<unsigned char>(item->fullTitle.front());
+		const int group = std::isalpha(first)
+			? 1 + std::tolower(first)
+			: 0;
+
+		if (!haveGroup || group != previousGroup) {
+			presentationLetterAnchors_.push_back(index);
+			previousGroup = group;
+			haveGroup = true;
+		}
+	}
+}
+
+void Page::refreshPresentationPreloadQueue_(
+	bool directionKnown,
+	bool forward)
+{
+	constexpr size_t MAX_PRELOAD_CANDIDATES = 192;
+	constexpr size_t LETTER_ANCHORS_EACH_WAY = 2;
+
+	presentationPreloadQueue_.clear();
+
+	ScrollingList* master = getMasterMenuForScroll(false);
+	if (!presentationPreloadEnabled_() ||
+		!master || master->getItems().empty() ||
+		getPlaylistName().empty())
+	{
+		return;
+	}
+
+	beginPresentationPreloadTelemetry_();
+
+	const size_t itemCount = master->getItems().size();
+	const auto& items = master->getItems();
+	const size_t selected = master->getSelectedIndex();
+	size_t maxSlotCount = 1;
+
+	for (ScrollingList* menu : activeMenu_) {
+		if (menu && !menu->isPlaylist() &&
+			menu->enablesPresentationPreload() &&
+			menu->presentsItems(items))
+		{
+			maxSlotCount = std::max(
+				maxSlotCount,
+				menu->getSlotCount()
+			);
+		}
+	}
+
+	presentationPreloadQueued_.clear();
+	if (presentationPreloadQueued_.bucket_count() <
+		MAX_PRELOAD_CANDIDATES)
+	{
+		presentationPreloadQueued_.reserve(
+			MAX_PRELOAD_CANDIDATES
+		);
+	}
+
+	auto increment = [itemCount](size_t value, size_t amount) {
+		return itemCount == 0
+			? size_t{ 0 }
+			: (value + amount % itemCount) % itemCount;
+	};
+	auto decrement = [itemCount](size_t value, size_t amount) {
+		if (itemCount == 0) {
+			return size_t{ 0 };
+		}
+		const size_t distance = amount % itemCount;
+		return (value + itemCount - distance) % itemCount;
+	};
+	auto addCandidate = [&](size_t index, bool idleOnly) {
+		if (presentationPreloadQueue_.size() >=
+				MAX_PRELOAD_CANDIDATES ||
+			presentationPreloadAttempted_.find(index) !=
+				presentationPreloadAttempted_.end() ||
+			!presentationPreloadQueued_.insert(index).second)
+		{
+			return;
+		}
+
+		presentationPreloadQueue_.push_back({
+			index,
+			idleOnly
+		});
+	};
+
+	// The current destination is the first complete presentation state.
+	addCandidate(selected, false);
+
+	size_t highPriorityRadius = 0;
+	if (directionKnown) {
+		const size_t ahead =
+			std::max(maxSlotCount * 4, size_t{ 24 });
+		const size_t behind =
+			std::max(maxSlotCount * 2, size_t{ 12 });
+		highPriorityRadius = std::max(ahead, behind);
+
+		for (size_t distance = 1;
+			distance <= highPriorityRadius;
+			++distance)
+		{
+			if (distance <= ahead) {
+				addCandidate(
+					forward
+						? increment(selected, distance)
+						: decrement(selected, distance),
+					false
+				);
+			}
+			if (distance <= behind) {
+				addCandidate(
+					forward
+						? decrement(selected, distance)
+						: increment(selected, distance),
+					false
+				);
+			}
+		}
+	}
+	else {
+		highPriorityRadius =
+			std::max(maxSlotCount * 3, size_t{ 16 });
+
+		for (size_t distance = 1;
+			distance <= highPriorityRadius;
+			++distance)
+		{
+			addCandidate(
+				increment(selected, distance),
+				false
+			);
+			addCandidate(
+				decrement(selected, distance),
+				false
+			);
+		}
+	}
+
+	if (presentationLetterAnchors_.size() > 1) {
+		const auto afterCurrent = std::upper_bound(
+			presentationLetterAnchors_.begin(),
+			presentationLetterAnchors_.end(),
+			selected
+		);
+		const size_t currentGroup =
+			afterCurrent == presentationLetterAnchors_.begin()
+			? presentationLetterAnchors_.size() - 1
+			: static_cast<size_t>(
+				std::distance(
+					presentationLetterAnchors_.begin(),
+					afterCurrent
+				) - 1
+			);
+
+		for (size_t step = 1;
+			step <= LETTER_ANCHORS_EACH_WAY;
+			++step)
+		{
+			addCandidate(
+				presentationLetterAnchors_[
+					(currentGroup + step) %
+					presentationLetterAnchors_.size()
+				],
+				false
+			);
+			addCandidate(
+				presentationLetterAnchors_[
+					(currentGroup +
+						presentationLetterAnchors_.size() -
+						step % presentationLetterAnchors_.size()) %
+					presentationLetterAnchors_.size()
+				],
+				false
+			);
+		}
+	}
+
+	for (size_t distance = 1;
+		distance < itemCount &&
+		presentationPreloadQueue_.size() <
+			MAX_PRELOAD_CANDIDATES;
+		++distance)
+	{
+		addCandidate(
+			increment(selected, distance),
+			true
+		);
+		addCandidate(
+			decrement(selected, distance),
+			true
+		);
+	}
+}
+
+void Page::queuePresentationState_(size_t selectedIndex) {
+	ScrollingList* master = getMasterMenuForScroll(false);
+	if (!master || master->getItems().empty()) {
+		return;
+	}
+
+	const auto& items = master->getItems();
+	selectedIndex %= items.size();
+
+	PresentationPreloadCollector collector;
+	PresentationPreloadContext context{
+		&items,
+		selectedIndex
+	};
+
+	// Reloadable images opt in independently with useTextureCache,
+	// while page text components continue to warm shared layouts.
+	collectPresentationPreloads(context, collector);
+	presentationPreloadStats_.pageImages +=
+		collector.images.size();
+	presentationPreloadStats_.pageTexts +=
+		collector.texts.size();
+
+	for (ScrollingList* menu : activeMenu_) {
+		if (!menu || menu->isPlaylist() ||
+			!menu->enablesPresentationPreload() ||
+			!menu->presentsItems(items))
+		{
+			continue;
+		}
+
+		const PresentationPreloadContribution contribution =
+			menu->collectPresentationPreloadsForSelection(
+				selectedIndex,
+				collector
+			);
+		presentationPreloadStats_.listImages +=
+			contribution.listImages;
+		presentationPreloadStats_.textFallbacks +=
+			contribution.textFallbacks;
+		presentationPreloadStats_.videosSkipped +=
+			contribution.videosSkipped;
+	}
+
+	auto higherLayerFirst = [](const auto& lhs, const auto& rhs) {
+		return lhs.layer > rhs.layer;
+	};
+	std::stable_sort(
+		collector.images.begin(),
+		collector.images.end(),
+		higherLayerFirst
+	);
+	std::stable_sort(
+		collector.texts.begin(),
+		collector.texts.end(),
+		higherLayerFirst
+	);
+
+	for (auto& request : collector.images) {
+		const std::string key = presentationImageKey(request);
+		if (!presentationImagesScheduled_.insert(key).second) {
+			++presentationPreloadStats_.imageDuplicates;
+			continue;
+		}
+
+		++presentationPreloadStats_.imagesScheduled;
+		if (Image::isTextureCached(
+			request.path,
+			request.monitor))
+		{
+			++presentationPreloadStats_.imageTextureHits;
+			continue;
+		}
+
+		presentationImageQueue_.push_back(
+			std::move(request)
+		);
+	}
+
+	for (auto& request : collector.texts) {
+		const std::string key = presentationTextKey(request);
+		if (!presentationTextsScheduled_.insert(key).second) {
+			++presentationPreloadStats_.textDuplicates;
+			continue;
+		}
+
+		++presentationPreloadStats_.textsScheduled;
+		presentationTextQueue_.push_back(
+			std::move(request)
+		);
+	}
+
+	++presentationPreloadStats_.statesExamined;
+	logPresentationPreloadProgress_();
+}
+
+void Page::pumpPresentationImageLanes_(bool allowFinalization) {
+	// Complete no more than one worker result per frame. Image finalization
+	// creates renderer-owned textures and must remain on the main thread.
+	if (allowFinalization) {
+		for (size_t offset = 0;
+			offset < presentationImagePreloads_.size();
+			++offset)
+		{
+			const size_t index =
+				(presentationImageFinalizeCursor_ + offset) %
+				presentationImagePreloads_.size();
+			auto& preload = presentationImagePreloads_[index];
+			if (!preload) {
+				continue;
+			}
+
+			if (preload->isGraphicsReadyForFirstRender()) {
+				preload.reset();
+				continue;
+			}
+
+			if (preload->isDecodeReadyForFinalization()) {
+				preload->pumpGraphicsPreparation();
+				if (preload->isGraphicsReadyForFirstRender()) {
+					preload.reset();
+				}
+				presentationImageFinalizeCursor_ =
+					(index + 1) %
+					presentationImagePreloads_.size();
+				break;
+			}
+		}
+	}
+
+	// Keep both CPU decode slots occupied. Cache hits are released
+	// immediately because they require neither decoding nor uploading.
+	while (!presentationImageQueue_.empty()) {
+		auto freeLane = std::find(
+			presentationImagePreloads_.begin(),
+			presentationImagePreloads_.end(),
+			nullptr
+		);
+		if (freeLane == presentationImagePreloads_.end()) {
+			break;
+		}
+
+		PresentationImageRequest request =
+			std::move(presentationImageQueue_.front());
+		presentationImageQueue_.pop_front();
+
+		auto preload = std::make_shared<Image>(
+			request.path,
+			"",
+			*this,
+			request.monitor,
+			request.additive,
+			true
+		);
+		preload->allocateGraphicsMemory();
+
+		switch (preload->getLoadSource()) {
+		case Image::LoadSource::TextureCache:
+			++presentationPreloadStats_.imageTextureHits;
+			break;
+		case Image::LoadSource::SharedInFlight:
+			++presentationPreloadStats_.imageInflightJoins;
+			break;
+		case Image::LoadSource::NewDecode:
+			++presentationPreloadStats_.imageDecodesStarted;
+			break;
+		case Image::LoadSource::None:
+			break;
+		}
+
+		if (!preload->isGraphicsReadyForFirstRender()) {
+			*freeLane = std::move(preload);
+		}
+	}
+}
+
+size_t Page::activePresentationImagePreloads_() const {
+	return static_cast<size_t>(std::count_if(
+		presentationImagePreloads_.begin(),
+		presentationImagePreloads_.end(),
+		[](const std::shared_ptr<Image>& preload) {
+			return static_cast<bool>(preload);
+		}
+	));
+}
+
+void Page::pumpPresentationPreload_(float dt) {
+	constexpr unsigned int MAX_STATES_PER_FRAME = 4;
+	constexpr unsigned int MAX_TEXT_LAYOUTS_PER_FRAME = 8;
+	constexpr float IDLE_SETTLE_SECONDS = 0.5f;
+
+	if (!presentationPreloadEnabled_()) {
+		return;
+	}
+	if (getPlaylistName().empty()) {
+		return;
+	}
+
+	// List contents and slot geometry can change independently of the Page
+	// navigation entry points. Invalidation clears the old plan; restart it
+	// lazily once the complete new presentation is available.
+	if (!presentationPreloadTelemetryStarted_) {
+		rebuildPresentationLetterAnchors_();
+		refreshPresentationPreloadQueue_();
+		if (!presentationPreloadTelemetryStarted_) {
+			return;
+		}
+	}
+
+	if (cachedIsIdle_ &&
+		scrolling_ == ScrollDirectionIdle)
+	{
+		presentationIdleStableSeconds_ +=
+			std::max(dt, 0.0f);
+	}
+	else {
+		presentationIdleStableSeconds_ = 0.0f;
+	}
+
+	auto pumpTextLayouts = [&]() {
+		for (unsigned int pass = 0;
+			pass < MAX_TEXT_LAYOUTS_PER_FRAME &&
+			!presentationTextQueue_.empty();
+			++pass)
+		{
+			PresentationTextRequest request =
+				std::move(presentationTextQueue_.front());
+			presentationTextQueue_.pop_front();
+
+			if (!request.font) {
+				continue;
+			}
+
+			bool cacheHit = false;
+			const auto layout = request.font->getTextLayout(
+				request.text,
+				request.fontSize,
+				&cacheHit
+			);
+			if (!layout) {
+				continue;
+			}
+
+			if (cacheHit) {
+				++presentationPreloadStats_.textLayoutHits;
+			}
+			else {
+				++presentationPreloadStats_.textLayoutsBuilt;
+			}
+		}
+	};
+
+	pumpPresentationImageLanes_(true);
+	pumpTextLayouts();
+	if (activePresentationImagePreloads_() >=
+			PRESENTATION_IMAGE_DECODE_LANES ||
+		!presentationImageQueue_.empty())
+	{
+		return;
+	}
+
+	const bool allowIdleWork =
+		presentationIdleStableSeconds_ >=
+		IDLE_SETTLE_SECONDS;
+
+	for (unsigned int pass = 0;
+		pass < MAX_STATES_PER_FRAME;
+		++pass)
+	{
+		if (presentationPreloadQueue_.empty() &&
+			allowIdleWork &&
+			!presentationIdleSweepComplete_)
+		{
+			ScrollingList* master =
+				getMasterMenuForScroll(false);
+			if (!master || master->getItems().empty()) {
+				break;
+			}
+
+			const size_t itemCount =
+				master->getItems().size();
+			bool foundCandidate = false;
+			for (size_t checked = 0;
+				checked < itemCount;
+				++checked)
+			{
+				const size_t index =
+					presentationIdleCursor_++ % itemCount;
+				if (presentationPreloadAttempted_.find(index) ==
+					presentationPreloadAttempted_.end())
+				{
+					presentationPreloadQueue_.push_back({
+						index,
+						true
+					});
+					foundCandidate = true;
+					break;
+				}
+			}
+
+			if (!foundCandidate) {
+				presentationIdleSweepComplete_ = true;
+				completePresentationPreloadTelemetry_();
+			}
+		}
+
+		if (presentationPreloadQueue_.empty()) {
+			break;
+		}
+
+		const PresentationPreloadCandidate candidate =
+			presentationPreloadQueue_.front();
+		if (candidate.idleOnly && !allowIdleWork) {
+			break;
+		}
+		presentationPreloadQueue_.pop_front();
+
+		if (!presentationPreloadAttempted_.insert(
+			candidate.selectedIndex).second)
+		{
+			continue;
+		}
+
+		queuePresentationState_(candidate.selectedIndex);
+		if (!presentationImageQueue_.empty() ||
+			!presentationTextQueue_.empty())
+		{
+			break;
+		}
+	}
+
+	pumpTextLayouts();
+	// This second call can start work discovered above, but texture
+	// finalization remains limited to the first call of the frame.
+	pumpPresentationImageLanes_(false);
+}
+
+void Page::releasePresentationImagePreloads_() {
+	for (auto& preload : presentationImagePreloads_) {
+		preload.reset();
+	}
+	presentationImageFinalizeCursor_ = 0;
+}
+
+void Page::resetPresentationPreload_() {
+	if (presentationPreloadTelemetryStarted_ &&
+		!presentationPreloadTelemetryComplete_)
+	{
+		LOG_INFO(
+			"PresentationPreload",
+			"stopped playlist='"
+			<< presentationPreloadPlaylist_
+			<< "' states="
+			<< presentationPreloadStats_.statesExamined
+			<< "/" << presentationPreloadStats_.totalStates
+			<< " images(cache="
+			<< presentationPreloadStats_.imageTextureHits
+			<< ", joined="
+			<< presentationPreloadStats_.imageInflightJoins
+			<< ", decode="
+			<< presentationPreloadStats_.imageDecodesStarted
+			<< ") text(hit="
+			<< presentationPreloadStats_.textLayoutHits
+			<< ", built="
+			<< presentationPreloadStats_.textLayoutsBuilt
+			<< ")"
+		);
+	}
+
+	releasePresentationImagePreloads_();
+	presentationPreloadQueue_.clear();
+	presentationPreloadAttempted_.clear();
+	presentationPreloadQueued_.clear();
+	presentationImageQueue_.clear();
+	presentationTextQueue_.clear();
+	presentationImagesScheduled_.clear();
+	presentationTextsScheduled_.clear();
+	presentationLetterAnchors_.clear();
+	presentationIdleCursor_ = 0;
+	presentationIdleStableSeconds_ = 0.0f;
+	presentationIdleSweepComplete_ = false;
+	presentationPreloadStats_ = {};
+	presentationPreloadPlaylist_.clear();
+	presentationPreloadNextProgress_ = 64;
+	presentationPreloadTelemetryStarted_ = false;
+	presentationPreloadTelemetryComplete_ = false;
+}
+
+void Page::beginPresentationPreloadTelemetry_() {
+	if (presentationPreloadTelemetryStarted_) {
+		return;
+	}
+
+	ScrollingList* master = getMasterMenuForScroll(false);
+	if (!master) {
+		return;
+	}
+
+	presentationPreloadStats_ = {};
+	presentationPreloadStats_.totalStates =
+		master->getItems().size();
+	const auto& items = master->getItems();
+	for (ScrollingList* menu : activeMenu_) {
+		if (menu && !menu->isPlaylist() &&
+			menu->enablesPresentationPreload() &&
+			menu->presentsItems(items))
+		{
+			++presentationPreloadStats_.contributingLists;
+		}
+	}
+
+	presentationPreloadPlaylist_ = getPlaylistName();
+	presentationPreloadNextProgress_ = 64;
+	presentationPreloadTelemetryStarted_ = true;
+	presentationPreloadTelemetryComplete_ = false;
+
+	LOG_INFO(
+		"PresentationPreload",
+		"started playlist='"
+		<< presentationPreloadPlaylist_
+		<< "' states="
+		<< presentationPreloadStats_.totalStates
+		<< " lists="
+		<< presentationPreloadStats_.contributingLists
+		<< " decodeLanes="
+		<< PRESENTATION_IMAGE_DECODE_LANES
+		<< " selected="
+		<< master->getSelectedIndex()
+	);
+}
+
+void Page::logPresentationPreloadProgress_() {
+	if (!presentationPreloadTelemetryStarted_ ||
+		presentationPreloadTelemetryComplete_ ||
+		presentationPreloadStats_.statesExamined <
+			presentationPreloadNextProgress_)
+	{
+		return;
+	}
+
+	LOG_DEBUG(
+		"PresentationPreload",
+		"progress playlist='"
+		<< presentationPreloadPlaylist_
+		<< "' states="
+		<< presentationPreloadStats_.statesExamined
+		<< "/" << presentationPreloadStats_.totalStates
+		<< " images(cache="
+		<< presentationPreloadStats_.imageTextureHits
+		<< ", joined="
+		<< presentationPreloadStats_.imageInflightJoins
+		<< ", decode="
+		<< presentationPreloadStats_.imageDecodesStarted
+		<< ", pending="
+		<< presentationImageQueue_.size()
+		<< ", active="
+		<< activePresentationImagePreloads_()
+		<< ") text(hit="
+		<< presentationPreloadStats_.textLayoutHits
+		<< ", built="
+		<< presentationPreloadStats_.textLayoutsBuilt
+		<< ", pending="
+		<< presentationTextQueue_.size()
+		<< ") videoSkipped="
+		<< presentationPreloadStats_.videosSkipped
+	);
+
+	presentationPreloadNextProgress_ =
+		(presentationPreloadStats_.statesExamined /
+			64 + 1) * 64;
+}
+
+void Page::completePresentationPreloadTelemetry_() {
+	if (!presentationPreloadTelemetryStarted_ ||
+		presentationPreloadTelemetryComplete_)
+	{
+		return;
+	}
+
+	presentationPreloadTelemetryComplete_ = true;
+	LOG_INFO(
+		"PresentationPreload",
+		"complete playlist='"
+		<< presentationPreloadPlaylist_
+		<< "' states="
+		<< presentationPreloadStats_.statesExamined
+		<< "/" << presentationPreloadStats_.totalStates
+		<< " lists="
+		<< presentationPreloadStats_.contributingLists
+		<< " described(pageImages="
+		<< presentationPreloadStats_.pageImages
+		<< ", pageTexts="
+		<< presentationPreloadStats_.pageTexts
+		<< ", listImages="
+		<< presentationPreloadStats_.listImages
+		<< ", textFallbacks="
+		<< presentationPreloadStats_.textFallbacks
+		<< ", videoSkipped="
+		<< presentationPreloadStats_.videosSkipped
+		<< ") images(unique="
+		<< presentationPreloadStats_.imagesScheduled
+		<< ", duplicate="
+		<< presentationPreloadStats_.imageDuplicates
+		<< ", cache="
+		<< presentationPreloadStats_.imageTextureHits
+		<< ", joined="
+		<< presentationPreloadStats_.imageInflightJoins
+		<< ", decode="
+		<< presentationPreloadStats_.imageDecodesStarted
+		<< ") text(unique="
+		<< presentationPreloadStats_.textsScheduled
+		<< ", duplicate="
+		<< presentationPreloadStats_.textDuplicates
+		<< ", hit="
+		<< presentationPreloadStats_.textLayoutHits
+		<< ", built="
+		<< presentationPreloadStats_.textLayoutsBuilt
+		<< ")"
+	);
 }
 
 void Page::updateReloadables(float dt) {
@@ -1981,6 +2829,7 @@ CollectionInfo* Page::getCollection() {
 
 void Page::freeGraphicsMemory() {
 	invalidateFrameLayerBuckets_();
+	resetPresentationPreload_();
 
 	for (auto const& menuVector : menus_) {
 		for (ScrollingList* menu : menuVector) {
@@ -2089,6 +2938,9 @@ void Page::allocateGraphicsMemory() {
 	if (unloadSoundChunk_) unloadSoundChunk_->allocate();
 	if (highlightSoundChunk_) highlightSoundChunk_->allocate();
 	if (selectSoundChunk_) selectSoundChunk_->allocate();
+
+	rebuildPresentationLetterAnchors_();
+	refreshPresentationPreloadQueue_();
 
 	LOG_DEBUG("Page", "Allocate graphics memory complete");
 }
@@ -2316,6 +3168,10 @@ void Page::scroll(bool forward, bool playlist) {
 		}
 
 		menu->scrollToSelectedIndex(newSelectedIndex, forward, masterPeriod);
+	}
+
+	if (!playlist) {
+		refreshPresentationPreloadQueue_(true, forward);
 	}
 
 	pendingScrollSelect_ = true;

@@ -16,11 +16,11 @@ public:
     ReloadableMedia(Configuration& config, bool systemMode, bool layoutMode, bool commonMode, [[maybe_unused]] bool menuMode,
         const std::string& type, const std::string& imageType,
         Page& p, int displayOffset, bool isVideo, FontManager* font,
-        bool jukebox, int jukeboxNumLoops, int randomSelect);
+        bool jukebox, int jukeboxNumLoops, int randomSelect,
+        bool useTextureCaching);
 
     ~ReloadableMedia() override;
 
-    void enableTextureCache_(bool value);
     void enableTextFallback_(bool value);
 
     bool update(float dt) override;
@@ -30,6 +30,12 @@ public:
     void pumpGraphicsPreparation() override;
     void waitForGraphicsPreparation() override;
     bool isGraphicsReadyForFirstRender() const override;
+    void collectPresentationPreloads(
+        const PresentationPreloadContext& context,
+        PresentationPreloadCollector& collector) const override;
+    bool enablesPresentationImagePreload() const override {
+        return useTextureCaching_ && !isVideo_;
+    }
     Component* findComponent(const std::string& collection, const std::string& type,
         const std::string& basename, std::string_view filepath, bool systemMode, bool isVideo);
 
@@ -46,6 +52,21 @@ public:
     std::string_view filePath() override;
 
 private:
+    std::vector<std::string> buildNamesForItem_(
+        Item& item) const;
+    bool resolveComponentFile_(
+        const std::string& collection,
+        const std::string& type,
+        const std::string& basename,
+        std::string_view filepath,
+        bool systemMode,
+        bool isVideo,
+        std::string& foundFilePath) const;
+    bool resolveImagePathForItem_(
+        Item& item,
+        size_t selectedIndex,
+        bool chooseRandomVariant,
+        std::string& foundFilePath) const;
     Component* reloadTexture();
     void realizePendingMedia(bool allowChildPump, float dt, bool allowChildUpdate);
     // NEW: playlist change detection for playlist-driven media
@@ -69,8 +90,7 @@ private:
     bool jukebox_;
     int  jukeboxNumLoops_;
     int numberOfImages_{ 27 };
-    bool useTextureCache_{ false };
-
+    bool useTextureCaching_{ false };
     static inline const std::vector<std::string> imageExtensions = {
 #ifdef WIN32
         "qoi", "png", "gif", "jpg", "jpeg"

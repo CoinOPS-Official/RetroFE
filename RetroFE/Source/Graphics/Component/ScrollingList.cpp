@@ -46,12 +46,12 @@
 #endif
 #include <sstream>
 #include <cctype>
+#include <cstdint>
 #include <iomanip>
 #include <algorithm>
 #include <cmath>
 
 int ScrollingList::nextListId = 0;
-size_t ScrollingList::activeImagePreloads_ = 0;
 std::unordered_map<std::string, ScrollingList::SharedResolvedMedia>
     ScrollingList::sharedMediaCache_;
 
@@ -122,7 +122,6 @@ ScrollingList::ScrollingList(const ScrollingList& other)
     , components_(other.components_)
     , useTextureCaching_(other.useTextureCaching_)
     , mediaCache_(other.mediaCache_)
-    , letterAnchors_(other.letterAnchors_)
     , perspectiveCornersInitialized_(other.perspectiveCornersInitialized_)
     , cachedIdle_(other.cachedIdle_)
     , cachedAttractIdle_(other.cachedAttractIdle_)
@@ -189,7 +188,7 @@ const std::vector<Item*>& ScrollingList::getItems() const
 }
 
 void ScrollingList::setItems(std::vector<Item*>* items) {
-    resetImagePreload_();
+    page.invalidatePresentationPreload();
     items_ = items;
     mediaCache_.clear();
     if (!items_) return;
@@ -201,298 +200,91 @@ void ScrollingList::setItems(std::vector<Item*>* items) {
     mediaCache_.resize(size);
 
     resetScrollPeriod();
-    rebuildLetterAnchors_();
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::clearSharedMediaCache() {
     sharedMediaCache_.clear();
 }
 
-void ScrollingList::rebuildLetterAnchors_() {
-    letterAnchors_.clear();
-    if (!items_ || items_->empty()) {
-        return;
-    }
-
-    bool haveGroup = false;
-    int previousGroup = 0;
-
-    for (size_t i = 0; i < items_->size(); ++i) {
-        const Item* item = (*items_)[i];
-        if (!item || item->fullTitle.empty()) {
-            continue;
-        }
-
-        const unsigned char first =
-            static_cast<unsigned char>(item->fullTitle.front());
-        const int group = std::isalpha(first)
-            ? 1 + std::tolower(first)
-            : 0;
-
-        if (!haveGroup || group != previousGroup) {
-            letterAnchors_.push_back(i);
-            previousGroup = group;
-            haveGroup = true;
-        }
-    }
-}
-
-void ScrollingList::refreshImagePreloadQueue_(
-    bool directionKnown,
-    bool forward)
+PresentationPreloadContribution
+ScrollingList::collectPresentationPreloadsForSelection(
+    size_t selectedIndex,
+    PresentationPreloadCollector& collector)
 {
-    constexpr size_t MAX_PRELOAD_CANDIDATES = 192;
-    constexpr size_t LETTER_ANCHORS_EACH_WAY = 2;
+    PresentationPreloadContribution contribution;
 
-    imagePreloadQueue_.clear();
-
-    if (!useTextureCaching_ || !items_ || items_->empty() ||
-        !scrollPoints_ || scrollPoints_->empty() ||
-        imageType_.empty()) {
-        return;
+    if (!enablesPresentationPreload() ||
+        !items_ || items_->empty() ||
+        !scrollPoints_ || scrollPoints_->empty())
+    {
+        return contribution;
     }
 
     const size_t itemCount = items_->size();
-    const size_t slotCount = scrollPoints_->size();
-    const size_t selected = getSelectedIndex();
-    imagePreloadQueued_.clear();
-    if (imagePreloadQueued_.bucket_count() <
-        MAX_PRELOAD_CANDIDATES) {
-        imagePreloadQueued_.reserve(MAX_PRELOAD_CANDIDATES);
+    selectedIndex %= itemCount;
+    const size_t firstItem = loopDecrement(
+        selectedIndex,
+        selectedOffsetIndex_,
+        itemCount
+    );
+    const Item* selectedItem = (*items_)[selectedIndex];
+    if (!selectedItem) {
+        return contribution;
     }
+    const std::string& selectedName = selectedItem->name;
 
-    auto addCandidate = [&](size_t index, bool idleOnly) {
-        if (imagePreloadQueue_.size() >= MAX_PRELOAD_CANDIDATES ||
-            imagePreloadAttempted_.find(index) !=
-                imagePreloadAttempted_.end() ||
-            !imagePreloadQueued_.insert(index).second) {
-            return;
-        }
-
-        imagePreloadQueue_.push_back({ index, idleOnly });
-    };
-
-    size_t highPriorityRadius = 0;
-
-    if (directionKnown) {
-        const size_t ahead = std::max(slotCount * 4, size_t{ 24 });
-        const size_t behind = std::max(slotCount * 2, size_t{ 12 });
-        highPriorityRadius = std::max(ahead, behind);
-
-        for (size_t distance = 1;
-            distance <= highPriorityRadius;
-            ++distance)
-        {
-            if (distance <= ahead) {
-                addCandidate(
-                    forward
-                        ? loopIncrement(selected, distance, itemCount)
-                        : loopDecrement(selected, distance, itemCount),
-                    false
-                );
-            }
-            if (distance <= behind) {
-                addCandidate(
-                    forward
-                        ? loopDecrement(selected, distance, itemCount)
-                        : loopIncrement(selected, distance, itemCount),
-                    false
-                );
-            }
-        }
-    }
-    else {
-        highPriorityRadius =
-            std::max(slotCount * 3, size_t{ 16 });
-
-        for (size_t distance = 1;
-            distance <= highPriorityRadius;
-            ++distance)
-        {
-            addCandidate(
-                loopIncrement(selected, distance, itemCount),
-                false
-            );
-            addCandidate(
-                loopDecrement(selected, distance, itemCount),
-                false
-            );
-        }
-    }
-
-    // Warm the complete slot windows for the next and previous letter
-    // landings. This predicts sequential letter navigation without
-    // touching the items that would be skipped over.
-    if (letterAnchors_.size() > 1) {
-        const auto afterCurrent = std::upper_bound(
-            letterAnchors_.begin(),
-            letterAnchors_.end(),
-            selected
-        );
-        const size_t currentGroup =
-            afterCurrent == letterAnchors_.begin()
-            ? letterAnchors_.size() - 1
-            : static_cast<size_t>(
-                std::distance(
-                    letterAnchors_.begin(),
-                    afterCurrent
-                ) - 1
-            );
-
-        auto addLandingWindow = [&](size_t anchor) {
-            const size_t firstSlot = loopDecrement(
-                anchor,
-                selectedOffsetIndex_,
-                itemCount
-            );
-            for (size_t slot = 0; slot < slotCount; ++slot) {
-                addCandidate(
-                    loopIncrement(firstSlot, slot, itemCount),
-                    false
-                );
-            }
-        };
-
-        for (size_t step = 1;
-            step <= LETTER_ANCHORS_EACH_WAY;
-            ++step)
-        {
-            addLandingWindow(
-                letterAnchors_[
-                    loopIncrement(
-                        currentGroup,
-                        step,
-                        letterAnchors_.size()
-                    )
-                ]
-            );
-            addLandingWindow(
-                letterAnchors_[
-                    loopDecrement(
-                        currentGroup,
-                        step,
-                        letterAnchors_.size()
-                    )
-                ]
-            );
-        }
-    }
-
-    // Use true idle time to expand the warm neighborhood, while keeping
-    // active-navigation work limited to the candidates above.
-    for (size_t distance = 1;
-        distance < itemCount &&
-        imagePreloadQueue_.size() < MAX_PRELOAD_CANDIDATES;
-        ++distance)
+    for (size_t slot = 0;
+        slot < scrollPoints_->size();
+        ++slot)
     {
-        addCandidate(
-            loopIncrement(selected, distance, itemCount),
-            true
-        );
-        addCandidate(
-            loopDecrement(selected, distance, itemCount),
-            true
-        );
-    }
-}
-
-void ScrollingList::pumpImagePreload_() {
-    constexpr unsigned int MAX_CACHE_HITS_PER_FRAME = 8;
-
-    if (!useTextureCaching_ || !items_ || items_->empty()) {
-        return;
-    }
-
-    for (unsigned int pass = 0;
-        pass < MAX_CACHE_HITS_PER_FRAME;
-        ++pass)
-    {
-        const bool allowIdleWork =
-            cachedIdle_ && letterSkipTimer_ <= 0.0f;
-
-        if (imagePreload_) {
-            imagePreload_->pumpGraphicsPreparation();
-            if (!imagePreload_->isGraphicsReadyForFirstRender()) {
-                return;
-            }
-
-            releaseImagePreload_();
-            return;
-        }
-
-        if (imagePreloadQueue_.empty()) {
-            return;
-        }
-
-        const ImagePreloadCandidate candidate =
-            imagePreloadQueue_.front();
-        if (candidate.idleOnly && !allowIdleWork) {
-            return;
-        }
-        imagePreloadQueue_.pop_front();
-
-        if (!imagePreloadAttempted_.insert(
-            candidate.itemIndex).second) {
+        const size_t itemIndex =
+            loopIncrement(firstItem, slot, itemCount);
+        Item* item = (*items_)[itemIndex];
+        const ViewInfo* point = (*scrollPoints_)[slot];
+        if (!item || !point) {
             continue;
         }
 
-        const ResolvedMedia& media =
-            resolveMediaAt_(candidate.itemIndex);
-
-        // Video-backed entries already have their own pool and preroll
-        // policy. Only warm the normal, non-selected image path here.
-        if (!media.videoPath.empty() ||
-            media.idleImagePath.empty()) {
+        const ResolvedMedia& media = resolveMediaAt_(itemIndex);
+        if (!media.videoPath.empty()) {
+            ++contribution.videosSkipped;
             continue;
         }
 
-        if (activeImagePreloads_ >= 1) {
-            imagePreloadQueue_.push_front(candidate);
-            return;
+        const bool selected =
+            selectedImage_ && item->name == selectedName;
+        const std::string& imagePath =
+            selected && !media.selectedImagePath.empty()
+                ? media.selectedImagePath
+                : media.idleImagePath;
+
+        if (!imagePath.empty()) {
+            collector.addImage(
+                imagePath,
+                baseViewInfo.Monitor,
+                baseViewInfo.Additive,
+                point->Layer
+            );
+            ++contribution.listImages;
+            continue;
         }
 
-        ++activeImagePreloads_;
-        ownsImagePreloadSlot_ = true;
-        imagePreloadIdleOnly_ = candidate.idleOnly;
-        imagePreload_ = std::make_shared<Image>(
-            media.idleImagePath,
-            "",
-            page,
-            baseViewInfo.Monitor,
-            baseViewInfo.Additive,
-            true
-        );
-        imagePreload_->allocateGraphicsMemory();
-        imagePreload_->pumpGraphicsPreparation();
-
-        if (!imagePreload_->isGraphicsReadyForFirstRender()) {
-            return;
+        if (textFallback_ && fontInst_) {
+            const int fontSize =
+                static_cast<int>(point->FontSize);
+            collector.addText(
+                fontInst_,
+                item->title,
+                fontSize > 0
+                    ? fontSize
+                    : fontInst_->getMaxFontSize(),
+                point->Layer
+            );
+            ++contribution.textFallbacks;
         }
-
-        releaseImagePreload_();
-        return;
     }
-}
 
-void ScrollingList::releaseImagePreload_() {
-    imagePreload_.reset();
-    imagePreloadIdleOnly_ = false;
-
-    if (ownsImagePreloadSlot_) {
-        if (activeImagePreloads_ > 0) {
-            --activeImagePreloads_;
-        }
-        ownsImagePreloadSlot_ = false;
-    }
-}
-
-void ScrollingList::resetImagePreload_() {
-    releaseImagePreload_();
-    imagePreloadQueue_.clear();
-    imagePreloadAttempted_.clear();
-    imagePreloadQueued_.clear();
-    letterAnchors_.clear();
+    return contribution;
 }
 
 std::string ScrollingList::mediaCacheKey_(const Item& item) const {
@@ -935,8 +727,8 @@ void ScrollingList::destroyItems() {
 
 void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
     std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints) {
+    page.invalidatePresentationPreload();
     
-    resetImagePreload_();
     deallocateSpritePoints();
 
     clearPoints();
@@ -956,8 +748,6 @@ void ScrollingList::setPoints(std::vector<ViewInfo*>* scrollPoints,
 
     // Allocate and initialize components (existing behavior)
     allocateSpritePoints();
-    rebuildLetterAnchors_();
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::rebuildSlotTopology_(bool initializeComponents) {
@@ -1033,14 +823,15 @@ size_t ScrollingList::getScrollOffsetIndex( ) const
 void ScrollingList::setScrollOffsetIndex( size_t index )
 {
     itemIndex_ = loopDecrement( index, selectedOffsetIndex_, items_->size());
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::setSelectedIndex( int selectedIndex )
 {
+    if (selectedOffsetIndex_ != selectedIndex) {
+        page.invalidatePresentationPreload();
+    }
     selectedOffsetIndex_ = selectedIndex;
     refreshPreparationPriorityHints_();
-    refreshImagePreloadQueue_();
 }
 
 Item *ScrollingList::getItemByOffset(int offset)
@@ -1073,14 +864,12 @@ void ScrollingList::pageUp()
 {
     if (components_.empty()) return; // More idiomatic
     itemIndex_ = loopDecrement(itemIndex_, components_.size(), items_->size());
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::pageDown()
 {
     if (components_.empty()) return; // More idiomatic
     itemIndex_ = loopIncrement(itemIndex_, components_.size(), items_->size());
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::random( )
@@ -1089,7 +878,6 @@ void ScrollingList::random( )
     size_t itemSize = items_->size();
     
     itemIndex_ = rand( ) % itemSize;
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::letterUp( )
@@ -1211,7 +999,6 @@ void ScrollingList::letterChange(bool increment) {
 
     // 5. Update the list's index
     itemIndex_ = newIndex;
-    refreshImagePreloadQueue_();
 }
 
 size_t ScrollingList::loopIncrement(size_t currentIndex, size_t incrementAmount, size_t N) const {
@@ -1292,7 +1079,6 @@ void ScrollingList::metaChange(bool increment, const std::string& attribute)
         }
     }
 
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::subChange(bool increment)
@@ -1335,7 +1121,6 @@ void ScrollingList::subChange(bool increment)
         }
     }
 
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::cfwLetterSubUp()
@@ -1376,15 +1161,12 @@ void ScrollingList::allocateGraphicsMemory( )
     scrollPeriod_ = startScrollTime_;
 
     allocateSpritePoints( );
-    rebuildLetterAnchors_();
-    refreshImagePreloadQueue_();
 }
 
 void ScrollingList::freeGraphicsMemory() {
     Component::freeGraphicsMemory();
 
     resetScrollPeriod();
-    resetImagePreload_();
 
     deallocateSpritePoints();
 
@@ -1584,8 +1366,6 @@ bool ScrollingList::update(float dt) {
 
     cachedIdle_ = allIdle;
     cachedAttractIdle_ = allAttractIdle;
-    pumpImagePreload_();
-
     // Notice: The movement logic is gone from here! It lives in Page.cpp now.
     return done;
 }
@@ -1600,7 +1380,6 @@ void ScrollingList::setItemIndex( unsigned int index )
 {
      if ( !items_ ) return;
      itemIndex_ = loopDecrement( index, selectedOffsetIndex_, items_->size( ) );
-     refreshImagePreloadQueue_();
 }
 
 size_t ScrollingList::getSize() const
@@ -1790,7 +1569,6 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
 
     const std::string& selectedItemName = getSelectedItemName();
     const bool isSelectedItem = (selectedImage_ && item->name == selectedItemName);
-    bool loadedNormalImage = false;
 
     // 1. Instantly load Video from exact resolved path
     if (!media.videoPath.empty()) {
@@ -1803,8 +1581,6 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
         std::string imageToLoad = (isSelectedItem && !media.selectedImagePath.empty()) ? media.selectedImagePath : media.idleImagePath;
         if (!imageToLoad.empty()) {
             t = imageBuild.CreateImageFromResolved(imageToLoad, page, baseViewInfo.Monitor, baseViewInfo.Additive, useTextureCaching_, existingComponent);
-            loadedNormalImage =
-                imageToLoad == media.idleImagePath;
         }
     }
 
@@ -1832,10 +1608,6 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
         }
 
         components_[componentIndex] = t;
-
-        if (media.videoPath.empty() && loadedNormalImage) {
-            imagePreloadAttempted_.insert(fullListIndex);
-        }
     }
 
     if (existingComponent != nullptr && existingComponent != t) {
@@ -1965,7 +1737,6 @@ void ScrollingList::syncToSelectedIndex(size_t selectedIndex) {
     }
 
     itemIndex_ = loopDecrement(selectedIndex, selectedOffsetIndex_, items_->size());
-    refreshImagePreloadQueue_();
 }
 
 float ScrollingList::getScrollPeriod() const {
@@ -2054,7 +1825,6 @@ void ScrollingList::scrollToSelectedIndex(size_t newSelectedIndex, bool forward,
     refreshPreparationPriorityHints_();
 
     itemIndex_ = newItemIndex;
-    refreshImagePreloadQueue_(true, forward);
 
     cachedIdle_ = false;
     cachedAttractIdle_ = false;
@@ -2133,7 +1903,6 @@ void ScrollingList::scroll(bool forward) {
 
     components_.rotate(forward);
     refreshPreparationPriorityHints_();
-    refreshImagePreloadQueue_(true, forward);
 
     cachedIdle_ = false;
     cachedAttractIdle_ = false;

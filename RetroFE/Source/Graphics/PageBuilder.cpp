@@ -567,7 +567,14 @@ bool PageBuilder::buildComponents(xml_node<>* layout, Page* page, const std::str
 				LOG_ERROR("Layout", "Failed to find image at: " + imagePath + " or " + altImagePath);
 				continue;
 			}
-			auto* c = new Image(imagePath, altImagePath, *page, imageMonitor, additive, true);
+			auto* c = new Image(
+				imagePath,
+				altImagePath,
+				*page,
+				imageMonitor,
+				additive,
+				false
+			);
 			if (c)
 			{
 				c->allocateGraphicsMemory();
@@ -906,17 +913,42 @@ void PageBuilder::loadReloadableImages(const xml_node<>* layout, const std::stri
 			std::string typeString = type ? type->value() : "video";
 			std::string imageTypeString = imageType ? imageType->value() : "";
 			int randomSelectInt = randomSelectXml ? Utils::convertInt(randomSelectXml->value()) : 0;
+			bool useTextureCaching = false;
+			if (tagName == "reloadableImage") {
+				if (const xml_attribute<>* cacheXml =
+						componentXml->first_attribute(
+							"useTextureCache"))
+				{
+					const std::string value =
+						Utils::toLower(cacheXml->value());
+					useTextureCaching =
+						value == "true" || value == "yes";
+				}
+			}
 
-			c = new ReloadableMedia(config_, systemMode, layoutMode, commonMode, menuMode, typeString, imageTypeString, *page, selectedOffset, (tagName == "reloadableVideo") || (tagName == "reloadableAudio"), font, jukebox, jukeboxNumLoops, randomSelectInt);
+			c = new ReloadableMedia(
+				config_,
+				systemMode,
+				layoutMode,
+				commonMode,
+				menuMode,
+				typeString,
+				imageTypeString,
+				*page,
+				selectedOffset,
+				(tagName == "reloadableVideo") ||
+					(tagName == "reloadableAudio"),
+				font,
+				jukebox,
+				jukeboxNumLoops,
+				randomSelectInt,
+				useTextureCaching
+			);
 			if (c) {
 				c->allocateGraphicsMemory();
 				xml_attribute<> const* textFallback = componentXml->first_attribute("textFallback");
 				static_cast<ReloadableMedia*>(c)->enableTextFallback_(textFallback && Utils::toLower(textFallback->value()) == "true");
 
-				xml_attribute<> const* useTextureCacheXml = componentXml->first_attribute("useTextureCache");
-				if (useTextureCacheXml && Utils::toLower(useTextureCacheXml->value()) == "true") {
-					static_cast<ReloadableMedia*>(c)->enableTextureCache_(true);
-				}
 			}
 		}
 

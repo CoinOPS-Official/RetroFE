@@ -203,6 +203,12 @@ GStreamerVideo::~GStreamerVideo() {
     catch (...) {
         LOG_ERROR("GStreamerVideo", "Exception in destructor during stop()");
     }
+
+    // Callback registrations hold their own references and release them via
+    // cbCtxUnref. Drop the instance's original owner reference last, after
+    // stop() has detached the registrations.
+    CallbackCtx* ctx = std::exchange(cbCtx_, nullptr);
+    cbCtxUnref(ctx);
 }
 
 gboolean GStreamerVideo::busCallback(GstBus*, GstMessage* msg, gpointer user_data) {
@@ -480,6 +486,9 @@ bool GStreamerVideo::stop() {
         }
         gst_element_set_state(pipeline, GST_STATE_NULL);
     }
+    // The pipeline has been detached from this instance. Its bus is flushing,
+    // so no later STATE_CHANGED message can reliably publish this transition.
+    actualGstState_.store(GST_STATE_NULL, std::memory_order_release);
 
     if (busWatchId != 0) {
         GlibLoop::instance().removeSource(busWatchId);
@@ -558,6 +567,7 @@ bool GStreamerVideo::unload() {
     }
 
     if (!pipeline_) {
+        actualGstState_.store(GST_STATE_NULL, std::memory_order_release);
         lifecycle_.store(PipelineLifecycle::Idle, std::memory_order_release);
         return true;
     }
@@ -934,9 +944,8 @@ VideoSnapshot GStreamerVideo::getSnapshot() const {
     snap.targetState = (pState == PlaybackState::Playing) ? VideoState::Playing :
         (pState == PlaybackState::Paused) ? VideoState::Paused : VideoState::None;
 
-    // Map Actual State (What the hardware is doing)
-    snap.actualState = (actual == GST_STATE_PLAYING) ? VideoState::Playing :
-        (actual == GST_STATE_PAUSED) ? VideoState::Paused : VideoState::None;
+    // Map Actual State (What the pipeline has reported)
+    snap.actualState = mapGstState(actual);
 
     auto currentLife = lifecycle_.load(std::memory_order_acquire);
     snap.pipelineReady = (currentLife == PipelineLifecycle::Ready);
@@ -945,6 +954,26 @@ VideoSnapshot GStreamerVideo::getSnapshot() const {
     snap.hasVideoStream = hasVideoStream_.load(std::memory_order_acquire);
 
     return snap;
+}
+
+IVideo::VideoState GStreamerVideo::mapGstState(GstState state) {
+    switch (state) {
+        case GST_STATE_READY:
+            return IVideo::VideoState::Ready;
+        case GST_STATE_PAUSED:
+            return IVideo::VideoState::Paused;
+        case GST_STATE_PLAYING:
+            return IVideo::VideoState::Playing;
+        case GST_STATE_VOID_PENDING:
+        case GST_STATE_NULL:
+        default:
+            return IVideo::VideoState::None;
+    }
+}
+
+IVideo::VideoState GStreamerVideo::getActualState() const {
+    return mapGstState(
+        actualGstState_.load(std::memory_order_acquire));
 }
 
 bool GStreamerVideo::open(const std::string& file) {

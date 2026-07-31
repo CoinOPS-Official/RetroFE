@@ -260,6 +260,7 @@ SDL_Surface* FontManager::applyVerticalGrayGradient(SDL_Surface* s, Uint8 topGra
 void FontManager::clearMips() {
     for (auto& kv : mipLevels_) delete kv.second;
     mipLevels_.clear();
+    textLayoutCache_.clear();
 }
 
 void FontManager::preloadGlyphRange(TTF_Font* font,
@@ -693,6 +694,179 @@ void FontManager::deInitialize() {
     kerningCache_.clear();
     clearMips();
     max_font_ = nullptr;
+}
+
+std::shared_ptr<const FontManager::TextLayout>
+FontManager::getTextLayout(
+    const std::string& text,
+    int targetSize,
+    bool* cacheHit)
+{
+    if (cacheHit) {
+        *cacheHit = false;
+    }
+
+    const MipLevel* constMip = getMipLevelForSize(targetSize);
+    if (!constMip || text.empty()) {
+        return {};
+    }
+
+    auto& layouts = textLayoutCache_[constMip->fontSize];
+    if (auto existing = layouts.find(text);
+        existing != layouts.end())
+    {
+        if (cacheHit) {
+            *cacheHit = true;
+        }
+        return existing->second;
+    }
+
+    auto layout = std::make_shared<TextLayout>();
+    layout->glyphs.reserve(text.size());
+
+    MipLevel* mip = const_cast<MipLevel*>(constMip);
+    const float ascent = static_cast<float>(mip->ascent);
+    const float outline = static_cast<float>(outlinePx_);
+
+    float cumulativeAdvance = 0.0f;
+    float cumulativeKerning = 0.0f;
+    Uint32 prev = 0;
+
+    const char* ptr = text.data();
+    const char* end = ptr + text.size();
+
+    while (ptr < end) {
+        uint32_t codepoint = 0;
+        const unsigned char c =
+            static_cast<unsigned char>(*ptr++);
+
+        if (c < 0x80) {
+            codepoint = c;
+        }
+        else if ((c & 0xE0) == 0xC0) {
+            if (ptr >= end) break;
+            const unsigned char b1 =
+                static_cast<unsigned char>(*ptr++);
+            if ((b1 & 0xC0) != 0x80) {
+                prev = 0;
+                continue;
+            }
+            codepoint =
+                ((c & 0x1F) << 6) |
+                (b1 & 0x3F);
+        }
+        else if ((c & 0xF0) == 0xE0) {
+            if (ptr + 1 >= end) break;
+            const unsigned char b1 =
+                static_cast<unsigned char>(*ptr++);
+            const unsigned char b2 =
+                static_cast<unsigned char>(*ptr++);
+            if ((b1 & 0xC0) != 0x80 ||
+                (b2 & 0xC0) != 0x80)
+            {
+                prev = 0;
+                continue;
+            }
+            codepoint =
+                ((c & 0x0F) << 12) |
+                ((b1 & 0x3F) << 6) |
+                (b2 & 0x3F);
+        }
+        else if ((c & 0xF8) == 0xF0) {
+            if (ptr + 2 >= end) break;
+            const unsigned char b1 =
+                static_cast<unsigned char>(*ptr++);
+            const unsigned char b2 =
+                static_cast<unsigned char>(*ptr++);
+            const unsigned char b3 =
+                static_cast<unsigned char>(*ptr++);
+            if ((b1 & 0xC0) != 0x80 ||
+                (b2 & 0xC0) != 0x80 ||
+                (b3 & 0xC0) != 0x80)
+            {
+                prev = 0;
+                continue;
+            }
+            codepoint =
+                ((c & 0x07) << 18) |
+                ((b1 & 0x3F) << 12) |
+                ((b2 & 0x3F) << 6) |
+                (b3 & 0x3F);
+        }
+        else {
+            prev = 0;
+            continue;
+        }
+
+        const Uint32 ch = codepoint;
+        const GlyphInfo* glyph = nullptr;
+        bool dynamic = false;
+
+        if (auto found = mip->glyphs.find(ch);
+            found != mip->glyphs.end() &&
+            found->second.rect.h > 0)
+        {
+            glyph = &found->second;
+        }
+        else {
+            dynamic = true;
+            auto dynamicFound = mip->dynamicGlyphs.find(ch);
+            if (dynamicFound == mip->dynamicGlyphs.end()) {
+                // Preserve the existing behavior for the legacy extended
+                // range while allowing full Unicode glyphs on demand.
+                if (ch < 1024 ||
+                    !loadGlyphOnDemand(ch, mip))
+                {
+                    prev = 0;
+                    continue;
+                }
+                dynamicFound = mip->dynamicGlyphs.find(ch);
+            }
+
+            if (dynamicFound != mip->dynamicGlyphs.end() &&
+                dynamicFound->second.rect.h > 0)
+            {
+                glyph = &dynamicFound->second;
+            }
+        }
+
+        if (!glyph) {
+            prev = 0;
+            continue;
+        }
+
+        cumulativeKerning +=
+            static_cast<float>(getKerning(prev, ch));
+
+        PositionedGlyph positioned;
+        positioned.srcOutline = glyph->rect;
+        positioned.srcFill = {
+            glyph->rect.x + glyph->fillX,
+            glyph->rect.y + glyph->fillY,
+            glyph->fillW,
+            glyph->fillH
+        };
+        positioned.advanceBefore = cumulativeAdvance;
+        positioned.kerningBefore = cumulativeKerning;
+        positioned.advance =
+            static_cast<float>(glyph->advance);
+        positioned.packedY =
+            ascent -
+            (static_cast<float>(glyph->maxY) +
+                outline +
+                static_cast<float>(glyph->topPad));
+        positioned.dynamicAtlas = dynamic;
+        layout->glyphs.push_back(positioned);
+
+        cumulativeAdvance +=
+            static_cast<float>(glyph->advance);
+        prev = ch;
+    }
+
+    auto immutable =
+        std::static_pointer_cast<const TextLayout>(layout);
+    layouts.emplace(text, immutable);
+    return immutable;
 }
 
 // MODIFIED: Applies color to all mip levels

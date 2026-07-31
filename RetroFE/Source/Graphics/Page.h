@@ -16,11 +16,15 @@
 #pragma once
 
 #include "../Collection/CollectionInfo.h"
+#include "PresentationPreload.h"
 
 #include <array>
+#include <deque>
 #include <map>
+#include <memory>
 #include <string>
 #include <list>
+#include <unordered_set>
 #include <vector>
 
 class Component;
@@ -28,6 +32,7 @@ class Configuration;
 class ScrollingList;
 class Text;
 class Item;
+class Image;
 class Sound;
 
 class Page
@@ -79,6 +84,10 @@ public:
     Item *getSelectedMenuItem();
     ScrollingList* getAnActiveMenu();
     bool addComponent(Component *c);
+    void invalidatePresentationPreload();
+    void collectPresentationPreloads(
+        const PresentationPreloadContext& context,
+        PresentationPreloadCollector& collector) const;
     void pageScroll(ScrollDirection direction);
     void letterScroll(ScrollDirection direction);
     void metaScroll(ScrollDirection direction, std::string attribute);
@@ -281,5 +290,71 @@ private:
     void invalidateFrameLayerBuckets_();
     void rebuildFrameLayerBuckets_();
     void prepareGraphicsByLayer_();
+
+    struct PresentationPreloadCandidate {
+        size_t selectedIndex = 0;
+        bool idleOnly = false;
+    };
+    struct PresentationPreloadStats {
+        size_t totalStates{ 0 };
+        size_t statesExamined{ 0 };
+        size_t contributingLists{ 0 };
+        size_t pageImages{ 0 };
+        size_t pageTexts{ 0 };
+        size_t listImages{ 0 };
+        size_t textFallbacks{ 0 };
+        size_t videosSkipped{ 0 };
+        size_t imagesScheduled{ 0 };
+        size_t imageDuplicates{ 0 };
+        size_t imageTextureHits{ 0 };
+        size_t imageInflightJoins{ 0 };
+        size_t imageDecodesStarted{ 0 };
+        size_t textsScheduled{ 0 };
+        size_t textDuplicates{ 0 };
+        size_t textLayoutHits{ 0 };
+        size_t textLayoutsBuilt{ 0 };
+    };
+
+    bool presentationPreloadEnabled_() const;
+    void resetPresentationPreload_();
+    void refreshPresentationPreloadQueue_(
+        bool directionKnown = false,
+        bool forward = true);
+    void rebuildPresentationLetterAnchors_();
+    void queuePresentationState_(size_t selectedIndex);
+    void pumpPresentationPreload_(float dt);
+    void pumpPresentationImageLanes_(bool allowFinalization);
+    size_t activePresentationImagePreloads_() const;
+    void releasePresentationImagePreloads_();
+    void beginPresentationPreloadTelemetry_();
+    void logPresentationPreloadProgress_();
+    void completePresentationPreloadTelemetry_();
+
+    std::deque<PresentationPreloadCandidate>
+        presentationPreloadQueue_;
+    std::unordered_set<size_t> presentationPreloadAttempted_;
+    std::unordered_set<size_t> presentationPreloadQueued_;
+    std::deque<PresentationImageRequest>
+        presentationImageQueue_;
+    std::deque<PresentationTextRequest>
+        presentationTextQueue_;
+    std::unordered_set<std::string>
+        presentationImagesScheduled_;
+    std::unordered_set<std::string>
+        presentationTextsScheduled_;
+    static constexpr size_t PRESENTATION_IMAGE_DECODE_LANES = 2;
+    std::array<std::shared_ptr<Image>,
+        PRESENTATION_IMAGE_DECODE_LANES>
+        presentationImagePreloads_;
+    size_t presentationImageFinalizeCursor_{ 0 };
+    std::vector<size_t> presentationLetterAnchors_;
+    size_t presentationIdleCursor_{ 0 };
+    float presentationIdleStableSeconds_{ 0.0f };
+    bool presentationIdleSweepComplete_{ false };
+    PresentationPreloadStats presentationPreloadStats_;
+    std::string presentationPreloadPlaylist_;
+    size_t presentationPreloadNextProgress_{ 64 };
+    bool presentationPreloadTelemetryStarted_{ false };
+    bool presentationPreloadTelemetryComplete_{ false };
 
 };

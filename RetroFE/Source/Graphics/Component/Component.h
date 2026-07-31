@@ -27,6 +27,8 @@
 #include <map>
 
 class IVideo;
+struct PresentationPreloadContext;
+class PresentationPreloadCollector;
 
 class Component {
 public:
@@ -90,6 +92,12 @@ public:
 	virtual std::shared_ptr<IVideo> extractVideo() { return nullptr; }
 	virtual bool recycleAsImage(const std::string& /*newFilePath*/, const std::string & /*newAltPath*/ = "") { return false; }
 	virtual bool recycleAsText(const std::string& /*newText*/) { return false; }
+	virtual void collectPresentationPreloads(
+		const PresentationPreloadContext&,
+		PresentationPreloadCollector&) const {}
+	virtual bool enablesPresentationImagePreload() const {
+		return false;
+	}
 
 protected:
 	Page& page;

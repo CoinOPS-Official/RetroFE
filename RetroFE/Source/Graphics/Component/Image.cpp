@@ -8,7 +8,7 @@
 // -------------------- Static Storage --------------------
 Image::PathCache Image::pathCache_;
 std::unordered_map<Image::PathCache::CacheKey, Image::CachedImage, Image::PathCache::CacheKeyHash> Image::textureCache_;
-std::unordered_map<std::string, std::shared_future<Image::AsyncLoadResult>> Image::loadingTasks_;
+std::unordered_map<std::string, std::weak_ptr<Image::AsyncLoadTask>> Image::loadingTasks_;
 
 // Renderer-owned cache/path state and worker-owned load deduplication have
 // different contention domains. Keeping them separate prevents a completed
@@ -62,16 +62,17 @@ void Image::allocateGraphicsMemory() {
 
 void Image::pumpGraphicsPreparation() {
 	if (status_ == LoadStatus::Loading) {
-		if (loadTask_.valid() &&
-			loadTask_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
+		if (loadTask_ &&
+			loadTask_->future.wait_for(std::chrono::milliseconds(0)) ==
+				std::future_status::ready) {
 			finalizeLoad();
 		}
 	}
 }
 
 void Image::waitForGraphicsPreparation() {
-	if (status_ == LoadStatus::Loading && loadTask_.valid()) {
-		loadTask_.wait();
+	if (status_ == LoadStatus::Loading && loadTask_) {
+		loadTask_->future.wait();
 	}
 }
 
@@ -87,10 +88,20 @@ bool Image::isGraphicsReadyForFirstRender() const {
 	return false;
 }
 
+bool Image::isDecodeReadyForFinalization() const {
+	return status_ == LoadStatus::Loading &&
+		loadTask_ &&
+		loadTask_->future.wait_for(std::chrono::milliseconds(0)) ==
+			std::future_status::ready;
+}
+
 bool Image::startAsyncLoad(const std::string& path) {
-	// 1. Check Monitor-Specific VRAM Cache
-	if (useTextureCaching_ && loadFromCache(path)) {
-		loadTask_ = {};
+	// 1. Adopt any renderer-specific texture already retained by another
+	// component or by presentation warming. useTextureCaching_ controls
+	// whether this instance inserts new entries, not whether it can reuse one.
+	if (loadFromCache(path)) {
+		loadSource_ = LoadSource::TextureCache;
+		releaseLoadTask();
 		currentLoadingPath_.clear();
 		status_ = LoadStatus::Ready;
 		return true;
@@ -101,66 +112,114 @@ bool Image::startAsyncLoad(const std::string& path) {
 	// 2. Check for an already in-flight task for this path
 	auto it = loadingTasks_.find(path);
 	if (it != loadingTasks_.end()) {
-		loadTask_ = it->second;
-		currentLoadingPath_ = path;
-		status_ = LoadStatus::Loading;
-		return true;
+		if (auto existing = it->second.lock()) {
+			loadSource_ = LoadSource::SharedInFlight;
+			loadTask_ = std::move(existing);
+			currentLoadingPath_ = path;
+			status_ = LoadStatus::Loading;
+			return true;
+		}
+		loadingTasks_.erase(it);
 	}
 
 	// 3. Start a new decompression task
+	auto promise =
+		std::make_shared<std::promise<AsyncLoadResult>>();
+	auto task = std::make_shared<AsyncLoadTask>();
+	task->future = promise->get_future().share();
+
+	loadSource_ = LoadSource::NewDecode;
 	currentLoadingPath_ = path;
 	status_ = LoadStatus::Loading;
-	loadTask_ = ThreadPool::getInstance().enqueue([path]() -> AsyncLoadResult {
-		AsyncLoadResult res;
+	loadTask_ = task;
+	loadingTasks_[path] = task;
 
-		auto cleanup = [&]() {
-			std::lock_guard<std::mutex> lock(g_ImageLoadTaskMutex);
-			loadingTasks_.erase(path);
-			};
+	try {
+		(void)ThreadPool::getInstance().enqueue(
+			[path, promise, task]() mutable {
+				AsyncLoadResult res;
 
-		SDL_RWops* rw = SDL_RWFromFile(path.c_str(), "rb");
-		if (!rw) {
-			cleanup();
-			return res;
-		}
-
-		if (IMG_isGIF(rw) || IMG_isWEBP(rw)) {
-			IMG_Animation* anim = IMG_LoadAnimation_RW(rw, 1);
-			if (anim) {
-				res.w = anim->w; res.h = anim->h;
-				for (int i = 0; i < anim->count; ++i) {
-					SDL_Surface* conv = SDL_ConvertSurfaceFormat(anim->frames[i], SDL_PIXELFORMAT_RGBA32, 0);
-					res.animatedSurfaces.emplace_back(conv, SurfaceDeleter());
-					res.frameDelays.push_back((anim->delays && anim->delays[i] > 0) ? anim->delays[i] : 100);
+				try {
+					SDL_RWops* rw =
+						SDL_RWFromFile(path.c_str(), "rb");
+					if (rw) {
+						if (IMG_isGIF(rw) || IMG_isWEBP(rw)) {
+							IMG_Animation* anim =
+								IMG_LoadAnimation_RW(rw, 1);
+							if (anim) {
+								res.w = anim->w;
+								res.h = anim->h;
+								for (int i = 0; i < anim->count; ++i) {
+									SDL_Surface* conv =
+										SDL_ConvertSurfaceFormat(
+											anim->frames[i],
+											SDL_PIXELFORMAT_RGBA32,
+											0
+										);
+									res.animatedSurfaces.emplace_back(
+										conv,
+										SurfaceDeleter()
+									);
+									res.frameDelays.push_back(
+										(anim->delays &&
+											anim->delays[i] > 0)
+										? anim->delays[i]
+										: 100
+									);
+								}
+								IMG_FreeAnimation(anim);
+								res.success =
+									!res.animatedSurfaces.empty();
+							}
+						}
+						else {
+							SDL_Surface* surface =
+								IMG_Load_RW(rw, 1);
+							if (surface) {
+								res.staticSurface = SharedSurface(
+									surface,
+									SurfaceDeleter()
+								);
+								res.w = surface->w;
+								res.h = surface->h;
+								res.success = true;
+							}
+						}
+					}
 				}
-				IMG_FreeAnimation(anim);
-				res.success = !res.animatedSurfaces.empty();
-			}
-		}
-		else {
-			SDL_Surface* s = IMG_Load_RW(rw, 1);
-			if (s) {
-				res.staticSurface = SharedSurface(s, SurfaceDeleter());
-				res.w = s->w; res.h = s->h;
-				res.success = true;
-			}
-		}
+				catch (...) {
+					// Treat decoder/library exceptions as a normal failed
+					// load so waiters always receive a usable result.
+					res = {};
+				}
 
-		cleanup();
-		return res;
-		}).share();
+				// Publish the completed surfaces before dropping the worker's
+				// registry lifetime. New consumers can join this ready result
+				// until the final main-thread consumer completes its handoff.
+				promise->set_value(std::move(res));
+				task.reset();
+				pruneExpiredLoadTask(path);
+			}
+		);
+	}
+	catch (...) {
+		loadingTasks_.erase(path);
+		loadTask_.reset();
+		currentLoadingPath_.clear();
+		loadSource_ = LoadSource::None;
+		status_ = LoadStatus::Error;
+		return false;
+	}
 
-	loadingTasks_[path] = loadTask_;
 	return true;
 }
 
 void Image::finalizeLoad() {
 	std::string path = currentLoadingPath_;
-	AsyncLoadResult res = loadTask_.get();
-	loadTask_ = {};
-	currentLoadingPath_.clear();
+	AsyncLoadResult res = loadTask_->future.get();
 
 	if (!res.success) {
+		releaseLoadTask();
 		// Fallback to alt file logic
 		if (path == file_ && !altFile_.empty()) {
 			startAsyncLoad(altFile_);
@@ -173,7 +232,8 @@ void Image::finalizeLoad() {
 	// Another consumer of the same shared load may already have finalized
 	// and cached the renderer-specific texture. Adopt it instead of
 	// creating and then orphaning a duplicate texture.
-	if (useTextureCaching_ && loadFromCache(path)) {
+	if (loadFromCache(path)) {
+		releaseLoadTask();
 		status_ = LoadStatus::Ready;
 		return;
 	}
@@ -184,6 +244,7 @@ void Image::finalizeLoad() {
 	if (res.staticSurface) {
 		newTexture = SDL_CreateTextureFromSurface(renderer, res.staticSurface.get());
 		if (!newTexture) {
+			releaseLoadTask();
 			status_ = LoadStatus::Error;
 			return;
 		}
@@ -204,6 +265,7 @@ void Image::finalizeLoad() {
 	if (!animatedSurfaces_.empty()) {
 		if (!createAnimatedStreamingTexture(res.w, res.h)) {
 			releaseLocalImageAssets();
+			releaseLoadTask();
 			status_ = LoadStatus::Error;
 			return;
 		}
@@ -233,6 +295,7 @@ void Image::finalizeLoad() {
 			isUsingCachedSurfaces_ = !animatedSurfaces_.empty();
 		}
 		else if (!applyCachedImage(existing)) {
+			releaseLoadTask();
 			status_ = LoadStatus::Error;
 			return;
 		}
@@ -242,6 +305,7 @@ void Image::finalizeLoad() {
 		isUsingCachedSurfaces_ = false;
 	}
 
+	releaseLoadTask();
 	status_ = LoadStatus::Ready;
 }
 
@@ -261,6 +325,15 @@ bool Image::loadFromCache(const std::string& filePath) {
 	}
 
 	return applyCachedImage(cached);
+}
+
+bool Image::isTextureCached(
+	const std::string& filePath,
+	int monitor)
+{
+	std::lock_guard<std::mutex> lock(g_ImageTextureCacheMutex);
+	return textureCache_.find({ filePath, monitor }) !=
+		textureCache_.end();
 }
 
 bool Image::applyCachedImage(const CachedImage& cached) {
@@ -308,10 +381,8 @@ bool Image::update(float dt) {
 	bool done = Component::update(dt);
 
 	// Check background asset status in the logic pass, BEFORE drawing starts
-	if (status_ == LoadStatus::Loading) {
-		if (loadTask_.valid() && loadTask_.wait_for(std::chrono::milliseconds(0)) == std::future_status::ready) {
-			finalizeLoad();
-		}
+	if (isDecodeReadyForFinalization()) {
+		finalizeLoad();
 	}
 
 	return done;
@@ -390,11 +461,28 @@ void Image::draw() {
 void Image::freeGraphicsMemory() {
 	releaseLocalImageAssets();
 	status_ = LoadStatus::Unloaded;
+	loadSource_ = LoadSource::None;
 
-	loadTask_ = {};
+	releaseLoadTask();
+}
 
-	// Reset our local path so we don't accidentally check it later
+void Image::releaseLoadTask() {
+	const std::string path = currentLoadingPath_;
+	loadTask_.reset();
 	currentLoadingPath_.clear();
+	pruneExpiredLoadTask(path);
+}
+
+void Image::pruneExpiredLoadTask(const std::string& path) {
+	if (path.empty()) {
+		return;
+	}
+
+	std::lock_guard<std::mutex> lock(g_ImageLoadTaskMutex);
+	auto it = loadingTasks_.find(path);
+	if (it != loadingTasks_.end() && it->second.expired()) {
+		loadingTasks_.erase(it);
+	}
 }
 
 void Image::resetAnimationState() {
@@ -464,6 +552,7 @@ bool Image::recycleAsImage(const std::string& newFilePath, const std::string& ne
 	}
 
 	this->Component::freeGraphicsMemory();
+	releaseLoadTask();
 
 	file_ = newFilePath;
 	altFile_ = newAltPath;

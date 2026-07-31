@@ -15,6 +15,7 @@
  */
 
 #include "ReloadableText.h"
+#include "../PresentationPreload.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
 #include "../../Sound/MusicPlayer.h"
@@ -153,6 +154,138 @@ bool ReloadableText::isInTransition() const
     return (getAnimationRequestedType() == "playlistExit" || getAnimationRequestedType() == "playlistPrevEnter" ||
             getAnimationRequestedType() == "playlistPrevExit" || getAnimationRequestedType() == "playlistNextEnter" ||
             getAnimationRequestedType() == "playlistNextExit");
+}
+
+bool ReloadableText::isItemDrivenType_() const {
+    return type_ != "time" &&
+        type_ != "file" &&
+        type_ != "trackInfo" &&
+        type_.rfind("playlist", 0) != 0 &&
+        type_ != "collectionName" &&
+        type_ != "collectionSize" &&
+        type_ != "collectionIndex" &&
+        type_ != "collectionIndexSize" &&
+        type_ != "isPaused" &&
+        type_ != "current" &&
+        type_ != "duration";
+}
+
+std::string ReloadableText::resolveItemText_(
+    const Item& item) const
+{
+    std::string text;
+
+    if (type_ == "numberButtons")        text = item.numberButtons;
+    else if (type_ == "numberPlayers")   text = item.numberPlayers;
+    else if (type_ == "ctrlType")        text = item.ctrlType;
+    else if (type_ == "numberJoyWays")   text = item.joyWays;
+    else if (type_ == "rating")          text = item.rating;
+    else if (type_ == "score")           text = item.score;
+    else if (type_ == "year")            text = item.year;
+    else if (type_ == "title")           text = item.title;
+    else if (type_ == "developer") {
+        text = item.developer;
+        if (text.empty()) text = item.manufacturer;
+    }
+    else if (type_ == "manufacturer")    text = item.manufacturer;
+    else if (type_ == "genre")           text = item.genre;
+    else if (type_ == "playCount")       text = std::to_string(item.playCount);
+    else if (type_ == "timeSpent") {
+        const int totalMinutes =
+            static_cast<int>(item.timeSpent / 60);
+        const int hours = totalMinutes / 60;
+        const int minutes = totalMinutes % 60;
+
+        if (totalMinutes < 1) text.clear();
+        else if (hours > 0)
+            text = std::to_string(hours) + "h " +
+                std::to_string(minutes) + "m";
+        else
+            text = std::to_string(minutes) + "m";
+    }
+    else if (type_ == "lastPlayed") {
+        if (item.lastPlayed != "0") {
+            text = item.lastPlayed;
+        }
+    }
+    else if (type_ == "firstLetter") {
+        if (!item.fullTitle.empty()) {
+            text.assign(1, item.fullTitle.front());
+        }
+    }
+    else if (type_ == "isFavorite") {
+        text = item.isFavorite ? "yes" : "no";
+    }
+
+    if (text.empty() && (!item.leaf || systemMode_)) {
+        (void)config_.getProperty(
+            "collections." + item.name + "." + type_,
+            text
+        );
+    }
+
+    if (text.empty() && systemMode_) {
+        (void)config_.getProperty(
+            "collections." + page.getCollectionName() +
+                "." + type_,
+            text
+        );
+    }
+
+    bool overwriteXML = false;
+    config_.getProperty(OPTION_OVERWRITEXML, overwriteXML);
+    if (text.empty() || overwriteXML) {
+        std::string textFromInfo;
+        item.getInfo(type_, textFromInfo);
+        if (!textFromInfo.empty()) {
+            text = std::move(textFromInfo);
+        }
+    }
+
+    return text;
+}
+
+std::string ReloadableText::formatItemText_(
+    std::string text) const
+{
+    if (text == "0")
+        text = singlePrefix_ + text + pluralPostfix_;
+    else if (text == "1")
+        text = singlePrefix_ + text + singlePostfix_;
+    else if (!text.empty())
+        text = pluralPrefix_ + text + pluralPostfix_;
+
+    if (textFormat_ == "uppercase") {
+        std::transform(
+            text.begin(), text.end(), text.begin(), ::toupper);
+    }
+    else if (textFormat_ == "lowercase") {
+        std::transform(
+            text.begin(), text.end(), text.begin(), ::tolower);
+    }
+
+    return text;
+}
+
+void ReloadableText::collectPresentationPreloads(
+    const PresentationPreloadContext& context,
+    PresentationPreloadCollector& collector) const
+{
+    if (!fontInst_ || !isItemDrivenType_()) {
+        return;
+    }
+
+    const Item* item = context.itemAtOffset(0);
+    if (!item) {
+        return;
+    }
+
+    collector.addText(
+        fontInst_,
+        formatItemText_(resolveItemText_(*item)),
+        static_cast<int>(baseViewInfo.FontSize),
+        baseViewInfo.Layer
+    );
 }
 
 void ReloadableText::ReloadTexture() {
@@ -350,64 +483,7 @@ void ReloadableText::ReloadTexture() {
     // ------------------------------------------------------------
     else
     {
-        if (type_ == "numberButtons")        text = selectedItem->numberButtons;
-        else if (type_ == "numberPlayers")   text = selectedItem->numberPlayers;
-        else if (type_ == "ctrlType")        text = selectedItem->ctrlType;
-        else if (type_ == "numberJoyWays")   text = selectedItem->joyWays;
-        else if (type_ == "rating")          text = selectedItem->rating;
-        else if (type_ == "score")           text = selectedItem->score;
-        else if (type_ == "year")            text = selectedItem->year;
-        else if (type_ == "title")           text = selectedItem->title;
-        else if (type_ == "developer") {
-            text = selectedItem->developer;
-            if (text.empty()) text = selectedItem->manufacturer;
-        }
-        else if (type_ == "manufacturer")    text = selectedItem->manufacturer;
-        else if (type_ == "genre")           text = selectedItem->genre;
-        else if (type_ == "playCount")       text = std::to_string(selectedItem->playCount);
-        else if (type_ == "timeSpent")
-        {
-            int totalMinutes = static_cast<int>(selectedItem->timeSpent / 60);
-            int hours = totalMinutes / 60;
-            int minutes = totalMinutes % 60;
-
-            if (totalMinutes < 1) text.clear();
-            else if (hours > 0)   text = std::to_string(hours) + "h " + std::to_string(minutes) + "m";
-            else                  text = std::to_string(minutes) + "m";
-        }
-        else if (type_ == "lastPlayed")
-        {
-            if (selectedItem->lastPlayed != "0")
-                text = selectedItem->lastPlayed;
-        }
-        else if (type_ == "firstLetter")
-        {
-            if (!selectedItem->fullTitle.empty())
-                text = std::string(1, selectedItem->fullTitle[0]);
-            else
-                text.clear();
-        }
-        else if (type_ == "isFavorite")
-        {
-            text = selectedItem->isFavorite ? "yes" : "no";
-        }
-
-        // Collection/item overrides + info fallbacks
-        if (text.empty() && (!selectedItem->leaf || systemMode_))
-            (void)config_.getProperty("collections." + selectedItem->name + "." + type_, text);
-
-        if (text.empty() && systemMode_)
-            (void)config_.getProperty("collections." + page.getCollectionName() + "." + type_, text);
-
-        bool overwriteXML = false;
-        config_.getProperty(OPTION_OVERWRITEXML, overwriteXML);
-        if (text.empty() || overwriteXML)
-        {
-            std::string text_tmp;
-            selectedItem->getInfo(type_, text_tmp);
-            if (!text_tmp.empty())
-                text = text_tmp;
-        }
+        text = resolveItemText_(*selectedItem);
     }
 
     // Apply the generic prefix/postfix + case transforms unless we already built ss ourselves

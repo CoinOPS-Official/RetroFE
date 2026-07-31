@@ -20,8 +20,15 @@ struct SDL_RWops;
 
 class Image : public Component {
 public:
+    enum class LoadSource {
+        None,
+        TextureCache,
+        SharedInFlight,
+        NewDecode
+    };
+
     Image(const std::string& file, const std::string& altFile, Page& p,
-        int monitor = 0, bool additive = false, bool useTextureCaching = true);
+        int monitor = 0, bool additive = false, bool useTextureCaching = false);
     ~Image() override;
     bool update(float dt) override;
     void draw() override;
@@ -30,9 +37,14 @@ public:
     void pumpGraphicsPreparation() override;
     void waitForGraphicsPreparation() override;
     bool isGraphicsReadyForFirstRender() const override;
+    bool isDecodeReadyForFinalization() const;
     std::string_view filePath();
+    LoadSource getLoadSource() const { return loadSource_; }
 
     static void cleanupTextureCache();
+    static bool isTextureCached(
+        const std::string& filePath,
+        int monitor);
 
     bool recycleAsImage(const std::string& newFilePath, const std::string& newAltPath = "") override;
 
@@ -51,6 +63,10 @@ private:
         std::vector<int> frameDelays;
         int w = 0, h = 0;
         bool success = false;
+    };
+
+    struct AsyncLoadTask {
+        std::shared_future<AsyncLoadResult> future;
     };
 
     struct CachedImage {
@@ -84,6 +100,8 @@ private:
     bool loadFromCache(const std::string& filePath);
     bool applyCachedImage(const CachedImage& cached);
     void releaseLocalImageAssets();
+    void releaseLoadTask();
+    static void pruneExpiredLoadTask(const std::string& path);
 
     void resetAnimationState();
     bool createAnimatedStreamingTexture(int width, int height);
@@ -95,7 +113,8 @@ private:
     std::string currentLoadingPath_; // NEW: Tracks which file is in-flight
 
     LoadStatus status_ = LoadStatus::Unloaded;
-    std::shared_future<AsyncLoadResult> loadTask_;
+    LoadSource loadSource_ = LoadSource::None;
+    std::shared_ptr<AsyncLoadTask> loadTask_;
 
     SDL_Texture* texture_ = nullptr;
     SDL_Texture* animatedTexture_ = nullptr;
@@ -114,7 +133,7 @@ private:
 
     static PathCache pathCache_;
     static std::unordered_map<PathCache::CacheKey, CachedImage, PathCache::CacheKeyHash> textureCache_;
-    static std::unordered_map<std::string, std::shared_future<AsyncLoadResult>> loadingTasks_;
+    static std::unordered_map<std::string, std::weak_ptr<AsyncLoadTask>> loadingTasks_;
 };
 
 #endif

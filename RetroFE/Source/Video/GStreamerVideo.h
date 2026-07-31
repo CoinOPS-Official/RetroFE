@@ -120,9 +120,7 @@ public:
         return IVideo::VideoState::None;
     }
 
-    IVideo::VideoState getActualState() const override {
-        return getTargetState();
-    }
+    IVideo::VideoState getActualState() const override;
 
     bool isPipelineReady() const override {
         return lifecycle_.load(std::memory_order_acquire) == PipelineLifecycle::Ready;
@@ -156,6 +154,7 @@ private:
 
     // The "Truth": Updated via GST_MESSAGE_STATE_CHANGED
     std::atomic<GstState> actualGstState_{ GST_STATE_NULL };
+    static IVideo::VideoState mapGstState(GstState state);
 
     // === Hardware Budget / CPU Preroll Gatekeeper ===
     std::atomic<uint64_t> prerollToken_{ 0 };

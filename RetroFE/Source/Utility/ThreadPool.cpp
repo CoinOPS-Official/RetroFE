@@ -72,7 +72,9 @@ ThreadPool::~ThreadPool() {
 ThreadPool& ThreadPool::getInstance() {
 	static ThreadPool instance([] {
 		unsigned hw = std::thread::hardware_concurrency();
-		unsigned suggested = hw ? std::min(3u, hw) : 3u; // keep 1+ cores free
+		unsigned suggested = hw
+			? std::clamp((hw * 3u) / 4u, 3u, 6u)
+			: 3u;
 		if (const char* env_p = std::getenv("RETROFE_THREADPOOL_SIZE")) {
 			unsigned user = std::atoi(env_p);
 			if (user > 0 && user < 64) suggested = user;

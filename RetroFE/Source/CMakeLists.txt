@@ -290,6 +290,7 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Graphics/FontCache.h"
 	"${RETROFE_DIR}/Source/Graphics/PageBuilder.h"
 	"${RETROFE_DIR}/Source/Graphics/Page.h"
+	"${RETROFE_DIR}/Source/Graphics/PresentationPreload.h"
 	"${RETROFE_DIR}/Source/Menu/Menu.h"
 	"${RETROFE_DIR}/Source/Sound/AudioBus.h"
 	"${RETROFE_DIR}/Source/Sound/Sound.h"

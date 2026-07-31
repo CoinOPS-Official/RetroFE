@@ -17,11 +17,10 @@
 
 
 #include <vector>
-#include <deque>
 #include <memory>
 #include <unordered_map>
-#include <unordered_set>
 #include "Component.h"
+#include "../PresentationPreload.h"
 #include "../Animate/Tween.h"
 #include "../Animate/TweenSet.h"
 #include "../Page.h"
@@ -207,6 +206,21 @@ public:
     bool isPlaylist() const;
     unsigned int getVisualPriorityTier() const;
     unsigned int getVisualPriorityLayer() const;
+    bool enablesPresentationPreload() const {
+        return useTextureCaching_ && !playlistType_;
+    }
+    bool presentsItems(
+        const std::vector<Item*>& items) const
+    {
+        return items_ == &items;
+    }
+    size_t getSlotCount() const {
+        return scrollPoints_ ? scrollPoints_->size() : 0;
+    }
+    PresentationPreloadContribution
+        collectPresentationPreloadsForSelection(
+            size_t selectedIndex,
+            PresentationPreloadCollector& collector);
     static void clearSharedMediaCache();
 
     void setPerspectiveCorners(const int corners[8]) {
@@ -257,13 +271,6 @@ private:
     TweenSet buildTweenTemplate_(
         const ViewInfo& current,
         const ViewInfo& next) const;
-    void rebuildLetterAnchors_();
-    void refreshImagePreloadQueue_(
-        bool directionKnown = false,
-        bool forward = true);
-    void pumpImagePreload_();
-    void releaseImagePreload_();
-    void resetImagePreload_();
 
     bool layoutMode_;
     bool commonMode_;
@@ -314,18 +321,6 @@ private:
     RotatableView<Component*> components_;
 
     bool useTextureCaching_{ false };
-    struct ImagePreloadCandidate {
-        size_t itemIndex;
-        bool idleOnly;
-    };
-    std::deque<ImagePreloadCandidate> imagePreloadQueue_;
-    std::unordered_set<size_t> imagePreloadAttempted_;
-    std::unordered_set<size_t> imagePreloadQueued_;
-    std::shared_ptr<Image> imagePreload_;
-    std::vector<size_t> letterAnchors_;
-    bool imagePreloadIdleOnly_{ false };
-    bool ownsImagePreloadSlot_{ false };
-    static size_t activeImagePreloads_;
 
     bool perspectiveCornersInitialized_{ false };
     int perspectiveCorners_[8]; // stores x,y coordinates for all 4 corners in order: topLeft, topRight, bottomLeft, bottomRight
