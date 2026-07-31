@@ -86,7 +86,7 @@ Alternatively, manually install
 ### Download and compile the source code
 Download the source code
 
-	git clone https://github.com/CoinOPS-Official/RetroFE.git
+	git clone --recurse-submodules https://github.com/CoinOPS-Official/RetroFE.git
 
 Setup Environment (to setup necessary variables and paths to compile in visual studio)
 
@@ -147,7 +147,7 @@ glib2 minizip libwebp libusb libevdev
 ### Download and compile the source code
 Download the source code
 
-	git clone https://github.com/CoinOPS-Official/RetroFE.git
+	git clone --recurse-submodules https://github.com/CoinOPS-Official/RetroFE.git
 
 Generate your gcc make files
 
@@ -172,7 +172,7 @@ An Xcode project has been created to build universal binaries (x86_64 and arm64)
 
 ### Download the source code
 
-	git clone https://github.com/CoinOPS-Official/RetroFE.git
+	git clone --recurse-submodules https://github.com/CoinOPS-Official/RetroFE.git
 
 ### Install libraries
 
@@ -232,7 +232,7 @@ glib minizip webp libusb
 ### Download and compile the source code
 Download the source code
 
-	git clone https://github.com/CoinOPS-Official/RetroFE.git
+	git clone --recurse-submodules https://github.com/CoinOPS-Official/RetroFE.git
 
 Generate your gcc make files
 

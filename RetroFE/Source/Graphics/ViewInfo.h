@@ -16,7 +16,7 @@
 #pragma once
 
 #include "Animate/TweenTypes.h"
-#include <SDL2/SDL_ttf.h>
+#include <SDL_ttf.h>
 #include <string>
 #include <map>
 #include <cfloat>

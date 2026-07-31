@@ -24,6 +24,8 @@ jobs:
     # Checkout the repository
     - name: Checkout code
       uses: actions/checkout@v4
+      with:
+        submodules: recursive
 
     - name: Cache apt packages
       uses: awalsh128/cache-apt-pkgs-action@latest

@@ -1,5 +1,12 @@
 cmake_minimum_required(VERSION 3.12)
 
+# Disable Visual Studio's user-wide vcpkg integration before project()
+# configures the compiler and creates any targets, including subdirectories.
+list(APPEND CMAKE_VS_GLOBALS
+    "VcpkgEnabled=false"
+    "VcpkgApplocalDeps=false"
+)
+
 if(POLICY CMP0091)
     cmake_policy(SET CMP0091 NEW)
 endif()
@@ -50,12 +57,19 @@ set(JSON_ROOT "${RETROFE_THIRD_PARTY_DIR}/json/single_include")
 set(RAPIDXML_ROOT "${RETROFE_THIRD_PARTY_DIR}/rapidxml-1.17")
 set(KISSFFT_ROOT "${RETROFE_THIRD_PARTY_DIR}/kissfft-131.1.0")
 
+# Keep the Windows SDL2 SDK and runtime versions in one place. These are the
+# latest native SDL2 releases, not the separate sdl2-compat project.
+set(RETROFE_SDL2_VERSION "2.32.10")
+set(RETROFE_SDL2_IMAGE_VERSION "2.8.12")
+set(RETROFE_SDL2_MIXER_VERSION "2.8.2")
+set(RETROFE_SDL2_TTF_VERSION "2.24.0")
+
 if(WIN32)
     if(MSVC)
-        set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-2.32.10")
-        set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.8.8")
-        set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.8.1")
-        set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.24.0")
+        set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-${RETROFE_SDL2_VERSION}")
+        set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-${RETROFE_SDL2_IMAGE_VERSION}")
+        set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-${RETROFE_SDL2_MIXER_VERSION}")
+        set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-${RETROFE_SDL2_TTF_VERSION}")
     endif()
 
     set(ZLIB_ROOT "${RETROFE_THIRD_PARTY_DIR}/zlib13-dll")
@@ -433,6 +447,22 @@ if(MSVC)
     set(CMAKE_EXE_LINKER_FLAGS_RELEASE "${CMAKE_EXE_LINKER_FLAGS_RELEASE} /LTCG /OPT:REF /OPT:ICF")
 
     set_target_properties(retrofe PROPERTIES LINK_FLAGS "/SUBSYSTEM:WINDOWS")
+
+    # Package the same SDL DLLs that supplied the headers and import libraries.
+    # This overwrites any older copies supplied by the Windows runtime bundle.
+    foreach(SDL_RUNTIME_DLL IN ITEMS
+        "${SDL2_ROOT}/lib/x64/SDL2.dll"
+        "${SDL2_IMAGE_ROOT}/lib/x64/SDL2_image.dll"
+        "${SDL2_MIXER_ROOT}/lib/x64/SDL2_mixer.dll"
+        "${SDL2_TTF_ROOT}/lib/x64/SDL2_ttf.dll"
+    )
+        add_custom_command(TARGET retrofe POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${SDL_RUNTIME_DLL}"
+                "$<TARGET_FILE_DIR:retrofe>"
+            VERBATIM
+        )
+    endforeach()
 else()
     set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_DEBUG} -g -O0 -Wall -ggdb")
     set(CMAKE_CXX_FLAGS_DEBUG "${CMAKE_CXX_FLAGS_DEBUG} -g -O0 -Wall -ggdb")

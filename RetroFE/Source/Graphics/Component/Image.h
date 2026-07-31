@@ -12,7 +12,7 @@
 #include <memory>
 #include <limits>
 #include <cstdint>
-#include <SDL2/SDL_image.h>
+#include <SDL_image.h>
 
 struct SDL_Texture;
 struct SDL_Surface;

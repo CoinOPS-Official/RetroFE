@@ -32,7 +32,7 @@
 #include <Tlhelp32.h>
 #include <winreg.h>
 
-#include <SDL2/SDL_syswm.h>
+#include <SDL_syswm.h>
 
 #include "../../../SDL.h"                 // SDL::getWindow
 #include "../../../Utility/Log.h"

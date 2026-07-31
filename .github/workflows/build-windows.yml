@@ -31,6 +31,7 @@ jobs:
           mkdir .\RetroFE\Build\Release\retrofe
           xcopy /S /I /Y .\Package\Environment\Windows\retrofe .\RetroFE\Build\Release\retrofe
           move .\RetroFE\Build\Release\retrofe.exe .\RetroFE\Build\Release\retrofe\retrofe.exe
+          Copy-Item -Force .\RetroFE\Build\Release\SDL2*.dll .\RetroFE\Build\Release\retrofe
           copy .\Package\Environment\Windows\RetroFE.lnk .\RetroFE\Build\Release
 
       - name: Upload RetroFE
