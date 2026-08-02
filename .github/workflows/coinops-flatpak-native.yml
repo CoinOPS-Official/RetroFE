@@ -620,7 +620,7 @@ jobs:
                   echo "============================================================"
                   echo "Checking Hypseus Singe build dependencies"
                   echo "============================================================"
-                  for tool in cmake ninja libtoolize autoreconf; do
+                  for tool in cmake make libtoolize autoreconf; do
                     command -v "$tool"
                   done
                   for pkg in \
@@ -643,10 +643,14 @@ jobs:
                   echo "============================================================"
                   echo "Configuring Hypseus Singe v2.12.1 (SDL2)"
                   echo "============================================================"
+                  # Hypseus's bundled libmpeg2 ExternalProject does not declare
+                  # libmpeg2.a as a Ninja BUILD_BYPRODUCT. Use the upstream
+                  # Unix Makefiles path so libmpeg2 is built before Hypseus links.
+                  rm -rf build
                   cmake \
                     -S src \
                     -B build \
-                    -G Ninja \
+                    -G "Unix Makefiles" \
                     -DCMAKE_BUILD_TYPE=Release \
                     -DCMAKE_INSTALL_PREFIX=/app \
                     -DCMAKE_PREFIX_PATH=/app \
