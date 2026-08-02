@@ -189,6 +189,10 @@ jobs:
                 libzstd \
                 liblz4 \
                 openssl \
+                ogg \
+                vorbis \
+                vorbisenc \
+                vorbisfile \
                 openal
               do
                 require_pkg "$pkg"
@@ -202,6 +206,7 @@ jobs:
               for pkg in \
                 SDL2_image \
                 SDL2_ttf \
+                libzip \
                 libevdev \
                 libserialport \
                 minizip
@@ -215,7 +220,6 @@ jobs:
               echo "============================================================"
 
               for pkg in \
-                libzip \
                 libxxhash \
                 snappy
               do
@@ -311,6 +315,8 @@ jobs:
       #   SDL2_ttf
       #   MAME
       #   SDL2_image
+      #   libzip
+      #   Hypseus Singe (last SDL2 release)
       #   libevdev
       #   libserialport
       #   minizip
@@ -322,8 +328,8 @@ jobs:
       #
       # SDL2_ttf must precede MAME because MAME requires it.
       #
-      # SDL2_image and other RetroFE-only dependencies remain after
-      # MAME so changes to them do not invalidate the MAME module.
+      # SDL2_image, libzip, Hypseus Singe and RetroFE-only dependencies
+      # remain after MAME so changes to them do not invalidate MAME.
       #
       # RetroArch is deliberately placed after RetroFE. Updating the
       # pinned RetroArch revision or its build flags therefore does not
@@ -560,6 +566,107 @@ jobs:
                 - type: git
                   url: https://github.com/libsdl-org/SDL_image.git
                   branch: SDL2
+            # ======================================================
+            # libzip
+            #
+            # Required by Hypseus Singe for zipped LUA game support.
+            # Build it into /app rather than depending on the SDK's
+            # optional package set.
+            # ======================================================
+            - name: libzip
+              buildsystem: cmake-ninja
+              builddir: true
+              build-options:
+                strip: true
+                no-debuginfo: true
+              config-opts:
+                - -DCMAKE_BUILD_TYPE=Release
+                - -DCMAKE_INSTALL_PREFIX=/app
+                - -DBUILD_SHARED_LIBS=ON
+                - -DBUILD_TOOLS=OFF
+                - -DBUILD_REGRESS=OFF
+                - -DBUILD_OSSFUZZ=OFF
+                - -DBUILD_EXAMPLES=OFF
+                - -DBUILD_DOC=OFF
+              cleanup:
+                - /include
+                - /lib/cmake
+                - /lib/pkgconfig
+                - '*.a'
+                - '*.la'
+              sources:
+                - type: git
+                  url: https://github.com/nih-at/libzip.git
+                  commit: 6f8a0cdd24a0dc6cce9dac4a7679da784ab124ea
+            # ======================================================
+            # Hypseus Singe
+            #
+            # v2.12.1 is the final SDL2-based Hypseus release.
+            # Only the immutable emulator executable and license are
+            # installed. Game data and mutable support directories
+            # remain in the external CoinOPS data tree.
+            # ======================================================
+            - name: hypseus-singe
+              buildsystem: simple
+              build-options:
+                strip: true
+                no-debuginfo: true
+                cflags-override: true
+                cxxflags-override: true
+                cflags: -O2 -g0
+                cxxflags: -O2 -g0
+              build-commands:
+                - |
+                  echo "============================================================"
+                  echo "Checking Hypseus Singe build dependencies"
+                  echo "============================================================"
+                  for tool in cmake ninja libtoolize autoreconf; do
+                    command -v "$tool"
+                  done
+                  for pkg in \
+                    sdl2 \
+                    SDL2_ttf \
+                    SDL2_image \
+                    SDL2_mixer \
+                    ogg \
+                    vorbis \
+                    vorbisenc \
+                    vorbisfile \
+                    zlib \
+                    libzip
+                  do
+                    printf '%-20s ' "$pkg"
+                    pkg-config --modversion "$pkg"
+                  done
+                - |
+                  echo
+                  echo "============================================================"
+                  echo "Configuring Hypseus Singe v2.12.1 (SDL2)"
+                  echo "============================================================"
+                  cmake \
+                    -S src \
+                    -B build \
+                    -G Ninja \
+                    -DCMAKE_BUILD_TYPE=Release \
+                    -DCMAKE_INSTALL_PREFIX=/app \
+                    -DCMAKE_PREFIX_PATH=/app \
+                    -DBUILD_SINGE=ON \
+                    -DABSTRACT_SINGE=ON \
+                    -DBUILDBOT=OFF
+                - |
+                  echo
+                  echo "============================================================"
+                  echo "Building Hypseus Singe"
+                  echo "============================================================"
+                  cmake --build build --parallel 10
+                - test -x build/hypseus
+                - build/hypseus -version
+                - install -Dm755 build/hypseus /app/bin/hypseus
+                - install -Dm644 LICENSE /app/share/licenses/hypseus-singe/LICENSE
+              sources:
+                - type: git
+                  url: https://github.com/DirtBagXon/hypseus-singe.git
+                  commit: 4cfd20d834ee6cf42c1c347ffd2627d87aaf8e2f
             # ======================================================
             # libevdev
             # ======================================================
@@ -1207,6 +1314,24 @@ jobs:
           ldd build-dir/files/bin/mame || true
           echo
           echo "============================================================"
+          echo "HYPSEUS SINGE"
+          echo "============================================================"
+          test -x build-dir/files/bin/hypseus
+          file build-dir/files/bin/hypseus
+          echo
+          echo "Dynamic dependencies:"
+          if ! ldd build-dir/files/bin/hypseus \
+            | tee /tmp/coinops-hypseus-ldd.txt
+          then
+            echo "Unable to inspect Hypseus dynamic dependencies" >&2
+            exit 1
+          fi
+          if grep -q 'not found' /tmp/coinops-hypseus-ldd.txt; then
+            echo "Hypseus has unresolved dynamic dependencies" >&2
+            exit 1
+          fi
+          echo
+          echo "============================================================"
           echo "COINOPS RETROARCH RUNTIME"
           echo "============================================================"
           file build-dir/files/bin/coinops-retroarch
@@ -1319,6 +1444,16 @@ jobs:
             -version
           echo
           echo "============================================================"
+          echo "Hypseus Singe version"
+          echo "============================================================"
+          flatpak-builder \
+            --run \
+            build-dir \
+            org.coinops.Runtime.yml \
+            /app/bin/hypseus \
+            -version
+          echo
+          echo "============================================================"
           echo "Stripped RetroArch version + features"
           echo "============================================================"
           flatpak-builder \
@@ -1351,6 +1486,9 @@ jobs:
               echo
               echo "mame:"
               command -v mame
+              echo
+              echo "hypseus:"
+              command -v hypseus
               echo
               echo "coinops-retroarch:"
               command -v coinops-retroarch
