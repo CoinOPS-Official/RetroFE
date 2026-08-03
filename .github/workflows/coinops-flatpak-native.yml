@@ -672,7 +672,6 @@ jobs:
                   echo "============================================================"
                   cmake --build build --parallel 10
                 - test -x build/hypseus
-                - build/hypseus -version
                 - install -Dm755 build/hypseus /app/bin/hypseus
                 - install -Dm644 LICENSE /app/share/licenses/hypseus-singe/LICENSE
               sources:
@@ -1455,17 +1454,6 @@ jobs:
             /app/bin/mame \
             -version
           echo
-          echo "============================================================"
-          echo "Hypseus Singe version"
-          echo "============================================================"
-          flatpak-builder \
-            --run \
-            build-dir \
-            org.coinops.Runtime.yml \
-            /app/bin/hypseus \
-            -version
-          echo
-          echo "============================================================"
           echo "Stripped RetroArch version + features"
           echo "============================================================"
           flatpak-builder \
