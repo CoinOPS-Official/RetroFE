@@ -3,7 +3,7 @@
 #ifdef __linux__
 #include <pthread.h> // for pthread_setname_np
 #endif
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include <cstdlib>   // for std::getenv
 #include <algorithm> // for std::clamp
 

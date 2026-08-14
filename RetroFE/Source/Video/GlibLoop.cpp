@@ -14,7 +14,7 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "GlibLoop.h"
-#include <SDL2/SDL.h>
+#include <SDL.h>
 #include <stdexcept>
 
 void GlibLoop::start() {

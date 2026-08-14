@@ -37,10 +37,23 @@
 find_package(PkgConfig QUIET)
 pkg_check_modules(PC_SDL2 QUIET sdl2)
 
+# A version-pinned SDK directory may have been replaced since the last
+# configure. Discard missing cached results so the searches below rerun.
+if(SDL2_INCLUDE_DIR AND NOT EXISTS "${SDL2_INCLUDE_DIR}/SDL.h")
+  unset(SDL2_INCLUDE_DIR CACHE)
+endif()
+if(SDL2_LIBRARY AND NOT EXISTS "${SDL2_LIBRARY}")
+  unset(SDL2_LIBRARY CACHE)
+endif()
+if(SDL2MAIN_LIBRARY AND NOT EXISTS "${SDL2MAIN_LIBRARY}")
+  unset(SDL2MAIN_LIBRARY CACHE)
+endif()
+
 find_path(SDL2_INCLUDE_DIR
-  NAMES SDL2/SDL.h
+  NAMES SDL.h
   HINTS
     ${SDL2_ROOT}/include /opt/homebrew/include/SDL2
+  PATH_SUFFIXES SDL2
 )
 
 find_library(SDL2_LIBRARY
@@ -59,10 +72,10 @@ if(NOT SDL2_BUILDING_LIBRARY)
   )
 endif()
 
-if(SDL2_INCLUDE_DIR AND EXISTS "${SDL2_INCLUDE_DIR}/SDL2/SDL_version.h")
-  file(STRINGS "${SDL2_INCLUDE_DIR}/SDL2/SDL_version.h" SDL2_VERSION_MAJOR_LINE REGEX "^#define[ \t]+SDL_MAJOR_VERSION[ \t]+[0-9]+$")
-  file(STRINGS "${SDL2_INCLUDE_DIR}/SDL2/SDL_version.h" SDL2_VERSION_MINOR_LINE REGEX "^#define[ \t]+SDL_MINOR_VERSION[ \t]+[0-9]+$")
-  file(STRINGS "${SDL2_INCLUDE_DIR}/SDL2/SDL_version.h" SDL2_VERSION_PATCH_LINE REGEX "^#define[ \t]+SDL_PATCHLEVEL[ \t]+[0-9]+$")
+if(SDL2_INCLUDE_DIR AND EXISTS "${SDL2_INCLUDE_DIR}/SDL_version.h")
+  file(STRINGS "${SDL2_INCLUDE_DIR}/SDL_version.h" SDL2_VERSION_MAJOR_LINE REGEX "^#define[ \t]+SDL_MAJOR_VERSION[ \t]+[0-9]+$")
+  file(STRINGS "${SDL2_INCLUDE_DIR}/SDL_version.h" SDL2_VERSION_MINOR_LINE REGEX "^#define[ \t]+SDL_MINOR_VERSION[ \t]+[0-9]+$")
+  file(STRINGS "${SDL2_INCLUDE_DIR}/SDL_version.h" SDL2_VERSION_PATCH_LINE REGEX "^#define[ \t]+SDL_PATCHLEVEL[ \t]+[0-9]+$")
   string(REGEX REPLACE "^#define[ \t]+SDL_MAJOR_VERSION[ \t]+([0-9]+)$" "\\1" SDL2_VERSION_MAJOR "${SDL2_VERSION_MAJOR_LINE}")
   string(REGEX REPLACE "^#define[ \t]+SDL_MINOR_VERSION[ \t]+([0-9]+)$" "\\1" SDL2_VERSION_MINOR "${SDL2_VERSION_MINOR_LINE}")
   string(REGEX REPLACE "^#define[ \t]+SDL_PATCHLEVEL[ \t]+([0-9]+)$" "\\1" SDL2_VERSION_PATCH "${SDL2_VERSION_PATCH_LINE}")
@@ -75,7 +88,7 @@ if(SDL2_INCLUDE_DIR AND EXISTS "${SDL2_INCLUDE_DIR}/SDL2/SDL_version.h")
   unset(SDL2_VERSION_PATCH)
 endif()
 
-set(SDL2_INCLUDE_DIRS ${SDL2_INCLUDE_DIR} ${SDL2_INCLUDE_DIR}/SDL2)
+set(SDL2_INCLUDE_DIRS ${SDL2_INCLUDE_DIR})
 set(SDL2_LIBRARIES ${SDL2MAIN_LIBRARY} ${SDL2_LIBRARY})
 
 include(FindPackageHandleStandardArgs)
