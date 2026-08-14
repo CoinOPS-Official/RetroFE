@@ -1,3 +1,7 @@
 [submodule "Package/Environment/Windows/retrofe"]
 	path = Package/Environment/Windows/retrofe
 	url = https://github.com/CoinOPS-official/RetroFE-windows-deps.git
+[submodule "RetroFE/ThirdParty/openhi2txt"]
+	path = RetroFE/ThirdParty/openhi2txt
+	url = https://github.com/inigomonyota/openhi2txt.git
+	branch = codex/chd-support
