@@ -364,10 +364,11 @@ jobs:
           seed_defaults /app/share/supermodel/Assets "$SUPERMODEL_ROOT/Assets"
 
           cd "$SUPERMODEL_ROOT"
-          # Supermodel's vendored GLEW is built around GLX. Keep the rest of
-          # CoinOPS free to select Wayland, but run this emulator through the
-          # Gamescope XWayland display.
-          export SDL_VIDEODRIVER=x11
+          # Do not force SDL_VIDEODRIVER here. The surrounding RetroFE/Flatpak
+          # session already exposes the usable display backend, and overriding
+          # that selection makes Supermodel fail even though the same binary
+          # launches successfully from this working directory without the
+          # wrapper.
 
           # RetroFE intentionally disconnects ordinary child output. Preserve
           # enough display context and the complete Supermodel console stream
