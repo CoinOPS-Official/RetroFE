@@ -367,6 +367,31 @@ jobs:
           exec /app/bin/supermodel "$@"
           EOF
           chmod +x Packaging/Flatpak/coinops-supermodel
+          cat > Packaging/Flatpak/supermodel-wayland-glew.patch <<'EOF'
+          diff --git a/Src/OSD/SDL/Main.cpp b/Src/OSD/SDL/Main.cpp
+          index d261b3f..241811c 100644
+          --- a/Src/OSD/SDL/Main.cpp
+          +++ b/Src/OSD/SDL/Main.cpp
+          @@ -412,5 +412,13 @@ static Result CreateGLScreen(bool coreContext, bool quadRendering, const std::st
+          -  if (GLEW_OK != err)
+          -  {
+          -    ErrorLog("OpenGL initialization failed: %s\n", glewGetErrorString(err));
+          -    return Result::FAIL;
+          -  }
+          +  if (GLEW_OK != err && GLEW_ERROR_NO_GLX_DISPLAY != err)
+          +  {
+          +    ErrorLog("OpenGL initialization failed: %s\n", glewGetErrorString(err));
+          +    return Result::FAIL;
+          +  }
+          +  else if (GLEW_ERROR_NO_GLX_DISPLAY == err)
+          +  {
+          +    // SDL created a valid EGL context on Wayland. Core GLEW
+          +    // initialization has already completed; only its optional GLX
+          +    // extension initialization failed because Wayland has no GLX
+          +    // display. Supermodel itself does not use GLX APIs.
+          +    InfoLog("No GLX display; continuing with SDL's EGL context");
+          +  }
+          EOF
           cat > Packaging/Flatpak/coinops-runtime.desktop <<'EOF'
           [Desktop Entry]
           Type=Application
@@ -1343,6 +1368,11 @@ jobs:
                 - type: git
                   path: Supermodel
                   branch: bezel-view-system
+                # SDL uses EGL in a Wayland session. Supermodel's bundled GLEW
+                # successfully initializes core GL entry points first, then
+                # returns NO_GLX_DISPLAY while probing optional GLX support.
+                - type: patch
+                  path: Packaging/Flatpak/supermodel-wayland-glew.patch
                 - type: file
                   path: Packaging/Flatpak/coinops-supermodel
 
