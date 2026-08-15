@@ -315,95 +315,6 @@ jobs:
           exec /app/bin/retrofe "$@"
           EOF
           chmod +x Packaging/Flatpak/coinops-launcher
-          cat > Packaging/Flatpak/coinops-supermodel <<'EOF'
-          #!/usr/bin/env bash
-          set -euo pipefail
-
-          if [[ $# -lt 1 ]]; then
-              echo "Usage: coinops-supermodel <Supermodel data folder> [romset] [options...]" >&2
-              echo >&2
-              echo "Example:" >&2
-              echo '  coinops-supermodel "$RETROFE_PATH/emulators/supermodel" "$ITEM_FILEPATH" -fullscreen' >&2
-              exit 2
-          fi
-
-          SUPERMODEL_ROOT="$1"
-          shift
-
-          if [[ ! -d "$SUPERMODEL_ROOT" ]]; then
-              echo "coinops-supermodel: data folder not found: $SUPERMODEL_ROOT" >&2
-              exit 1
-          fi
-
-          # Supermodel selects all of these paths from its startup working
-          # directory. Keep user configuration and writable state in the
-          # external, movable CoinOPS tree. Seed only missing branch defaults;
-          # never overwrite files supplied or edited by the user.
-          mkdir -p \
-              "$SUPERMODEL_ROOT/Config" \
-              "$SUPERMODEL_ROOT/Assets" \
-              "$SUPERMODEL_ROOT/NVRAM" \
-              "$SUPERMODEL_ROOT/Saves" \
-              "$SUPERMODEL_ROOT/Screenshots" \
-              "$SUPERMODEL_ROOT/Analysis"
-
-          seed_defaults() {
-              source_root="$1"
-              target_root="$2"
-
-              while IFS= read -r -d '' source_file; do
-                  relative_path="${source_file#"$source_root"/}"
-                  target_file="$target_root/$relative_path"
-                  if [[ ! -e "$target_file" ]]; then
-                      install -Dm644 "$source_file" "$target_file"
-                  fi
-              done < <(find "$source_root" -type f -print0)
-          }
-
-          seed_defaults /app/share/supermodel/Config "$SUPERMODEL_ROOT/Config"
-          seed_defaults /app/share/supermodel/Assets "$SUPERMODEL_ROOT/Assets"
-
-          cd "$SUPERMODEL_ROOT"
-          # Do not force SDL_VIDEODRIVER here. The surrounding RetroFE/Flatpak
-          # session already exposes the usable display backend, and overriding
-          # that selection makes Supermodel fail even though the same binary
-          # launches successfully from this working directory without the
-          # wrapper.
-
-          # RetroFE intentionally disconnects ordinary child output. Preserve
-          # enough display context and the complete Supermodel console stream
-          # in the external data root so early SDL/GLX failures are visible.
-          {
-              printf 'timestamp=%s\n' "$(date -Iseconds)"
-              for variable in \
-                  FLATPAK_ID DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY \
-                  XDG_RUNTIME_DIR XAUTHORITY SDL_VIDEODRIVER; do
-                  value="$(printenv "$variable" 2>/dev/null || true)"
-                  if [[ -n "$value" ]]; then
-                      printf '%s=%s\n' "$variable" "$value"
-                  else
-                      printf '%s=<unset>\n' "$variable"
-                  fi
-              done
-              printf '\n/tmp/.X11-unix:\n'
-              ls -la /tmp/.X11-unix 2>&1 || true
-          } > "$SUPERMODEL_ROOT/Supermodel-environment.log"
-
-          # RetroFE gives emulator children /dev/null for stdout/stderr. Use a
-          # simple redirection in that case so creating the diagnostic log does
-          # not depend on Bash process substitution or a background tee. Keep
-          # live output when this wrapper is invoked from a terminal.
-          if [[ -t 1 ]]; then
-              set +e
-              /app/bin/supermodel "$@" 2>&1 | tee "$SUPERMODEL_ROOT/Supermodel-console.log"
-              supermodel_status="${PIPESTATUS[0]}"
-              exit "$supermodel_status"
-          fi
-
-          exec /app/bin/supermodel "$@" \
-              > "$SUPERMODEL_ROOT/Supermodel-console.log" 2>&1
-          EOF
-          chmod +x Packaging/Flatpak/coinops-supermodel
           cat > Packaging/Flatpak/coinops-runtime.desktop <<'EOF'
           [Desktop Entry]
           Type=Application
@@ -434,7 +345,7 @@ jobs:
       #   stripped RetroArch runtime
       #   CoinOPS generic libretro launcher
       #   GLU
-      #   Supermodel + CoinOPS Supermodel launcher
+      #   Supermodel
       #   runtime-cleanup
       #   launcher metadata
       #
@@ -1322,9 +1233,9 @@ jobs:
             # minizip, tinyxml2, ImGui and MPEG decoding are vendored.
             #
             # Config/, Assets/, NVRAM/, Saves/, Screenshots/ and Analysis/
-            # are selected from Supermodel's working directory. The
-            # coinops-supermodel wrapper therefore enters an external
-            # CoinOPS data folder and seeds only missing branch defaults.
+            # are selected from Supermodel's working directory. RetroFE runs
+            # the binary directly with the external CoinOPS Supermodel folder
+            # as currentDirectory.
             # ======================================================
             - name: supermodel
               buildsystem: simple
@@ -1429,7 +1340,6 @@ jobs:
                     PLATFORM_LDFLAGS="$SUPERMODEL_PLATFORM_LDFLAGS"
                 - test -x bin/supermodel
                 - install -Dm755 bin/supermodel /app/bin/supermodel
-                - install -Dm755 coinops-supermodel /app/bin/coinops-supermodel
                 - install -d /app/share/supermodel
                 - cp -a Config /app/share/supermodel/
                 - cp -a Assets /app/share/supermodel/
@@ -1439,8 +1349,6 @@ jobs:
                 - type: git
                   path: Supermodel
                   branch: bezel-view-system
-                - type: file
-                  path: Packaging/Flatpak/coinops-supermodel
 
             # ======================================================
             # Final runtime cleanup
@@ -1618,7 +1526,6 @@ jobs:
           echo "SUPERMODEL"
           echo "============================================================"
           test -x build-dir/files/bin/supermodel
-          test -x build-dir/files/bin/coinops-supermodel
           test -f build-dir/files/share/supermodel/Config/Games.xml
           test -f build-dir/files/share/supermodel/Config/Music.xml
           test -f build-dir/files/share/supermodel/Assets/Bezel.png
@@ -1637,9 +1544,9 @@ jobs:
             -c '
               set -eu
               ldd /app/bin/supermodel \
-                > /tmp/coinops-supermodel-ldd.txt
-              cat /tmp/coinops-supermodel-ldd.txt
-              if grep -q "not found" /tmp/coinops-supermodel-ldd.txt; then
+                > /tmp/supermodel-ldd.txt
+              cat /tmp/supermodel-ldd.txt
+              if grep -q "not found" /tmp/supermodel-ldd.txt; then
                 echo "Supermodel has unresolved dynamic dependencies" >&2
                 exit 1
               fi
@@ -1762,7 +1669,7 @@ jobs:
             -version
           echo
           echo "============================================================"
-          echo "Supermodel game database + external data-root launcher"
+          echo "Supermodel game database + packaged working files"
           echo "============================================================"
           flatpak-builder \
             --run \
@@ -1772,14 +1679,10 @@ jobs:
             -c '
               SUPERMODEL_TEST_ROOT="$(mktemp -d)"
               trap '\''rm -rf "$SUPERMODEL_TEST_ROOT"'\'' EXIT
-              /app/bin/coinops-supermodel \
-                "$SUPERMODEL_TEST_ROOT" \
-                -print-games \
-                -log-output=stdout
-              test -f "$SUPERMODEL_TEST_ROOT/Config/Games.xml"
-              test -f "$SUPERMODEL_TEST_ROOT/Config/Music.xml"
-              test -f "$SUPERMODEL_TEST_ROOT/Assets/Bezel.png"
-              test -f "$SUPERMODEL_TEST_ROOT/Assets/Bezel2.png"
+              cp -a /app/share/supermodel/Config "$SUPERMODEL_TEST_ROOT/"
+              cp -a /app/share/supermodel/Assets "$SUPERMODEL_TEST_ROOT/"
+              cd "$SUPERMODEL_TEST_ROOT"
+              /app/bin/supermodel -print-games -log-output=stdout
             '
           echo
           echo "Stripped RetroArch version + features"
@@ -1820,8 +1723,6 @@ jobs:
               echo
               echo "supermodel:"
               command -v supermodel
-              echo "coinops-supermodel:"
-              command -v coinops-supermodel
               echo
               echo "coinops-retroarch:"
               command -v coinops-retroarch
