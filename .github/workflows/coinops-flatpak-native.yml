@@ -46,6 +46,19 @@ jobs:
           fetch-depth: 1
 
       # ============================================================
+      # Checkout custom Supermodel fork
+      # ============================================================
+
+      - name: Checkout Supermodel fork
+        uses: actions/checkout@v6
+        with:
+          repository: inigomonyota/Supermodel
+          ref: bezel-view-system
+          path: Supermodel
+          clean: false
+          fetch-depth: 1
+
+      # ============================================================
       # Show exact source revisions
       # ============================================================
 
@@ -60,6 +73,11 @@ jobs:
           echo "MAME revision"
           echo "============================================================"
           git -C MAME rev-parse HEAD
+          echo
+          echo "============================================================"
+          echo "Supermodel revision"
+          echo "============================================================"
+          git -C Supermodel rev-parse HEAD
       # ============================================================
       # Verify host build tools
       #
@@ -194,7 +212,8 @@ jobs:
                 vorbis \
                 vorbisenc \
                 vorbisfile \
-                openal
+                openal \
+                SDL2_net
               do
                 require_pkg "$pkg"
               done
@@ -210,7 +229,8 @@ jobs:
                 libzip \
                 libevdev \
                 libserialport \
-                minizip
+                minizip \
+                glu
               do
                 optional_pkg "$pkg"
               done
@@ -295,6 +315,58 @@ jobs:
           exec /app/bin/retrofe "$@"
           EOF
           chmod +x Packaging/Flatpak/coinops-launcher
+          cat > Packaging/Flatpak/coinops-supermodel <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          if [[ $# -lt 1 ]]; then
+              echo "Usage: coinops-supermodel <Supermodel data folder> [romset] [options...]" >&2
+              echo >&2
+              echo "Example:" >&2
+              echo '  coinops-supermodel "$RETROFE_PATH/emulators/supermodel" "$ITEM_FILEPATH" -fullscreen' >&2
+              exit 2
+          fi
+
+          SUPERMODEL_ROOT="$1"
+          shift
+
+          if [[ ! -d "$SUPERMODEL_ROOT" ]]; then
+              echo "coinops-supermodel: data folder not found: $SUPERMODEL_ROOT" >&2
+              exit 1
+          fi
+
+          # Supermodel selects all of these paths from its startup working
+          # directory. Keep user configuration and writable state in the
+          # external, movable CoinOPS tree. Seed only missing branch defaults;
+          # never overwrite files supplied or edited by the user.
+          mkdir -p \
+              "$SUPERMODEL_ROOT/Config" \
+              "$SUPERMODEL_ROOT/Assets" \
+              "$SUPERMODEL_ROOT/NVRAM" \
+              "$SUPERMODEL_ROOT/Saves" \
+              "$SUPERMODEL_ROOT/Screenshots" \
+              "$SUPERMODEL_ROOT/Analysis"
+
+          seed_defaults() {
+              source_root="$1"
+              target_root="$2"
+
+              while IFS= read -r -d '' source_file; do
+                  relative_path="${source_file#"$source_root"/}"
+                  target_file="$target_root/$relative_path"
+                  if [[ ! -e "$target_file" ]]; then
+                      install -Dm644 "$source_file" "$target_file"
+                  fi
+              done < <(find "$source_root" -type f -print0)
+          }
+
+          seed_defaults /app/share/supermodel/Config "$SUPERMODEL_ROOT/Config"
+          seed_defaults /app/share/supermodel/Assets "$SUPERMODEL_ROOT/Assets"
+
+          cd "$SUPERMODEL_ROOT"
+          exec /app/bin/supermodel "$@"
+          EOF
+          chmod +x Packaging/Flatpak/coinops-supermodel
           cat > Packaging/Flatpak/coinops-runtime.desktop <<'EOF'
           [Desktop Entry]
           Type=Application
@@ -324,6 +396,8 @@ jobs:
       #   RetroFE
       #   stripped RetroArch runtime
       #   CoinOPS generic libretro launcher
+      #   GLU
+      #   Supermodel + CoinOPS Supermodel launcher
       #   runtime-cleanup
       #   launcher metadata
       #
@@ -335,6 +409,10 @@ jobs:
       # RetroArch is deliberately placed after RetroFE. Updating the
       # pinned RetroArch revision or its build flags therefore does not
       # invalidate either the expensive MAME module or RetroFE.
+      #
+      # Supermodel and its package-private GLU dependency are also leaf
+      # payloads. Keeping them immediately before final cleanup means a
+      # Supermodel source update does not invalidate any existing emulator.
       # ============================================================
 
       - name: Create native Flatpak manifest
@@ -1172,6 +1250,88 @@ jobs:
                   chmod 0755 /app/bin/coinops-libretro
 
             # ======================================================
+            # GLU
+            #
+            # Supermodel's legacy renderer calls gluPerspective().
+            # Freedesktop 25.08 supplies OpenGL but does not include GLU
+            # in the base Platform/SDK, so keep GLU package-private and
+            # immediately adjacent to its only consumer.
+            # ======================================================
+            - name: glu
+              buildsystem: meson
+              build-options:
+                strip: true
+                no-debuginfo: true
+              config-opts:
+                - -Ddefault_library=shared
+              cleanup:
+                - /include
+                - /lib/pkgconfig
+                - '*.a'
+                - '*.la'
+              sources:
+                - type: git
+                  url: https://gitlab.freedesktop.org/mesa/glu.git
+                  commit: a2b96c7bba8db8fec3e02fb4227a7f7b02cabad1
+
+            # ======================================================
+            # Supermodel
+            #
+            # Build the requested bezel-view-system branch with its
+            # upstream Unix Makefile. SDL2, SDL2_net, OpenGL and zlib are
+            # supplied by Freedesktop 25.08; GLU is supplied above. GLEW,
+            # minizip, tinyxml2, ImGui and MPEG decoding are vendored.
+            #
+            # Config/, Assets/, NVRAM/, Saves/, Screenshots/ and Analysis/
+            # are selected from Supermodel's working directory. The
+            # coinops-supermodel wrapper therefore enters an external
+            # CoinOPS data folder and seeds only missing branch defaults.
+            # ======================================================
+            - name: supermodel
+              buildsystem: simple
+              build-options:
+                strip: true
+                no-debuginfo: true
+              build-commands:
+                - |
+                  echo "============================================================"
+                  echo "Checking Supermodel build dependencies"
+                  echo "============================================================"
+                  for tool in gcc g++ make sdl2-config; do
+                    command -v "$tool"
+                  done
+                  for pkg in sdl2 SDL2_net gl glu zlib; do
+                    printf '%-20s ' "$pkg"
+                    pkg-config --modversion "$pkg"
+                  done
+                - |
+                  echo
+                  echo "============================================================"
+                  echo "Building Supermodel (bezel-view-system)"
+                  echo "============================================================"
+                  make \
+                    -f Makefiles/Makefile.UNIX \
+                    -j10 \
+                    release \
+                    ENABLE_DEBUGGER=0 \
+                    EXTRA_DEBUG=0 \
+                    OPT="-O2 -g0"
+                - test -x bin/supermodel
+                - install -Dm755 bin/supermodel /app/bin/supermodel
+                - install -Dm755 coinops-supermodel /app/bin/coinops-supermodel
+                - install -d /app/share/supermodel
+                - cp -a Config /app/share/supermodel/
+                - cp -a Assets /app/share/supermodel/
+                - install -Dm644 Docs/LICENSE.txt /app/share/licenses/supermodel/LICENSE.txt
+                - /app/bin/supermodel -help >/dev/null
+              sources:
+                - type: git
+                  path: Supermodel
+                  branch: bezel-view-system
+                - type: file
+                  path: Packaging/Flatpak/coinops-supermodel
+
+            # ======================================================
             # Final runtime cleanup
             #
             # At this point MAME, RetroFE and RetroArch are fully built.
@@ -1344,6 +1504,29 @@ jobs:
           fi
           echo
           echo "============================================================"
+          echo "SUPERMODEL"
+          echo "============================================================"
+          test -x build-dir/files/bin/supermodel
+          test -x build-dir/files/bin/coinops-supermodel
+          test -f build-dir/files/share/supermodel/Config/Games.xml
+          test -f build-dir/files/share/supermodel/Config/Music.xml
+          test -f build-dir/files/share/supermodel/Assets/Bezel.png
+          test -f build-dir/files/share/supermodel/Assets/Bezel2.png
+          file build-dir/files/bin/supermodel
+          echo
+          echo "Dynamic dependencies:"
+          if ! ldd build-dir/files/bin/supermodel \
+            | tee /tmp/coinops-supermodel-ldd.txt
+          then
+            echo "Unable to inspect Supermodel dynamic dependencies" >&2
+            exit 1
+          fi
+          if grep -q 'not found' /tmp/coinops-supermodel-ldd.txt; then
+            echo "Supermodel has unresolved dynamic dependencies" >&2
+            exit 1
+          fi
+          echo
+          echo "============================================================"
           echo "COINOPS RETROARCH RUNTIME"
           echo "============================================================"
           file build-dir/files/bin/coinops-retroarch
@@ -1455,6 +1638,27 @@ jobs:
             /app/bin/mame \
             -version
           echo
+          echo "============================================================"
+          echo "Supermodel game database + external data-root launcher"
+          echo "============================================================"
+          flatpak-builder \
+            --run \
+            build-dir \
+            org.coinops.Runtime.yml \
+            sh \
+            -c '
+              SUPERMODEL_TEST_ROOT="$(mktemp -d)"
+              trap '\''rm -rf "$SUPERMODEL_TEST_ROOT"'\'' EXIT
+              /app/bin/coinops-supermodel \
+                "$SUPERMODEL_TEST_ROOT" \
+                -print-games \
+                -log-output=stdout
+              test -f "$SUPERMODEL_TEST_ROOT/Config/Games.xml"
+              test -f "$SUPERMODEL_TEST_ROOT/Config/Music.xml"
+              test -f "$SUPERMODEL_TEST_ROOT/Assets/Bezel.png"
+              test -f "$SUPERMODEL_TEST_ROOT/Assets/Bezel2.png"
+            '
+          echo
           echo "Stripped RetroArch version + features"
           echo "============================================================"
           flatpak-builder \
@@ -1490,6 +1694,11 @@ jobs:
               echo
               echo "hypseus:"
               command -v hypseus
+              echo
+              echo "supermodel:"
+              command -v supermodel
+              echo "coinops-supermodel:"
+              command -v coinops-supermodel
               echo
               echo "coinops-retroarch:"
               command -v coinops-retroarch
