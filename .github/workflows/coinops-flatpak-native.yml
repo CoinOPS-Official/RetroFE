@@ -388,8 +388,19 @@ jobs:
               ls -la /tmp/.X11-unix 2>&1 || true
           } > "$SUPERMODEL_ROOT/Supermodel-environment.log"
 
-          exec > >(tee "$SUPERMODEL_ROOT/Supermodel-console.log") 2>&1
-          exec /app/bin/supermodel "$@"
+          # RetroFE gives emulator children /dev/null for stdout/stderr. Use a
+          # simple redirection in that case so creating the diagnostic log does
+          # not depend on Bash process substitution or a background tee. Keep
+          # live output when this wrapper is invoked from a terminal.
+          if [[ -t 1 ]]; then
+              set +e
+              /app/bin/supermodel "$@" 2>&1 | tee "$SUPERMODEL_ROOT/Supermodel-console.log"
+              supermodel_status="${PIPESTATUS[0]}"
+              exit "$supermodel_status"
+          fi
+
+          exec /app/bin/supermodel "$@" \
+              > "$SUPERMODEL_ROOT/Supermodel-console.log" 2>&1
           EOF
           chmod +x Packaging/Flatpak/coinops-supermodel
           cat > Packaging/Flatpak/coinops-runtime.desktop <<'EOF'
