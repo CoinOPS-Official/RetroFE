@@ -1304,18 +1304,33 @@ jobs:
                     printf '%-20s ' "$pkg"
                     pkg-config --modversion "$pkg"
                   done
+                  echo
+                  echo "Supermodel linker flags:"
+                  pkg-config --libs sdl2 SDL2_net gl glu zlib
+                  GLU_LIBDIR="$(pkg-config --variable=libdir glu)"
+                  echo "GLU library directory: $GLU_LIBDIR"
+                  test -e "$GLU_LIBDIR/libGLU.so"
                 - |
                   echo
                   echo "============================================================"
                   echo "Building Supermodel (bezel-view-system)"
                   echo "============================================================"
+                  # Makefile.UNIX hardcodes -lGLU instead of obtaining GLU's
+                  # /app library search path from pkg-config. Pass the complete
+                  # dependency flags explicitly so the package-private GLU
+                  # module is visible to both the ppcd and Supermodel links.
+                  SUPERMODEL_PLATFORM_LDFLAGS="$(
+                    pkg-config --libs sdl2 SDL2_net gl glu zlib
+                  ) -lm -lstdc++ -lpthread"
+                  echo "PLATFORM_LDFLAGS=$SUPERMODEL_PLATFORM_LDFLAGS"
                   make \
                     -f Makefiles/Makefile.UNIX \
                     -j10 \
                     release \
                     ENABLE_DEBUGGER=0 \
                     EXTRA_DEBUG=0 \
-                    OPT="-O2 -g0"
+                    OPT="-O2 -g0" \
+                    PLATFORM_LDFLAGS="$SUPERMODEL_PLATFORM_LDFLAGS"
                 - test -x bin/supermodel
                 - install -Dm755 bin/supermodel /app/bin/supermodel
                 - install -Dm755 coinops-supermodel /app/bin/coinops-supermodel
