@@ -368,6 +368,27 @@ jobs:
           # CoinOPS free to select Wayland, but run this emulator through the
           # Gamescope XWayland display.
           export SDL_VIDEODRIVER=x11
+
+          # RetroFE intentionally disconnects ordinary child output. Preserve
+          # enough display context and the complete Supermodel console stream
+          # in the external data root so early SDL/GLX failures are visible.
+          {
+              printf 'timestamp=%s\n' "$(date -Iseconds)"
+              for variable in \
+                  FLATPAK_ID DISPLAY WAYLAND_DISPLAY GAMESCOPE_WAYLAND_DISPLAY \
+                  XDG_RUNTIME_DIR XAUTHORITY SDL_VIDEODRIVER; do
+                  value="$(printenv "$variable" 2>/dev/null || true)"
+                  if [[ -n "$value" ]]; then
+                      printf '%s=%s\n' "$variable" "$value"
+                  else
+                      printf '%s=<unset>\n' "$variable"
+                  fi
+              done
+              printf '\n/tmp/.X11-unix:\n'
+              ls -la /tmp/.X11-unix 2>&1 || true
+          } > "$SUPERMODEL_ROOT/Supermodel-environment.log"
+
+          exec > >(tee "$SUPERMODEL_ROOT/Supermodel-console.log") 2>&1
           exec /app/bin/supermodel "$@"
           EOF
           chmod +x Packaging/Flatpak/coinops-supermodel
