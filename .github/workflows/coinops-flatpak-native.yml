@@ -1529,15 +1529,27 @@ jobs:
           test -f build-dir/files/share/supermodel/Assets/Bezel2.png
           file build-dir/files/bin/supermodel
           echo
-          echo "Dynamic dependencies:"
-          if ! ldd build-dir/files/bin/supermodel \
-            | tee /tmp/coinops-supermodel-ldd.txt
+          echo "Dynamic dependencies inside Freedesktop 25.08 runtime:"
+          # Do not use the host ldd here. Supermodel consumes SDL2_net from
+          # the Freedesktop runtime and GLU from /app, neither of which is
+          # represented correctly by the self-hosted runner's /usr/lib.
+          if ! flatpak-builder \
+            --run \
+            build-dir \
+            org.coinops.Runtime.yml \
+            sh \
+            -c '
+              set -eu
+              ldd /app/bin/supermodel \
+                > /tmp/coinops-supermodel-ldd.txt
+              cat /tmp/coinops-supermodel-ldd.txt
+              if grep -q "not found" /tmp/coinops-supermodel-ldd.txt; then
+                echo "Supermodel has unresolved dynamic dependencies" >&2
+                exit 1
+              fi
+            '
           then
-            echo "Unable to inspect Supermodel dynamic dependencies" >&2
-            exit 1
-          fi
-          if grep -q 'not found' /tmp/coinops-supermodel-ldd.txt; then
-            echo "Supermodel has unresolved dynamic dependencies" >&2
+            echo "Unable to validate Supermodel inside the Flatpak runtime" >&2
             exit 1
           fi
           echo
