@@ -367,31 +367,6 @@ jobs:
           exec /app/bin/supermodel "$@"
           EOF
           chmod +x Packaging/Flatpak/coinops-supermodel
-          cat > Packaging/Flatpak/supermodel-wayland-glew.patch <<'EOF'
-          diff --git a/Src/OSD/SDL/Main.cpp b/Src/OSD/SDL/Main.cpp
-          index d261b3f..241811c 100644
-          --- a/Src/OSD/SDL/Main.cpp
-          +++ b/Src/OSD/SDL/Main.cpp
-          @@ -412,5 +412,13 @@ static Result CreateGLScreen(bool coreContext, bool quadRendering, const std::st
-          -  if (GLEW_OK != err)
-          -  {
-          -    ErrorLog("OpenGL initialization failed: %s\n", glewGetErrorString(err));
-          -    return Result::FAIL;
-          -  }
-          +  if (GLEW_OK != err && GLEW_ERROR_NO_GLX_DISPLAY != err)
-          +  {
-          +    ErrorLog("OpenGL initialization failed: %s\n", glewGetErrorString(err));
-          +    return Result::FAIL;
-          +  }
-          +  else if (GLEW_ERROR_NO_GLX_DISPLAY == err)
-          +  {
-          +    // SDL created a valid EGL context on Wayland. Core GLEW
-          +    // initialization has already completed; only its optional GLX
-          +    // extension initialization failed because Wayland has no GLX
-          +    // display. Supermodel itself does not use GLX APIs.
-          +    InfoLog("No GLX display; continuing with SDL's EGL context");
-          +  }
-          EOF
           cat > Packaging/Flatpak/coinops-runtime.desktop <<'EOF'
           [Desktop Entry]
           Type=Application
@@ -898,6 +873,18 @@ jobs:
                 no-debuginfo: true
               build-commands:
                 - |
+                  # This fork stores Main.cpp with CRLF line endings, so a
+                  # flatpak-builder patch source cannot match it reliably.
+                  # GLEW core initialization completes under SDL/Wayland EGL,
+                  # then its optional Unix GLX probe returns NO_GLX_DISPLAY.
+                  # Supermodel does not use GLX APIs outside vendored GLEW.
+                  GLEW_GUARD='if (GLEW_OK != err)'
+                  GLEW_WAYLAND_GUARD='if (GLEW_OK != err && GLEW_ERROR_NO_GLX_DISPLAY != err)'
+                  GLEW_WAYLAND_REPLACEMENT='if (GLEW_OK != err \&\& GLEW_ERROR_NO_GLX_DISPLAY != err)'
+                  test "$(grep -Fc "$GLEW_GUARD" Src/OSD/SDL/Main.cpp)" -eq 1
+                  sed -i "s/$GLEW_GUARD/$GLEW_WAYLAND_REPLACEMENT/" Src/OSD/SDL/Main.cpp
+                  grep -Fq "$GLEW_WAYLAND_GUARD" Src/OSD/SDL/Main.cpp
+                - |
                   echo "============================================================"
                   echo "Checking required RetroFE dependencies"
                   echo "============================================================"
@@ -1368,11 +1355,6 @@ jobs:
                 - type: git
                   path: Supermodel
                   branch: bezel-view-system
-                # SDL uses EGL in a Wayland session. Supermodel's bundled GLEW
-                # successfully initializes core GL entry points first, then
-                # returns NO_GLX_DISPLAY while probing optional GLX support.
-                - type: patch
-                  path: Packaging/Flatpak/supermodel-wayland-glew.patch
                 - type: file
                   path: Packaging/Flatpak/coinops-supermodel
 
