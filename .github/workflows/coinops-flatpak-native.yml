@@ -1244,80 +1244,31 @@ jobs:
                 no-debuginfo: true
               build-commands:
                 - |
-                  # Add readable SDL GameController aliases while preserving
-                  # every existing JOYn_BUTTONn mapping. Put aliases after the
-                  # numbered entries so input auto-configuration continues to
-                  # emit the established names.
-                  INPUT_PARTS=Src/Inputs/InputSystem.cpp
-                  ALIAS_ANCHOR='{ "BUTTON32",      JoyButton31 },'
-                  test "$(grep -Fc "$ALIAS_ANCHOR" "$INPUT_PARTS")" -eq 1
-                  awk -v anchor="$ALIAS_ANCHOR" '
-                    { sub(/\r$/, ""); print }
-                    index($0, anchor) {
-                      print ""
-                      print "  // SDL GameController semantic aliases"
-                      print "  { \"A\",             JoyButton0 },"
-                      print "  { \"B\",             JoyButton1 },"
-                      print "  { \"X\",             JoyButton2 },"
-                      print "  { \"Y\",             JoyButton3 },"
-                      print "  { \"LEFTSHOULDER\",  JoyButton4 },"
-                      print "  { \"RIGHTSHOULDER\", JoyButton5 },"
-                      print "  { \"BACK\",          JoyButton6 },"
-                      print "  { \"START\",         JoyButton7 },"
-                      print "  { \"LEFTSTICK\",     JoyButton8 },"
-                      print "  { \"RIGHTSTICK\",    JoyButton9 },"
-                      print "  { \"PADDLE1\",       JoyButton10 },"
-                      print "  { \"PADDLE2\",       JoyButton11 },"
-                      print "  { \"GUIDE\",         JoyButton12 },"
-                      print "  { \"PADDLE3\",       JoyButton13 },"
-                      print "  { \"PADDLE4\",       JoyButton14 },"
-                      print "  { \"MISC1\",         JoyButton15 },"
-                      print "  { \"TOUCHPAD\",      JoyButton16 },"
-                      print "  { \"DPUP\",          JoyPOV0Up },"
-                      print "  { \"DPDOWN\",        JoyPOV0Down },"
-                      print "  { \"DPLEFT\",        JoyPOV0Left },"
-                      print "  { \"DPRIGHT\",       JoyPOV0Right },"
-                      print "  { \"LEFTX\",         JoyXAxis },"
-                      print "  { \"LEFTX_INV\",     JoyXAxisInv },"
-                      print "  { \"LEFTX_POS\",     JoyXAxisPos },"
-                      print "  { \"LEFTX_NEG\",     JoyXAxisNeg },"
-                      print "  { \"LEFTY\",         JoyYAxis },"
-                      print "  { \"LEFTY_INV\",     JoyYAxisInv },"
-                      print "  { \"LEFTY_POS\",     JoyYAxisPos },"
-                      print "  { \"LEFTY_NEG\",     JoyYAxisNeg },"
-                      print "  { \"LEFTTRIGGER\",   JoyZAxis },"
-                      print "  { \"LEFTTRIGGER_INV\", JoyZAxisInv },"
-                      print "  { \"LEFTTRIGGER_POS\", JoyZAxisPos },"
-                      print "  { \"LEFTTRIGGER_NEG\", JoyZAxisNeg },"
-                      print "  { \"RIGHTX\",        JoyRXAxis },"
-                      print "  { \"RIGHTX_INV\",    JoyRXAxisInv },"
-                      print "  { \"RIGHTX_POS\",    JoyRXAxisPos },"
-                      print "  { \"RIGHTX_NEG\",    JoyRXAxisNeg },"
-                      print "  { \"RIGHTY\",        JoyRYAxis },"
-                      print "  { \"RIGHTY_INV\",    JoyRYAxisInv },"
-                      print "  { \"RIGHTY_POS\",    JoyRYAxisPos },"
-                      print "  { \"RIGHTY_NEG\",    JoyRYAxisNeg },"
-                      print "  { \"RIGHTTRIGGER\",  JoyRZAxis },"
-                      print "  { \"RIGHTTRIGGER_INV\", JoyRZAxisInv },"
-                      print "  { \"RIGHTTRIGGER_POS\", JoyRZAxisPos },"
-                      print "  { \"RIGHTTRIGGER_NEG\", JoyRZAxisNeg },"
-                    }
-                  ' "$INPUT_PARTS" > "$INPUT_PARTS.new"
-                  mv "$INPUT_PARTS.new" "$INPUT_PARTS"
-                  grep -Fq '{ "START",         JoyButton7 },' "$INPUT_PARTS"
-                  grep -Fq '{ "RIGHTTRIGGER_POS", JoyRZAxisPos },' "$INPUT_PARTS"
-
-                  # Make new Linux configurations use the standardized SDL
-                  # controller backend and semantic Start/Back mappings.
-                  sed -i \
-                    -e 's/"InputSystem", "sdl",/"InputSystem", "sdlgamepad",/' \
-                    -e 's/KEY_1,JOY1_BUTTON9/KEY_1,JOY1_START/g' \
-                    -e 's/KEY_2,JOY2_BUTTON9/KEY_2,JOY2_START/g' \
-                    -e 's/KEY_3,JOY1_BUTTON10/KEY_3,JOY1_BACK/g' \
-                    -e 's/KEY_4,JOY2_BUTTON10/KEY_4,JOY2_BACK/g' \
-                    Src/OSD/SDL/Main.cpp Src/OSD/DefaultConfigFile.h
-                  grep -Fq '"InputSystem", "sdlgamepad",' Src/OSD/SDL/Main.cpp
+                  echo "============================================================"
+                  echo "Verifying Supermodel input integration"
+                  echo "============================================================"
+                  # Controller support lives in the Supermodel fork so native,
+                  # Flatpak, and EmuDeck builds share the same implementation.
+                  grep -Fq 'CInputSystem(useGameController ? "SDL Gamepad" : "SDL Joystick")' \
+                    Src/OSD/SDL/SDLInputSystem.cpp
+                  grep -Fq 'SDL_IsGameController(joyNum)' \
+                    Src/OSD/SDL/SDLInputSystem.cpp
+                  grep -Fq 'SDL_GameControllerMapping(gamepad)' \
+                    Src/OSD/SDL/SDLInputSystem.cpp
+                  grep -Fq 'SDL_GameControllerHasButton(gamepad, button)' \
+                    Src/OSD/SDL/SDLInputSystem.cpp
+                  grep -Fq '{ "LEFTSTICK",     JoyButton8 },' \
+                    Src/Inputs/InputSystem.cpp
+                  grep -Fq '{ "RIGHTSTICK",    JoyButton9 },' \
+                    Src/Inputs/InputSystem.cpp
+                  grep -Fq '"KEY_ALT+KEY_LEFT,JOY1_LEFTSTICK"' \
+                    Src/Inputs/Inputs.cpp
+                  grep -Fq '"KEY_ALT+KEY_RIGHT,JOY1_RIGHTSTICK"' \
+                    Src/Inputs/Inputs.cpp
+                  grep -Fq '"InputSystem", "sdlgamepad",' \
+                    Src/OSD/SDL/Main.cpp
                   grep -Fq 'JOY1_START' Src/OSD/DefaultConfigFile.h
+                  grep -Fq 'JOY1_BACK' Src/OSD/DefaultConfigFile.h
 
                 - |
                   echo "============================================================"
