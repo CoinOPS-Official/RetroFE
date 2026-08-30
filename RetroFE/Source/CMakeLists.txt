@@ -6,6 +6,11 @@ endif()
 
 project (retrofe)
 
+option(RETROFE_BUILD_TESTING "Build RetroFE's focused test executables" OFF)
+if(RETROFE_BUILD_TESTING)
+    enable_testing()
+endif()
+
 set(CMAKE_CXX_STANDARD 20) # Upgraded from 17 to support coroutines
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
@@ -238,8 +243,10 @@ set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Database/DB.h"
 	"${RETROFE_DIR}/Source/Database/GlobalOpts.h"
     "${RETROFE_DIR}/Source/Database/GlobalHiScores.h"
+    "${RETROFE_DIR}/Source/Database/HighScoreChange.h"
     "${RETROFE_DIR}/Source/Database/HighScoreView.h"
     "${RETROFE_DIR}/Source/Database/LocalHiScores.h"
+    "${RETROFE_DIR}/Source/Database/MameLiveClient.h"
     "${RETROFE_DIR}/Source/Execute/AttractMode.h"
     "${RETROFE_DIR}/Source/Execute/Input/InputMonitor.h"
     "${RETROFE_DIR}/Source/Execute/Input/SDLJoyStickScopeGuard.h"
@@ -322,7 +329,9 @@ set(RETROFE_SOURCES
 	"${RETROFE_DIR}/Source/Database/DB.cpp"
 	"${RETROFE_DIR}/Source/Database/GlobalOpts.cpp"
     "${RETROFE_DIR}/Source/Database/GlobalHiScores.cpp"
+    "${RETROFE_DIR}/Source/Database/HighScoreChange.cpp"
     "${RETROFE_DIR}/Source/Database/LocalHiScores.cpp"
+    "${RETROFE_DIR}/Source/Database/MameLiveClient.cpp"
 	"${RETROFE_DIR}/Source/Database/MetadataDatabase.cpp"
     "${RETROFE_DIR}/Source/Execute/AttractMode.cpp"
     "${RETROFE_DIR}/Source/Execute/Input/InputMonitor.cpp"
@@ -393,6 +402,14 @@ add_dependencies(retrofe GenerateVersioningHeader)
 
 target_link_libraries(retrofe ${RETROFE_LIBRARIES})
 target_link_libraries(retrofe openhi2txt::openhi2txt)
+
+if(RETROFE_BUILD_TESTING)
+    add_executable(retrofe_high_score_change_tests
+        "${RETROFE_DIR}/Source/Database/HighScoreChange.cpp"
+        "${RETROFE_DIR}/Source/Tests/HighScoreChangeTests.cpp"
+    )
+    add_test(NAME retrofe_high_score_change_tests COMMAND retrofe_high_score_change_tests)
+endif()
 
 if(APPLE)
     target_link_libraries(retrofe

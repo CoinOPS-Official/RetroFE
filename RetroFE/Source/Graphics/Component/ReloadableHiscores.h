@@ -58,14 +58,29 @@ private:
         int rowsPerTile = 32;
     };
 
+    struct PreviousPanelState {
+        size_t tableIndex = 0;
+        std::vector<size_t> visibleColumns;
+        std::vector<float> columnWidths;
+        float x = 0.0f;
+        float width = 0.0f;
+        float scale = 0.0f;
+        float lineStep = 0.0f;
+        float headerHeight = 0.0f;
+    };
+
     bool updatePages_(float dt);
     void rebuildPagePlan_();
-    void buildCurrentPage_();
+    void buildCurrentPage_(bool resetPresentation = true);
     void freePagePanels_();
     void drawPages_();
     bool ensureCompositeTexture_(SDL_Renderer* renderer, int width, int height);
+    void renderPanel_(SDL_Renderer* renderer, const PagePanel& panel,
+        float originX, float originY, Uint8 alpha) const;
     void renderPanels_(SDL_Renderer* renderer, float originX, float originY, Uint8 alpha) const;
+    void capturePageTransition_(bool wholePage, const std::vector<size_t>& changedTables = {});
     void beginPageTransition_();
+    bool panelGeometryStable_(const std::vector<size_t>& changedTables) const;
     float measureNaturalWidth_(FontManager* font, const HighScoreTableView& table,
         const std::vector<size_t>& columns, float scale) const;
     void reloadTexture(bool resetScroll = true);
@@ -129,6 +144,7 @@ private:
 
     // Resources
     Item* lastSelectedItem_;
+    std::string lastSelectedGame_;
     uint64_t lastRenderedRevision_;
     HighScoreView highScoreTable_;
     std::vector<LocalScorePagePlan> pagePlan_;
@@ -139,6 +155,9 @@ private:
     SDL_Texture* headerTexture_;
     SDL_Texture* tableRowsTexture_;
     SDL_Texture* previousTableTexture_;
+    std::vector<PreviousPanelState> previousPanelStates_;
+    std::unordered_set<size_t> transitioningTableIndices_;
+    bool wholePageTransition_ = false;
     SDL_Texture* compositeTexture_;
     int compositeTextureWidth_;
     int compositeTextureHeight_;

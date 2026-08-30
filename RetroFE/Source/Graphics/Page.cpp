@@ -389,6 +389,19 @@ void Page::setSelectedItem() {
 	selectedItem_ = getSelectedMenuItem();
 }
 
+bool Page::reanchorSelectedItem(Item* item) {
+	ScrollingList* amenu = getAnActiveMenu();
+	if (!amenu || !item) return false;
+
+	const std::vector<Item*>& items = amenu->getItems();
+	const auto found = std::find(items.begin(), items.end(), item);
+	if (found == items.end()) return false;
+
+	setScrollOffsetIndex(static_cast<size_t>(std::distance(items.begin(), found)));
+	setSelectedItem();
+	return selectedItem_ == item;
+}
+
 Item* Page::getSelectedItem() {
 	if (!selectedItem_) {
 		setSelectedItem();

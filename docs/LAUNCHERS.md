@@ -8,13 +8,26 @@ application, or game) when a launchable menu item is selected.
 See below for a list of supported configuration properties. Launcher
 options
 
-| Property   | Description                                                   |
-|------------|---------------------------------------------------------------|
-| executable | Path of where the executable exists                           |
-| arguments  | Arguments to pass when executing the launcher (i.e. ROM name) |
+| Property          | Description                                                                 |
+|-------------------|-----------------------------------------------------------------------------|
+| executable        | Path of where the executable exists                                         |
+| arguments         | Arguments to pass when executing the launcher (i.e. ROM name)               |
+| liveHiscores      | Connect to MAME's openhi2txt live-score output while the game is running    |
+| liveHiscoresPort  | Local TCP port for live scores (default: 32123)                              |
 
     executable = D:/Emulators/Nestopia/nestopia.exe
     arguments  = "%ITEM_FILEPATH%"
+
+For a MAME launcher using the openhi2txt live-score plugin:
+
+    executable = emulators/mame/mame64.exe
+    arguments = "%ITEM_NAME%"
+    liveHiscores = true
+    liveHiscoresPort = 32123
+
+Live scores are opt-in per launcher. RetroFE connects only to localhost,
+reconnects if MAME starts first or temporarily disconnects, and stops the
+connection when the launched game exits.
 
 %ITEM_FILEPATH% is a reserved variable name. See the variables table
 below for other variables that may be used. Also note the quotes around

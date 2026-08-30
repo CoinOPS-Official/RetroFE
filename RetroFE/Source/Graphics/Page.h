@@ -199,6 +199,7 @@ public:
     bool getIsLaunched() const;
     bool playlistExists(const std::string&);
     void setSelectedItem();
+    bool reanchorSelectedItem(Item* item);
     bool fromPreviousPlaylist = false;
     bool fromPlaylistNav = false;
     static const int MAX_LAYOUTS = 20; // TODO Put this behind a key 

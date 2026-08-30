@@ -18,6 +18,7 @@
 #include "../ViewInfo.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
+#include "../../Database/HighScoreChange.h"
 #include "../../Database/LocalHiScores.h"
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
@@ -253,6 +254,7 @@ ReloadableHiscores::ReloadableHiscores(Configuration& config, std::string textFo
 	, lastComputedDrawableHeight_(0.0f)
 	, lastComputedRowPadding_(0.0f)
 	, lastSelectedItem_(nullptr)
+	, lastSelectedGame_()
 	, lastRenderedRevision_(0)
 	, highScoreTable_()
 	, headerTexture_(nullptr)
@@ -516,6 +518,7 @@ void ReloadableHiscores::allocateGraphicsMemory() {
 void ReloadableHiscores::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
 	lastSelectedItem_ = nullptr;
+	lastSelectedGame_.clear();
 	if (headerTexture_) { SDL_DestroyTexture(headerTexture_); headerTexture_ = nullptr; }
 	if (tableRowsTexture_) { SDL_DestroyTexture(tableRowsTexture_); tableRowsTexture_ = nullptr; }
 	if (previousTableTexture_) { SDL_DestroyTexture(previousTableTexture_); previousTableTexture_ = nullptr; }
@@ -524,6 +527,9 @@ void ReloadableHiscores::freeGraphicsMemory() {
 	compositeTextureHeight_ = 0;
 	freePagePanels_();
 	tableCrossfading_ = false;
+	wholePageTransition_ = false;
+	previousPanelStates_.clear();
+	transitioningTableIndices_.clear();
 	showingNoData_ = false;
 	noDataElapsed_ = 0.0f;
 	wasComponentVisible_ = false;
@@ -548,12 +554,14 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 	}
 
 	Item* selectedItem = page.getSelectedItem(displayOffset_);
-	bool itemChanged = (selectedItem != lastSelectedItem_);
+	const std::string selectedGame = selectedItem ? selectedItem->name : std::string();
+	bool itemChanged = (selectedItem != lastSelectedItem_) || (selectedGame != lastSelectedGame_);
 
 	if (itemChanged) {
 		lastSelectedItem_ = selectedItem;
+		lastSelectedGame_ = selectedGame;
 		if (selectedItem) {
-			HighScoreSnapshot snapshot = LocalHiScores::getInstance().getTable({ selectedItem->name });
+			HighScoreSnapshot snapshot = LocalHiScores::getInstance().getTable({ selectedGame });
 			highScoreTable_ = std::move(snapshot.view);
 			lastRenderedRevision_ = snapshot.revision;
 			if (!highScoreTable_.tables.empty()) currentTableIndex_ = 0;
@@ -853,7 +861,7 @@ void ReloadableHiscores::rebuildPagePlan_() {
 	currentPageIndex_ = std::min(currentPageIndex_, pagePlan_.empty() ? size_t(0) : pagePlan_.size() - 1);
 }
 
-void ReloadableHiscores::buildCurrentPage_() {
+void ReloadableHiscores::buildCurrentPage_(bool resetPresentation) {
 	freePagePanels_();
 	showingNoData_ = false;
 	noDataElapsed_ = 0.0f;
@@ -966,12 +974,25 @@ void ReloadableHiscores::buildCurrentPage_() {
 		}
 		SDL_SetRenderTarget(renderer, old); pagePanels_.push_back(std::move(panel));
 	}
-	currentPosition_=0.0f; pageElapsed_=0.0f; pageEndPause_=0.0f; waitStartTime_=startTime_;
+	if (resetPresentation) {
+		currentPosition_ = 0.0f;
+		pageElapsed_ = 0.0f;
+		pageEndPause_ = 0.0f;
+		waitStartTime_ = startTime_;
+	}
+	else {
+		float maximumScroll = 0.0f;
+		for (const auto& panel : pagePanels_) maximumScroll = std::max(maximumScroll, panel.maxScroll);
+		currentPosition_ = std::min(currentPosition_, maximumScroll);
+	}
 }
 
 void ReloadableHiscores::cancelTableTransition_() {
 	tableCrossfading_ = false;
 	tableCrossfadeTimer_ = 0.0f;
+	wholePageTransition_ = false;
+	previousPanelStates_.clear();
+	transitioningTableIndices_.clear();
 	if (previousTableTexture_) {
 		SDL_DestroyTexture(previousTableTexture_);
 		previousTableTexture_ = nullptr;
@@ -1029,27 +1050,129 @@ void ReloadableHiscores::beginTableTransition_() {
 	tableCrossfadeTimer_ = 0.0f;
 }
 
-void ReloadableHiscores::renderPanels_(SDL_Renderer* renderer, float originX, float originY, Uint8 alpha) const {
-	for (const auto& panel : pagePanels_) {
-		const float x=originX+panel.x;
-		if(panel.header){SDL_SetTextureAlphaMod(panel.header,alpha);SDL_FRect d{x,originY,panel.width,panel.headerHeight};SDL_RenderCopyF(renderer,panel.header,nullptr,&d);}
-		const float viewport=std::max(0.0f,baseViewInfo.ScaledHeight()-panel.headerHeight);
-		const float scroll=panel.maxScroll>0?std::min(currentPosition_,panel.maxScroll):0.0f;
-		for(size_t i=0;i<panel.rowTiles.size();++i){SDL_Texture* tile=panel.rowTiles[i];if(!tile)continue;int tw=0,th=0;SDL_QueryTexture(tile,nullptr,nullptr,&tw,&th);
-			float top=panel.headerHeight+i*panel.rowsPerTile*panel.lineStep-scroll,bottom=top+th;float ct=std::max(panel.headerHeight,top),cb=std::min(panel.headerHeight+viewport,bottom);if(cb<=ct)continue;
-			SDL_Rect src{0,(int)std::floor(ct-top),tw,std::min(th-(int)std::floor(ct-top),(int)std::ceil(cb-ct))};SDL_FRect dst{x,originY+ct,panel.width,(float)src.h};SDL_SetTextureAlphaMod(tile,alpha);SDL_RenderCopyF(renderer,tile,&src,&dst);}
+void ReloadableHiscores::renderPanel_(SDL_Renderer* renderer, const PagePanel& panel,
+	float originX, float originY, Uint8 alpha) const {
+	const float x = originX + panel.x;
+	if (panel.header) {
+		SDL_SetTextureAlphaMod(panel.header, alpha);
+		SDL_FRect destination{x, originY, panel.width, panel.headerHeight};
+		SDL_RenderCopyF(renderer, panel.header, nullptr, &destination);
+	}
+	const float viewport = std::max(0.0f, baseViewInfo.ScaledHeight() - panel.headerHeight);
+	const float scroll = panel.maxScroll > 0.0f
+		? std::min(currentPosition_, panel.maxScroll)
+		: 0.0f;
+	for (size_t tileIndex = 0; tileIndex < panel.rowTiles.size(); ++tileIndex) {
+		SDL_Texture* tile = panel.rowTiles[tileIndex];
+		if (!tile) continue;
+		int tileWidth = 0;
+		int tileHeight = 0;
+		SDL_QueryTexture(tile, nullptr, nullptr, &tileWidth, &tileHeight);
+		const float top = panel.headerHeight + tileIndex * panel.rowsPerTile * panel.lineStep - scroll;
+		const float bottom = top + tileHeight;
+		const float clippedTop = std::max(panel.headerHeight, top);
+		const float clippedBottom = std::min(panel.headerHeight + viewport, bottom);
+		if (clippedBottom <= clippedTop) continue;
+		SDL_Rect source{
+			0,
+			static_cast<int>(std::floor(clippedTop - top)),
+			tileWidth,
+			std::min(tileHeight - static_cast<int>(std::floor(clippedTop - top)),
+				static_cast<int>(std::ceil(clippedBottom - clippedTop)))
+		};
+		SDL_FRect destination{x, originY + clippedTop, panel.width, static_cast<float>(source.h)};
+		SDL_SetTextureAlphaMod(tile, alpha);
+		SDL_RenderCopyF(renderer, tile, &source, &destination);
 	}
 }
 
-void ReloadableHiscores::beginPageTransition_(){if(pagePanels_.empty())return;SDL_Renderer* r=SDL::getRenderer(baseViewInfo.Monitor);if(!r)return;cancelTableTransition_();
-	int w=std::max(1,(int)std::ceil((baseViewInfo.Width>0&&baseViewInfo.Width<baseViewInfo.MaxWidth)?baseViewInfo.Width:baseViewInfo.MaxWidth)),h=std::max(1,(int)std::ceil(baseViewInfo.ScaledHeight()));
-	previousTableTexture_=SDL_CreateTexture(r,SDL_PIXELFORMAT_RGBA8888,SDL_TEXTUREACCESS_TARGET,w,h);if(!previousTableTexture_)return;SDL_SetTextureBlendMode(previousTableTexture_,SDL_BLENDMODE_BLEND);SDL_Texture* old=SDL_GetRenderTarget(r);SDL_SetRenderTarget(r,previousTableTexture_);SDL_SetRenderDrawColor(r,0,0,0,0);SDL_RenderClear(r);renderPanels_(r,0,0,255);SDL_SetRenderTarget(r,old);tableCrossfading_=true;tableCrossfadeTimer_=0;}
+void ReloadableHiscores::renderPanels_(SDL_Renderer* renderer, float originX, float originY, Uint8 alpha) const {
+	for (const auto& panel : pagePanels_) renderPanel_(renderer, panel, originX, originY, alpha);
+}
+
+void ReloadableHiscores::capturePageTransition_(
+	bool wholePage,
+	const std::vector<size_t>& changedTables) {
+	if (pagePanels_.empty()) return;
+	SDL_Renderer* renderer = SDL::getRenderer(baseViewInfo.Monitor);
+	if (!renderer) return;
+	cancelTableTransition_();
+	previousPanelStates_.reserve(pagePanels_.size());
+	for (const auto& panel : pagePanels_) {
+		previousPanelStates_.push_back({
+			panel.tableIndex,
+			panel.visibleColumns,
+			panel.columnWidths,
+			panel.x,
+			panel.width,
+			panel.scale,
+			panel.lineStep,
+			panel.headerHeight
+		});
+	}
+	transitioningTableIndices_.insert(changedTables.begin(), changedTables.end());
+	wholePageTransition_ = wholePage;
+	const int width = std::max(1, static_cast<int>(std::ceil(
+		(baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth)
+			? baseViewInfo.Width
+			: baseViewInfo.MaxWidth)));
+	const int height = std::max(1, static_cast<int>(std::ceil(baseViewInfo.ScaledHeight())));
+	previousTableTexture_ = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA8888,
+		SDL_TEXTUREACCESS_TARGET, width, height);
+	if (!previousTableTexture_) {
+		cancelTableTransition_();
+		return;
+	}
+	SDL_SetTextureBlendMode(previousTableTexture_, SDL_BLENDMODE_BLEND);
+	SDL_Texture* oldTarget = SDL_GetRenderTarget(renderer);
+	SDL_SetRenderTarget(renderer, previousTableTexture_);
+	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
+	SDL_RenderClear(renderer);
+	renderPanels_(renderer, 0.0f, 0.0f, 255);
+	SDL_SetRenderTarget(renderer, oldTarget);
+	tableCrossfading_ = true;
+	tableCrossfadeTimer_ = 0.0f;
+}
+
+void ReloadableHiscores::beginPageTransition_() {
+	capturePageTransition_(true);
+}
+
+bool ReloadableHiscores::panelGeometryStable_(const std::vector<size_t>& changedTables) const {
+	if (previousPanelStates_.size() != pagePanels_.size()) return false;
+	const std::unordered_set<size_t> changed(changedTables.begin(), changedTables.end());
+	const auto closeEnough = [](float lhs, float rhs) { return std::abs(lhs - rhs) <= 0.01f; };
+	for (const auto& previous : previousPanelStates_) {
+		auto current = std::find_if(pagePanels_.begin(), pagePanels_.end(), [&](const PagePanel& panel) {
+			return panel.tableIndex == previous.tableIndex;
+		});
+		if (current == pagePanels_.end()) return false;
+		if (!closeEnough(previous.x, current->x) || !closeEnough(previous.width, current->width)) {
+			return false;
+		}
+		if (changed.find(previous.tableIndex) != changed.end()) continue;
+		if (!closeEnough(previous.scale, current->scale) ||
+			!closeEnough(previous.lineStep, current->lineStep) ||
+			!closeEnough(previous.headerHeight, current->headerHeight) ||
+			previous.visibleColumns != current->visibleColumns ||
+			previous.columnWidths.size() != current->columnWidths.size()) {
+			return false;
+		}
+		for (size_t column = 0; column < previous.columnWidths.size(); ++column) {
+			if (!closeEnough(previous.columnWidths[column], current->columnWidths[column])) return false;
+		}
+	}
+	return true;
+}
 
 bool ReloadableHiscores::updatePages_(float dt) {
 	Item* selected = page.getSelectedItem(displayOffset_);
+	const std::string selectedGame = selected ? selected->name : std::string();
 	const bool selectionEvent = newItemSelected || (newScrollItemSelected && getMenuScrollReload());
+	const bool selectionChanged = selected != lastSelectedItem_ ||
+		selectedGame != lastSelectedGame_ || selectionEvent;
 	const uint64_t revision = selected
-		? LocalHiScores::getInstance().getRevision(selected->name)
+		? LocalHiScores::getInstance().getRevision(selectedGame)
 		: 0;
 	const float currentWidth = (baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth)
 		? baseViewInfo.Width
@@ -1059,26 +1182,112 @@ bool ReloadableHiscores::updatePages_(float dt) {
 		std::abs(baseViewInfo.ScaledHeight() - cachedViewHeight_) > 0.5f ||
 		std::abs(baseViewInfo.FontSize - cachedBaseFontSize_) > 0.01f;
 
-	if (selected != lastSelectedItem_ || selectionEvent ||
-		revision != lastRenderedRevision_ || geometryChanged) {
-		cancelTableTransition_();
+	const bool revisionChanged = revision != lastRenderedRevision_;
+	if (selectionChanged || revisionChanged || geometryChanged) {
+		const bool presentationOnlyRefresh = selected && revisionChanged &&
+			!selectionChanged && !geometryChanged;
+		const HighScoreView previousView = highScoreTable_;
+		const float previousPosition = currentPosition_;
+		std::vector<size_t> previousPageTables;
+		if (currentPageIndex_ < pagePlan_.size()) {
+			previousPageTables = pagePlan_[currentPageIndex_].tableIndices;
+		}
+		const size_t previousAnchor = previousPageTables.empty()
+			? std::numeric_limits<size_t>::max()
+			: previousPageTables.front();
+
 		lastSelectedItem_ = selected;
-		if (!geometryChanged) {
+		lastSelectedGame_ = selectedGame;
+		if (selectionChanged) {
 			currentPageIndex_ = 0;
 		}
 
+		HighScoreSnapshot snapshot;
+		HighScoreView nextView;
 		if (selected) {
-			auto snapshot = LocalHiScores::getInstance().getTable({ selected->name });
-			highScoreTable_ = std::move(snapshot.view);
+			snapshot = LocalHiScores::getInstance().getTable({ selectedGame });
+			nextView = std::move(snapshot.view);
 			lastRenderedRevision_ = snapshot.revision;
 		}
 		else {
-			highScoreTable_.tables.clear();
 			lastRenderedRevision_ = 0;
 		}
 
+		const HighScoreViewChange change = compareHighScoreViews(previousView, nextView);
+		HighScoreViewChange transitionChange = change;
+		if (!change.structureChanged) {
+			transitionChange.changedTableIndices.erase(
+				std::remove_if(
+					transitionChange.changedTableIndices.begin(),
+					transitionChange.changedTableIndices.end(),
+					[&](size_t tableIndex) {
+						return tableIndex < previousView.tables.size() &&
+							tableIndex < nextView.tables.size() &&
+							highScoreTableChangeIsRowLocal(
+								previousView.tables[tableIndex], nextView.tables[tableIndex]);
+					}),
+				transitionChange.changedTableIndices.end());
+		}
+		const bool continuingTransition = tableCrossfading_;
+		if (presentationOnlyRefresh && change.anyChange() && !continuingTransition) {
+			capturePageTransition_(transitionChange.structureChanged, transitionChange.changedTableIndices);
+		}
+		else if (!presentationOnlyRefresh) {
+			cancelTableTransition_();
+		}
+
+		highScoreTable_ = std::move(nextView);
 		rebuildPagePlan_();
-		buildCurrentPage_();
+		std::optional<size_t> currentAnchor;
+		if (presentationOnlyRefresh && previousAnchor < previousView.tables.size()) {
+			currentAnchor = findCorrespondingHighScoreTable(
+				previousView.tables[previousAnchor], highScoreTable_, previousAnchor);
+		}
+		if (currentAnchor) {
+			for (size_t pageIndex = 0; pageIndex < pagePlan_.size(); ++pageIndex) {
+				const auto& tables = pagePlan_[pageIndex].tableIndices;
+				if (std::find(tables.begin(), tables.end(), *currentAnchor) != tables.end()) {
+					currentPageIndex_ = pageIndex;
+					break;
+				}
+			}
+		}
+		buildCurrentPage_(!presentationOnlyRefresh);
+
+		if (presentationOnlyRefresh) {
+			const std::vector<size_t> currentPageTables = currentPageIndex_ < pagePlan_.size()
+				? pagePlan_[currentPageIndex_].tableIndices
+				: std::vector<size_t>{};
+			const bool stableScrollPosition =
+				std::abs(previousPosition - currentPosition_) <= 0.01f;
+			const bool stableDirectGeometry = panelGeometryStable_({});
+			const bool rowLocalOnly = change.anyChange() && !transitionChange.anyChange();
+			const HighScoreTransitionScope scope = rowLocalOnly
+				? (previousPageTables == currentPageTables &&
+					stableDirectGeometry && stableScrollPosition
+						? HighScoreTransitionScope::None
+						: HighScoreTransitionScope::WholePage)
+				: chooseHighScoreTransitionScope(
+					transitionChange,
+					previousPageTables,
+					currentPageTables,
+					panelGeometryStable_(change.changedTableIndices),
+					stableScrollPosition);
+			if (scope == HighScoreTransitionScope::None) {
+				if (!continuingTransition) cancelTableTransition_();
+			}
+			else if (scope == HighScoreTransitionScope::WholePage) {
+				wholePageTransition_ = true;
+				transitioningTableIndices_.clear();
+			}
+			else {
+				if (!wholePageTransition_) {
+					transitioningTableIndices_.insert(
+						transitionChange.changedTableIndices.begin(),
+						transitionChange.changedTableIndices.end());
+				}
+			}
+		}
 		newItemSelected = false;
 		newScrollItemSelected = false;
 
@@ -1317,37 +1526,61 @@ void ReloadableHiscores::drawPages_() {
 			)
 			: 1.0f;
 
+		const Uint8 previousAlpha = static_cast<Uint8>(
+			std::lround((1.0f - fade) * 255.0f));
+		const Uint8 currentAlpha = static_cast<Uint8>(
+			std::lround(fade * 255.0f));
+
 		if (tableCrossfading_ && previousTableTexture_) {
 			SDL_SetTextureAlphaMod(
 				previousTableTexture_,
-				static_cast<Uint8>(
-					std::lround((1.0f - fade) * 255.0f)
-					)
+				previousAlpha
 			);
 
-			const SDL_FRect previousDestination{
-				0.0f,
-				0.0f,
-				componentWidth,
-				componentHeight
-			};
-
-			SDL_RenderCopyF(
-				renderer,
-				previousTableTexture_,
-				nullptr,
-				&previousDestination
-			);
+			if (wholePageTransition_) {
+				const SDL_FRect previousDestination{
+					0.0f,
+					0.0f,
+					componentWidth,
+					componentHeight
+				};
+				SDL_RenderCopyF(renderer, previousTableTexture_, nullptr, &previousDestination);
+			}
+			else {
+				for (const auto& previousPanel : previousPanelStates_) {
+					if (transitioningTableIndices_.find(previousPanel.tableIndex) ==
+						transitioningTableIndices_.end()) {
+						continue;
+					}
+					const int sourceX = std::max(0, static_cast<int>(std::floor(previousPanel.x)));
+					const int sourceWidth = std::max(1, std::min(
+						compositeWidth - sourceX,
+						static_cast<int>(std::ceil(previousPanel.width))));
+					if (sourceX >= compositeWidth || sourceWidth <= 0) continue;
+					const SDL_Rect source{sourceX, 0, sourceWidth, compositeHeight};
+					const SDL_FRect destination{
+						previousPanel.x,
+						0.0f,
+						static_cast<float>(sourceWidth),
+						componentHeight
+					};
+					SDL_RenderCopyF(renderer, previousTableTexture_, &source, &destination);
+				}
+			}
 		}
 
-		renderPanels_(
-			renderer,
-			0.0f,
-			0.0f,
-			static_cast<Uint8>(
-				std::lround(fade * 255.0f)
-				)
-		);
+		if (!tableCrossfading_ || wholePageTransition_) {
+			renderPanels_(renderer, 0.0f, 0.0f, currentAlpha);
+		}
+		else {
+			for (const auto& panel : pagePanels_) {
+				const Uint8 panelAlpha = transitioningTableIndices_.find(panel.tableIndex) !=
+					transitioningTableIndices_.end()
+					? currentAlpha
+					: 255;
+				renderPanel_(renderer, panel, 0.0f, 0.0f, panelAlpha);
+			}
+		}
 	}
 
 	if (SDL_SetRenderTarget(renderer, previousTarget) != 0) {

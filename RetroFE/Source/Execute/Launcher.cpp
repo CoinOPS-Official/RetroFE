@@ -20,6 +20,7 @@
 #include "../Collection/Item.h"
 #include "../Database/Configuration.h"
 #include "../Database/GlobalOpts.h"
+#include "../Database/LocalHiScores.h"
 #include "../Graphics/Page.h"
 #include "../RetroFE.h"
 #include "../SDL.h"
@@ -28,6 +29,7 @@
 
 // --- C++ Standard Library ---
 #include <chrono>
+#include <cstdint>
 #include <cstdlib> // For getenv
 #include <filesystem>
 #include <fstream>
@@ -51,6 +53,28 @@
 
 
 namespace fs = std::filesystem;
+
+namespace {
+class LiveHiScoreSessionGuard {
+public:
+    ~LiveHiScoreSessionGuard() {
+        stop();
+    }
+
+    void start(const std::string& gameName, std::uint16_t port) {
+        active_ = LocalHiScores::getInstance().beginLiveSession(gameName, port);
+    }
+
+    void stop() {
+        if (!active_) return;
+        LocalHiScores::getInstance().endLiveSession();
+        active_ = false;
+    }
+
+private:
+    bool active_ = false;
+};
+}
 
 Launcher::Launcher(Configuration& c, RetroFE& retroFe)
 	: config_(c),
@@ -214,6 +238,25 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     getPropChainBool("reboot", reboot);
     bool quitComboEnabled = true;
     getPropChainBool("quitCombo", quitComboEnabled);
+
+    bool liveHiscores = false;
+    getPropChainBool("liveHiscores", liveHiscores);
+    std::uint16_t liveHiscoresPort = 32123;
+    std::string liveHiscoresPortText;
+    if (getPropChainStr("liveHiscoresPort", liveHiscoresPortText)) {
+        try {
+            const int configuredPort = std::stoi(liveHiscoresPortText);
+            if (configuredPort >= 1 && configuredPort <= 65535) {
+                liveHiscoresPort = static_cast<std::uint16_t>(configuredPort);
+            }
+            else {
+                LOG_WARNING("Launcher", "liveHiscoresPort is outside the valid range; using 32123.");
+            }
+        }
+        catch (const std::exception&) {
+            LOG_WARNING("Launcher", "Invalid liveHiscoresPort value; using 32123.");
+        }
+    }
 
     LOG_INFO("Launcher",
         std::string("quitCombo for launcher \"") + launcherName +
@@ -434,6 +477,11 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         return false;
     }
 
+    LiveHiScoreSessionGuard liveHiScoreSession;
+    if (liveHiscores) {
+        liveHiScoreSession.start(collectionItem->name, liveHiscoresPort);
+    }
+
     // --- Wait/monitor logic ---
     if (reboot) {
         LOG_INFO("Launcher", "Reboot mode enabled. Entering simple wait until process terminates.");
@@ -552,6 +600,8 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             cib.updateTimeSpent(collectionItem, gameplayDuration);
         }
     }
+
+    liveHiScoreSession.stop();
 
     //
     // --- STEP 7: REBOOT CHECK ---
