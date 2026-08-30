@@ -1706,7 +1706,8 @@ bool RetroFE::run() {
 			if ((quickListCollection == "" || currentPage_->getCollectionName() == quickListCollection) &&
 				(quickListPlaylist == "" || currentPage_->getPlaylistName() == quickListPlaylist))
 			{
-				nextPageItem_ = new Item();
+				syntheticNextPageItem_ = Item{};
+				nextPageItem_ = &syntheticNextPageItem_;
 				config_.getProperty("lastCollection", nextPageItem_->name);
 				if (currentPage_->getCollectionName() != nextPageItem_->name)
 				{
@@ -1772,7 +1773,8 @@ bool RetroFE::run() {
 			if ((settingsCollection == "" || currentPage_->getCollectionName() == settingsCollection) &&
 				(settingsPlaylist == "" || currentPage_->getPlaylistName() == settingsPlaylist))
 			{
-				nextPageItem_ = new Item();
+				syntheticNextPageItem_ = Item{};
+				nextPageItem_ = &syntheticNextPageItem_;
 				config_.getProperty("lastCollection", nextPageItem_->name);
 				if (currentPage_->getCollectionName() != nextPageItem_->name)
 				{
@@ -3974,7 +3976,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 					collectionCycleIt_++;
 					if (collectionCycleIt_ == collectionCycle_.end()) collectionCycleIt_ = collectionCycle_.begin();
 					if (!pages_.empty() && pages_.size() > 1) pages_.pop();
-					nextPageItem_ = new Item();
+					syntheticNextPageItem_ = Item{};
+					nextPageItem_ = &syntheticNextPageItem_;
 					nextPageItem_->name = *collectionCycleIt_;
 					menuMode_ = false;
 					return RETROFE_NEXT_PAGE_REQUEST;
@@ -3986,7 +3989,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 					if (collectionCycleIt_ == collectionCycle_.begin()) collectionCycleIt_ = collectionCycle_.end();
 					collectionCycleIt_--;
 					if (!pages_.empty() && pages_.size() > 1) pages_.pop();
-					nextPageItem_ = new Item();
+					syntheticNextPageItem_ = Item{};
+					nextPageItem_ = &syntheticNextPageItem_;
 					nextPageItem_->name = *collectionCycleIt_;
 					menuMode_ = false;
 					return RETROFE_NEXT_PAGE_REQUEST;
@@ -4130,6 +4134,7 @@ CollectionInfo* RetroFE::getCollection(const std::string& collectionName) {
 	fs::path path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName);
 	if (!fs::exists(path) || !fs::is_directory(path)) {
 		LOG_ERROR("RetroFE", "Failed to load collection " + collectionName);
+		delete collection;
 		return nullptr;
 	}
 
