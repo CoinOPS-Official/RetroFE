@@ -79,6 +79,7 @@ private:
     std::atomic<bool> initializeError{ false };
     SDL_Thread   *initializeThread;
     static int    initialize( void *context );
+    void          waitForInitializationThread(int* status = nullptr);
 
 	double lastFrameTimeMs_ = 0.0;
 	double lastFrameTimePointMs_ = 0.0;

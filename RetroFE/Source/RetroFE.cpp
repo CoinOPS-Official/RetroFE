@@ -46,6 +46,7 @@
 #include <sstream>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 #include <cmath>
 #include <cstdint>
@@ -142,6 +143,16 @@ static inline void sleepUntilTicks(uint64_t targetTicks, uint64_t freq, double f
 
 RetroFE::~RetroFE() {
 	deInitialize();
+}
+
+void RetroFE::waitForInitializationThread(int* status) {
+	if (!initializeThread) {
+		return;
+	}
+
+	SDL_Thread* thread = std::exchange(initializeThread, nullptr);
+	int ignoredStatus = 0;
+	SDL_WaitThread(thread, status ? status : &ignoredStatus);
 }
 
 void RetroFE::render() {
@@ -922,6 +933,10 @@ void RetroFE::allocateGraphicsMemory() {
 // Deinitialize RetroFE
 bool RetroFE::deInitialize() {
 	bool retVal = true;
+
+	// The worker can still be using this instance and publishing db_/metadb_.
+	waitForInitializationThread();
+
 	VideoPool::shuttingDown_ = true;
 
 	// 1. Gather all existing pages into a unified destruction queue
@@ -1456,7 +1471,7 @@ bool RetroFE::run() {
 						currentPage_->getMinShowTime() <= (currentTime_ - preloadTime) &&
 						!(currentPage_->isPlaying()))))
 			{
-				SDL_WaitThread(initializeThread, &initializeStatus);
+				waitForInitializationThread(&initializeStatus);
 
 				if (initializeError)
 				{
