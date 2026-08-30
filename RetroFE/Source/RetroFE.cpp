@@ -2787,10 +2787,21 @@ bool RetroFE::run() {
 
 				if (updateLastPlayed)
 				{
-					// This rewrites the Last Played playlist.
-					// Do NOT refresh reloadables here yet; selection/offset may still refer
-					// to the pre-launch playlist state.
+					// This rewrites the Last Played playlist and can move the selected item.
 					cib.updateLastPlayedPlaylist(currentPage_->getCollection(), nextPageItem_, size);
+
+					// Preserve the selected item, not its old numerical position, when the
+					// active Last Played list is reordered. Only rebind the menu here:
+					// launchEnter() has already begun graphics shutdown, and launchExit()
+					// performs selected-item asset updates after graphics are rebuilt.
+					if (wasLastPlayed)
+					{
+						currentPage_->selectPlaylist("lastplayed");
+						if (!currentPage_->reanchorSelectedItem(nextPageItem_))
+						{
+							LOG_WARNING("RetroFE", "Unable to re-anchor Last Played selection to " + nextPageItem_->name + ".");
+						}
+					}
 				}
 
 				l.LEDBlinky(3, nextPageItem_->collectionInfo->name, nextPageItem_);
@@ -2808,31 +2819,9 @@ bool RetroFE::run() {
 					attract_.reset();
 					l.LEDBlinky(4);
 
-					const bool forceLastPlayedRefresh = wasLastPlayed && updateLastPlayed;
-
-					if (forceLastPlayedRefresh)
-					{
-						// Rebind to the rewritten Last Played playlist.
-						currentPage_->selectPlaylist("lastplayed");
-
-						// The game just launched should now be the newest Last Played entry.
-						currentPage_->setScrollOffsetIndex(0);
-						currentPage_->setSelectedItem();
-						currentPage_->onNewItemSelected();
-					}
-
 					// This already reallocates menu sprite points when unloadSDL is false,
 					// so do not manually call reallocateMenuSpritePoints() before it.
 					launchExit(true);
-
-					if (forceLastPlayedRefresh)
-					{
-						// launchExit() calls onNewItemSelected(), but updateReloadables()
-						// is commented out inside launchExit(), so force the art/media
-						// components to actually rebind now.
-						currentPage_->onNewItemSelected();
-						currentPage_->updateReloadables(0);
-					}
 
 					waitForAsyncAssets();
 
