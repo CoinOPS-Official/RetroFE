@@ -51,6 +51,10 @@ private:
         bool success = false;
     };
 
+    struct AsyncLoadTask {
+        std::shared_future<AsyncLoadResult> future;
+    };
+
     struct CachedImage {
         SDL_Texture* texture = nullptr;
         std::vector<SharedSurface> animatedSurfaces;
@@ -80,6 +84,10 @@ private:
     bool startAsyncLoad(const std::string& path);
     void finalizeLoad();
     bool loadFromCache(const std::string& filePath);
+    bool applyCachedImage(const CachedImage& cached);
+    void releaseLocalImageAssets();
+    void releaseLoadTask();
+    static void pruneExpiredLoadTask(const std::string& path);
 
     void resetAnimationState();
     bool createAnimatedStreamingTexture(int width, int height);
@@ -91,7 +99,7 @@ private:
     std::string currentLoadingPath_; // NEW: Tracks which file is in-flight
 
     LoadStatus status_ = LoadStatus::Unloaded;
-    std::shared_future<AsyncLoadResult> loadTask_;
+    std::shared_ptr<AsyncLoadTask> loadTask_;
 
     SDL_Texture* texture_ = nullptr;
     SDL_Texture* animatedTexture_ = nullptr;
@@ -108,7 +116,7 @@ private:
 
     static PathCache pathCache_;
     static std::unordered_map<PathCache::CacheKey, CachedImage, PathCache::CacheKeyHash> textureCache_;
-    static std::unordered_map<std::string, std::shared_future<AsyncLoadResult>> loadingTasks_;
+    static std::unordered_map<std::string, std::weak_ptr<AsyncLoadTask>> loadingTasks_;
 };
 
 #endif
