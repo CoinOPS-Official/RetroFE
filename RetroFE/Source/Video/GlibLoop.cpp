@@ -222,7 +222,14 @@ template std::future<bool> GlibLoop::invokeAsync<bool>(std::function<bool()>, in
 template std::future<int> GlibLoop::invokeAsync<int>(std::function<int()>, int);
 
 guint GlibLoop::addBusWatch(GstBus* bus, GstBusFunc func, gpointer user_data, GDestroyNotify notify, int priority) {
-    if (!isRunning() || !bus || !func) return 0;
+    if (!isRunning() || !bus || !func) {
+        // Match gst_bus_add_watch_full's ownership transfer when no watch can
+        // be installed.
+        if (notify && user_data) {
+            notify(user_data);
+        }
+        return 0;
+    }
 
     auto pr = std::make_shared<std::promise<guint>>();
     auto fut = pr->get_future();

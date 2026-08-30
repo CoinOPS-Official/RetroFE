@@ -203,6 +203,13 @@ GStreamerVideo::~GStreamerVideo() {
     catch (...) {
         LOG_ERROR("GStreamerVideo", "Exception in destructor during stop()");
     }
+
+    // Callback registrations own separate references released by their
+    // destroy notifications. Release this instance's original reference last.
+    CallbackCtx* ctx = std::exchange(cbCtx_, nullptr);
+    if (ctx) {
+        cbCtxUnref(ctx);
+    }
 }
 
 gboolean GStreamerVideo::busCallback(GstBus*, GstMessage* msg, gpointer user_data) {
