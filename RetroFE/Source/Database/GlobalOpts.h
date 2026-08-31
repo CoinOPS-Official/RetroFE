@@ -128,6 +128,7 @@
 
 // WINDOWS ONLY OPTIONS
 #define OPTION_LEDBLINKYDIRECTORY     "LEDBlinkyDirectory"
+#define OPTION_LEDBLINKYCLOSEONEXIT   "LEDBlinkyCloseOnExit"
 
 // MEDIA SEARCH PATH OPTIONS
 #define OPTION_BASEMEDIAPATH          "baseMediaPath"
@@ -254,7 +255,8 @@ public:
     bool showparenthesis() { return bool_value(OPTION_SHOWPARENTHESIS); }
     bool showsquarebrackets() { return bool_value(OPTION_SHOWSQUAREBRACKETS); }
     
-    const char *ledblinkydirectory() { return value(OPTION_LEDBLINKYDIRECTORY); }
+    const char *ledblinkydirectory() const { return value(OPTION_LEDBLINKYDIRECTORY); }
+    bool ledblinkycloseonexit() const { return bool_value(OPTION_LEDBLINKYCLOSEONEXIT); }
     
     const char *basemediapath() { return value(OPTION_BASEMEDIAPATH); }
     const char *baseitempath() { return value(OPTION_BASEITEMPATH); }
