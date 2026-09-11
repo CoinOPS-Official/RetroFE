@@ -29,6 +29,10 @@ CMake must report `Linux GStreamer GL texture interop enabled`. If development
 packages are missing, it warns and builds the CPU-upload path instead.
 SDL3 config packages are used when present; otherwise the existing CMake helper
 fetches pinned SDL3 sources. The legacy README's SDL2 package list is insufficient.
+Fetched SDL3_image defaults to AVIF support disabled, avoiding its vendored
+dav1d and aom builds. This does not affect GStreamer video decoding. When
+reusing a build directory configured before this default changed, add
+`-DSDLIMAGE_AVIF=OFF` to the configure command to update the cached option.
 
 ## Frontend settings
 

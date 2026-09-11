@@ -8,6 +8,9 @@ set(SDL_STATIC OFF CACHE BOOL "Build static SDL")
 set(SDL_TEST_LIBRARY OFF CACHE BOOL "Build SDL test library")
 set(SDL_TESTS OFF CACHE BOOL "Build SDL tests")
 set(SDLIMAGE_VENDORED ON CACHE BOOL "Use pinned image codec submodules")
+# AVIF artwork support is optional; avoid building its dav1d/aom codecs by
+# default. Video decoding is handled separately by GStreamer.
+set(SDLIMAGE_AVIF OFF CACHE BOOL "Enable AVIF artwork support")
 set(SDLIMAGE_SAMPLES OFF CACHE BOOL "Build image samples")
 set(SDLIMAGE_TESTS OFF CACHE BOOL "Build image tests")
 set(SDLTTF_VENDORED ON CACHE BOOL "Use pinned font submodules")
