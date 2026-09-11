@@ -16,7 +16,7 @@ public:
     const char* reason() const;
     static const char* caps() { return "video/x-raw(memory:GLMemory),format=RGBA,texture-target=2D,pixel-aspect-ratio=1/1"; }
     static SDL_PixelFormat pixelFormat() { return SDL_PIXELFORMAT_ABGR8888; }
-    static const char* description() { return "OpenGL RGBA GPU copy to SDL3 texture; check GL input and decoder logs for upstream CPU uploads"; }
+    const char* description() const;
 private:
     struct Impl;
     std::unique_ptr<Impl> impl_;

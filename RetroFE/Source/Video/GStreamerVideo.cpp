@@ -1379,7 +1379,7 @@ void GStreamerVideo::updateFrame() {
             SDL_SetTextureBlendMode(texture_, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
             isTextureReady_ = true;
             if (!loggedGpu_) {
-                LOG_INFO("GStreamerVideo", std::string("GPU texture interop ACTIVE: ") + NativeVideoInterop::description() + "; monitor " + std::to_string(monitor_) + "; " + currentFile_);
+                LOG_INFO("GStreamerVideo", std::string("GPU texture interop ACTIVE: ") + gpuInterop_->description() + "; monitor " + std::to_string(monitor_) + "; " + currentFile_);
                 loggedGpu_ = true;
             }
             gst_sample_unref(sampleToProcess);

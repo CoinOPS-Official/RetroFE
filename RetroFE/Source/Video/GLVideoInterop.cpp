@@ -35,6 +35,9 @@ struct GLVideoInterop::Impl {
     GstGLContext* wrapped = nullptr;
     bool ready = false;
     bool gles = false;
+    bool direct = false;
+    SDL_Texture* directTexture = nullptr;
+    GstSample* directSample = nullptr;
     std::string error = "OpenGL/OpenGL ES renderer required";
     struct Slot { GLuint native = 0; SDL_Texture* texture = nullptr; };
     std::array<Slot, 3> slots{};
@@ -44,6 +47,19 @@ struct GLVideoInterop::Impl {
     int width = 0, height = 0;
     unsigned next = 0;
     explicit Impl(SDL_Renderer* r) : renderer(r) {}
+    // Called only after SDL's queued reads have been submitted. Keep the
+    // producer buffer out of its pool until those reads finish on the GPU.
+    void releaseDirect() {
+        if (!directSample) return;
+        SDL_DestroyTexture(directTexture); // SDL wrapper only; GStreamer owns GL storage.
+        directTexture = nullptr;
+        auto* gl = wrapped->gl_vtable;
+        GLsync fence = gl->FenceSync && gl->ClientWaitSync && gl->DeleteSync
+            ? gl->FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0) : nullptr;
+        if (fence) { pending.push_back({directSample, fence}); gl->Flush(); }
+        else { gl->Finish(); gst_sample_unref(directSample); }
+        directSample = nullptr;
+    }
     void retire(bool wait) {
         auto* gl = wrapped->gl_vtable;
         if (wait && !pending.empty()) gl->Finish();
@@ -59,6 +75,7 @@ struct GLVideoInterop::Impl {
     }
     void clear() {
         SDL_FlushRenderer(renderer);
+        releaseDirect();
         retire(true);
         for (auto& slot : slots) {
             if (slot.texture) SDL_DestroyTexture(slot.texture);
@@ -86,6 +103,7 @@ GLVideoInterop::GLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_unique<
     const std::string backend = SDL_GetRendererName(renderer);
     if (backend != "opengl" && backend != "opengles2") return;
     p.gles = backend == "opengles2";
+    p.direct = g_strcmp0(g_getenv("RETROFE_GL_DIRECT"), "1") == 0;
     p.native = static_cast<SDL_GLContext>(SDL_GetPointerProperty(SDL_GetRendererProperties(renderer), "retrofe.gl.context", nullptr));
     if (!p.native) { p.error = "SDL renderer GL context not captured"; return; }
     CurrentContext current(renderer, p.native);
@@ -139,12 +157,17 @@ GLVideoInterop::GLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_unique<
 GLVideoInterop::~GLVideoInterop() = default;
 bool GLVideoInterop::available() const { return impl_->ready; }
 const char* GLVideoInterop::reason() const { return impl_->error.c_str(); }
+const char* GLVideoInterop::description() const {
+    return impl_->direct ? "OpenGL direct RGBA texture wrapping; no final GPU copy"
+        : "OpenGL RGBA GPU copy to SDL3 texture";
+}
 void GLVideoInterop::discardFrames() {
     if (!available()) return;
     auto& p = *impl_;
     CurrentContext current(p.renderer, p.native);
     if (current.valid && gst_gl_context_activate(p.wrapped, TRUE)) {
         SDL_FlushRenderer(p.renderer);
+        p.releaseDirect();
         p.retire(true);
         gst_gl_context_activate(p.wrapped, FALSE);
     }
@@ -247,6 +270,25 @@ SDL_Texture* GLVideoInterop::copy(GstSample* sample) {
     else gst_gl_context_thread_add(source->mem.context, [](GstGLContext* c, gpointer) { c->gl_vtable->Finish(); }, nullptr);
     const int w = gst_gl_memory_get_texture_width(source), h = gst_gl_memory_get_texture_height(source);
     if (w <= 0 || h <= 0) return nullptr;
+    if (p.direct) {
+        auto props = SDL_CreateProperties();
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_ABGR8888);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
+        SDL_SetNumberProperty(props, p.gles ? SDL_PROP_TEXTURE_CREATE_OPENGLES2_TEXTURE_NUMBER
+            : SDL_PROP_TEXTURE_CREATE_OPENGL_TEXTURE_NUMBER, gst_gl_memory_get_texture_id(source));
+        auto* texture = SDL_CreateTextureWithProperties(p.renderer, props);
+        SDL_DestroyProperties(props);
+        if (texture) {
+            p.releaseDirect();
+            p.directSample = gst_sample_ref(sample);
+            p.directTexture = texture;
+            return texture;
+        }
+        LOG_WARNING("GStreamerVideo", std::string("Direct GL wrapping failed; using GPU copy: ") + SDL_GetError());
+        p.releaseDirect();
+        p.direct = false;
+    }
     if (w != p.width || h != p.height) {
         p.clear();
         GLint oldTexture = 0, oldUnpack = 0;

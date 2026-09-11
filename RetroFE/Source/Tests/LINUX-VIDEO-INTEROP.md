@@ -70,6 +70,23 @@ draws first. The code preserves the GL bindings it changes.
 
 ## Focused test
 
+### Experimental direct wrapping
+
+Set `RETROFE_GL_DIRECT=1` in the process environment to wrap GStreamer's RGBA
+GL texture with SDL_CreateTextureWithProperties instead of copying into the
+texture ring. For fish, launch with `env RETROFE_GL_DIRECT=1 ./retrofe` from
+the normal runtime directory. Omit the variable to use the tested GPU-copy path.
+This is experimental and has not been compiled or tested on Linux locally.
+
+The ACTIVE log reports `OpenGL direct RGBA texture wrapping; no final GPU copy`.
+Color conversion still runs upstream. Each new frame creates an SDL wrapper,
+not new GL pixel storage. The current sample stays retained across redraws;
+replacement submits SDL draws and fences their completion before releasing the
+old sample. Unload/shutdown drain outstanding reads. Wrapper creation failure
+switches the instance to the GPU-copy path with a warning.
+Test rapid scrolling, pause/resume, unload/reopen, and multiple simultaneous
+videos for corruption or stalls, and compare performance with the variable unset.
+
 Run from the build directory so logs stay with generated files:
 
 ```sh
