@@ -80,8 +80,11 @@ RETROFE_TEST_RENDERER=opengles2 ./bin/retrofe_sdl3_smoke_tests \
 
 This requires the GPU texture path, multiple copied frames, correct overlay
 pixels, and successful unload/reopen. It fails if interop falls back to CPU.
-It can pass with a software decoder feeding glupload: check decoder/input-caps
-logs separately for end-to-end hardware acceleration.
+The GL sink now requires DMA-BUF or GLMemory input; plain system-memory input
+triggers the existing CPU retry instead of silently uploading through glupload.
+Check decoder/input-caps logs separately for end-to-end hardware acceleration.
+DRM formats and modifiers are negotiated with the active GL context rather than
+hard-coded for a particular GPU.
 
 Also inspect a real layout for video orientation, color, aspect ratio,
 reflections, pause/resume, rapid scrolling, multiple videos, and multiple

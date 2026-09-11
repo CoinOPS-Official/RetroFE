@@ -173,20 +173,31 @@ void GLVideoInterop::configure(GstElement* pipeline) {
 
 GstElement* GLVideoInterop::wrapSink(GstElement* sink) {
     auto* bin = gst_bin_new(nullptr);
+    auto* gpuInput = gst_element_factory_make("capsfilter", nullptr);
     auto* upload = gst_element_factory_make("glupload", nullptr);
     auto* convert = gst_element_factory_make("glcolorconvert", nullptr);
-    if (!bin || !upload || !convert) {
+    if (!bin || !gpuInput || !upload || !convert) {
         if (bin) gst_object_unref(bin);
+        if (gpuInput) gst_object_unref(gpuInput);
         if (upload) gst_object_unref(upload);
         if (convert) gst_object_unref(convert);
         return nullptr;
     }
+    // Do not let playbin negotiate system memory merely because glupload can
+    // upload it. Leave DRM formats/modifiers to the decoder and EGL importer.
+    // Unsupported GPU paths use GStreamerVideo's existing CPU retry.
+    auto* inputCaps = gst_caps_from_string(
+        "video/x-raw(memory:DMABuf);video/x-raw(memory:GLMemory)");
+    g_object_set(gpuInput, "caps", inputCaps, nullptr);
+    gst_caps_unref(inputCaps);
     // Preserve the caller's sink if bin construction fails after parenting it.
     const bool floating = g_object_is_floating(sink);
     gst_object_ref(sink);
-    gst_bin_add_many(GST_BIN(bin), upload, convert, sink, nullptr);
+    gst_bin_add_many(GST_BIN(bin), gpuInput, upload, convert, sink, nullptr);
+    auto* inputPad = gst_element_get_static_pad(gpuInput, "sink");
+    auto* ghost = gst_ghost_pad_new("sink", inputPad);
+    gst_object_unref(inputPad);
     auto* pad = gst_element_get_static_pad(upload, "sink");
-    auto* ghost = gst_ghost_pad_new("sink", pad);
     // Log actual memory negotiation before glupload, independently of GL output.
     gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
         [](GstPad*, GstPadProbeInfo* info, gpointer) {
@@ -201,13 +212,14 @@ GstElement* GLVideoInterop::wrapSink(GstElement* sink) {
             return GST_PAD_PROBE_OK;
         }, nullptr, nullptr);
     gst_object_unref(pad);
-    if (!ghost || !gst_element_add_pad(bin, ghost) || !gst_element_link_many(upload, convert, sink, nullptr)) {
+    if (!ghost || !gst_element_add_pad(bin, ghost) || !gst_element_link_many(gpuInput, upload, convert, sink, nullptr)) {
         if (ghost && !GST_OBJECT_PARENT(ghost)) gst_object_unref(ghost);
         gst_object_unref(bin);
         if (floating) g_object_force_floating(G_OBJECT(sink));
         return nullptr;
     }
     gst_object_unref(sink);
+    LOG_INFO("GStreamerVideo", "GL input requires DMA-BUF or GLMemory; CPU upload fallback on negotiation failure");
     return bin;
 }
 
