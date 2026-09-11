@@ -846,16 +846,21 @@ void RetroFE::launchExit(bool userInitiated) {
 	SDL_SetRelativeMouseMode(SDL_TRUE);
 #endif
 
-	const std::string launchedGame = pendingLocalHiscoreGame_;
+	const LocalScoreQuery launchedGame{
+		pendingLocalHiscoreGame_,
+		pendingLocalHiscoreMachine_,
+		pendingLocalHiscoreSoftwareList_,
+		pendingLocalHiscoreSoftware_
+	};
 	pendingLocalHiscoreGame_.clear();
+	pendingLocalHiscoreMachine_.clear();
+	pendingLocalHiscoreSoftwareList_.clear();
+	pendingLocalHiscoreSoftware_.clear();
 
-	if (userInitiated && !launchedGame.empty())
+	if (userInitiated && !launchedGame.gameName.empty())
 	{
-		if (LocalHiScores::getInstance().hasHiFile(launchedGame))
-		{
-			LOG_INFO("RetroFE", "Refreshing local high scores for " + launchedGame + " after game exit.");
-			LocalHiScores::getInstance().runHi2TxtAsync(launchedGame);
-		}
+		LOG_INFO("RetroFE", "Refreshing local high scores for " + launchedGame.gameName + " after game exit.");
+		LocalHiScores::getInstance().runHi2TxtAsync(launchedGame);
 	}
 
 	bool globalHiscoresEnabled = false;
@@ -2706,10 +2711,16 @@ bool RetroFE::run() {
 				if (!nextPageItem_)
 				{
 					pendingLocalHiscoreGame_.clear();
+					pendingLocalHiscoreMachine_.clear();
+					pendingLocalHiscoreSoftwareList_.clear();
+					pendingLocalHiscoreSoftware_.clear();
 					setState(RETROFE_IDLE);
 					break;
 				}
 				pendingLocalHiscoreGame_ = nextPageItem_->name;
+				pendingLocalHiscoreMachine_ = nextPageItem_->mameMachine;
+				pendingLocalHiscoreSoftwareList_ = nextPageItem_->mameSoftwareList;
+				pendingLocalHiscoreSoftware_ = nextPageItem_->mameSoftware;
 				launchEnter();
 
 				l.LEDBlinky(3, nextPageItem_->collectionInfo->name, nextPageItem_);
@@ -2769,10 +2780,16 @@ bool RetroFE::run() {
 				if (!nextPageItem_)
 				{
 					pendingLocalHiscoreGame_.clear();
+					pendingLocalHiscoreMachine_.clear();
+					pendingLocalHiscoreSoftwareList_.clear();
+					pendingLocalHiscoreSoftware_.clear();
 					setState(RETROFE_IDLE);
 					break;
 				}
 				pendingLocalHiscoreGame_ = nextPageItem_->name;
+				pendingLocalHiscoreMachine_ = nextPageItem_->mameMachine;
+				pendingLocalHiscoreSoftwareList_ = nextPageItem_->mameSoftwareList;
+				pendingLocalHiscoreSoftware_ = nextPageItem_->mameSoftware;
 
 				const bool wasLastPlayed = currentPage_->getPlaylistName() == "lastplayed";
 

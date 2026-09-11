@@ -52,6 +52,9 @@ public:
 
     std::string iscoredId;
     std::string iscoredType;
+    std::string mameMachine;
+    std::string mameSoftwareList;
+    std::string mameSoftware;
 
     mutable std::unordered_map<std::string, std::vector<std::string_view>> nameBaseCache;
 

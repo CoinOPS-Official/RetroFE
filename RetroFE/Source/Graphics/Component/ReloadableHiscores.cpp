@@ -37,6 +37,16 @@ namespace {
 	constexpr float kNoDataHoldSeconds = 3.0f;
 	constexpr float kNoDataFadeSeconds = 0.6f;
 
+	LocalScoreQuery localScoreQuery(const Item* item) {
+		if (!item) return {};
+		return {
+			item->name,
+			item->mameMachine,
+			item->mameSoftwareList,
+			item->mameSoftware
+		};
+	}
+
 	static float measureTextWidthExact(FontManager* f, const std::string& s, float scale) {
 		if (!f || s.empty()) return 0.0f;
 		const float targetH = scale * f->getMaxHeight();
@@ -301,10 +311,10 @@ bool ReloadableHiscores::update(float dt) {
 	Item* selectedItem = page.getSelectedItem(displayOffset_);
 	if (selectedItem && selectedItem == lastSelectedItem_ &&
 		!(newItemSelected || (newScrollItemSelected && getMenuScrollReload()))) {
-		const uint64_t revision = LocalHiScores::getInstance().getRevision(selectedItem->name);
+		const uint64_t revision = LocalHiScores::getInstance().getRevision(localScoreQuery(selectedItem));
 		if (revision != lastRenderedRevision_) {
 			cancelTableTransition_();
-			HighScoreSnapshot snapshot = LocalHiScores::getInstance().getTable({ selectedItem->name });
+			HighScoreSnapshot snapshot = LocalHiScores::getInstance().getTable(localScoreQuery(selectedItem));
 			LOG_INFO("ReloadableHiscores", "High score redraw requested for " + selectedItem->name + ".");
 			highScoreTable_ = std::move(snapshot.view);
 			lastRenderedRevision_ = snapshot.revision;
@@ -561,7 +571,7 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 		lastSelectedItem_ = selectedItem;
 		lastSelectedGame_ = selectedGame;
 		if (selectedItem) {
-			HighScoreSnapshot snapshot = LocalHiScores::getInstance().getTable({ selectedGame });
+			HighScoreSnapshot snapshot = LocalHiScores::getInstance().getTable(localScoreQuery(selectedItem));
 			highScoreTable_ = std::move(snapshot.view);
 			lastRenderedRevision_ = snapshot.revision;
 			if (!highScoreTable_.tables.empty()) currentTableIndex_ = 0;
@@ -1172,7 +1182,7 @@ bool ReloadableHiscores::updatePages_(float dt) {
 	const bool selectionChanged = selected != lastSelectedItem_ ||
 		selectedGame != lastSelectedGame_ || selectionEvent;
 	const uint64_t revision = selected
-		? LocalHiScores::getInstance().getRevision(selectedGame)
+		? LocalHiScores::getInstance().getRevision(localScoreQuery(selected))
 		: 0;
 	const float currentWidth = (baseViewInfo.Width > 0 && baseViewInfo.Width < baseViewInfo.MaxWidth)
 		? baseViewInfo.Width
@@ -1205,7 +1215,7 @@ bool ReloadableHiscores::updatePages_(float dt) {
 		HighScoreSnapshot snapshot;
 		HighScoreView nextView;
 		if (selected) {
-			snapshot = LocalHiScores::getInstance().getTable({ selectedGame });
+			snapshot = LocalHiScores::getInstance().getTable(localScoreQuery(selected));
 			nextView = std::move(snapshot.view);
 			lastRenderedRevision_ = snapshot.revision;
 		}

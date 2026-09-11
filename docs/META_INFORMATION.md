@@ -73,6 +73,26 @@ rest):
 -   \<ctrltype>
 -   \<buttons>
 -   \<joyways>
+-   \<mamemachine>
+-   \<mamesoftwarelist>
+-   \<mamesoftware>
+
+The three MAME fields form an optional structured identity for software-list
+items. Supply all three together. For example:
+
+```xml
+<game name="my-frontend-item">
+    <description>Tecmo Super Baseball (USA)</description>
+    <mamemachine>genesis</mamemachine>
+    <mamesoftwarelist>megadriv</mamesoftwarelist>
+    <mamesoftware>tecmobb</mamesoftware>
+</game>
+```
+
+RetroFE uses this identity for MAME launcher variables and passes it to the
+OpenHi2txt library for persisted, static, and live score lookup. The `name`
+attribute remains RetroFE's item/artwork identity and need not encode any of
+these values.
 
 ## emuArc (super)dat files
 

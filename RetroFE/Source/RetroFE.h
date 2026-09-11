@@ -229,8 +229,11 @@ private:
     bool                buildInfo_;
     bool                collectionInfo_;
     bool                gameInfo_;
-	std::string        firstPlaylist_;
+    std::string        firstPlaylist_;
     std::string        pendingLocalHiscoreGame_;
+    std::string        pendingLocalHiscoreMachine_;
+    std::string        pendingLocalHiscoreSoftwareList_;
+    std::string        pendingLocalHiscoreSoftware_;
     std::map<std::string, bool> lkupAttractModeSkipPlaylist_;
     std::map<std::string, size_t> lastMenuOffsets_;
     std::map<std::string, std::string>  lastMenuPlaylists_;

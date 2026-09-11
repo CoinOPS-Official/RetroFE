@@ -63,12 +63,15 @@ void Text::draw() {
     FontManager* font = baseViewInfo.font ? baseViewInfo.font : fontInst_;
     if (!font || textData_.empty()) return;
 
-    const int targetFontSize = static_cast<int>(baseViewInfo.FontSize);
+    const float effectiveFontSize = baseViewInfo.FontSize > 0
+        ? baseViewInfo.FontSize
+        : static_cast<float>(font->getMaxFontSize());
+    const int targetFontSize = static_cast<int>(effectiveFontSize);
     const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
     if (!mip || !mip->fillTexture) return;
 
     const float scale = (mip->fontSize > 0)
-        ? (baseViewInfo.FontSize / (float)mip->fontSize)
+        ? (effectiveFontSize / (float)mip->fontSize)
         : 1.f;
 
     const float maxW =
@@ -145,7 +148,9 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
 
     cachedPositions_.reserve(textData_.size());
 
-    const int targetFontSize = static_cast<int>(baseViewInfo.FontSize);
+    const int targetFontSize = baseViewInfo.FontSize > 0
+        ? static_cast<int>(baseViewInfo.FontSize)
+        : font->getMaxFontSize();
     const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
     if (!mip) return;
 

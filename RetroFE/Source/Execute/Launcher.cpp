@@ -16,6 +16,7 @@
 
  // --- Core Required Headers ---
 #include "Launcher.h"
+#include "MameSoftwareResolver.h"
 #include "../Collection/CollectionInfoBuilder.h"
 #include "../Collection/Item.h"
 #include "../Database/Configuration.h"
@@ -38,6 +39,7 @@
 #include <sstream>
 #include <thread>
 #include <algorithm>
+#include <vector>
 
 // --- New Refactored Components ---
 #include "Input/InputMonitor.h"
@@ -55,14 +57,64 @@
 namespace fs = std::filesystem;
 
 namespace {
+constexpr const char* kMameMachineVariable = "%MAME_MACHINE%";
+constexpr const char* kMameSoftwareListVariable = "%MAME_SOFTWARELIST%";
+constexpr const char* kMameSoftwareVariable = "%MAME_SOFTWARE%";
+
+bool usesMameSoftwareVariables(const std::string& value) {
+    return value.find(kMameMachineVariable) != std::string::npos ||
+        value.find(kMameSoftwareListVariable) != std::string::npos ||
+        value.find(kMameSoftwareVariable) != std::string::npos;
+}
+
+std::optional<fs::path> findMameHashDirectory(
+    const std::string& executablePath,
+    const std::string& currentDirectory) {
+    std::vector<fs::path> candidates;
+    if (!currentDirectory.empty()) candidates.emplace_back(fs::path(currentDirectory) / "hash");
+
+    const fs::path executable(executablePath);
+    if (executable.has_parent_path()) candidates.emplace_back(executable.parent_path() / "hash");
+    candidates.emplace_back(fs::path(Configuration::absolutePath) / "emulators" / "mame" / "hash");
+
+    for (const auto& candidate : candidates) {
+        std::error_code error;
+        if (fs::is_directory(candidate, error) && !error) return candidate;
+    }
+    return std::nullopt;
+}
+
+std::optional<fs::path> findMameHiscoreDat(
+    const std::string& executablePath,
+    const std::string& currentDirectory) {
+    std::vector<fs::path> candidates;
+    if (!currentDirectory.empty())
+        candidates.emplace_back(fs::path(currentDirectory) / "plugins" / "hiscore" / "hiscore.dat");
+
+    const fs::path executable(executablePath);
+    if (executable.has_parent_path())
+        candidates.emplace_back(executable.parent_path() / "plugins" / "hiscore" / "hiscore.dat");
+    candidates.emplace_back(fs::path(Configuration::absolutePath) / "emulators" / "mame" /
+        "plugins" / "hiscore" / "hiscore.dat");
+
+    for (const auto& candidate : candidates) {
+        std::error_code error;
+        if (fs::is_regular_file(candidate, error) && !error) return candidate;
+    }
+    return std::nullopt;
+}
+
 class LiveHiScoreSessionGuard {
 public:
     ~LiveHiScoreSessionGuard() {
         stop();
     }
 
-    void start(const std::string& gameName, std::uint16_t port) {
-        active_ = LocalHiScores::getInstance().beginLiveSession(gameName, port);
+    void start(
+        const LocalScoreQuery& query,
+        const std::vector<LocalHiScoreStorageHint>& storageHints,
+        std::uint16_t port) {
+        active_ = LocalHiScores::getInstance().beginLiveSession(query, storageHints, port);
     }
 
     void stop() {
@@ -183,6 +235,28 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
         };
 
     std::string executablePath, selectedItemsDirectory, selectedItemsPath, extensionstr, matchedExtension, args;
+    std::optional<MameSoftwareIdentity> mameSoftwareIdentity;
+    std::vector<LocalHiScoreStorageHint> mameStorageHints;
+
+    bool liveHiscores = false;
+    getPropChainBool("liveHiscores", liveHiscores);
+
+    const bool hasAnyMameMetadata = !collectionItem->mameMachine.empty() ||
+        !collectionItem->mameSoftwareList.empty() || !collectionItem->mameSoftware.empty();
+    const bool hasCompleteMameMetadata = !collectionItem->mameMachine.empty() &&
+        !collectionItem->mameSoftwareList.empty() && !collectionItem->mameSoftware.empty();
+    if (hasAnyMameMetadata && !hasCompleteMameMetadata) {
+        LOG_ERROR("Launcher", "Incomplete MAME identity metadata for " + collectionItem->name +
+            "; mamemachine, mamesoftwarelist, and mamesoftware must be supplied together.");
+        return false;
+    }
+    if (hasCompleteMameMetadata) {
+        mameSoftwareIdentity = MameSoftwareIdentity{
+            collectionItem->mameMachine,
+            collectionItem->mameSoftwareList,
+            collectionItem->mameSoftware
+        };
+    }
 
     if (!getPropChainStr("executable", executablePath)) {
         LOG_ERROR("Launcher", "Launcher executable not found for: " + launcherName);
@@ -233,14 +307,90 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
     getPropChainStr("currentDirectory", currentDirectory); // The helper will overwrite 'currentDirectory' if the property is found
     currentDirectory = replaceVariables(currentDirectory, selectedItemsPath, collectionItem->name, Utils::getFileName(selectedItemsPath), selectedItemsDirectory, collection);
 
+    if (usesMameSoftwareVariables(args)) {
+        MameSoftwareResolution resolution;
+        if (mameSoftwareIdentity) {
+            resolution.identity = *mameSoftwareIdentity;
+        }
+        else {
+            const auto hashDirectory = findMameHashDirectory(executablePath, currentDirectory);
+            if (!hashDirectory) {
+                LOG_ERROR("Launcher", "Unable to locate MAME's hash directory while resolving " + collectionItem->name + ".");
+                return false;
+            }
+            const auto hiscoreDat = findMameHiscoreDat(executablePath, currentDirectory);
+            resolution = MameSoftwareResolver::resolve(
+                *hashDirectory,
+                selectedItemsPath,
+                collectionItem->name,
+                hiscoreDat.value_or(fs::path()),
+                false);
+        }
+        if (!resolution) {
+            LOG_ERROR("Launcher", "Unable to resolve MAME software for " + collectionItem->name + ": " + resolution.error + ".");
+            return false;
+        }
+        if (args.find(kMameSoftwareListVariable) != std::string::npos &&
+            resolution.identity.softwareList.empty()) {
+            LOG_ERROR("Launcher", "MAME's software-list name is unknown for " + collectionItem->name +
+                "; use a literal machine argument with %MAME_SOFTWARE% for this launcher.");
+            return false;
+        }
+        if (args.find(kMameMachineVariable) != std::string::npos &&
+            resolution.identity.machine.empty()) {
+            LOG_ERROR("Launcher", "MAME's machine name is unknown for " + collectionItem->name +
+                "; add mamemachine metadata or use a literal machine argument.");
+            return false;
+        }
+
+        args = Utils::replace(args, kMameMachineVariable, resolution.identity.machine);
+        args = Utils::replace(args, kMameSoftwareListVariable, resolution.identity.softwareList);
+        args = Utils::replace(args, kMameSoftwareVariable, resolution.identity.software);
+        mameSoftwareIdentity = resolution.identity;
+        const std::string owner = !resolution.identity.softwareList.empty()
+            ? resolution.identity.softwareList
+            : resolution.identity.machine;
+        LOG_INFO("Launcher", "Resolved " + collectionItem->name + " to MAME software " +
+            owner + ":" + resolution.identity.software + ".");
+    }
+
+    if (liveHiscores && mameSoftwareIdentity &&
+        LocalHiScores::getInstance().needsMameStorageHints({
+            collectionItem->name,
+            mameSoftwareIdentity->machine,
+            mameSoftwareIdentity->softwareList,
+            mameSoftwareIdentity->software
+        })) {
+        const auto hashDirectory = findMameHashDirectory(executablePath, currentDirectory);
+        if (hashDirectory) {
+            const MameSoftwareResolution description = MameSoftwareResolver::describe(
+                *hashDirectory, *mameSoftwareIdentity);
+            if (description) {
+                mameStorageHints.reserve(description.storageAreas.size());
+                for (const auto& area : description.storageAreas) {
+                    mameStorageHints.push_back({area.name, area.size});
+                    LOG_INFO("Launcher", "MAME software storage area " + area.name + " has " +
+                        std::to_string(area.size) + " bytes (part " + area.part +
+                        ", interface " + area.interfaceName +
+                        (area.slot.empty() ? std::string() : ", slot " + area.slot) + ").");
+                }
+            }
+            else {
+                LOG_WARNING("Launcher", "Unable to read MAME storage metadata for " +
+                    collectionItem->name + ": " + description.error + ".");
+            }
+        }
+        else {
+            LOG_WARNING("Launcher", "Unable to locate MAME's hash directory for live storage metadata.");
+        }
+    }
+
     // Flags
     bool reboot = false;
     getPropChainBool("reboot", reboot);
     bool quitComboEnabled = true;
     getPropChainBool("quitCombo", quitComboEnabled);
 
-    bool liveHiscores = false;
-    getPropChainBool("liveHiscores", liveHiscores);
     std::uint16_t liveHiscoresPort = 32123;
     std::string liveHiscoresPortText;
     if (getPropChainStr("liveHiscoresPort", liveHiscoresPortText)) {
@@ -479,7 +629,14 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
 
     LiveHiScoreSessionGuard liveHiScoreSession;
     if (liveHiscores) {
-        liveHiScoreSession.start(collectionItem->name, liveHiscoresPort);
+        const LocalScoreQuery liveQuery{
+            collectionItem->name,
+            mameSoftwareIdentity ? mameSoftwareIdentity->machine : std::string(),
+            mameSoftwareIdentity ? mameSoftwareIdentity->softwareList : std::string(),
+            mameSoftwareIdentity ? mameSoftwareIdentity->software : std::string()
+        };
+        liveHiScoreSession.start(
+            liveQuery, mameStorageHints, liveHiscoresPort);
     }
 
     // --- Wait/monitor logic ---

@@ -246,13 +246,13 @@ set(RETROFE_HEADERS
     "${RETROFE_DIR}/Source/Database/HighScoreChange.h"
     "${RETROFE_DIR}/Source/Database/HighScoreView.h"
     "${RETROFE_DIR}/Source/Database/LocalHiScores.h"
-    "${RETROFE_DIR}/Source/Database/MameLiveClient.h"
     "${RETROFE_DIR}/Source/Execute/AttractMode.h"
     "${RETROFE_DIR}/Source/Execute/Input/InputMonitor.h"
     "${RETROFE_DIR}/Source/Execute/Input/SDLJoyStickScopeGuard.h"
     "${RETROFE_DIR}/Source/Execute/Input/IKeyboardBackend.h"
     "${RETROFE_DIR}/Source/Execute/Input/KeyboardBackendFactory.h"
     "${RETROFE_DIR}/Source/Execute/Launcher.h"
+    "${RETROFE_DIR}/Source/Execute/MameSoftwareResolver.h"
     "${RETROFE_DIR}/Source/Execute/PatchExecutor.h"
     "${RETROFE_DIR}/Source/Execute/Platform/IProcessManager.h"
     "${RETROFE_DIR}/Source/Execute/Platform/Windows/WindowsProcessManager.h"
@@ -331,7 +331,6 @@ set(RETROFE_SOURCES
     "${RETROFE_DIR}/Source/Database/GlobalHiScores.cpp"
     "${RETROFE_DIR}/Source/Database/HighScoreChange.cpp"
     "${RETROFE_DIR}/Source/Database/LocalHiScores.cpp"
-    "${RETROFE_DIR}/Source/Database/MameLiveClient.cpp"
 	"${RETROFE_DIR}/Source/Database/MetadataDatabase.cpp"
     "${RETROFE_DIR}/Source/Execute/AttractMode.cpp"
     "${RETROFE_DIR}/Source/Execute/Input/InputMonitor.cpp"
@@ -339,6 +338,7 @@ set(RETROFE_SOURCES
     "${RETROFE_DIR}/Source/Execute/Input/Platform/KeyboardBackendWindows.cpp"
     "${RETROFE_DIR}/Source/Execute/Input/Platform/KeyboardBackendMac.cpp"
     "${RETROFE_DIR}/Source/Execute/Launcher.cpp"
+    "${RETROFE_DIR}/Source/Execute/MameSoftwareResolver.cpp"
     "${RETROFE_DIR}/Source/Execute/PatchExecutor.cpp"
     "${RETROFE_DIR}/Source/Execute/Platform/Windows/WindowsProcessManager.cpp"
     "${RETROFE_DIR}/Source/Execute/Platform/Unix/UnixProcessManager.cpp"
@@ -409,6 +409,12 @@ if(RETROFE_BUILD_TESTING)
         "${RETROFE_DIR}/Source/Tests/HighScoreChangeTests.cpp"
     )
     add_test(NAME retrofe_high_score_change_tests COMMAND retrofe_high_score_change_tests)
+
+    add_executable(retrofe_mame_software_resolver_tests
+        "${RETROFE_DIR}/Source/Execute/MameSoftwareResolver.cpp"
+        "${RETROFE_DIR}/Source/Tests/MameSoftwareResolverTests.cpp"
+    )
+    add_test(NAME retrofe_mame_software_resolver_tests COMMAND retrofe_mame_software_resolver_tests)
 endif()
 
 if(APPLE)

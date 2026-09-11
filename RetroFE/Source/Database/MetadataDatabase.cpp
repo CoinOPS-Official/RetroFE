@@ -266,7 +266,7 @@ namespace {
     static const char* MERGEABLE_TAGS[] = {
         "description","year","players","ctrltype","manufacturer","developer",
         "genre","buttons","joyways","rating","iscoredid","iscoredtype",
-        "score","cloneof"
+        "score","cloneof","mamemachine","mamesoftwarelist","mamesoftware"
     };
 
     struct MergeOptions {
@@ -461,7 +461,7 @@ namespace {
         }
 
         // --- serialize to outPath ---
-        LOG_INFO("Metadata", "merge: writing \"" + outPath.string() + "\" …");
+        LOG_INFO("Metadata", "merge: writing \"" + outPath.string() + "\" ...");
         std::ofstream ofs(outPath, std::ios::binary | std::ios::trunc);
         if (!ofs) {
             LOG_ERROR("Metadata", "merge: cannot open for write: " + outPath.string());
@@ -531,6 +531,7 @@ bool MetadataDatabase::resetDatabase() {
 }
 
 bool MetadataDatabase::initialize() {
+    bool metadataSchemaChanged = false;
     // Always ensure schema exists (idempotent)
     {
         sqlite3* handle = db_.handle;
@@ -553,6 +554,9 @@ bool MetadataDatabase::initialize() {
         sql.append("rating TEXT NOT NULL DEFAULT '',");
         sql.append("iscoredId TEXT NOT NULL DEFAULT '',");
         sql.append("iscoredType TEXT NOT NULL DEFAULT '',");
+        sql.append("mameMachine TEXT NOT NULL DEFAULT '',");
+        sql.append("mameSoftwareList TEXT NOT NULL DEFAULT '',");
+        sql.append("mameSoftware TEXT NOT NULL DEFAULT '',");
         sql.append("score TEXT NOT NULL DEFAULT '');");
         sql.append("CREATE UNIQUE INDEX IF NOT EXISTS MetaUniqueId ON Meta(collectionName, name);");
 
@@ -562,6 +566,38 @@ bool MetadataDatabase::initialize() {
             LOG_ERROR("Metadata", ss.str());
             return false;
         }
+
+        // Preserve existing meta.db files while extending their schema.
+        const auto ensureColumn = [&](const char* name) -> bool {
+            sqlite3_stmt* columns = nullptr;
+            if (sqlite3_prepare_v2(handle, "PRAGMA table_info(Meta);", -1, &columns, nullptr) != SQLITE_OK)
+                return false;
+            bool found = false;
+            while (sqlite3_step(columns) == SQLITE_ROW) {
+                const char* column = reinterpret_cast<const char*>(sqlite3_column_text(columns, 1));
+                if (column && std::strcmp(column, name) == 0) {
+                    found = true;
+                    break;
+                }
+            }
+            sqlite3_finalize(columns);
+            if (found) return true;
+
+            const std::string alter = std::string("ALTER TABLE Meta ADD COLUMN ") + name +
+                " TEXT NOT NULL DEFAULT '';";
+            char* alterError = nullptr;
+            if (sqlite3_exec(handle, alter.c_str(), nullptr, nullptr, &alterError) == SQLITE_OK)
+            {
+                metadataSchemaChanged = true;
+                return true;
+            }
+            LOG_ERROR("Metadata", std::string("Unable to add metadata column ") + name +
+                ": " + (alterError ? alterError : "(null)"));
+            sqlite3_free(alterError);
+            return false;
+        };
+        if (!ensureColumn("mameMachine") || !ensureColumn("mameSoftwareList") ||
+            !ensureColumn("mameSoftware")) return false;
     }
 
     // Always check remotes; merge into local XMLs if remote is newer.
@@ -573,7 +609,7 @@ bool MetadataDatabase::initialize() {
         anyRemoteChanged = syncAllHyperlistRemotes_();
     }
     // Import when DB is stale OR any XML changed on disk
-    if (needsRefresh() || anyRemoteChanged) {
+    if (metadataSchemaChanged || needsRefresh() || anyRemoteChanged) {
         importAllHyperlists_();
     }
     return true;
@@ -668,7 +704,8 @@ void MetadataDatabase::injectMetadata(CollectionInfo* collection) {
     if (sqlite3_prepare_v2(handle,
         "SELECT DISTINCT Meta.name, Meta.title, Meta.year, Meta.manufacturer, Meta.developer, "
         "Meta.genre, Meta.players, Meta.ctrltype, Meta.buttons, Meta.joyways, Meta.cloneOf, "
-        "Meta.rating, Meta.score, Meta.iscoredId, Meta.iscoredType "
+        "Meta.rating, Meta.score, Meta.iscoredId, Meta.iscoredType, "
+        "Meta.mameMachine, Meta.mameSoftwareList, Meta.mameSoftware "
         "FROM Meta WHERE collectionName=? ORDER BY title ASC;",
         -1, &stmt, nullptr) != SQLITE_OK) {
         LOG_ERROR("Metadata", "Failed to prepare metadata query for injection.");
@@ -693,6 +730,9 @@ void MetadataDatabase::injectMetadata(CollectionInfo* collection) {
         const char* scoreC = (const char*)sqlite3_column_text(stmt, 12);
         const char* iscoredIdC = (const char*)sqlite3_column_text(stmt, 13);
         const char* iscoredTypeC = (const char*)sqlite3_column_text(stmt, 14);
+        const char* mameMachineC = (const char*)sqlite3_column_text(stmt, 15);
+        const char* mameSoftwareListC = (const char*)sqlite3_column_text(stmt, 16);
+        const char* mameSoftwareC = (const char*)sqlite3_column_text(stmt, 17);
 
         if (!nameC) continue;
         auto it = itemMap.find(nameC);
@@ -714,6 +754,9 @@ void MetadataDatabase::injectMetadata(CollectionInfo* collection) {
         item->score = scoreC ? scoreC : "";
         item->iscoredId = iscoredIdC ? iscoredIdC : "";
         item->iscoredType = iscoredTypeC ? iscoredTypeC : "";
+        item->mameMachine = mameMachineC ? mameMachineC : "";
+        item->mameSoftwareList = mameSoftwareListC ? mameSoftwareListC : "";
+        item->mameSoftware = mameSoftwareC ? mameSoftwareC : "";
     }
 
     sqlite3_finalize(stmt);
@@ -788,8 +831,9 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
         const char* sql =
             "INSERT OR REPLACE INTO Meta "
             "(name, title, year, manufacturer, developer, genre, players, ctrltype, buttons, joyways, "
-            " cloneOf, collectionName, rating, score, iscoredId, iscoredType) "
-            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
+            " cloneOf, collectionName, rating, score, iscoredId, iscoredType, "
+            " mameMachine, mameSoftwareList, mameSoftware) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)";
 
         if (sqlite3_prepare_v2(handle, sql, -1, &stmt, nullptr) != SQLITE_OK) {
             LOG_ERROR("Metadata", "SQL Error preparing insert statement");
@@ -822,6 +866,9 @@ bool MetadataDatabase::importHyperlist(const std::string& hyperlistFile, const s
             sqlite3_bind_text(stmt, 14, getV(game, "score"), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 15, getV(game, "iscoredid"), -1, SQLITE_TRANSIENT);
             sqlite3_bind_text(stmt, 16, getV(game, "iscoredtype"), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 17, getV(game, "mamemachine"), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 18, getV(game, "mamesoftwarelist"), -1, SQLITE_TRANSIENT);
+            sqlite3_bind_text(stmt, 19, getV(game, "mamesoftware"), -1, SQLITE_TRANSIENT);
 
             if (sqlite3_step(stmt) != SQLITE_DONE) {
                 LOG_ERROR("Metadata", "SQL Error executing insert");

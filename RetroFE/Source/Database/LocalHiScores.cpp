@@ -1,14 +1,13 @@
 #include "LocalHiScores.h"
-#include "MameLiveClient.h"
 
 #include "Configuration.h"
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
 
 #include <algorithm>
+#include <cctype>
 #include <filesystem>
 #include <mutex>
-#include <sstream>
 #include <thread>
 #include <utility>
 
@@ -61,6 +60,7 @@ bool viewsEqual(const HighScoreView& lhs, const HighScoreView& rhs) {
     }
     return true;
 }
+
 }
 
 LocalHiScores& LocalHiScores::getInstance() {
@@ -79,17 +79,19 @@ void LocalHiScores::deinitialize() {
         scoresCache_.clear();
     }
     {
+        std::unique_lock<std::shared_mutex> lock(definitionKeyCacheMutex_);
+        definitionKeyCache_.clear();
+    }
+    {
         std::lock_guard<std::mutex> lock(contextMutex_);
         openhi2txtContext_.reset();
     }
-    hiFilesDirectory_.clear();
     scoresDirectory_.clear();
     LOG_INFO("LocalHiScores", "Local high scores deinitialized and cache cleared.");
 }
 
 void LocalHiScores::loadHighScores(const std::string& zipPath, const std::string& overridePath) {
     endLiveSession();
-    hiFilesDirectory_ = Utils::combinePath(Configuration::absolutePath, "emulators", "mame", "hiscore");
     scoresDirectory_ = overridePath;
 
     openhi2txt::ContextOptions options;
@@ -112,6 +114,7 @@ void LocalHiScores::loadHighScores(const std::string& zipPath, const std::string
             LOG_ERROR("LocalHiScores", std::string("Failed to initialize OpenHi2txt: ") + e.what());
             return;
         }
+        openhi2txtContext_->prepareMameDefinitionIndex();
         persistedScores = openhi2txtContext_->readAllPersistedGames();
     }
 
@@ -130,166 +133,182 @@ void LocalHiScores::loadHighScores(const std::string& zipPath, const std::string
             ++loaded;
         }
     }
+    {
+        std::unique_lock<std::shared_mutex> lock(definitionKeyCacheMutex_);
+        definitionKeyCache_.clear();
+    }
     LOG_INFO("LocalHiScores", "OpenHi2txt local cache bulk-loaded " + std::to_string(loaded) + " games.");
 }
 
 HighScoreSnapshot LocalHiScores::getTable(const LocalScoreQuery& query) const {
+    const std::string key = definitionKey(query);
     std::shared_lock<std::shared_mutex> lock(scoresCacheMutex_);
-    auto it = scoresCache_.find(query.gameName);
+    auto it = scoresCache_.find(key);
     if (it == scoresCache_.end()) return {};
     return it->second;
 }
 
-uint64_t LocalHiScores::getRevision(const std::string& gameName) const {
+uint64_t LocalHiScores::getRevision(const LocalScoreQuery& query) const {
+    const std::string key = definitionKey(query);
     std::shared_lock<std::shared_mutex> lock(scoresCacheMutex_);
-    auto it = scoresCache_.find(gameName);
+    auto it = scoresCache_.find(key);
     return it == scoresCache_.end() ? 0 : it->second.revision;
 }
 
-bool LocalHiScores::hasHiFile(const std::string& gameName) const {
-    std::lock_guard<std::mutex> lock(contextMutex_);
-    if (openhi2txtContext_) return openhi2txtContext_->hasInputForGame(gameName);
-    return std::filesystem::exists(Utils::combinePath(hiFilesDirectory_, gameName + ".hi"));
+std::string LocalHiScores::definitionKey(const LocalScoreQuery& query) const {
+    if (!query.hasMameIdentity()) return query.gameName;
+    std::string identityKey = query.mameMachine + "\x1f" +
+        query.mameSoftwareList + "\x1f" + query.mameSoftware;
+    std::transform(identityKey.begin(), identityKey.end(), identityKey.begin(),
+        [](unsigned char character) { return static_cast<char>(std::tolower(character)); });
+    {
+        std::shared_lock<std::shared_mutex> lock(definitionKeyCacheMutex_);
+        const auto cached = definitionKeyCache_.find(identityKey);
+        if (cached != definitionKeyCache_.end()) return cached->second;
+    }
+
+    std::string resolvedKey = query.gameName;
+    {
+        std::lock_guard<std::mutex> lock(contextMutex_);
+        if (openhi2txtContext_) {
+            const auto resolved = openhi2txtContext_->resolveDefinition({
+                query.mameMachine, query.mameSoftwareList, query.mameSoftware
+            });
+            if (resolved.ok) resolvedKey = resolved.definitionId;
+        }
+    }
+    {
+        std::unique_lock<std::shared_mutex> cacheLock(definitionKeyCacheMutex_);
+        definitionKeyCache_[std::move(identityKey)] = resolvedKey;
+    }
+    return resolvedKey;
 }
 
-bool LocalHiScores::runHi2Txt(const std::string& gameName) {
+bool LocalHiScores::needsMameStorageHints(const LocalScoreQuery& query) const {
+    if (!query.hasMameIdentity()) return false;
+    std::lock_guard<std::mutex> lock(contextMutex_);
+    if (!openhi2txtContext_) return false;
+    const auto plan = openhi2txtContext_->planGameInputs({
+        query.mameMachine, query.mameSoftwareList, query.mameSoftware
+    });
+    if (!plan.ok) return false;
+    for (const auto& input : plan.inputs) {
+        std::string kind = input.fileKind;
+        std::transform(kind.begin(), kind.end(), kind.begin(), [](unsigned char character) {
+            return static_cast<char>(std::tolower(character));
+        });
+        const bool isHi = kind.empty() || kind == "hi" || kind == ".hi";
+        const bool isDisk = kind == "dif" || kind == "chd";
+        if (!isHi && !isDisk && kind != "game" &&
+            input.acceptedBufferSizes.size() == 1 && !input.watchRanges.empty()) return true;
+    }
+    return false;
+}
+
+bool LocalHiScores::runHi2Txt(const LocalScoreQuery& query) {
     openhi2txt::HiScoreResult result;
+    std::string key = query.gameName;
     {
         std::lock_guard<std::mutex> lock(contextMutex_);
         if (!openhi2txtContext_) {
-            LOG_ERROR("LocalHiScores", "OpenHi2txt context is not initialized; cannot refresh " + gameName);
+            LOG_ERROR("LocalHiScores", "OpenHi2txt context is not initialized; cannot refresh " + query.gameName);
             return false;
         }
-        if (!openhi2txtContext_->hasInputForGame(gameName)) {
-            LOG_INFO("LocalHiScores", "No hi/nvram input exists for " + gameName + ", skipping OpenHi2txt refresh.");
-            return false;
+        if (query.hasMameIdentity()) {
+            const openhi2txt::MameRuntimeIdentity identity{
+                query.mameMachine, query.mameSoftwareList, query.mameSoftware
+            };
+            result = openhi2txtContext_->refreshGame(identity);
         }
-        result = openhi2txtContext_->refreshGame(gameName);
+        else {
+            result = openhi2txtContext_->refreshGame(query.gameName);
+        }
     }
     if (!result.ok) {
-        LOG_WARNING("LocalHiScores", "OpenHi2txt refresh failed for " + gameName + ": " + result.error);
+        LOG_WARNING("LocalHiScores", "OpenHi2txt refresh failed for " + query.gameName + ": " + result.error);
         return false;
     }
+    if (!result.game.empty()) key = result.game;
 
     HighScoreView data = toHighScoreView(result);
     if (data.tables.empty()) {
-        LOG_WARNING("LocalHiScores", "OpenHi2txt produced no display tables for " + gameName);
+        LOG_WARNING("LocalHiScores", "OpenHi2txt produced no display tables for " + query.gameName);
         return false;
     }
     {
         std::unique_lock<std::shared_mutex> lock(scoresCacheMutex_);
-        auto& snapshot = scoresCache_[gameName];
+        auto& snapshot = scoresCache_[key];
         if (!viewsEqual(snapshot.view, data)) {
             snapshot.view = std::move(data);
             snapshot.origin = HighScoreUpdateOrigin::FileRefresh;
             ++snapshot.revision;
         }
     }
-    LOG_INFO("LocalHiScores", "Scores updated for " + gameName + " using OpenHi2txt.");
+    LOG_INFO("LocalHiScores", "Scores updated for " + query.gameName + " using OpenHi2txt.");
     return true;
 }
 
-void LocalHiScores::runHi2TxtAsync(const std::string& gameName) {
-    if (!hasHiFile(gameName)) {
-        LOG_INFO("LocalHiScores", "No hi/nvram input exists for " + gameName + ", skipping async OpenHi2txt refresh.");
-        return;
-    }
-    std::thread([this, gameName]() {
+void LocalHiScores::runHi2TxtAsync(LocalScoreQuery query) {
+    std::thread([this, query = std::move(query)]() {
         try {
-            if (runHi2Txt(gameName)) {
-                LOG_INFO("LocalHiScores", "OpenHi2txt refresh executed successfully in the background for game " + gameName);
+            if (runHi2Txt(query)) {
+                LOG_INFO("LocalHiScores", "OpenHi2txt refresh executed successfully in the background for game " + query.gameName);
             } else {
-                LOG_ERROR("LocalHiScores", "OpenHi2txt refresh failed in the background for game " + gameName);
+                LOG_ERROR("LocalHiScores", "OpenHi2txt refresh failed in the background for game " + query.gameName);
             }
         }
         catch (const std::exception& e) {
-            LOG_ERROR("LocalHiScores", "Exception in async OpenHi2txt refresh for game " + gameName + ": " + e.what());
+            LOG_ERROR("LocalHiScores", "Exception in async OpenHi2txt refresh for game " + query.gameName + ": " + e.what());
         }
         catch (...) {
-            LOG_ERROR("LocalHiScores", "Unknown exception in async OpenHi2txt refresh for game " + gameName);
+            LOG_ERROR("LocalHiScores", "Unknown exception in async OpenHi2txt refresh for game " + query.gameName);
         }
     }).detach();
 }
 
-bool LocalHiScores::beginLiveSession(const std::string& gameName, std::uint16_t port) {
+bool LocalHiScores::beginLiveSession(
+    const LocalScoreQuery& query,
+    const std::vector<LocalHiScoreStorageHint>& storageHints,
+    std::uint16_t port) {
     endLiveSession();
-
-    std::string expectedSource;
-    std::vector<MameLiveWatchRequest> watchRequests;
-
     {
         std::lock_guard<std::mutex> lock(contextMutex_);
         if (!openhi2txtContext_) {
-            LOG_WARNING("LocalHiScores", "OpenHi2txt context is not initialized; live scores are unavailable for " + gameName + ".");
+            LOG_WARNING("LocalHiScores", "OpenHi2txt context is not initialized; live scores are unavailable for " + query.gameName + ".");
             return false;
         }
+    }
 
-        const openhi2txt::HiScoreInputPlanResult plan = openhi2txtContext_->planGameInputs(gameName);
-        if (!plan.ok) {
-            LOG_INFO("LocalHiScores", "No OpenHi2txt definition is available for live scores for " + gameName + ".");
-            return false;
-        }
+    openhi2txt::MameLiveOptions options;
+    options.expectedIdentity = {
+        query.hasMameIdentity() ? query.mameMachine : query.gameName,
+        query.mameSoftwareList,
+        query.mameSoftware
+    };
+    options.port = port;
+    options.storageHints.reserve(storageHints.size());
+    for (const auto& hint : storageHints)
+        options.storageHints.push_back({hint.name, hint.size});
 
-        const bool hasHiInput = std::any_of(plan.inputs.begin(), plan.inputs.end(), [](const auto& input) {
-            return input.fileKind.empty() || input.fileKind == "hi" || input.fileKind == ".hi";
+    liveClient_ = std::make_unique<openhi2txt::MameLiveClient>(
+        *openhi2txtContext_, std::move(options),
+        [this, frontendName = query.gameName](openhi2txt::MameLiveUpdate update) {
+            applyLiveUpdate(frontendName, std::move(update));
+        },
+        [](openhi2txt::MameLiveDiagnosticLevel level, const std::string& message) {
+            switch (level) {
+            case openhi2txt::MameLiveDiagnosticLevel::Error:
+                LOG_ERROR("LocalHiScores", message);
+                break;
+            case openhi2txt::MameLiveDiagnosticLevel::Warning:
+                LOG_WARNING("LocalHiScores", message);
+                break;
+            case openhi2txt::MameLiveDiagnosticLevel::Info:
+            default:
+                LOG_INFO("LocalHiScores", message);
+                break;
+            }
         });
-        if (hasHiInput) {
-			expectedSource = ".hi";
-		}
-		else {
-			for (const auto& input : plan.inputs) {
-				const std::string& kind = input.fileKind;
-				const bool logicalDisk = kind == "dif" || kind == "chd";
-				const bool ordinaryNvram = !logicalDisk && input.acceptedBufferSizes.size() == 1;
-				if (kind.empty() || kind == "hi" || kind == ".hi" || kind == "game" ||
-					(!ordinaryNvram && (!logicalDisk || input.sourceWindowLength == 0)) ||
-					input.watchRanges.empty()) {
-					continue;
-				}
-				MameLiveWatchRequest request;
-				request.source = kind;
-				request.storage = logicalDisk ? "harddisk" : "nvram";
-				request.sourceOffset = logicalDisk ? input.sourceWindowOffset : 0;
-				request.sourceSize = logicalDisk
-					? input.sourceWindowLength
-					: input.acceptedBufferSizes.front();
-				request.ranges.reserve(input.watchRanges.size());
-				for (const auto& range : input.watchRanges)
-					request.ranges.push_back({range.offset, range.length});
-				watchRequests.push_back(std::move(request));
-			}
-		}
-        if (expectedSource.empty() && watchRequests.empty()) {
-            LOG_INFO("LocalHiScores", "The current live MAME client does not yet support the input type required by " + gameName + ".");
-            return false;
-        }
-    }
-
-	if (!watchRequests.empty()) {
-		std::ostringstream detail;
-		for (std::size_t index = 0; index < watchRequests.size(); ++index) {
-			if (index) detail << ", ";
-			detail << watchRequests[index].source << '/' << watchRequests[index].storage << ':'
-			       << watchRequests[index].sourceOffset << '+' << watchRequests[index].sourceSize
-			       << " (" << watchRequests[index].ranges.size() << " range(s))";
-		}
-		LOG_INFO("LocalHiScores", "Prepared live source candidates for " + gameName + ": " + detail.str() + ".");
-	}
-	else {
-		LOG_INFO("LocalHiScores", "Prepared live " + expectedSource + " session for " + gameName + ".");
-	}
-
-    liveClient_ = std::make_unique<MameLiveClient>(
-        gameName,
-        expectedSource,
-        port,
-        std::move(watchRequests),
-        [this](MameLiveSnapshot snapshot) { applyLiveSnapshot(std::move(snapshot)); });
-    {
-        std::lock_guard<std::mutex> lock(liveStateMutex_);
-        liveBaselineGame_ = gameName;
-        awaitingLiveBaseline_ = true;
-    }
     liveClient_->start();
     return true;
 }
@@ -299,63 +318,25 @@ void LocalHiScores::endLiveSession() {
         liveClient_->stop();
         liveClient_.reset();
     }
-    std::lock_guard<std::mutex> lock(liveStateMutex_);
-    liveBaselineGame_.clear();
-    awaitingLiveBaseline_ = false;
 }
 
-void LocalHiScores::applyLiveSnapshot(MameLiveSnapshot snapshot) {
-	LOG_INFO("LocalHiScores", "Received live snapshot for " + snapshot.game +
-		" from " + snapshot.source + " at sequence " + std::to_string(snapshot.sequence) + ".");
-    openhi2txt::HiScoreResult result;
-    {
-        std::lock_guard<std::mutex> lock(contextMutex_);
-        if (!openhi2txtContext_) return;
-        const std::string sourceName = "mame://127.0.0.1/live/" +
-            std::to_string(snapshot.session) + "/" + std::to_string(snapshot.sequence);
-        if (!snapshot.ranges.empty()) {
-            openhi2txt::HiScoreSparseInput input;
-            input.fileKind = snapshot.source;
-            input.sourceOffset = snapshot.sourceOffset;
-            input.sourceSize = snapshot.sourceSize;
-            input.sourceName = sourceName;
-            input.ranges.reserve(snapshot.ranges.size());
-            for (auto& range : snapshot.ranges)
-                input.ranges.push_back({range.offset, std::move(range.bytes)});
-            result = openhi2txtContext_->decodeSparseGame(snapshot.game, {std::move(input)});
-        }
-        else {
-            std::vector<openhi2txt::HiScoreInput> inputs;
-            inputs.push_back({snapshot.source, std::move(snapshot.bytes), sourceName});
-            result = openhi2txtContext_->decodeGame(snapshot.game, inputs);
-        }
-    }
-
-    if (!result.ok) {
-        LOG_WARNING("LocalHiScores", "OpenHi2txt rejected a live snapshot for " + snapshot.game + ": " + result.error);
-        return;
-    }
-
-    HighScoreView data = toHighScoreView(result);
+void LocalHiScores::applyLiveUpdate(const std::string& frontendName, openhi2txt::MameLiveUpdate update) {
+	LOG_INFO("LocalHiScores", "Received decoded live update for " + update.definitionKey +
+		" from " + update.source + " at sequence " + std::to_string(update.sequence) + ".");
+    HighScoreView data = toHighScoreView(update.result);
     if (data.tables.empty()) {
-        LOG_WARNING("LocalHiScores", "OpenHi2txt produced no display tables from a live snapshot for " + snapshot.game + ".");
+        LOG_WARNING("LocalHiScores", "OpenHi2txt produced no display tables from a live update for " + frontendName + ".");
         return;
     }
 
-    HighScoreUpdateOrigin origin = HighScoreUpdateOrigin::LiveChange;
-    {
-        std::lock_guard<std::mutex> lock(liveStateMutex_);
-        if (awaitingLiveBaseline_ && liveBaselineGame_ == snapshot.game) {
-            origin = HighScoreUpdateOrigin::LiveBaseline;
-            awaitingLiveBaseline_ = false;
-        }
-    }
+    const HighScoreUpdateOrigin origin = update.reason == openhi2txt::MameLiveUpdateReason::Baseline
+        ? HighScoreUpdateOrigin::LiveBaseline : HighScoreUpdateOrigin::LiveChange;
 
     bool changed = false;
     std::uint64_t revision = 0;
     {
         std::unique_lock<std::shared_mutex> lock(scoresCacheMutex_);
-        auto& cached = scoresCache_[snapshot.game];
+        auto& cached = scoresCache_[update.definitionKey];
         if (!viewsEqual(cached.view, data)) {
             cached.view = std::move(data);
             cached.origin = origin;
@@ -364,9 +345,9 @@ void LocalHiScores::applyLiveSnapshot(MameLiveSnapshot snapshot) {
         }
     }
     if (changed) {
-        LOG_INFO("LocalHiScores", "Live scores updated for " + snapshot.game + " at revision " + std::to_string(revision) + ".");
+        LOG_INFO("LocalHiScores", "Live scores updated for " + frontendName + " at revision " + std::to_string(revision) + ".");
     }
 	else {
-		LOG_INFO("LocalHiScores", "Live snapshot decoded for " + snapshot.game + "; displayed tables were unchanged.");
+		LOG_INFO("LocalHiScores", "Live snapshot decoded for " + frontendName + "; displayed tables were unchanged.");
 	}
 }

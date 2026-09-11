@@ -25,6 +25,52 @@ For a MAME launcher using the openhi2txt live-score plugin:
     liveHiscores = true
     liveHiscoresPort = 32123
 
+For MAME software-list items, put the runtime identity in the collection's
+existing `meta.xml` entry:
+
+    <game name="my-frontend-item">
+        <mamemachine>genesis</mamemachine>
+        <mamesoftwarelist>megadriv</mamesoftwarelist>
+        <mamesoftware>tecmobb</mamesoftware>
+    </game>
+
+The frontend item name remains free to follow the collection's artwork and
+collision-avoidance conventions. It is not treated as an OpenHi2txt definition
+name. A launcher can use the metadata directly:
+
+    executable = emulators/mame/mame64.exe
+    arguments = "%MAME_MACHINE%" "%MAME_SOFTWARE%"
+    liveHiscores = true
+
+This example launches as `mame64.exe genesis tecmobb`. The software-list name
+remains `megadriv`; it identifies the hash catalog, not necessarily the machine
+argument accepted by MAME.
+
+If these metadata tags are absent, the earlier ROM-hash resolver remains as a
+compatibility fallback for `%MAME_SOFTWARELIST%` and `%MAME_SOFTWARE%`. It
+matches a loose ROM or ZIP contents against MAME's hash XMLs. It cannot always
+infer the machine driver because one software list may be usable by several
+machines; `%MAME_MACHINE%` therefore requires explicit metadata.
+
+A literal machine argument also remains valid:
+
+    arguments = genesis "%MAME_SOFTWARE%"
+
+MAME reports the authoritative machine (`genesis`), software list (`megadriv`),
+and software (`tecmobb`) to OpenHi2txt after launch. OpenHi2txt—not RetroFE—
+resolves that structured identity to a decoder definition. Normal content
+resolution does not split the frontend filename.
+For compatibility with existing collections, a zero-byte placeholder item may
+fall back to an exact `<machine>,<software>:` entry in `hiscore.dat`; non-empty
+ROM files are always identified by their contents.
+
+When the matched software entry declares writable data areas such as
+`<dataarea name="sram" size="16384">`, RetroFE retains the area name, size,
+part, interface, and slot feature. For live NVRAM inputs it correlates those
+areas with openhi2txt's planned source size and sends the matching storage
+names as hints to MAME. MAME still verifies the actual live NVRAM device and
+requires its serialized size to match before observing any requested ranges.
+
 Live scores are opt-in per launcher. RetroFE connects only to localhost,
 reconnects if MAME starts first or temporarily disconnects, and stops the
 connection when the launched game exits.
@@ -57,6 +103,9 @@ Launcher variables
 | %RETROFE_PATH%         | Folder location of Frontend | D:/Frontends/RetroFE                  |
 | %RETROFE_EXEC_PATH%    | Location of RetroFE         | D:/Frontends/RetroFE/RetroFE.exe      |
 | %COLLECTION_PATH%      | Full path to collection     | D:/Frontends/collections/Genesis      |
+| %MAME_MACHINE%         | MAME machine driver from item metadata | genesis |
+| %MAME_SOFTWARELIST%    | MAME software-list short name from metadata or hash fallback | megadriv |
+| %MAME_SOFTWARE%        | MAME software short name from metadata or hash fallback | tecmobb |
 | %CMD% (Windows only)   | Path to system cmd.exe      | C:/Windows/system32/cmd.exe           |
 
 More elaborate example:
