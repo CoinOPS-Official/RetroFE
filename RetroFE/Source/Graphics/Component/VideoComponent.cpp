@@ -313,24 +313,6 @@ void VideoComponent::draw() {
 
     SDL_Texture* texture = videoInst_->getTexture();
 
-    // TEMP DEBUG: only log pirates to reduce spam and identify the real visible layer.
-    if (videoFile_.find("pirates.mp4") != std::string::npos) {
-        LOG_DEBUG("VideoComponent",
-            "draw file=" + videoFile_ +
-            " layer=" + std::to_string(baseViewInfo.Layer) +
-            " monitor=" + std::to_string(baseViewInfo.Monitor) +
-            " x=" + std::to_string(baseViewInfo.XRelativeToOrigin()) +
-            " y=" + std::to_string(baseViewInfo.YRelativeToOrigin()) +
-            " w=" + std::to_string(baseViewInfo.ScaledWidth()) +
-            " h=" + std::to_string(baseViewInfo.ScaledHeight()) +
-            " alpha=" + std::to_string(baseViewInfo.Alpha) +
-            " ready=" + std::to_string(instanceReady_) +
-            " pipelineReady=" + std::to_string(currentSnapshot_.pipelineReady) +
-            " actualState=" + std::to_string(static_cast<int>(currentSnapshot_.actualState)) +
-            " launched=" + std::to_string(currentPage_->getIsLaunched()) +
-            " texture=" + std::string(texture ? "yes" : "no"));
-    }
-
     if (texture) {
         SDL_FRect rect = {
             baseViewInfo.XRelativeToOrigin(),
