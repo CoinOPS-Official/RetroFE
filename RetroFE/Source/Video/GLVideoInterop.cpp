@@ -132,9 +132,9 @@ GLVideoInterop::GLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_unique<
         gst_object_unref(factory);
     }
     p.ready = true;
-    LOG_INFO("GStreamerVideo", gl->FenceSync && gl->ClientWaitSync && gl->DeleteSync
+    LOG_INFO("GStreamerVideo", (gl->FenceSync && gl->ClientWaitSync && gl->DeleteSync
         ? "GL interop synchronization: GPU fences"
-        : "GL interop synchronization: blocking completion (GL sync objects unavailable)");
+        : "GL interop synchronization: blocking completion (GL sync objects unavailable)"));
 }
 GLVideoInterop::~GLVideoInterop() = default;
 bool GLVideoInterop::available() const { return impl_->ready; }

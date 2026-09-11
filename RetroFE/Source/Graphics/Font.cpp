@@ -19,6 +19,7 @@
 #include "../Utility/Log.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <utility>
 #include <deque>

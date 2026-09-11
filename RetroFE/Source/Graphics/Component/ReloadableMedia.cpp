@@ -26,6 +26,7 @@
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
 #include <fstream>
+#include <cmath>
 #include <vector>
 #include <iostream>
 
@@ -354,7 +355,7 @@ Component* ReloadableMedia::reloadTexture() {
                 basename = std::to_string(numberOfImages_);
             }
             else {
-                basename = std::to_string(static_cast<int>(ceil(static_cast<float>(position) / static_cast<float>(page.getCollectionSize()) * static_cast<float>(numberOfImages_))));
+                basename = std::to_string(static_cast<int>(std::ceil(static_cast<float>(position) / static_cast<float>(page.getCollectionSize()) * static_cast<float>(numberOfImages_))));
             }
             defined = true;
         }
