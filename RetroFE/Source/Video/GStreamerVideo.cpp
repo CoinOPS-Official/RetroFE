@@ -28,7 +28,7 @@
 #include "../Utility/Log.h"
 #include "../Utility/ThreadPool.h"
 #include "../Utility/Utils.h"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -119,40 +119,16 @@ static bool IsIntelGPU() {
 // Utility: SDL_AudioFormat -> GStreamer audio/x-raw format string
 static const char* sdl_to_gst_fmt(Uint16 fmt) {
     switch (fmt) {
-        case AUDIO_U8:  return "U8";
-        case AUDIO_S8:  return "S8";
-#if defined(AUDIO_U16LSB)
-        case AUDIO_U16LSB: return "U16LE";
-#endif
-#if defined(AUDIO_U16MSB)
-        case AUDIO_U16MSB: return "U16BE";
-#endif
-#if defined(AUDIO_S16LSB)
-        case AUDIO_S16LSB: return "S16LE";
-#endif
-#if defined(AUDIO_S16MSB)
-        case AUDIO_S16MSB: return "S16BE";
-#endif
-#if defined(AUDIO_S24LSB)
-        case AUDIO_S24LSB: return "S24LE";
-#endif
-#if defined(AUDIO_S24MSB)
-        case AUDIO_S24MSB: return "S24BE";
-#endif
-#if defined(AUDIO_S32LSB)
-        case AUDIO_S32LSB: return "S32LE";
-#endif
-#if defined(AUDIO_S32MSB)
-        case AUDIO_S32MSB: return "S32BE";
-#endif
-#if defined(AUDIO_F32LSB)
-        case AUDIO_F32LSB: return "F32LE";
-#endif
-#if defined(AUDIO_F32MSB)
-        case AUDIO_F32MSB: return "F32BE";
-#endif
+        case SDL_AUDIO_U8: return "U8";
+        case SDL_AUDIO_S8: return "S8";
+        case SDL_AUDIO_S16LE: return "S16LE";
+        case SDL_AUDIO_S16BE: return "S16BE";
+        case SDL_AUDIO_S32LE: return "S32LE";
+        case SDL_AUDIO_S32BE: return "S32BE";
+        case SDL_AUDIO_F32LE: return "F32LE";
+        case SDL_AUDIO_F32BE: return "F32BE";
+        default: return nullptr;
     }
-    return nullptr;
 }
 
 void GStreamerVideo::releaseDecodeSlot(uint64_t tokenToRelease) {
@@ -276,7 +252,7 @@ gboolean GStreamerVideo::busCallback(GstBus*, GstMessage* msg, gpointer user_dat
         break;
 
         case GST_MESSAGE_ERROR: {
-            video->lifecycle_.store(PipelineLifecycle::Failed, std::memory_order_release);
+            const bool retryGL = video->glPipelineActive_.exchange(false);
             video->playbackState_.store(PlaybackState::None, std::memory_order_release);
 
             // Release whatever token is currently held, because the pipeline just died.
@@ -289,8 +265,17 @@ gboolean GStreamerVideo::busCallback(GstBus*, GstMessage* msg, gpointer user_dat
             GError* err = nullptr;
             gchar* dbg = nullptr;
             gst_message_parse_error(msg, &err, &dbg);
-            if (err) g_error_free(err);
+            if (err) {
+                LOG_ERROR("GStreamerVideo", std::string("GStreamer pipeline error: ") + err->message);
+                g_error_free(err);
+            }
             if (dbg) g_free(dbg);
+            video->lifecycle_.store(retryGL ? PipelineLifecycle::Starting : PipelineLifecycle::Failed, std::memory_order_release);
+            if (retryGL) {
+                LOG_WARNING("GStreamerVideo", "GL pipeline failed; retrying this instance with CPU texture upload");
+                // Publish only after the callback is finished accessing the old pipeline.
+                video->pendingCpuFallback_.store(true, std::memory_order_release);
+            }
             break;
         }
 
@@ -312,7 +297,16 @@ void GStreamerVideo::initializePlugins() {
         disablePlugin("nvh265dec");
         if (Configuration::HardwareVideoAccel)
         {
-            if (IsIntelGPU())
+            if (SDL::getRendererBackend(0) == "direct3d11") {
+                for (const char* codec : {"h264", "h265", "vp8", "vp9", "mpeg2", "av1"}) {
+                    enablePlugin(std::string("d3d11") + codec + "dec");
+                    disablePlugin(std::string("d3d12") + codec + "dec");
+                }
+                disablePlugin("qsvh264dec");
+                disablePlugin("qsvh265dec");
+                LOG_INFO("GStreamerVideo", "D3D11 hardware decoding requested; awaiting frame verification");
+            }
+            else if (IsIntelGPU())
             {
                 enablePlugin("qsvh264dec");
                 enablePlugin("qsvh265dec");
@@ -417,6 +411,8 @@ namespace {
 }
 
 void GStreamerVideo::destroyTextures() {
+    if (texture_ == gpuTexture_) texture_ = nullptr;
+    gpuTexture_ = nullptr;
     if (texture_) {
         SDL_DestroyTexture(texture_);
         texture_ = nullptr;
@@ -428,6 +424,8 @@ void GStreamerVideo::destroyTextures() {
 }
 
 bool GStreamerVideo::stop() {
+    glPipelineActive_.store(false);
+    pendingCpuFallback_.store(false);
     const uint64_t deadEpoch = playbackEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
     if (cbCtx_) {
         cbCtx_->epoch.store(deadEpoch, std::memory_order_release);
@@ -474,6 +472,7 @@ bool GStreamerVideo::stop() {
     }
 
     destroyTextures();
+    gpuInterop_.reset();
 
     {
         std::lock_guard<std::mutex> lock(sampleMutex_);
@@ -503,6 +502,10 @@ bool GStreamerVideo::isReadyForReuse() const {
 }
 
 bool GStreamerVideo::unload() {
+    pendingCpuFallback_.store(false);
+#ifdef RETROFE_HAVE_GST_GL
+    if (gpuInterop_) gpuInterop_->discardFrames();
+#endif
     if (!initialized_) return false;
 
     const uint64_t deadEpoch = playbackEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -721,6 +724,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
         "drop", TRUE,
         "sync", TRUE,
         "enable-last-sample", FALSE,
+        "wait-on-eos", FALSE,
         NULL);
 
     GstAppSinkCallbacks videoCbs = {};
@@ -734,6 +738,20 @@ bool GStreamerVideo::createPipelineIfNeeded() {
         &GStreamerVideo::cbCtxUnref
     );
 
+    loggedGpu_ = loggedUpload_ = false;
+    gpuInterop_.reset();
+    if (Configuration::HardwareVideoAccel && !hasPerspective_ && !disableInterop_) {
+        gpuInterop_ = std::make_unique<NativeVideoInterop>(SDL::getRenderer(monitor_));
+        if (gpuInterop_->available()) {
+            gpuInterop_->configure(pipeline_);
+#ifdef RETROFE_HAVE_GST_GL
+            glPipelineActive_.store(true);
+#endif
+        }
+        else LOG_INFO("GStreamerVideo", std::string("GPU texture interop unavailable: ") + gpuInterop_->reason());
+    }
+    if (Configuration::HardwareVideoAccel && hasPerspective_)
+        LOG_INFO("GStreamerVideo", "GPU texture interop unavailable: perspective filter requires system-memory RGBA");
     GstCaps* videoCaps = nullptr;
     if (hasPerspective_) {
         videoCaps = gst_caps_from_string(
@@ -744,8 +762,10 @@ bool GStreamerVideo::createPipelineIfNeeded() {
     else {
         if (Configuration::HardwareVideoAccel) {
             videoCaps = gst_caps_from_string(
-                "video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
-            sdlFormat_ = SDL_PIXELFORMAT_NV12;
+                gpuInterop_ && gpuInterop_->available()
+                    ? NativeVideoInterop::caps()
+                    : "video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+            sdlFormat_ = gpuInterop_ && gpuInterop_->available() ? NativeVideoInterop::pixelFormat() : SDL_PIXELFORMAT_NV12;
             LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_NV12 (HW accel: true)");
         }
         else {
@@ -757,6 +777,15 @@ bool GStreamerVideo::createPipelineIfNeeded() {
             LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_IYUV (HW accel: false)");
         }
     }
+#ifdef RETROFE_HAVE_GST_GL
+    if (Configuration::HardwareVideoAccel) {
+        elementSetupHandlerId_ = g_signal_connect(pipeline_, "element-setup", G_CALLBACK(+[](GstElement*, GstElement* element, gpointer) {
+            if (!GST_IS_VIDEO_DECODER(element)) return;
+            auto* factory = gst_element_get_factory(element);
+            if (factory) LOG_INFO("GStreamerVideo", std::string("Video decoder selected: ") + GST_OBJECT_NAME(factory));
+        }), nullptr);
+    }
+#endif
     gst_app_sink_set_caps(GST_APP_SINK(videoSink_), videoCaps);
     gst_caps_unref(videoCaps);
 
@@ -796,9 +825,21 @@ bool GStreamerVideo::createPipelineIfNeeded() {
         gst_object_unref(videoBin);
     }
     else {
-        gst_object_ref_sink(videoSink_);
-        g_object_set(pipeline_, "video-sink", videoSink_, nullptr);
-        gst_object_unref(videoSink_);
+        GstElement* output = gpuInterop_ && gpuInterop_->available() ? gpuInterop_->wrapSink(videoSink_) : videoSink_;
+        if (!output) {
+            LOG_WARNING("GStreamerVideo", "Could not construct GPU video sink; using CPU texture upload");
+            glPipelineActive_.store(false);
+            disableInterop_ = true;
+            gpuInterop_.reset();
+            auto* fallbackCaps = gst_caps_from_string("video/x-raw,format=NV12,pixel-aspect-ratio=1/1");
+            gst_app_sink_set_caps(GST_APP_SINK(videoSink_), fallbackCaps);
+            gst_caps_unref(fallbackCaps);
+            sdlFormat_ = SDL_PIXELFORMAT_NV12;
+            output = videoSink_;
+        }
+        gst_object_ref_sink(output);
+        g_object_set(pipeline_, "video-sink", output, nullptr);
+        gst_object_unref(output);
     }
 
     GstPad* sinkPad = gst_element_get_static_pad(videoSink_, "sink");
@@ -858,7 +899,7 @@ VideoSnapshot GStreamerVideo::getSnapshot() const {
 
     auto currentLife = lifecycle_.load(std::memory_order_acquire);
     snap.pipelineReady = (currentLife == PipelineLifecycle::Ready);
-    snap.hasError = (currentLife == PipelineLifecycle::Failed);
+    snap.hasError = hasError();
     snap.hasFinishedLoops = loopsFinished_.load(std::memory_order_acquire);
     snap.hasVideoStream = hasVideoStream_.load(std::memory_order_acquire);
 
@@ -873,6 +914,7 @@ bool GStreamerVideo::open(const std::string& file) {
     if (cbCtx_) cbCtx_->epoch.store(newEpoch, std::memory_order_release);
 
     currentFile_ = file;
+    loggedGpu_ = loggedUpload_ = false;
     isTextureReady_ = false;
     dimensions_.store({ -1, -1 }, std::memory_order_release);
     loopsFinished_.store(false, std::memory_order_release);
@@ -916,9 +958,11 @@ bool GStreamerVideo::open(const std::string& file) {
         if (ret == GST_STATE_CHANGE_FAILURE) {
             LOG_ERROR("GStreamerVideo", "Async pause failed for " + file);
             if (auto self = weak.lock()) {
-                self->lifecycle_.store(PipelineLifecycle::Failed, std::memory_order_release);
+                const bool retryGL = self->glPipelineActive_.exchange(false);
+                self->lifecycle_.store(retryGL ? PipelineLifecycle::Starting : PipelineLifecycle::Failed, std::memory_order_release);
                 self->forceReleaseDecodeSlot();
                 self->awaitingInitialPreroll_.store(false, std::memory_order_release);
+                if (retryGL) self->pendingCpuFallback_.store(true, std::memory_order_release);
             }
         }
         });
@@ -1281,7 +1325,7 @@ void GStreamerVideo::createSdlTexture() {
     }
 
     SDL_SetTextureBlendMode(texture_, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
-    SDL_SetTextureScaleMode(texture_, SDL_ScaleModeLinear);
+    SDL_SetTextureScaleMode(texture_, SDL_SCALEMODE_LINEAR);
 
     allocatedWidth_ = w;
     allocatedHeight_ = h;
@@ -1290,6 +1334,13 @@ void GStreamerVideo::createSdlTexture() {
 }
 
 void GStreamerVideo::updateFrame() {
+    if (pendingCpuFallback_.exchange(false, std::memory_order_acq_rel)) {
+        const auto file = currentFile_;
+        disableInterop_ = true;
+        stop();
+        if (!file.empty() && !open(file)) lifecycle_.store(PipelineLifecycle::Failed, std::memory_order_release);
+        return;
+    }
     GstSample* sampleToProcess = nullptr;
 
     {
@@ -1319,6 +1370,24 @@ void GStreamerVideo::updateFrame() {
         dimensions_.store({ frameW, frameH }, std::memory_order_release);
     }
 
+    dimensions_.store({ frameW, frameH }, std::memory_order_release);
+    if (gpuInterop_ && gpuInterop_->available()) {
+        if (SDL_Texture* imported = gpuInterop_->copy(sampleToProcess)) {
+            if (texture_ && texture_ != gpuTexture_) SDL_DestroyTexture(texture_);
+            texture_ = gpuTexture_ = imported;
+            ++gpuFrameCount_;
+            SDL_SetTextureBlendMode(texture_, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
+            isTextureReady_ = true;
+            if (!loggedGpu_) {
+                LOG_INFO("GStreamerVideo", std::string("GPU texture interop ACTIVE: ") + NativeVideoInterop::description() + "; monitor " + std::to_string(monitor_) + "; " + currentFile_);
+                loggedGpu_ = true;
+            }
+            gst_sample_unref(sampleToProcess);
+            return;
+        }
+        if (!loggedUpload_) LOG_INFO("GStreamerVideo", std::string("GPU texture interop fallback: ") + gpuInterop_->reason() + "; " + currentFile_);
+    }
+    if (texture_ == gpuTexture_) { texture_ = nullptr; gpuTexture_ = nullptr; }
     createSdlTexture();
 
     GstVideoFrame frame;
@@ -1328,6 +1397,10 @@ void GStreamerVideo::updateFrame() {
     }
 
     bool ok = false;
+    if (!loggedUpload_) {
+        LOG_INFO("GStreamerVideo", "Video uses CPU texture upload; monitor " + std::to_string(monitor_) + "; " + currentFile_);
+        loggedUpload_ = true;
+    }
     if (texture_) {
         switch (sdlFormat_) {
             case SDL_PIXELFORMAT_IYUV:     ok = updateTextureFromFrameIYUV(texture_, &frame); break;
@@ -1354,7 +1427,7 @@ bool GStreamerVideo::updateTextureFromFrameIYUV(SDL_Texture* texture, GstVideoFr
     const int strideU = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
     const int strideV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 2);
 
-    if (SDL_UpdateYUVTexture(texture, nullptr, srcY, strideY, srcU, strideU, srcV, strideV) != 0) {
+    if (!SDL_UpdateYUVTexture(texture, nullptr, srcY, strideY, srcU, strideU, srcV, strideV)) {
         return false;
     }
 
@@ -1368,7 +1441,7 @@ bool GStreamerVideo::updateTextureFromFrameNV12(SDL_Texture* texture, GstVideoFr
     const int strideY = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
     const int strideUV = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 1);
 
-    if (SDL_UpdateNVTexture(texture, nullptr, srcY, strideY, srcUV, strideUV) != 0) {
+    if (!SDL_UpdateNVTexture(texture, nullptr, srcY, strideY, srcUV, strideUV)) {
         return false;
     }
 
@@ -1380,7 +1453,7 @@ bool GStreamerVideo::updateTextureFromFrameRGBA(SDL_Texture* texture, GstVideoFr
     const void* src_pixels = GST_VIDEO_FRAME_PLANE_DATA(frame, 0);
     const int src_pitch = GST_VIDEO_FRAME_PLANE_STRIDE(frame, 0);
 
-    if (SDL_UpdateTexture(texture, nullptr, src_pixels, src_pitch) != 0) {
+    if (!SDL_UpdateTexture(texture, nullptr, src_pixels, src_pitch)) {
         return false;
     }
 

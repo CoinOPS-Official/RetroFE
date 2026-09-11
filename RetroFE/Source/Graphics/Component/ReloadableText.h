@@ -19,7 +19,7 @@
 #include "../Font.h"
 #include "../Page.h"
 #include "../../Collection/Item.h"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <string>
 #include <filesystem>
 
@@ -59,7 +59,7 @@ private:
     size_t lastCollectionIdx_ = std::numeric_limits<size_t>::max();
     size_t lastCollectionSize_ = std::numeric_limits<size_t>::max();
     std::filesystem::file_time_type lastWriteTime_;
-    Uint32 lastFileReloadTime_ = 0;
-    const Uint32 fileDebounceDuration_ = 1000; // 1 second debounce per instance
+    Uint64 lastFileReloadTime_ = 0;
+    const Uint64 fileDebounceDuration_ = 1000; // 1 second debounce per instance
     time_t lastTimeSecond_ = 0;
 };

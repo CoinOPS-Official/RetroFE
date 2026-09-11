@@ -14,7 +14,7 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include "GlibLoop.h"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <stdexcept>
 
 void GlibLoop::start() {
@@ -28,7 +28,7 @@ void GlibLoop::start() {
     loop_ = g_main_loop_new(ctx_, FALSE);
 
     th_ = std::thread([this] {
-        if (SDL_SetThreadPriority(SDL_THREAD_PRIORITY_LOW) != 0) {
+        if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW)) {
             // Optionally log this once, though not critical
         }
         g_main_context_push_thread_default(ctx_);

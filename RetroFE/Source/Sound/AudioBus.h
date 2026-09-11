@@ -1,6 +1,6 @@
 #pragma once
-#include <SDL.h>
-#include <SDL_mixer.h>
+#include <SDL3/SDL.h>
+#include <SDL3_mixer/SDL_mixer.h>
 #include <atomic>
 #include <cstdint>
 #include <mutex>
@@ -9,12 +9,21 @@
 #include <string>
 #include <memory>
 
+class MusicPlayer;
+
 class AudioBus {
     struct Source;
 public:
     using SourceId = uint32_t;
     static AudioBus& instance();
-    void configureFromMixer();
+    // Main-thread lifecycle. Stop external producers before shutdown/reconfiguration.
+    bool initialize(int sampleRate = 48000, int channels = 2);
+    void shutdown();
+    void configureFromMixer(); // Retained for existing callers; initializes if needed.
+    MIX_Mixer* mixer() const { return mixer_; }
+    uint64_t generation() const { return generation_; }
+    void setMusicPlayer(MusicPlayer* player);
+
 
     class Handle {
         friend class AudioBus;
@@ -60,12 +69,14 @@ private:
         void clear();
         // AudioBus.h (inside SpscRing public)
         size_t available() const {
+            std::lock_guard<std::mutex> lock(ringMutex_);
             size_t h = head_.load(std::memory_order_acquire);
             size_t t = tail_.load(std::memory_order_relaxed);
             return h - t;
         }
 
     private:
+        mutable std::mutex ringMutex_;
         std::vector<uint8_t> buf_;
         const size_t mask_;
         const size_t align_;          // bytes-per-frame alignment (>=1)
@@ -84,6 +95,12 @@ private:
         explicit Source(size_t cap, size_t align) : ring(cap, align) {}
     };
 
+    static void SDLCALL postMix(void*, MIX_Mixer*, const SDL_AudioSpec*, float*, int);
+    MIX_Mixer* mixer_ = nullptr;
+    MusicPlayer* musicPlayer_ = nullptr;
+    std::mutex callbackMutex_;
+    bool mixerInitialized_ = false;
+    uint64_t generation_ = 1;
     AudioBus() = default;
     ~AudioBus();
 
@@ -106,7 +123,7 @@ private:
     std::unordered_map<SourceId, std::shared_ptr<Source>> sources_;
 
     SourceId        nextId_{ 1 };
-    SDL_AudioFormat devFmt_{ AUDIO_S16SYS };
+    SDL_AudioFormat devFmt_{ SDL_AUDIO_S16 };
     int             devRate_{ 48000 };
     int             devChans_{ 2 };
 };

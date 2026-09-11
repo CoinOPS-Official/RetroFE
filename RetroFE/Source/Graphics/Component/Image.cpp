@@ -114,16 +114,16 @@ bool Image::startAsyncLoad(const std::string& path) {
 			AsyncLoadResult res;
 
 			try {
-				SDL_RWops* rw = SDL_RWFromFile(path.c_str(), "rb");
+				SDL_IOStream* rw = SDL_IOFromFile(path.c_str(), "rb");
 				if (rw) {
 					if (IMG_isGIF(rw) || IMG_isWEBP(rw)) {
-						IMG_Animation* anim = IMG_LoadAnimation_RW(rw, 1);
+						IMG_Animation* anim = IMG_LoadAnimation_IO(rw, 1);
 						if (anim) {
 							res.w = anim->w;
 							res.h = anim->h;
 							for (int i = 0; i < anim->count; ++i) {
-								SDL_Surface* conv = SDL_ConvertSurfaceFormat(
-									anim->frames[i], SDL_PIXELFORMAT_RGBA32, 0);
+								SDL_Surface* conv = SDL_ConvertSurface(
+									anim->frames[i], SDL_PIXELFORMAT_RGBA32);
 								if (conv) {
 									res.animatedSurfaces.emplace_back(conv, SurfaceDeleter());
 									res.frameDelays.push_back(
@@ -136,7 +136,7 @@ bool Image::startAsyncLoad(const std::string& path) {
 						}
 					}
 					else {
-						SDL_Surface* s = IMG_Load_RW(rw, 1);
+						SDL_Surface* s = IMG_Load_IO(rw, 1);
 						if (s) {
 							res.staticSurface = SharedSurface(s, SurfaceDeleter());
 							res.w = s->w;
@@ -325,7 +325,7 @@ void Image::draw() {
 	}
 
 	if (animatedTexture_ && !animatedSurfaces_.empty() && !frameDelays_.empty()) {
-		Uint32 now = SDL_GetTicks();
+		Uint64 now = SDL_GetTicks();
 
 		/* Initialize a stable timeline anchor once */
 		if (animationStartTime_ == 0) {
@@ -334,19 +334,19 @@ void Image::draw() {
 		}
 
 		/* Compute total cycle time */
-		Uint32 totalCycleTime = 0;
-		for (int d : frameDelays_) totalCycleTime += (Uint32)d;
+		Uint64 totalCycleTime = 0;
+		for (int d : frameDelays_) totalCycleTime += (Uint64)d;
 
 		if (totalCycleTime > 0) {
 			/* Resolve current phase in cycle */
-			Uint32 t = (now - animationStartTime_) % totalCycleTime;
+			Uint64 t = (now - animationStartTime_) % totalCycleTime;
 
 			/* Map phase -> frame index */
-			Uint32 accum = 0;
+			Uint64 accum = 0;
 			size_t frameIndex = 0;
 
 			for (size_t i = 0; i < frameDelays_.size(); ++i) {
-				accum += (Uint32)frameDelays_[i];
+				accum += (Uint64)frameDelays_[i];
 				if (t < accum) {
 					frameIndex = i;
 					break;

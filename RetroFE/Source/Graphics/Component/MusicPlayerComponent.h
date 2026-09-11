@@ -138,6 +138,7 @@ private:
     
     GStreamerVisType gstreamerVisType_ = GStreamerVisType::None;
 
+    GstClockTime gstAudioPts_{ 0 };
     GstElement* gstPipeline_{ nullptr };
     GstElement* gstAppSrc_{ nullptr };
     GstElement* gstAppSink_{ nullptr };

@@ -2,14 +2,8 @@
 
 #pragma once
 
-#include <SDL.h>
-#if __has_include(<SDL_ttf.h>)
-#include <SDL_ttf.h>
-#elif __has_include(<SDL2_ttf/SDL_ttf.h>)
-#include <SDL2_ttf/SDL_ttf.h>
-#else
-#error "Cannot find SDL_ttf header"
-#endif
+#include <SDL3/SDL.h>
+#include <SDL3_ttf/SDL_ttf.h>
 
 #include <string>
 #include <unordered_map>

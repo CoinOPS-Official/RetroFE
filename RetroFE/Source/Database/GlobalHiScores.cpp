@@ -8,8 +8,8 @@
 #include "GlobalHiScores.h"
 #include "../Utility/Utils.h"
 #include "../Utility/Log.h"
-#include "SDL.h"
-#include "SDL_image.h"
+#include <SDL3/SDL.h>
+#include <SDL3_image/SDL_image.h>
 #include "qrcodegen.hpp"
 #include <sstream>
 #include <iomanip>
@@ -148,20 +148,20 @@ static void bakeAlphaMaskFromPNG_(SDL_Surface* qr, const std::string& maskPath) 
 
 	SDL_Surface* raw = IMG_Load(maskPath.c_str());
 	if (!raw) {
-		LOG_WARNING("GlobalHiScores", std::string("QR mask load failed: ") + IMG_GetError());
+		LOG_WARNING("GlobalHiScores", std::string("QR mask load failed: ") + SDL_GetError());
 		return;
 	}
-	SDL_Surface* mask = SDL_ConvertSurfaceFormat(raw, SDL_PIXELFORMAT_ARGB8888, 0);
-	SDL_FreeSurface(raw);
+	SDL_Surface* mask = SDL_ConvertSurface(raw, SDL_PIXELFORMAT_ARGB8888);
+	SDL_DestroySurface(raw);
 	if (!mask) return;
 
 	// Scale if sizes differ
 	if (mask->w != qr->w || mask->h != qr->h) {
-		SDL_Surface* scaled = SDL_CreateRGBSurfaceWithFormat(0, qr->w, qr->h, 32, SDL_PIXELFORMAT_ARGB8888);
-		if (!scaled) { SDL_FreeSurface(mask); return; }
+		SDL_Surface* scaled = SDL_CreateSurface(qr->w, qr->h, SDL_PIXELFORMAT_ARGB8888);
+		if (!scaled) { SDL_DestroySurface(mask); return; }
 		SDL_Rect dst{ 0, 0, qr->w, qr->h };
-		SDL_BlitScaled(mask, nullptr, scaled, &dst);
-		SDL_FreeSurface(mask);
+		SDL_BlitSurfaceScaled(mask, nullptr, scaled, &dst, SDL_SCALEMODE_LINEAR);
+		SDL_DestroySurface(mask);
 		mask = scaled;
 	}
 
@@ -184,7 +184,7 @@ static void bakeAlphaMaskFromPNG_(SDL_Surface* qr, const std::string& maskPath) 
 	SDL_UnlockSurface(mask);
 	SDL_UnlockSurface(qr);
 
-	SDL_FreeSurface(mask);
+	SDL_DestroySurface(mask);
 }
 
 static inline bool isScaledScoreMode_(GlobalSort m) {
@@ -344,16 +344,6 @@ static size_t curlWriteToString_(char* ptr, size_t size, size_t nmemb, void* use
 	return size * nmemb;
 }
 
-// One-time init for PNG codec in SDL_image
-static void ensureImgPngInit_() {
-	static std::once_flag once;
-	std::call_once(once, []() {
-		if ((IMG_Init(IMG_INIT_PNG) & IMG_INIT_PNG) == 0) {
-			LOG_WARNING("GlobalHiScores", std::string("IMG_Init PNG failed: ") + IMG_GetError());
-		}
-		});
-}
-
 // Build a crisp QR surface (integer scale, border in modules). EC=M, bg=#DDDDDD by default.
 static SDL_Surface* buildQrSurface_(const std::string& data,
 	int requested_px = 58,
@@ -368,12 +358,12 @@ static SDL_Surface* buildQrSurface_(const std::string& data,
 	if (scale < 1) scale = 1;
 	const int W = total * scale;
 
-	SDL_Surface* surf = SDL_CreateRGBSurfaceWithFormat(0, W, W, 32, SDL_PIXELFORMAT_ARGB8888);
+	SDL_Surface* surf = SDL_CreateSurface(W, W, SDL_PIXELFORMAT_ARGB8888);
 	if (!surf) return nullptr;
 
-	Uint32 bg = SDL_MapRGBA(surf->format, bgR, bgG, bgB, 255);
-	Uint32 fg = SDL_MapRGBA(surf->format, fgR, fgG, fgB, 255);
-	SDL_FillRect(surf, nullptr, bg);
+	Uint32 bg = SDL_MapSurfaceRGBA(surf, bgR, bgG, bgB, 255);
+	Uint32 fg = SDL_MapSurfaceRGBA(surf, fgR, fgG, fgB, 255);
+	SDL_FillSurfaceRect(surf, nullptr, bg);
 
 	// Draw modules as filled rects
 	const int off = border_modules * scale;
@@ -383,7 +373,7 @@ static SDL_Surface* buildQrSurface_(const std::string& data,
 			if (!qr.getModule(x, y)) continue;
 			r.x = off + x * scale;
 			r.y = off + y * scale;
-			SDL_FillRect(surf, &r, fg);
+			SDL_FillSurfaceRect(surf, &r, fg);
 		}
 	}
 	return surf;
@@ -490,7 +480,7 @@ static void ensureAllQrPngsAsync_(std::vector<std::string> ids) {
 	std::thread([ids = std::move(ids)]() {
 		try {
 			namespace fs = std::filesystem;
-			ensureImgPngInit_();
+
 
 			const std::string qrDir = Utils::combinePath(Configuration::absolutePath, "iScored", "qr");
 			std::error_code fec;
@@ -527,15 +517,15 @@ static void ensureAllQrPngsAsync_(std::vector<std::string> ids) {
 				}
 
 				// 3) save to PNG
-				if (IMG_SavePNG(surf, outPath.c_str()) != 0) {
+				if (!IMG_SavePNG(surf, outPath.c_str())) {
 					++failed;
 					LOG_WARNING("GlobalHiScores", std::string("QR: IMG_SavePNG failed for ")
-						+ gid + " : " + IMG_GetError());
-					SDL_FreeSurface(surf);
+						+ gid + " : " + SDL_GetError());
+					SDL_DestroySurface(surf);
 					continue;
 				}
 
-				SDL_FreeSurface(surf);
+				SDL_DestroySurface(surf);
 				++made;
 			}
 

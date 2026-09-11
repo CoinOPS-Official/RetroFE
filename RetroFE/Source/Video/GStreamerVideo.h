@@ -21,6 +21,13 @@
 #include "../Utility/Log.h"
 #include "../Sound/AudioBus.h" 
 #include "IVideo.h"
+#include "D3D11VideoInterop.h"
+#ifdef RETROFE_HAVE_GST_GL
+#include "GLVideoInterop.h"
+using NativeVideoInterop = GLVideoInterop;
+#else
+using NativeVideoInterop = D3D11VideoInterop;
+#endif
 #include <atomic>
 #include <string>
 #include <vector>
@@ -86,6 +93,8 @@ public:
     bool stop() override;
     bool isReadyForReuse() const;
     SDL_Texture* getTexture() const override;
+    bool usingGpuTexture() const { return texture_ && texture_ == gpuTexture_; }
+    uint64_t gpuFrameCount() const { return gpuFrameCount_; }
     void updateFrame() override; // Renamed from draw
     void setNumLoops(int n);
     bool isPlaying() override;
@@ -109,6 +118,7 @@ public:
 
     // --- Mapped IVideo Interface ---
     bool hasError() const override {
+        if (pendingCpuFallback_.load(std::memory_order_acquire)) return false;
         return lifecycle_.load(std::memory_order_acquire) == PipelineLifecycle::Failed;
     }
 
@@ -175,10 +185,18 @@ private:
 
     int allocatedWidth_{ 0 };
     int allocatedHeight_{ 0 };
-    SDL_PixelFormatEnum allocatedFormat_{ SDL_PIXELFORMAT_UNKNOWN };
+    SDL_PixelFormat allocatedFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     bool isTextureReady_{ false };
     int monitor_;
-    bool softOverlay_;
+    bool softOverlay_{ false };
+    std::unique_ptr<NativeVideoInterop> gpuInterop_;
+    SDL_Texture* gpuTexture_ = nullptr; // owned by gpuInterop_
+    bool loggedGpu_ = false;
+    bool loggedUpload_ = false;
+    uint64_t gpuFrameCount_ = 0;
+    std::atomic<bool> glPipelineActive_{false};
+    std::atomic<bool> pendingCpuFallback_{false};
+    bool disableInterop_ = false;
     int perspectiveCorners_[8]{ 0 };
     bool hasPerspective_{ false };
 
@@ -189,7 +207,7 @@ private:
     int lastPerspectiveW_{ -1 };
     int lastPerspectiveH_{ -1 };
     SDL_Texture* texture_{ nullptr };
-    SDL_PixelFormatEnum sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
+    SDL_PixelFormat sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     guint elementSetupHandlerId_{ 0 };
     guint busWatchId_{ 0 };
     guint padProbeId_{ 0 };

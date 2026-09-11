@@ -18,7 +18,7 @@
 #include <vector>
 #include <string>
 #include <cstdint>
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include "Component.h"
 #include "../../Database/GlobalHiScores.h"

@@ -21,17 +21,13 @@
 #include "Utility/Log.h"
 #include "Sound/AudioBus.h"
 #include "Sound/MusicPlayer.h"
-#if __has_include(<SDL_mixer.h>)
-#include <SDL_mixer.h>
-#elif __has_include(<SDL2_mixer/SDL_mixer.h>)
-#include <SDL2_mixer/SDL_mixer.h>
-#else
-#error "Cannot find SDL_mixer header"
-#endif
+
 #include "Utility/Utils.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <memory>
+#include <sstream>
 
 std::vector<SDL_Window*>    SDL::window_;
 std::vector<SDL_Renderer*>  SDL::renderer_;
@@ -52,10 +48,8 @@ SDL::LayoutScaleMode SDL::layoutScaleMode_ = SDL::LayoutScaleMode::Stretch;
 // Initialize SDL
 bool SDL::initialize(Configuration& config) {
 	int audioRate = 48000;
-	Uint16 audioFormat = MIX_DEFAULT_FORMAT; // 16-bit stereo
 	int audioChannels = 2;
-	int audioBuffers = 4096;
-	bool hideMouse;
+	bool hideMouse = false;
 
 	SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
 	SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
@@ -71,7 +65,7 @@ bool SDL::initialize(Configuration& config) {
 	if (SDL_WasInit(0) == 0) {
 		// First-time startup: Initialize everything.
 		LOG_INFO("SDL", "Performing first-time full initialization of all SDL subsystems.");
-		if (SDL_Init(SDL_INIT_TIMER | SDL_INIT_VIDEO | SDL_INIT_GAMECONTROLLER) != 0)
+		if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD | SDL_INIT_AUDIO))
 		{
 			std::string error = SDL_GetError();
 			LOG_ERROR("SDL", "Initial SDL_Init failed: " + error);
@@ -86,7 +80,7 @@ bool SDL::initialize(Configuration& config) {
 		const int RETRY_DELAY_MS = 100;
 		bool success = false;
 		for (int i = 0; i < MAX_RETRIES; ++i) {
-			if (SDL_InitSubSystem(SDL_INIT_VIDEO) == 0) {
+			if (SDL_InitSubSystem(SDL_INIT_VIDEO)) {
 				success = true;
 				LOG_INFO("SDL", "Video subsystem re-initialized successfully on attempt " + std::to_string(i + 1) + ".");
 				break;
@@ -100,23 +94,23 @@ bool SDL::initialize(Configuration& config) {
 		}
 	}
 
-#ifdef WIN32
-	std::string SDLRenderDriver = "direct3d11";
+	std::string SDLRenderDriver;
 	config.getProperty(OPTION_SDLRENDERDRIVER, SDLRenderDriver);
-	if (SDL_SetHint(SDL_HINT_RENDER_DRIVER, SDLRenderDriver.c_str()) != SDL_TRUE)
-	{
-		LOG_ERROR("SDL", "Error setting renderer to " + SDLRenderDriver + ". Available: direct3d, direct3d11, direct3d12, opengl, opengles2, opengles, metal, and software");
-	}
+#ifdef WIN32
+	if (SDLRenderDriver == "direct3d") SDLRenderDriver = "direct3d11";
 #endif
+	if (SDLRenderDriver.empty()) {
+		SDL_ResetHint(SDL_HINT_RENDER_DRIVER);
+	}
+	else if (!SDL_SetHint(SDL_HINT_RENDER_DRIVER, SDLRenderDriver.c_str())) {
+		LOG_WARNING("SDL", "Unable to select renderer " + SDLRenderDriver + ": " + SDL_GetError());
+	}
 
 	std::string ScaleQuality = "1";
 	config.getProperty(OPTION_SCALEQUALITY, ScaleQuality);
-	if (SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, ScaleQuality.c_str()) != SDL_TRUE)
-	{
-		LOG_ERROR("SDL", "Failed to set scale quality hint to " + ScaleQuality);
-	}
-
-	SDL_SetHint(SDL_HINT_RENDER_BATCHING, "1"); // For all renderers
+	// SDL3 selects texture filtering per renderer/texture; batching is automatic.
+	const SDL_ScaleMode scaleMode = (ScaleQuality == "0" || ScaleQuality == "nearest")
+		? SDL_SCALEMODE_NEAREST : SDL_SCALEMODE_LINEAR;
 
 	std::string layoutScaleModeString = "stretch";
 	config.getProperty(OPTION_LAYOUTSCALEMODE, layoutScaleModeString);
@@ -160,12 +154,14 @@ bool SDL::initialize(Configuration& config) {
 	);
 
 	if (config.getProperty(OPTION_HIDEMOUSE, hideMouse))
-		SDL_ShowCursor(hideMouse ? SDL_FALSE : SDL_TRUE);
+		hideMouse ? SDL_HideCursor() : SDL_ShowCursor();
 
 	// --- Configuration for hardware/video/audio ---
 	bool HardwareVideoAccel = false;
 	config.getProperty(OPTION_HARDWAREVIDEOACCEL, HardwareVideoAccel);
 	Configuration::HardwareVideoAccel = HardwareVideoAccel;
+	// Hardware video shares the D3D11 device with GStreamer streaming threads.
+	SDL_SetHint(SDL_HINT_RENDER_DIRECT3D_THREADSAFE, "1");
 	int AvdecMaxThreads = 2;
 	config.getProperty(OPTION_AVDECMAXTHREADS, AvdecMaxThreads);
 	Configuration::AvdecMaxThreads = AvdecMaxThreads;
@@ -237,8 +233,9 @@ bool SDL::initialize(Configuration& config) {
 		}
 	}
 
-	int numDisplays = SDL_GetNumVideoDisplays();
-	if (numDisplays < 1) {
+	int numDisplays = 0;
+	std::unique_ptr<SDL_DisplayID, decltype(&SDL_free)> displays(SDL_GetDisplays(&numDisplays), SDL_free);
+	if (!displays || numDisplays < 1) {
 		LOG_ERROR("SDL", "No SDL video displays detected.");
 		return false;
 	}
@@ -260,6 +257,8 @@ bool SDL::initialize(Configuration& config) {
 	}
 
 	screenOrder = validScreenOrder;
+	numDisplays_ = numDisplays;
+	numScreens_ = static_cast<int>(screenOrder.size());
 	screenCount_ = static_cast<int>(screenOrder.size());
 	LOG_INFO("SDL", "Number of displays found: " + std::to_string(numDisplays));
 	LOG_INFO("SDL", "Number of screens requested: " + std::to_string(screenCount_));
@@ -279,10 +278,11 @@ bool SDL::initialize(Configuration& config) {
 	for (int logicalScreen = 0; logicalScreen < screenCount_; ++logicalScreen)
 	{
 		int physicalDisplay = screenOrder[logicalScreen];
-		SDL_DisplayMode mode;
+		const SDL_DisplayID displayID = displays.get()[physicalDisplay];
+		const SDL_DisplayMode* mode = SDL_GetCurrentDisplayMode(displayID);
 		bool windowBorder = false;
 		bool windowResize = false;
-		Uint32 windowFlags = SDL_WINDOW_OPENGL;
+		SDL_WindowFlags windowFlags = 0; // SDL_CreateRenderer chooses the graphics API.
 		std::string screenIndex = std::to_string(logicalScreen);
 		config.getProperty(OPTION_WINDOWBORDER, windowBorder);
 		if (!windowBorder)
@@ -291,29 +291,14 @@ bool SDL::initialize(Configuration& config) {
 		if (windowResize)
 			windowFlags |= SDL_WINDOW_RESIZABLE;
 
-		if (SDL_GetCurrentDisplayMode(physicalDisplay, &mode) != 0)
-		{
-			if (logicalScreen == 0)
-			{
-				LOG_ERROR("SDL", "Display " + std::to_string(physicalDisplay) + " does not exist.");
-				return false;
-			}
-			else
-			{
-				LOG_WARNING("SDL", "Display " + std::to_string(physicalDisplay) + " does not exist.");
-				windowWidth_.push_back(0);
-				windowHeight_.push_back(0);
-				displayWidth_.push_back(0);
-				displayHeight_.push_back(0);
-				window_.push_back(NULL);
-				renderer_.push_back(NULL);
-				continue;
-			}
+		if (!mode) {
+			LOG_ERROR("SDL", "Cannot query display " + std::to_string(physicalDisplay) + ": " + SDL_GetError());
+			return false;
 		}
 
-		displayRefresh_.push_back(mode.refresh_rate);
-		windowWidth_.push_back(mode.w);
-		displayWidth_.push_back(mode.w);
+		displayRefresh_.push_back(static_cast<int>(std::lround(mode->refresh_rate)));
+		windowWidth_.push_back(mode->w);
+		displayWidth_.push_back(mode->w);
 		std::string hString = "";
 		if (logicalScreen == 0)
 			config.getProperty(OPTION_HORIZONTAL, hString);
@@ -344,8 +329,8 @@ bool SDL::initialize(Configuration& config) {
 			return false;
 		}
 
-		windowHeight_.push_back(mode.h);
-		displayHeight_.push_back(mode.h);
+		windowHeight_.push_back(mode->h);
+		displayHeight_.push_back(mode->h);
 		std::string vString = "";
 		if (logicalScreen == 0)
 			config.getProperty(OPTION_VERTICAL, vString);
@@ -388,7 +373,7 @@ bool SDL::initialize(Configuration& config) {
 		if (fullscreen_[logicalScreen])
 		{
 #ifdef WIN32
-			windowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+			windowFlags |= SDL_WINDOW_FULLSCREEN;
 #elif defined(__APPLE__)
 			windowFlags |= SDL_WINDOW_BORDERLESS;
 #else
@@ -427,9 +412,17 @@ bool SDL::initialize(Configuration& config) {
 		std::string retrofeTitle = "RetroFE " + std::to_string(physicalDisplay);
 		if (!window_[logicalScreen])
 		{
-			window_[logicalScreen] = SDL_CreateWindow(retrofeTitle.c_str(),
-				SDL_WINDOWPOS_CENTERED_DISPLAY(physicalDisplay), SDL_WINDOWPOS_CENTERED_DISPLAY(physicalDisplay),
-				windowWidth_[logicalScreen], windowHeight_[logicalScreen], windowFlags);
+			const SDL_PropertiesID props = SDL_CreateProperties();
+			if (!props) return false;
+			const bool configured =
+				SDL_SetStringProperty(props, SDL_PROP_WINDOW_CREATE_TITLE_STRING, retrofeTitle.c_str()) &&
+				SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_X_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(displayID)) &&
+				SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_Y_NUMBER, SDL_WINDOWPOS_CENTERED_DISPLAY(displayID)) &&
+				SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, windowWidth_[logicalScreen]) &&
+				SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, windowHeight_[logicalScreen]) &&
+				SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_FLAGS_NUMBER, windowFlags);
+			if (configured) window_[logicalScreen] = SDL_CreateWindowWithProperties(props);
+			SDL_DestroyProperties(props);
 		}
 
 		if (window_[logicalScreen] == NULL)
@@ -454,21 +447,13 @@ bool SDL::initialize(Configuration& config) {
 #else
 				SDL_WarpMouseInWindow(window_[logicalScreen], windowWidth_[logicalScreen] / 2, windowHeight_[logicalScreen] / 2);
 #endif
-				SDL_SetRelativeMouseMode(SDL_TRUE);
+				SDL_SetWindowRelativeMouseMode(window_[logicalScreen], hideMouse);
 			}
 			bool vSync = false;
 			config.getProperty(OPTION_VSYNC, vSync);
 			if (!renderer_[logicalScreen])
 			{
-				if (vSync)
-				{
-					renderer_[logicalScreen] = SDL_CreateRenderer(window_[logicalScreen], -1, SDL_RENDERER_ACCELERATED | SDL_RENDERER_PRESENTVSYNC);
-					LOG_INFO("SDL", "vSync Enabled");
-				}
-				else
-				{
-					renderer_[logicalScreen] = SDL_CreateRenderer(window_[logicalScreen], -1, SDL_RENDERER_ACCELERATED);
-				}
+				renderer_[logicalScreen] = SDL_CreateRenderer(window_[logicalScreen], nullptr);
 			}
 			if (renderer_[logicalScreen] == NULL)
 			{
@@ -478,6 +463,17 @@ bool SDL::initialize(Configuration& config) {
 			}
 			else
 			{
+#ifdef RETROFE_HAVE_GST_GL
+                const char* backendName = SDL_GetRendererName(renderer_[logicalScreen]);
+                if (backendName && (std::string(backendName) == "opengl" || std::string(backendName) == "opengles2"))
+                    SDL_SetPointerProperty(SDL_GetRendererProperties(renderer_[logicalScreen]), "retrofe.gl.context", SDL_GL_GetCurrentContext());
+#endif
+				if (!SDL_SetRenderVSync(renderer_[logicalScreen], vSync ? 1 : 0)) {
+					LOG_WARNING("SDL", "Unable to set renderer vsync: " + std::string(SDL_GetError()));
+				}
+				SDL_SetDefaultTextureScaleMode(renderer_[logicalScreen], scaleMode);
+				// Size targets to the actual drawable pixels, including desktop fullscreen.
+				if (!SDL_GetRenderOutputSize(renderer_[logicalScreen], &windowWidth_[logicalScreen], &windowHeight_[logicalScreen])) return false;
 				// ensure vector sized once before the per-screen loop (or here; harmless)
 				renderTargets_.resize(screenCount_, nullptr);
 
@@ -499,7 +495,7 @@ bool SDL::initialize(Configuration& config) {
 
 					// Use standard blend mode for compositing UI elements
 					SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
-					SDL_SetTextureScaleMode(t, SDL_ScaleModeLinear);
+					SDL_SetTextureScaleMode(t, SDL_SCALEMODE_LINEAR);
 
 					// --- One-time init clear so contents are defined ---
 					SDL_SetRenderTarget(r, t);
@@ -510,36 +506,20 @@ bool SDL::initialize(Configuration& config) {
 					renderTargets_[logicalScreen] = t;
 				}
 
-				SDL_RendererInfo info;
-				if (SDL_GetRendererInfo(renderer_[logicalScreen], &info) == 0)
-				{
-					std::string screenIndexStr = std::to_string(logicalScreen);
-					std::string logMessage = "Current rendering backend for renderer " + screenIndexStr + ": ";
-					logMessage += info.name;
-					LOG_INFO("SDL", logMessage);
-
-					// Log the supported pixel formats
-					logMessage = "Supported pixel formats for renderer " + screenIndexStr + ":";
-					for (Uint32 i = 0; i < info.num_texture_formats; ++i)
-					{
-						const char* formatName = SDL_GetPixelFormatName(info.texture_formats[i]);
-						logMessage += "\n  - " + std::string(formatName);
+				const char* backend = SDL_GetRendererName(renderer_[logicalScreen]);
+				if (backend) {
+					LOG_INFO("SDL", "Current rendering backend for renderer " + screenIndex + ": " + backend);
+					const auto* formats = static_cast<const SDL_PixelFormat*>(SDL_GetPointerProperty(
+						SDL_GetRendererProperties(renderer_[logicalScreen]), SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER, nullptr));
+					if (formats) {
+						for (; *formats != SDL_PIXELFORMAT_UNKNOWN; ++formats)
+							LOG_INFO("SDL", "Supported pixel format: " + std::string(SDL_GetPixelFormatName(*formats)));
 					}
-					LOG_INFO("SDL", logMessage);
-
-					if (strcmp(info.name, "opengl") == 0)
-					{
-						int GlSwapInterval = 1;
-						config.getProperty(OPTION_GLSWAPINTERVAL, GlSwapInterval);
-						if (SDL_GL_SetSwapInterval(GlSwapInterval) < 0)
-						{
-							LOG_ERROR("SDL", "Unable to set OpenGL swap interval: " + std::string(SDL_GetError()));
-						}
+					int interval = vSync ? 1 : 0;
+					if (std::string(backend) == "opengl" && config.getProperty(OPTION_GLSWAPINTERVAL, interval)) {
+						if (!SDL_SetRenderVSync(renderer_[logicalScreen], interval))
+							LOG_WARNING("SDL", "Unable to set OpenGL renderer swap interval: " + std::string(SDL_GetError()));
 					}
-				}
-				else
-				{
-					LOG_ERROR("SDL", "Could not retrieve renderer info for renderer " + screenIndex + " Error: " + SDL_GetError());
 				}
 			}
 		}
@@ -551,64 +531,9 @@ bool SDL::initialize(Configuration& config) {
 		SDL_SetHintWithPriority(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, minimizeOnFocusLoss ? "1" : "0", SDL_HINT_OVERRIDE);
 	}
 
-	int num_audio_devices_open = Mix_QuerySpec(nullptr, nullptr, nullptr);
-
-	if (num_audio_devices_open == 0) {
-		// No audio device is open, so initialize it and the decoders.
-		if (Mix_OpenAudio(audioRate, audioFormat, audioChannels, audioBuffers) == -1)
-		{
-			std::string error = Mix_GetError();
-			LOG_WARNING("SDL", "Audio initialize failed: " + error);
-		}
-		else
-		{
-			// If we successfully opened the audio device, IMMEDIATELY initialize the decoders.
-			int flags = MIX_INIT_MP3 | MIX_INIT_OGG;
-			int initialized_flags = Mix_Init(flags);
-			if ((initialized_flags & flags) != flags) {
-				LOG_ERROR("SDL", "Mix_Init failed to initialize all requested decoders: " + std::string(Mix_GetError()));
-			}
-			else {
-				LOG_INFO("SDL", "SDL_mixer decoders (MP3, OGG, etc.) initialized successfully.");
-			}
-			// --- NEW: configure AudioBus to match the device SDL_mixer opened ---
-			AudioBus::instance().configureFromMixer();
-			// Define a tiny context
-			struct PostMixCtx {
-				MusicPlayer* mp;   // nullptr if music player disabled
-			};
-
-			// … during init …
-			bool musicPlayerEnabled = false;
-			config.getProperty("musicPlayer.enabled", musicPlayerEnabled);
-
-			// If enabled, ensure the instance exists *before* installing the callback
-			MusicPlayer* mp = nullptr;
-			if (musicPlayerEnabled) {
-				mp = MusicPlayer::getInstance();
-			}
-
-			// Context must outlive the audio device; make it static or allocate it
-			static PostMixCtx g_postmix_ctx{ mp };
-
-			Mix_SetPostMix(
-				[](void* udata, Uint8* stream, int len) {
-					auto* ctx = static_cast<PostMixCtx*>(udata);
-
-					// 1) MUSIC-ONLY visualization: notify visualizers if enabled
-					if (ctx && ctx->mp) {
-						ctx->mp->processAudioData(stream, len);
-					}
-
-					// 2) Mix in external (GStreamer) audio AFTER visualizers saw music-only
-					AudioBus::instance().mixInto(stream, len);
-
-					// 3) optional: master metering on final mix goes here
-				},
-				&g_postmix_ctx
-			);
-		}
-	}
+	if (!AudioBus::instance().initialize(audioRate, audioChannels)) {
+        LOG_WARNING("SDL", std::string("Audio initialization failed: ") + SDL_GetError());
+    }
 
 	return true;
 }
@@ -621,7 +546,7 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	if (!window_.empty() && window_[0])
 	{
 #ifdef __APPLE__
-		SDL_SetRelativeMouseMode(SDL_FALSE);
+		SDL_SetWindowRelativeMouseMode(window_[0], false);
 #endif
 		SDL_WarpMouseInWindow(window_[0], windowWidth_[0] / 2, windowHeight_[0] / 2);
 	}
@@ -655,11 +580,10 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	// Step 2: Decide which subsystems to shut down.
 	if (fullShutdown)
 	{
-		SDL_ShowCursor(SDL_TRUE);
+		SDL_ShowCursor();
 		// This is the final application exit. Shut down everything.
 		LOG_INFO("SDL", "Performing full de-initialization of all SDL subsystems.");
-		Mix_CloseAudio();
-		Mix_Quit();
+		AudioBus::instance().shutdown();
 		SDL_Quit();
 
 	}
@@ -670,6 +594,10 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 		SDL_QuitSubSystem(SDL_INIT_VIDEO);
 	}
 
+	displayRefresh_.clear();
+	screenCount_ = 0;
+	numScreens_ = 0;
+	numDisplays_ = 0;
 	displayWidth_.clear();
 	displayHeight_.clear();
 	windowWidth_.clear();
@@ -687,7 +615,7 @@ SDL_Renderer* SDL::getRenderer(int index) {
 	if (renderer_.empty()) {
 		return nullptr;
 	}
-	return (index < screenCount_ ? renderer_[index] : renderer_[0]);
+	return (index >= 0 && index < screenCount_ ? renderer_[index] : renderer_[0]);
 }
 
 std::string SDL::getRendererBackend(int index) {
@@ -696,12 +624,8 @@ std::string SDL::getRendererBackend(int index) {
 		return "Invalid renderer index";
 	}
 
-	SDL_RendererInfo info;
-	if (SDL_GetRendererInfo(renderer, &info) != 0) {
-		return std::string("Error getting renderer info: ") + SDL_GetError();
-	}
-
-	return std::string(info.name);
+	const char* name = SDL_GetRendererName(renderer);
+	return name ? std::string(name) : std::string("Error getting renderer name: ") + SDL_GetError();
 }
 
 // Get the window
@@ -709,13 +633,13 @@ SDL_Window* SDL::getWindow(int index) {
 	if (window_.empty()) {
 		return nullptr;
 	}
-	return (index < screenCount_ ? window_[index] : window_[0]);
+	return (index >= 0 && index < screenCount_ ? window_[index] : window_[0]);
 }
 
 // current target to render into for this frame
 SDL_Texture* SDL::getRenderTarget(int index) {
 	if (renderTargets_.empty()) return nullptr;
-	return (index < screenCount_ ? renderTargets_[index] : renderTargets_[0]);
+	return (index >= 0 && index < screenCount_ ? renderTargets_[index] : renderTargets_[0]);
 }
 
 void SDL::drawFitBars(
@@ -851,7 +775,7 @@ void SDL::drawFitBars(
 			outH
 		);
 
-	SDL_Rect bars[4];
+	SDL_FRect bars[4];
 	int barCount = 0;
 
 	// Top
@@ -859,8 +783,8 @@ void SDL::drawFitBars(
 		bars[barCount++] = {
 			0,
 			0,
-			outW,
-			top
+			static_cast<float>(outW),
+			static_cast<float>(top)
 		};
 	}
 
@@ -868,9 +792,9 @@ void SDL::drawFitBars(
 	if (bottom < outH) {
 		bars[barCount++] = {
 			0,
-			bottom,
-			outW,
-			outH - bottom
+			static_cast<float>(bottom),
+			static_cast<float>(outW),
+			static_cast<float>(outH - bottom)
 		};
 	}
 
@@ -880,9 +804,9 @@ void SDL::drawFitBars(
 	{
 		bars[barCount++] = {
 			0,
-			top,
-			left,
-			bottom - top
+			static_cast<float>(top),
+			static_cast<float>(left),
+			static_cast<float>(bottom - top)
 		};
 	}
 
@@ -891,10 +815,10 @@ void SDL::drawFitBars(
 		bottom > top)
 	{
 		bars[barCount++] = {
-			right,
-			top,
-			outW - right,
-			bottom - top
+			static_cast<float>(right),
+			static_cast<float>(top),
+			static_cast<float>(outW - right),
+			static_cast<float>(bottom - top)
 		};
 	}
 
@@ -928,654 +852,12 @@ void SDL::drawFitBars(
 }
 
 // Render a copy of a texture
-bool SDL::renderCopy(SDL_Texture* texture, float alpha, SDL_Rect const* src, SDL_Rect const* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight) {
-
-	// Skip rendering if the object is invisible anyway or if renderer does not exist
-	if (alpha == 0 || viewInfo.Monitor >= screenCount_ || !renderer_[viewInfo.Monitor])
-		return true;
-	SDL_GetWindowSize(getWindow(viewInfo.Monitor), &windowWidth_[viewInfo.Monitor], &windowHeight_[viewInfo.Monitor]);
-
-	float scaleX = (float)windowWidth_[viewInfo.Monitor] / (float)layoutWidth;
-	float scaleY = (float)windowHeight_[viewInfo.Monitor] / (float)layoutHeight;
-
-	// 90 or 270 degree rotation; change scale factors
-	if (rotation_[viewInfo.Monitor] % 2 == 1) {
-		scaleX = (float)windowHeight_[viewInfo.Monitor] / (float)layoutWidth;
-		scaleY = (float)windowWidth_[viewInfo.Monitor] / (float)layoutHeight;
-	}
-
-	if (mirror_[viewInfo.Monitor])
-		scaleY /= 2;
-
-	// Don't print outside the screen in mirror mode
-	if (mirror_[viewInfo.Monitor] && (viewInfo.ContainerWidth < 0 || viewInfo.ContainerHeight < 0)) {
-		viewInfo.ContainerX = 0;
-		viewInfo.ContainerY = 0;
-		viewInfo.ContainerWidth = static_cast<float>(layoutWidth);
-		viewInfo.ContainerHeight = static_cast<float>(layoutHeight);
-	}
-
-	SDL_Rect srcRect{};
-	SDL_Rect dstRect{};
-	SDL_Rect srcRectCopy{};
-	SDL_Rect dstRectCopy{};
-	SDL_Rect srcRectOrig{};
-	SDL_Rect dstRectOrig{};
-	double   imageScaleX;
-	double   imageScaleY;
-
-	dstRect.w = dest->w;
-	dstRect.h = dest->h;
-
-	if (fullscreen_[viewInfo.Monitor]) {
-		dstRect.x = dest->x + (displayWidth_[viewInfo.Monitor] - windowWidth_[viewInfo.Monitor]) / 2;
-		dstRect.y = dest->y + (displayHeight_[viewInfo.Monitor] - windowHeight_[viewInfo.Monitor]) / 2;
-	}
-	else {
-		dstRect.x = dest->x;
-		dstRect.y = dest->y;
-	}
-
-	// Create the base fields to check against the container.
-	if (src) {
-		srcRect.x = src->x;
-		srcRect.y = src->y;
-		srcRect.w = src->w;
-		srcRect.h = src->h;
-	}
-	else {
-		srcRect.x = 0;
-		srcRect.y = 0;
-		int w = 0;
-		int h = 0;
-		SDL_QueryTexture(texture, nullptr, nullptr, &w, &h);
-		srcRect.w = w;
-		srcRect.h = h;
-	}
-
-	// Define the scale
-	imageScaleX = (dstRect.w > 0) ? static_cast<double>(srcRect.w) / static_cast<double>(dstRect.w) : 0.0;
-	imageScaleY = (dstRect.h > 0) ? static_cast<double>(srcRect.h) / static_cast<double>(dstRect.h) : 0.0;
-
-	// Make two copies
-	srcRectOrig.x = srcRect.x;
-	srcRectOrig.y = srcRect.y;
-	srcRectOrig.w = srcRect.w;
-	srcRectOrig.h = srcRect.h;
-	dstRectOrig.x = dstRect.x;
-	dstRectOrig.y = dstRect.y;
-	dstRectOrig.w = dstRect.w;
-	dstRectOrig.h = dstRect.h;
-
-	srcRectCopy.x = srcRect.x;
-	srcRectCopy.y = srcRect.y;
-	srcRectCopy.w = srcRect.w;
-	srcRectCopy.h = srcRect.h;
-	dstRectCopy.x = dstRect.x;
-	dstRectCopy.y = dstRect.y;
-	dstRectCopy.w = dstRect.w;
-	dstRectCopy.h = dstRect.h;
-
-	// If a container has been defined, limit the display to the container boundaries.
-	if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-		dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-
-		// Correct if the image falls to the left of the container
-		if (dstRect.x < viewInfo.ContainerX) {
-			dstRect.x = static_cast<int>(viewInfo.ContainerX);
-			dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-			srcRect.x = srcRectCopy.x + srcRectCopy.w * (dstRect.x - dstRectCopy.x) / dstRectCopy.w;
-		}
-
-		// Correct if the image falls to the right of the container
-		if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-			dstRect.w = static_cast<int>(viewInfo.ContainerX + viewInfo.ContainerWidth) - dstRect.x;
-		}
-
-		// Correct if the image falls to the top of the container
-		if (dstRect.y < viewInfo.ContainerY) {
-			dstRect.y = static_cast<int>(viewInfo.ContainerY);
-			dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-			srcRect.y = srcRectCopy.y + srcRectCopy.h * (dstRect.y - dstRectCopy.y) / dstRectCopy.h;
-		}
-
-		// Correct if the image falls to the bottom of the container
-		if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-			dstRect.h = static_cast<int>(viewInfo.ContainerY + viewInfo.ContainerHeight) - dstRect.y;
-		}
-
-		// Define source width and height
-		srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-		srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-
-	}
-
-	double angle = viewInfo.Angle;
-	if (!mirror_[viewInfo.Monitor])
-		angle += rotation_[viewInfo.Monitor] * 90;
-
-	dstRect.x = (int)(dstRect.x * scaleX);
-	dstRect.y = (int)(dstRect.y * scaleY);
-	dstRect.w = (int)(dstRect.w * scaleX);
-	dstRect.h = (int)(dstRect.h * scaleY);
-
-	if (mirror_[viewInfo.Monitor]) {
-		if (rotation_[viewInfo.Monitor] % 2 == 0) {
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-				angle += 180;
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-			}
-		}
-		else {
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				int tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-				angle += 90;
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-				angle += 180;
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-			}
-		}
-	}
-	else {
-		// 90 degree rotation
-		if (rotation_[viewInfo.Monitor] == 1) {
-			int tmp = dstRect.x;
-			dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-			dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-		}
-		// 180 degree rotation
-		if (rotation_[viewInfo.Monitor] == 2) {
-			dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-			dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-		}
-		// 270 degree rotation
-		if (rotation_[viewInfo.Monitor] == 3) {
-			int tmp = dstRect.x;
-			dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-			dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-		}
-
-		if (srcRect.h > 0 && srcRect.w > 0) {
-			SDL_SetTextureAlphaMod(texture, static_cast<char>(alpha * 255));
-			SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_NONE);
-		}
-	}
-
-	// Restore original parameters
-	srcRect.x = srcRectOrig.x;
-	srcRect.y = srcRectOrig.y;
-	srcRect.w = srcRectOrig.w;
-	srcRect.h = srcRectOrig.h;
-	dstRect.x = dstRectOrig.x;
-	dstRect.y = dstRectOrig.y;
-	dstRect.w = dstRectOrig.w;
-	dstRect.h = dstRectOrig.h;
-	srcRectCopy.x = srcRectOrig.x;
-	srcRectCopy.y = srcRectOrig.y;
-	srcRectCopy.w = srcRectOrig.w;
-	srcRectCopy.h = srcRectOrig.h;
-	dstRectCopy.x = dstRectOrig.x;
-	dstRectCopy.y = dstRectOrig.y;
-	dstRectCopy.w = dstRectOrig.w;
-	dstRectCopy.h = dstRectOrig.h;
-
-	if (viewInfo.Reflection.find("top") != std::string::npos) {
-		dstRect.h = static_cast<unsigned int>(static_cast<float>(dstRect.h) * viewInfo.ReflectionScale);
-		dstRect.y = dstRect.y - dstRect.h - viewInfo.ReflectionDistance;
-		imageScaleY = (dstRect.h > 0) ? static_cast<double>(srcRect.h) / static_cast<double>(dstRect.h) : 0.0;
-		dstRectCopy.y = dstRect.y;
-		dstRectCopy.h = dstRect.h;
-
-		// If a container has been defined, limit the display to the container boundaries.
-		if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-			dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-
-			// Correct if the image falls to the left of the container
-			if (dstRect.x < viewInfo.ContainerX) {
-				dstRect.x = static_cast<int>(viewInfo.ContainerX);
-				dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-				srcRect.x = srcRectCopy.x + srcRectCopy.w * (dstRect.x - dstRectCopy.x) / dstRectCopy.w;
-			}
-
-			// Correct if the image falls to the right of the container
-			if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-				dstRect.w = static_cast<int>(viewInfo.ContainerX + viewInfo.ContainerWidth) - dstRect.x;
-			}
-
-			// Correct if the image falls to the top of the container
-			if (dstRect.y < viewInfo.ContainerY) {
-				dstRect.y = static_cast<int>(viewInfo.ContainerY);
-				dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-			}
-
-			// Correct if the image falls to the bottom of the container
-			if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-				dstRect.h = static_cast<int>(viewInfo.ContainerY + viewInfo.ContainerHeight) - dstRect.y;
-				srcRect.y = srcRectCopy.y + srcRectCopy.h * (dstRectCopy.h - dstRect.h) / dstRectCopy.h;
-			}
-
-			// Define source width and height
-			srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-			srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-
-		}
-
-		angle = viewInfo.Angle;
-		if (!mirror_[viewInfo.Monitor])
-			angle += rotation_[viewInfo.Monitor] * 90;
-
-		dstRect.x = (int)(dstRect.x * scaleX);
-		dstRect.y = (int)(dstRect.y * scaleY);
-		dstRect.w = (int)(dstRect.w * scaleX);
-		dstRect.h = (int)(dstRect.h * scaleY);
-
-		if (mirror_[viewInfo.Monitor]) {
-			if (rotation_[viewInfo.Monitor] % 2 == 0) {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-				}
-			}
-			else {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					int tmp = dstRect.x;
-					dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-					angle += 90;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-				}
-			}
-		}
-		else {
-			// 90 degree rotation
-			if (rotation_[viewInfo.Monitor] == 1) {
-				int tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-			}
-			// 180 degree rotation
-			if (rotation_[viewInfo.Monitor] == 2) {
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-			}
-			// 270 degree rotation
-			if (rotation_[viewInfo.Monitor] == 3) {
-				int tmp = dstRect.x;
-				dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-			}
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-			}
-		}
-	}
-
-	// Restore original parameters
-	srcRect.x = srcRectOrig.x;
-	srcRect.y = srcRectOrig.y;
-	srcRect.w = srcRectOrig.w;
-	srcRect.h = srcRectOrig.h;
-	dstRect.x = dstRectOrig.x;
-	dstRect.y = dstRectOrig.y;
-	dstRect.w = dstRectOrig.w;
-	dstRect.h = dstRectOrig.h;
-	srcRectCopy.x = srcRectOrig.x;
-	srcRectCopy.y = srcRectOrig.y;
-	srcRectCopy.w = srcRectOrig.w;
-	srcRectCopy.h = srcRectOrig.h;
-	dstRectCopy.x = dstRectOrig.x;
-	dstRectCopy.y = dstRectOrig.y;
-	dstRectCopy.w = dstRectOrig.w;
-	dstRectCopy.h = dstRectOrig.h;
-
-	if (viewInfo.Reflection.find("bottom") != std::string::npos) {
-		dstRect.y = dstRect.y + dstRect.h + viewInfo.ReflectionDistance;
-		dstRect.h = static_cast<unsigned int>(static_cast<float>(dstRect.h) * viewInfo.ReflectionScale);
-		imageScaleY = (dstRect.h > 0) ? static_cast<double>(srcRect.h) / static_cast<double>(dstRect.h) : 0.0;
-		dstRectCopy.y = dstRect.y;
-		dstRectCopy.h = dstRect.h;
-
-		// If a container has been defined, limit the display to the container boundaries.
-		if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-			dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-
-			// Correct if the image falls to the left of the container
-			if (dstRect.x < viewInfo.ContainerX) {
-				dstRect.x = static_cast<int>(viewInfo.ContainerX);
-				dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-				srcRect.x = srcRectCopy.x + srcRectCopy.w * (dstRect.x - dstRectCopy.x) / dstRectCopy.w;
-			}
-			// Correct if the image falls to the right of the container
-			if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-				dstRect.w = static_cast<int>(viewInfo.ContainerX + viewInfo.ContainerWidth) - dstRect.x;
-			}
-			// Correct if the image falls to the top of the container
-			if (dstRect.y < viewInfo.ContainerY) {
-				dstRect.y = static_cast<int>(viewInfo.ContainerY);
-				dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-			}
-			// Correct if the image falls to the bottom of the container
-			if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-				dstRect.h = static_cast<int>(viewInfo.ContainerY + viewInfo.ContainerHeight) - dstRect.y;
-				srcRect.y = srcRectCopy.y + srcRectCopy.h * (dstRectCopy.h - dstRect.h) / dstRectCopy.h;
-			}
-			// Define source width and height
-			srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-			srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-		}
-
-		angle = viewInfo.Angle;
-		if (!mirror_[viewInfo.Monitor])
-			angle += rotation_[viewInfo.Monitor] * 90;
-
-		dstRect.x = (int)(dstRect.x * scaleX);
-		dstRect.y = (int)(dstRect.y * scaleY);
-		dstRect.w = (int)(dstRect.w * scaleX);
-		dstRect.h = (int)(dstRect.h * scaleY);
-
-		if (mirror_[viewInfo.Monitor]) {
-			if (rotation_[viewInfo.Monitor] % 2 == 0) {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-				}
-			}
-			else {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					int tmp = dstRect.x;
-					dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-					angle += 90;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-				}
-			}
-		}
-		else {
-			// 90 degree rotation
-			if (rotation_[viewInfo.Monitor] == 1) {
-				int tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-			}
-			// 180 degree rotation
-			if (rotation_[viewInfo.Monitor] == 2) {
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-			}
-			// 270 degree rotation
-			if (rotation_[viewInfo.Monitor] == 3) {
-				int tmp = dstRect.x;
-				dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-			}
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_VERTICAL);
-			}
-		}
-	}
-
-	// Restore original parameters
-	srcRect.x = srcRectOrig.x;
-	srcRect.y = srcRectOrig.y;
-	srcRect.w = srcRectOrig.w;
-	srcRect.h = srcRectOrig.h;
-	dstRect.x = dstRectOrig.x;
-	dstRect.y = dstRectOrig.y;
-	dstRect.w = dstRectOrig.w;
-	dstRect.h = dstRectOrig.h;
-	srcRectCopy.x = srcRectOrig.x;
-	srcRectCopy.y = srcRectOrig.y;
-	srcRectCopy.w = srcRectOrig.w;
-	srcRectCopy.h = srcRectOrig.h;
-	dstRectCopy.x = dstRectOrig.x;
-	dstRectCopy.y = dstRectOrig.y;
-	dstRectCopy.w = dstRectOrig.w;
-	dstRectCopy.h = dstRectOrig.h;
-
-	if (viewInfo.Reflection.find("left") != std::string::npos) {
-		dstRect.w = static_cast<unsigned int>(static_cast<float>(dstRect.w) * viewInfo.ReflectionScale);
-		dstRect.x = dstRect.x - dstRect.w - viewInfo.ReflectionDistance;
-		imageScaleX = (dstRect.h > 0) ? static_cast<double>(srcRect.w) / static_cast<double>(dstRect.w) : 0.0;
-		dstRectCopy.x = dstRect.x;
-		dstRectCopy.w = dstRect.w;
-
-		// If a container has been defined, limit the display to the container boundaries.
-		if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-			dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-			// Correct if the image falls to the left of the container
-			if (dstRect.x < viewInfo.ContainerX) {
-				dstRect.x = static_cast<int>(viewInfo.ContainerX);
-				dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-			}
-			// Correct if the image falls to the right of the container
-			if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-				dstRect.w = static_cast<int>(viewInfo.ContainerX + viewInfo.ContainerWidth) - dstRect.x;
-				srcRect.x = srcRectCopy.x + srcRectCopy.w * (dstRectCopy.w - dstRect.w) / dstRectCopy.w;
-			}
-			// Correct if the image falls to the top of the container
-			if (dstRect.y < viewInfo.ContainerY) {
-				dstRect.y = static_cast<int>(viewInfo.ContainerY);
-				dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-				srcRect.y = srcRectCopy.y + srcRectCopy.h * (dstRect.y - dstRectCopy.y) / dstRectCopy.h;
-			}
-			// Correct if the image falls to the bottom of the container
-			if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-				dstRect.h = static_cast<int>(viewInfo.ContainerY + viewInfo.ContainerHeight) - dstRect.y;
-			}
-			// Define source width and height
-			srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-			srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-
-		}
-
-		angle = viewInfo.Angle;
-		if (!mirror_[viewInfo.Monitor])
-			angle += rotation_[viewInfo.Monitor] * 90;
-
-		dstRect.x = (int)(dstRect.x * scaleX);
-		dstRect.y = (int)(dstRect.y * scaleY);
-		dstRect.w = (int)(dstRect.w * scaleX);
-		dstRect.h = (int)(dstRect.h * scaleY);
-
-		if (mirror_[viewInfo.Monitor]) {
-			if (rotation_[viewInfo.Monitor] % 2 == 0) {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-				}
-			}
-			else {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					int tmp = dstRect.x;
-					dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-					angle += 90;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-				}
-			}
-		}
-		else {
-			// 90 degree rotation
-			if (rotation_[viewInfo.Monitor] == 1) {
-				int tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-			}
-			// 180 degree rotation
-			if (rotation_[viewInfo.Monitor] == 2) {
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-			}
-			// 270 degree rotation
-			if (rotation_[viewInfo.Monitor] == 3) {
-				int tmp = dstRect.x;
-				dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-			}
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-			}
-		}
-	}
-
-	// Restore original parameters
-	srcRect.x = srcRectOrig.x;
-	srcRect.y = srcRectOrig.y;
-	srcRect.w = srcRectOrig.w;
-	srcRect.h = srcRectOrig.h;
-	dstRect.x = dstRectOrig.x;
-	dstRect.y = dstRectOrig.y;
-	dstRect.w = dstRectOrig.w;
-	dstRect.h = dstRectOrig.h;
-	srcRectCopy.x = srcRectOrig.x;
-	srcRectCopy.y = srcRectOrig.y;
-	srcRectCopy.w = srcRectOrig.w;
-	srcRectCopy.h = srcRectOrig.h;
-	dstRectCopy.x = dstRectOrig.x;
-	dstRectCopy.y = dstRectOrig.y;
-	dstRectCopy.w = dstRectOrig.w;
-	dstRectCopy.h = dstRectOrig.h;
-
-	if (viewInfo.Reflection.find("right") != std::string::npos) {
-		dstRect.x = dstRect.x + dstRect.w + viewInfo.ReflectionDistance;
-		dstRect.w = static_cast<unsigned int>(static_cast<float>(dstRect.w) * viewInfo.ReflectionScale);
-		imageScaleX = (dstRect.h > 0) ? static_cast<double>(srcRect.w) / static_cast<double>(dstRect.w) : 0.0;
-		dstRectCopy.x = dstRect.x;
-		dstRectCopy.w = dstRect.w;
-
-		// If a container has been defined, limit the display to the container boundaries.
-		if (viewInfo.ContainerWidth > 0 && viewInfo.ContainerHeight > 0 &&
-			dstRectCopy.w > 0 && dstRectCopy.h > 0) {
-			// Correct if the image falls to the left of the container
-			if (dstRect.x < viewInfo.ContainerX) {
-				dstRect.x = static_cast<int>(viewInfo.ContainerX);
-				dstRect.w = dstRectCopy.w + dstRectCopy.x - dstRect.x;
-			}
-			// Correct if the image falls to the right of the container
-			if ((dstRectCopy.x + dstRectCopy.w) > (viewInfo.ContainerX + viewInfo.ContainerWidth)) {
-				dstRect.w = static_cast<int>(viewInfo.ContainerX + viewInfo.ContainerWidth) - dstRect.x;
-				srcRect.x = srcRectCopy.x + srcRectCopy.w * (dstRectCopy.w - dstRect.w) / dstRectCopy.w;
-			}
-			// Correct if the image falls to the top of the container
-			if (dstRect.y < viewInfo.ContainerY) {
-				dstRect.y = static_cast<int>(viewInfo.ContainerY);
-				dstRect.h = dstRectCopy.h + dstRectCopy.y - dstRect.y;
-				srcRect.y = srcRectCopy.y + srcRectCopy.h * (dstRect.y - dstRectCopy.y) / dstRectCopy.h;
-			}
-			// Correct if the image falls to the bottom of the container
-			if ((dstRectCopy.y + dstRectCopy.h) > (viewInfo.ContainerY + viewInfo.ContainerHeight)) {
-				dstRect.h = static_cast<int>(viewInfo.ContainerY + viewInfo.ContainerHeight) - dstRect.y;
-			}
-			// Define source width and height
-			srcRect.w = static_cast<int>(dstRect.w * imageScaleX);
-			srcRect.h = static_cast<int>(dstRect.h * imageScaleY);
-
-		}
-
-		angle = viewInfo.Angle;
-		if (!mirror_[viewInfo.Monitor])
-			angle += rotation_[viewInfo.Monitor] * 90;
-
-		dstRect.x = (int)(dstRect.x * scaleX);
-		dstRect.y = (int)(dstRect.y * scaleY);
-		dstRect.w = (int)(dstRect.w * scaleX);
-		dstRect.h = (int)(dstRect.h * scaleY);
-
-		if (mirror_[viewInfo.Monitor]) {
-			if (rotation_[viewInfo.Monitor] % 2 == 0) {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					dstRect.y += windowHeight_[viewInfo.Monitor] / 2;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-				}
-			}
-			else {
-				if (srcRect.h > 0 && srcRect.w > 0) {
-					int tmp = dstRect.x;
-					dstRect.x = windowWidth_[viewInfo.Monitor] / 2 - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-					dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-					angle += 90;
-					SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-					dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-					dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-					angle += 180;
-					SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-				}
-			}
-		}
-		else {
-			// 90 degree rotation
-			if (rotation_[viewInfo.Monitor] == 1) {
-				int tmp = dstRect.x;
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.y - dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = tmp - dstRect.h / 2 + dstRect.w / 2;
-			}
-			// 180 degree rotation
-			if (rotation_[viewInfo.Monitor] == 2) {
-				dstRect.x = windowWidth_[viewInfo.Monitor] - dstRect.x - dstRect.w;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - dstRect.y - dstRect.h;
-			}
-			// 270 degree rotation
-			if (rotation_[viewInfo.Monitor] == 3) {
-				int tmp = dstRect.x;
-				dstRect.x = dstRect.y + dstRect.h / 2 - dstRect.w / 2;
-				dstRect.y = windowHeight_[viewInfo.Monitor] - tmp - dstRect.h / 2 - dstRect.w / 2;
-			}
-			if (srcRect.h > 0 && srcRect.w > 0) {
-				SDL_SetTextureAlphaMod(texture, static_cast<char>(viewInfo.ReflectionAlpha * alpha * 255));
-				SDL_RenderCopyEx(renderer_[viewInfo.Monitor], texture, &srcRect, &dstRect, angle, nullptr, SDL_FLIP_HORIZONTAL);
-			}
-		}
-	}
-	return true;
+bool SDL::renderCopy(SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_Rect* dest,
+	ViewInfo& viewInfo, int layoutWidth, int layoutHeight) {
+	if (!dest) return false;
+	const SDL_FRect destination{ static_cast<float>(dest->x), static_cast<float>(dest->y),
+		static_cast<float>(dest->w), static_cast<float>(dest->h) };
+	return renderCopyF(texture, alpha, src, &destination, viewInfo, layoutWidth, layoutHeight);
 }
 
 bool SDL::renderCopyF(SDL_Texture* texture,
@@ -1615,6 +897,8 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 		int lastOH = -1;
 		int lastRot = -1;
 		int lastMode = -1;
+		int lastDisplayW = -1;
+		int lastDisplayH = -1;
 
 		bool lastMir = false;
 		bool lastFS = false;
@@ -1631,17 +915,9 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 		float dyL = 0.0f;
 	};
 
-	static ScaleCache cache[8];
-
-	// Avoid indexing past the fixed cache if screenCount_ is ever raised.
-	if (m >= static_cast<int>(std::size(cache))) {
-		LOG_ERROR(
-			"SDL",
-			"renderCopyF scale cache supports at most " +
-			std::to_string(std::size(cache)) + " monitors"
-		);
-		return false;
-	}
+	// Local calculation also observes display changes across video reloads.
+	static std::vector<ScaleCache> cache;
+	cache.resize(screenCount_);
 
 	const int outW = windowWidth_[m];
 	const int outH = windowHeight_[m];
@@ -1655,6 +931,8 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 	}
 
 	const bool cacheInvalid =
+		cache[m].lastDisplayW != displayWidth_[m] ||
+		cache[m].lastDisplayH != displayHeight_[m] ||
 		cache[m].lastLW != layoutWidth ||
 		cache[m].lastLH != layoutHeight ||
 		cache[m].lastOW != outW ||
@@ -1769,6 +1047,8 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 				std::max(cache[m].scaleY, 1e-6f);
 		}
 
+		cache[m].lastDisplayW = displayWidth_[m];
+		cache[m].lastDisplayH = displayHeight_[m];
 		cache[m].lastLW = layoutWidth;
 		cache[m].lastLH = layoutHeight;
 		cache[m].lastOW = outW;
@@ -1789,24 +1069,22 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 	int texW = static_cast<int>(viewInfo.ImageWidth);
 	int texH = static_cast<int>(viewInfo.ImageHeight);
 
-	if (texW <= 0 || texH <= 0) {
-		if (SDL_QueryTexture(
-			texture,
-			nullptr,
-			nullptr,
-			&texW,
-			&texH) != 0)
+	{ // Native video textures may include decoder allocation padding.
+		float width = 0.0f, height = 0.0f;
+		if (!SDL_GetTextureSize(texture, &width, &height))
 		{
 			LOG_ERROR(
 				"SDL",
-				"SDL_QueryTexture failed in renderCopyF: " +
+				"SDL_GetTextureSize failed in renderCopyF: " +
 				std::string(SDL_GetError())
 			);
 			return false;
 		}
 
-		viewInfo.ImageWidth = static_cast<float>(texW);
-		viewInfo.ImageHeight = static_cast<float>(texH);
+		texW = static_cast<int>(width);
+		texH = static_cast<int>(height);
+		if (viewInfo.ImageWidth <= 0) viewInfo.ImageWidth = static_cast<float>(texW);
+		if (viewInfo.ImageHeight <= 0) viewInfo.ImageHeight = static_cast<float>(texH);
 	}
 
 	const float invTexW =
@@ -1817,11 +1095,11 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 
 	// Texture color modulation is invariant for every quad emitted by
 	// this renderCopyF() call, including reflections and mirror copies.
-	Uint8 textureR = 255;
-	Uint8 textureG = 255;
-	Uint8 textureB = 255;
+	float textureR = 1.0f;
+	float textureG = 1.0f;
+	float textureB = 1.0f;
 
-	SDL_GetTextureColorMod(
+	SDL_GetTextureColorModFloat(
 		texture,
 		&textureR,
 		&textureG,
@@ -1877,25 +1155,6 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 	// Helpers
 	// ---------------------------------------------------------
 
-	auto clamp_int = [](int value, int minimum, int maximum) {
-		return value < minimum
-			? minimum
-			: value > maximum
-			? maximum
-			: value;
-		};
-
-	auto clamp_u8 = [&](float alpha01) -> Uint8 {
-		alpha01 = std::clamp(alpha01, 0.0f, 1.0f);
-
-		return static_cast<Uint8>(
-			clamp_int(
-				static_cast<int>(std::lround(alpha01 * 255.0f)),
-				0,
-				255
-			)
-			);
-		};
 
 	/*
 	 * This is the key global layout viewport transform.
@@ -2315,11 +1574,11 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 				std::swap(v0, v1);
 			}
 
-			const SDL_Color color = {
+			const SDL_FColor color = {
 				textureR,
 				textureG,
 				textureB,
-				clamp_u8(alpha01)
+				std::clamp(alpha01, 0.0f, 1.0f)
 			};
 
 			SDL_Vertex vertices[4];
@@ -2360,7 +1619,7 @@ bool SDL::renderCopyF(SDL_Texture* texture,
 				4,
 				indices,
 				6
-			) == 0;
+			);
 		};
 
 	auto render_path =

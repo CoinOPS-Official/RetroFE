@@ -81,18 +81,13 @@ void Component::allocateGraphicsMemory() {
     // --- SHARED TEXTURE LOGIC ---
     if (sharedBackgroundTextures_.find(monitor) == sharedBackgroundTextures_.end()) {
 
-        // FIX 3: Explicitly define RGBA masks so the texture supports alpha blending properly
-#if SDL_BYTEORDER == SDL_BIG_ENDIAN
-        Uint32 rmask = 0xff000000, gmask = 0x00ff0000, bmask = 0x0000ff00, amask = 0x000000ff;
-#else
-        Uint32 rmask = 0x000000ff, gmask = 0x0000ff00, bmask = 0x00ff0000, amask = 0xff000000;
-#endif
+        // RGBA32 preserves the byte-order-independent surface layout.
 
-        SDL_Surface* surface = SDL_CreateRGBSurface(0, 4, 4, 32, rmask, gmask, bmask, amask);
-        SDL_FillRect(surface, NULL, SDL_MapRGBA(surface->format, 255, 255, 255, 255));
+        SDL_Surface* surface = SDL_CreateSurface(4, 4, SDL_PIXELFORMAT_RGBA32);
+        SDL_FillSurfaceRect(surface, NULL, SDL_MapSurfaceRGBA(surface, 255, 255, 255, 255));
         sharedBackgroundTextures_[monitor] = SDL_CreateTextureFromSurface(SDL::getRenderer(monitor), surface);
         SDL_SetTextureBlendMode(sharedBackgroundTextures_[monitor], SDL_BLENDMODE_BLEND);
-        SDL_FreeSurface(surface);
+        SDL_DestroySurface(surface);
     }
 
     // Point this component's local pointer to the shared master texture

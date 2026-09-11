@@ -1,6 +1,6 @@
 #include "JoyAxisHandler.h"
 
-JoyAxisHandler::JoyAxisHandler(SDL_JoystickID joyid, Uint8 axis, Sint16 min, Sint16 max)
+JoyAxisHandler::JoyAxisHandler(int joyid, Uint8 axis, Sint16 min, Sint16 max)
 : joyid_(joyid)
 , axis_(axis)
 , min_(min)
@@ -15,7 +15,7 @@ void JoyAxisHandler::reset()
 
 bool JoyAxisHandler::update(SDL_Event &e)
 {
-    if(e.type != SDL_JOYAXISMOTION || (joyid_ != -1 && e.jaxis.which != joyid_) || e.jaxis.axis != axis_) return false;
+    if(e.type != SDL_EVENT_JOYSTICK_AXIS_MOTION || (joyid_ != -1 && e.jaxis.which != joyid_) || e.jaxis.axis != axis_) return false;
     pressed_ = (min_ <= e.jaxis.value && e.jaxis.value <= max_);
 
     return true;

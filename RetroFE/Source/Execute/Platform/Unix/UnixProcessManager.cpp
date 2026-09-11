@@ -59,7 +59,7 @@ constexpr std::array<XdgEnvironmentMapping, 4> hostXdgMappings{{
     { "HOST_XDG_STATE_HOME",  "XDG_STATE_HOME" },
 }};
 
-constexpr std::array<const char*, 20> appImageDiagnosticEnvironment{{
+constexpr std::array<const char*, 21> appImageDiagnosticEnvironment{{
     "DISPLAY",
     "WAYLAND_DISPLAY",
     "XDG_RUNTIME_DIR",
@@ -67,7 +67,8 @@ constexpr std::array<const char*, 20> appImageDiagnosticEnvironment{{
     "PULSE_SERVER",
     "PIPEWIRE_REMOTE",
     "DBUS_SESSION_BUS_ADDRESS",
-    "SDL_VIDEODRIVER",
+    "SDL_VIDEO_DRIVER",
+    "SDL_VIDEODRIVER", // Also sanitize the environment for SDL2 child processes.
     "GAMESCOPE_WAYLAND_DISPLAY",
     "SteamAppId",
     "SteamGameId",

@@ -16,13 +16,9 @@
 #pragma once
 
 #include <string>
-#if __has_include(<SDL_mixer.h>)
-#include <SDL_mixer.h>
-#elif __has_include(<SDL2_mixer/SDL_mixer.h>)
-#include <SDL2_mixer/SDL_mixer.h>
-#else
-#error "Cannot find SDL_mixer header"
-#endif
+#include <vector>
+#include <SDL3/SDL.h>
+#include <SDL3_mixer/SDL_mixer.h>
 
 class Sound
 {
@@ -35,6 +31,7 @@ public:
     bool isPlaying();
 private:
     std::string file_;
-    Mix_Chunk  *chunk_;
-    int         channel_;
+    MIX_Audio* chunk_;
+    std::vector<MIX_Track*> voices_;
+    uint64_t generation_ = 0;
 };

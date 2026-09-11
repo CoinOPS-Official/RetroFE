@@ -30,11 +30,11 @@
 #include "../Page.h"
 
 #ifdef __APPLE__
-#include <SDL_rect.h>
-#include <SDL_render.h>
+#include <SDL3/SDL_rect.h>
+#include <SDL3/SDL_render.h>
 #else
-#include "SDL_rect.h"
-#include "SDL_render.h"
+#include <SDL3/SDL_rect.h>
+#include <SDL3/SDL_render.h>
 #endif
 
 VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
@@ -193,7 +193,7 @@ bool VideoComponent::update(float dt) {
     // 2. Enforce the Retry Backoff Timer!
     // This stops the 60fps log spam if the pool OR the CPU is full.
     if (pendingVideoRetry_) {
-        if (SDL_GetTicks64() < nextRetryTime_) {
+        if (SDL_GetTicks() < nextRetryTime_) {
             return Component::update(dt); // Wait patiently
         }
     }
@@ -206,7 +206,7 @@ bool VideoComponent::update(float dt) {
             pendingVideoRetry_ = true;
             retryAttempts_++;
             const uint32_t delay = std::min(250u, 16u * (1u << std::min(retryAttempts_, 4u)));
-            nextRetryTime_ = SDL_GetTicks64() + delay;
+            nextRetryTime_ = SDL_GetTicks() + delay;
             return Component::update(dt);
         }
     }
@@ -225,7 +225,7 @@ bool VideoComponent::update(float dt) {
             pendingVideoRetry_ = true;
             retryAttempts_ = std::max(1u, retryAttempts_ + 1); // Use std::max to ensure we scale correctly
             const uint32_t delay = std::min(250u, 16u * (1u << std::min(retryAttempts_, 4u)));
-            nextRetryTime_ = SDL_GetTicks64() + delay;
+            nextRetryTime_ = SDL_GetTicks() + delay;
             return Component::update(dt);
         }
         else {
@@ -234,6 +234,8 @@ bool VideoComponent::update(float dt) {
             retryAttempts_ = 0;
         }
     }
+
+    if (instanceReady_) videoInst_->updateFrame();
 
     // --- ATOMIC SNAPSHOT PULL ---
     const auto snap = videoInst_->getSnapshot();
@@ -307,9 +309,6 @@ void VideoComponent::draw() {
         return;
     }
 
-    if (currentSnapshot_.pipelineReady) {
-        videoInst_->updateFrame();
-    }
 
     SDL_Texture* texture = videoInst_->getTexture();
 
@@ -321,10 +320,12 @@ void VideoComponent::draw() {
             baseViewInfo.ScaledHeight()
         };
 
+        const auto dimensions = videoInst_->getDimensions();
+        SDL_Rect source{0, 0, dimensions.w, dimensions.h};
         SDL::renderCopyF(
             texture,
             baseViewInfo.Alpha,
-            nullptr,
+            &source,
             &rect,
             baseViewInfo,
             page.getLayoutWidthByMonitor(baseViewInfo.Monitor),

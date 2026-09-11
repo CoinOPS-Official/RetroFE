@@ -27,6 +27,7 @@
 #include "Utility/CrashHandler.h"
 #include "RetroFE.h"
 #include "SDL.h"
+#include <SDL3/SDL_main.h>
 #include "versioning.h" // Created at build time
 
 #include <cstdlib>

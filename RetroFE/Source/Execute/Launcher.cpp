@@ -465,7 +465,7 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
                     SDL_RenderClear(r);
                     currentPage->draw(i);
                     SDL_SetRenderTarget(r, nullptr);
-                    SDL_RenderCopy(r, t, nullptr, nullptr);
+                    SDL_RenderTexture(r, t, nullptr, nullptr);
                     SDL_RenderPresent(r);
                 }
             }

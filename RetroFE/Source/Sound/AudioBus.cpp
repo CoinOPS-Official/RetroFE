@@ -1,4 +1,6 @@
 #include "AudioBus.h"
+#include "MusicPlayer.h"
+#include <array>
 #if defined(__AVX2__)
 #include <immintrin.h>
 #elif defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
@@ -37,10 +39,10 @@ namespace {
 
 static inline int bytes_per_sample(SDL_AudioFormat f) noexcept {
     switch (f) {
-        case AUDIO_S8: case AUDIO_U8:                           return 1;
-        case AUDIO_S16LSB: case AUDIO_S16MSB:                   return 2;
-        case AUDIO_S32LSB: case AUDIO_S32MSB:                   return 4;
-        case AUDIO_F32LSB: case AUDIO_F32MSB:                   return 4;
+        case SDL_AUDIO_S8: case SDL_AUDIO_U8:                           return 1;
+        case SDL_AUDIO_S16LE: case SDL_AUDIO_S16BE:                   return 2;
+        case SDL_AUDIO_S32LE: case SDL_AUDIO_S32BE:                   return 4;
+        case SDL_AUDIO_F32LE: case SDL_AUDIO_F32BE:                   return 4;
         default:                                                return 2;
     }
 }
@@ -53,6 +55,7 @@ AudioBus::SpscRing::SpscRing(size_t cap_req, size_t align)
 }
 
 int AudioBus::SpscRing::write(const uint8_t* data, int bytes) {
+    std::lock_guard<std::mutex> lock(ringMutex_);
     if (!data || bytes <= 0) return 0;
 
     const size_t cap = buf_.size();
@@ -89,6 +92,7 @@ int AudioBus::SpscRing::write(const uint8_t* data, int bytes) {
 }
 
 int AudioBus::SpscRing::read(uint8_t* out, int bytes) {
+    std::lock_guard<std::mutex> lock(ringMutex_);
     if (!out || bytes <= 0) return 0;
 
     const size_t cap = buf_.size();
@@ -111,6 +115,7 @@ int AudioBus::SpscRing::read(uint8_t* out, int bytes) {
 }
 
 void AudioBus::SpscRing::clear() {
+    std::lock_guard<std::mutex> lock(ringMutex_);
     size_t h = head_.load(std::memory_order_relaxed);
     tail_.store(h, std::memory_order_release);
 }
@@ -152,14 +157,88 @@ AudioBus& AudioBus::instance() {
 }
 
 AudioBus::~AudioBus() {
+    shutdown();
     std::lock_guard<std::mutex> lk(mtx_);
     sources_.clear();  // shared_ptr destructors free streams safely
 }
 
+bool AudioBus::initialize(int sampleRate, int channels) {
+    if (mixer_) return true;
+    if (sampleRate <= 0 || channels <= 0 || channels > 8)
+        return SDL_SetError("Invalid audio rate or channel count");
+    if (!MIX_Init()) return false;
+    mixerInitialized_ = true;
+    SDL_AudioSpec requested{ SDL_AUDIO_F32, channels, sampleRate };
+    mixer_ = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &requested);
+    SDL_AudioSpec actual{};
+    if (!mixer_ || !MIX_GetMixerFormat(mixer_, &actual)) {
+        shutdown();
+        return false;
+    }
+    devFmt_ = SDL_AUDIO_S16; // Stable native-endian producer contract, independent of hardware format.
+    devRate_ = actual.freq;
+    devChans_ = actual.channels;
+    if (!MIX_SetPostMixCallback(mixer_, postMix, this)) {
+        shutdown();
+        return false;
+    }
+    return true;
+}
+
+void AudioBus::shutdown() {
+    if (mixer_) MIX_SetPostMixCallback(mixer_, nullptr, nullptr);
+    MusicPlayer* player;
+    {
+        std::lock_guard<std::mutex> lock(callbackMutex_);
+        player = musicPlayer_;
+        musicPlayer_ = nullptr;
+    }
+    if (player) player->releaseAudio();
+    if (mixer_) MIX_DestroyMixer(mixer_); // Also destroys outstanding SFX voices.
+    mixer_ = nullptr;
+    ++generation_;
+    {
+        std::lock_guard<std::mutex> lock(mtx_);
+        for (auto& entry : sources_) {
+            entry.second->enabled.store(false, std::memory_order_release);
+            entry.second->ring.clear();
+        }
+        sources_.clear();
+        rebuildSnapshotLocked();
+    }
+    if (mixerInitialized_) MIX_Quit();
+    mixerInitialized_ = false;
+}
+
 void AudioBus::configureFromMixer() {
-    int freq = 48000, chans = 2; Uint16 fmt = AUDIO_S16SYS;
-    (void)Mix_QuerySpec(&freq, &fmt, &chans);
-    devFmt_ = fmt; devRate_ = freq; devChans_ = chans;
+    if (!initialize()) LOG_ERROR("AudioBus", std::string("Audio initialization failed: ") + SDL_GetError());
+}
+
+void AudioBus::setMusicPlayer(MusicPlayer* player) {
+    std::lock_guard<std::mutex> lock(callbackMutex_);
+    musicPlayer_ = player;
+}
+
+void SDLCALL AudioBus::postMix(void* userdata, MIX_Mixer*, const SDL_AudioSpec* spec, float* pcm, int samples) {
+    auto& bus = *static_cast<AudioBus*>(userdata);
+    if (!pcm || samples <= 0 || spec->channels != bus.devChans_ || spec->freq != bus.devRate_) return;
+    {
+        std::lock_guard<std::mutex> lock(bus.callbackMutex_);
+        if (bus.musicPlayer_)
+            bus.musicPlayer_->processAudioData(reinterpret_cast<Uint8*>(pcm), samples * static_cast<int>(sizeof(float)));
+    }
+    // Keep visualization before injected video audio, as in the original postmix.
+    // Fixed scratch storage bounds callback allocations and handles arbitrary block sizes.
+    std::array<int16_t, 4096> injected{};
+    const int capacity = static_cast<int>(injected.size()) / spec->channels * spec->channels;
+    for (int offset = 0; offset < samples;) {
+        const int count = std::min(capacity, samples - offset);
+        std::fill_n(injected.data(), count, int16_t{0});
+        bus.mixInto(reinterpret_cast<Uint8*>(injected.data()), count * static_cast<int>(sizeof(int16_t)));
+        for (int i = 0; i < count; ++i)
+            pcm[offset + i] = std::clamp(pcm[offset + i] + injected[i] / 32768.0f, -1.0f, 1.0f);
+        offset += count;
+    }
 }
 
 AudioBus::SourceId AudioBus::addSource(const char* name, size_t ring_kb) {
@@ -248,6 +327,9 @@ void AudioBus::pushImpl(Source& src, const void* data, int bytes) {
     static thread_local size_t tl_temp_hwm_cap = 0;
     static thread_local size_t tl_temp_hwm_size = 0;
 
+    bytes -= bytes % (devChans_ * bytes_per_sample(devFmt_));
+    if (bytes <= 0) return;
+
     if (temp_buffer.size() < static_cast<size_t>(bytes))
         temp_buffer.resize(static_cast<size_t>(bytes));
 
@@ -265,7 +347,7 @@ void AudioBus::pushImpl(Source& src, const void* data, int bytes) {
 
     // 1) fade
     int fadeLeft = src.fadeSamplesLeft.load(std::memory_order_acquire);
-    if (fadeLeft > 0 && devFmt_ == AUDIO_S16SYS) {
+    if (fadeLeft > 0 && devFmt_ == SDL_AUDIO_S16) {
         int16_t* samples = reinterpret_cast<int16_t*>(temp_buffer.data());
         int total_samples = bytes / (int)sizeof(int16_t);
         int samples_to_fade = std::min(fadeLeft, total_samples);
@@ -282,17 +364,17 @@ void AudioBus::pushImpl(Source& src, const void* data, int bytes) {
     // 2) gain
     float sourceGain = src.gain.load(std::memory_order_relaxed);
 
-    if (devFmt_ == AUDIO_S16SYS) {
+    if (devFmt_ == SDL_AUDIO_S16) {
         int16_t* samples = reinterpret_cast<int16_t*>(temp_buffer.data());
         int num_samples = bytes / (int)sizeof(int16_t);
         for (int i = 0; i < num_samples; ++i) samples[i] = static_cast<int16_t>(samples[i] * sourceGain);
     }
-    else if (devFmt_ == AUDIO_F32LSB || devFmt_ == AUDIO_F32MSB) {
+    else if (devFmt_ == SDL_AUDIO_F32LE || devFmt_ == SDL_AUDIO_F32BE) {
         float* samples = reinterpret_cast<float*>(temp_buffer.data());
         int num_samples = bytes / (int)sizeof(float);
         for (int i = 0; i < num_samples; ++i) samples[i] *= sourceGain;
     }
-    else if (devFmt_ == AUDIO_S32LSB || devFmt_ == AUDIO_S32MSB) {
+    else if (devFmt_ == SDL_AUDIO_S32LE || devFmt_ == SDL_AUDIO_S32BE) {
         int32_t* samples = reinterpret_cast<int32_t*>(temp_buffer.data());
         int num_samples = bytes / (int)sizeof(int32_t);
         for (int i = 0; i < num_samples; ++i)
@@ -300,7 +382,7 @@ void AudioBus::pushImpl(Source& src, const void* data, int bytes) {
     }
 
     // 3) limiter
-    if (devFmt_ == AUDIO_S16SYS) {
+    if (devFmt_ == SDL_AUDIO_S16) {
         int16_t* samples = reinterpret_cast<int16_t*>(temp_buffer.data());
         int num_samples = bytes / (int)sizeof(int16_t);
 
@@ -416,32 +498,20 @@ void AudioBus::mixInto(Uint8* dst, int lenBytes) {
 
     switch (devFmt_) {
         // -------- float32 --------
-#if defined(AUDIO_F32LSB)
-        case AUDIO_F32LSB:
-#endif
-#if defined(AUDIO_F32MSB)
-        case AUDIO_F32MSB:
-#endif
+        case SDL_AUDIO_F32LE:
+        case SDL_AUDIO_F32BE:
         mixInto_f32(dst, lenBytes);
         break;
 
         // -------- signed 32-bit int --------
-#if defined(AUDIO_S32LSB)
-        case AUDIO_S32LSB:
-#endif
-#if defined(AUDIO_S32MSB)
-        case AUDIO_S32MSB:
-#endif
+        case SDL_AUDIO_S32LE:
+        case SDL_AUDIO_S32BE:
         mixInto_s32(dst, lenBytes);
         break;
 
         // -------- signed 16-bit int --------
-#if defined(AUDIO_S16LSB)
-        case AUDIO_S16LSB:
-#endif
-#if defined(AUDIO_S16MSB)
-        case AUDIO_S16MSB:
-#endif
+        case SDL_AUDIO_S16LE:
+        case SDL_AUDIO_S16BE:
         mixInto_s16(dst, lenBytes);
         break;
 

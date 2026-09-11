@@ -16,7 +16,7 @@
 
 #include "GameControllerAxisHandler.h"
 
-GameControllerAxisHandler::GameControllerAxisHandler(int joyid, SDL_GameControllerAxis axis, Sint16 min, Sint16 max)
+GameControllerAxisHandler::GameControllerAxisHandler(int joyid, SDL_GamepadAxis axis, Sint16 min, Sint16 max)
     : joyid_(joyid)
     , axis_(axis)
     , min_(min)
@@ -31,8 +31,8 @@ void GameControllerAxisHandler::reset()
 
 bool GameControllerAxisHandler::update(SDL_Event &e)
 {
-    if (e.type != SDL_CONTROLLERAXISMOTION || (joyid_ != -1 && e.caxis.which != joyid_) || static_cast<SDL_GameControllerAxis>(e.caxis.axis) != axis_) return false;
-    pressed_ = (min_ <= e.caxis.value && e.caxis.value <= max_);
+    if (e.type != SDL_EVENT_GAMEPAD_AXIS_MOTION || (joyid_ != -1 && e.gaxis.which != joyid_) || static_cast<SDL_GamepadAxis>(e.gaxis.axis) != axis_) return false;
+    pressed_ = (min_ <= e.gaxis.value && e.gaxis.value <= max_);
 
     return true;
 }

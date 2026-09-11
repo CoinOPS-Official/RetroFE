@@ -36,6 +36,7 @@
 #include <charconv>
 #include <numeric>
 #include <cmath>
+#include <cstring>
 
 static const SDL_BlendMode softOverlayBlendMode = SDL_ComposeCustomBlendMode(
 	SDL_BLENDFACTOR_SRC_ALPHA,           // Source color factor: modulates source color by the alpha value set dynamically
@@ -361,7 +362,7 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 	SDL_Surface* fullSurfaceRaw = IMG_Load(fullPath.c_str());
 	if (!fullSurfaceRaw || !volumeEmptyTexture_) {
 		LOG_ERROR("MusicPlayerComponent", "Failed to load volume bar assets");
-		if (fullSurfaceRaw) SDL_FreeSurface(fullSurfaceRaw);
+		if (fullSurfaceRaw) SDL_DestroySurface(fullSurfaceRaw);
 		if (volumeEmptyTexture_) {
 			SDL_DestroyTexture(volumeEmptyTexture_);
 			volumeEmptyTexture_ = nullptr;
@@ -370,8 +371,8 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 	}
 
 	// Convert to 32-bit RGBA format
-	SDL_Surface* fullSurface = SDL_ConvertSurfaceFormat(fullSurfaceRaw, SDL_PIXELFORMAT_RGBA8888, 0);
-	SDL_FreeSurface(fullSurfaceRaw); // no longer needed
+	SDL_Surface* fullSurface = SDL_ConvertSurface(fullSurfaceRaw, SDL_PIXELFORMAT_RGBA8888);
+	SDL_DestroySurface(fullSurfaceRaw); // no longer needed
 	if (!fullSurface) {
 		LOG_ERROR("MusicPlayerComponent", "Failed to convert full surface to RGBA8888");
 		SDL_DestroyTexture(volumeEmptyTexture_);
@@ -404,7 +405,7 @@ void MusicPlayerComponent::loadVolumeBarTextures() {
 	volumeBarHeight_ = fullSurface->h;
 	baseViewInfo.ImageWidth = static_cast<float>(volumeBarWidth_);
 	baseViewInfo.ImageHeight = static_cast<float>(volumeBarHeight_);
-	SDL_FreeSurface(fullSurface);
+	SDL_DestroySurface(fullSurface);
 
 	if (!volumeFullTexture_) {
 		LOG_ERROR("MusicPlayerComponent", "Failed to create texture from full surface");
@@ -438,10 +439,10 @@ void MusicPlayerComponent::pushToGst(const Uint8* data, int len) {
 	gst_buffer_fill(buffer, 0, data, len);
 
 	// -- Add this block to set timestamps! --
-	static GstClockTime pts = 0;
-	// Each audio frame: bytes_per_sample * num_channels = 4 for S16LE stereo, 2 for S16LE mono, etc.
-	const int bytes_per_frame = 2 /*bytes/sample*/ * 2 /*channels*/; // assuming S16LE, stereo
-	const int sample_rate = 44100; // or whatever your pipeline uses
+	GstClockTime& pts = gstAudioPts_;
+	// SDL3_mixer callbacks use native-endian floating-point samples.
+	const int bytes_per_frame = sizeof(float) * musicPlayer_->getAudioChannels();
+	const int sample_rate = musicPlayer_->getAudioSampleRate();
 
 	// Number of frames (samples per channel) in this buffer:
 	int nframes = len / bytes_per_frame;
@@ -461,7 +462,7 @@ void MusicPlayerComponent::pushToGst(const Uint8* data, int len) {
 
 int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 	if (!surface || !surface->pixels) return 0;
-	if (surface->format->BytesPerPixel != 4) return 0;
+	if (SDL_GetPixelFormatDetails(surface->format)->bytes_per_pixel != 4) return 0;
 
 	const int texW = surface->w;
 	const int texH = surface->h;
@@ -470,7 +471,7 @@ int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 
 	std::map<int, int> segmentCountHistogram;
 
-	if (SDL_MUSTLOCK(surface)) SDL_LockSurface(surface);
+	if (SDL_MUSTLOCK(surface) && !SDL_LockSurface(surface)) return 0;
 
 	for (int y = scanYStart; y < scanYEnd; ++y) {
 		Uint8* pixelData = static_cast<Uint8*>(surface->pixels);
@@ -485,7 +486,7 @@ int MusicPlayerComponent::detectSegmentsFromSurface(SDL_Surface* surface) {
 		for (int x = 0; x < texW; ++x) {
 			Uint32 pixel = row[x];
 			Uint8 r, g, b, a;
-			SDL_GetRGBA(pixel, surface->format, &r, &g, &b, &a);
+			SDL_GetRGBA(pixel, SDL_GetPixelFormatDetails(surface->format), SDL_GetSurfacePalette(surface), &r, &g, &b, &a);
 
 			float currentLuminance = 0.0f;
 			if (a > ImageProcessorConstants::ALPHA_THRESHOLD) {
@@ -568,10 +569,10 @@ void MusicPlayerComponent::updateVolumeBarTexture() {
 			};
 
 			if (i < activeSegments) {
-				SDL_RenderCopy(renderer_, volumeFullTexture_, &rect, &rect);
+				{ SDL_FRect sourceF; SDL_RectToFRect(&rect, &sourceF); SDL_FRect destinationF; SDL_RectToFRect(&rect, &destinationF); SDL_RenderTexture(renderer_, volumeFullTexture_, &sourceF, &destinationF); }
 			}
 			else {
-				SDL_RenderCopy(renderer_, volumeEmptyTexture_, &rect, &rect);
+				{ SDL_FRect sourceF; SDL_RectToFRect(&rect, &sourceF); SDL_FRect destinationF; SDL_RectToFRect(&rect, &destinationF); SDL_RenderTexture(renderer_, volumeEmptyTexture_, &sourceF, &destinationF); }
 			}
 		}
 	}
@@ -582,13 +583,13 @@ void MusicPlayerComponent::updateVolumeBarTexture() {
 		if (visibleWidth > 0) {
 			SDL_Rect src = { 0, 0, visibleWidth, volumeBarHeight_ };
 			SDL_Rect dst = { 0, 0, visibleWidth, volumeBarHeight_ };
-			SDL_RenderCopy(renderer_, volumeFullTexture_, &src, &dst);
+			{ SDL_FRect sourceF; SDL_RectToFRect(&src, &sourceF); SDL_FRect destinationF; SDL_RectToFRect(&dst, &destinationF); SDL_RenderTexture(renderer_, volumeFullTexture_, &sourceF, &destinationF); }
 		}
 
 		if (visibleWidth < volumeBarWidth_) {
 			SDL_Rect src = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
 			SDL_Rect dst = { visibleWidth, 0, volumeBarWidth_ - visibleWidth, volumeBarHeight_ };
-			SDL_RenderCopy(renderer_, volumeEmptyTexture_, &src, &dst);
+			{ SDL_FRect sourceF; SDL_RectToFRect(&src, &sourceF); SDL_FRect destinationF; SDL_RectToFRect(&dst, &destinationF); SDL_RenderTexture(renderer_, volumeEmptyTexture_, &sourceF, &destinationF); }
 		}
 	}
 
@@ -1026,9 +1027,10 @@ bool MusicPlayerComponent::fillPcmBuffer() {
 			float sampleMono = 0.0f;
 			for (int ch = 0; ch < channels; ++ch) {
 				int pos = (i * channels + ch) * sampleSize;
-				// Assuming S16LE format as before
-				int16_t val = *reinterpret_cast<const int16_t*>(&pcmBlock[pos]);
-				sampleMono += static_cast<float>(val) / 32768.0f;
+				// SDL3_mixer supplies native-endian float PCM.
+				float val = 0.0f;
+				std::memcpy(&val, pcmBlock.data() + pos, sizeof(val));
+				sampleMono += val;
 			}
 			sampleMono /= channels;
 			pcmBuffer_.push_back(sampleMono);
@@ -1240,14 +1242,14 @@ void MusicPlayerComponent::drawVuMeterToTexture() {
 				SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.bottomColor.r, vuMeterConfig_.bottomColor.g, vuMeterConfig_.bottomColor.b, 255);
 				float segmentHeight = std::min(barHeight, greenZone);
 				SDL_FRect greenRect = { barX, fftTexH_ - segmentHeight, actualBarWidth, segmentHeight };
-				SDL_RenderFillRectF(renderer_, &greenRect);
+				SDL_RenderFillRect(renderer_, &greenRect);
 			}
 			// Yellow
 			if (barHeight > greenZone) {
 				SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.middleColor.r, vuMeterConfig_.middleColor.g, vuMeterConfig_.middleColor.b, 255);
 				float segmentHeight = std::min(barHeight - greenZone, yellowZone);
 				SDL_FRect yellowRect = { barX, fftTexH_ - greenZone - segmentHeight, actualBarWidth, segmentHeight };
-				SDL_RenderFillRectF(renderer_, &yellowRect);
+				SDL_RenderFillRect(renderer_, &yellowRect);
 			}
 			// Red
 			if (barHeight > greenZone + yellowZone) {
@@ -1255,13 +1257,13 @@ void MusicPlayerComponent::drawVuMeterToTexture() {
 				float redSegmentHeight = barHeight - greenZone - yellowZone;
 				// CORRECTED Y-COORDINATE: Start from the top of the bar.
 				SDL_FRect redRect = { barX, fftTexH_ - barHeight, actualBarWidth, redSegmentHeight };
-				SDL_RenderFillRectF(renderer_, &redRect);
+				SDL_RenderFillRect(renderer_, &redRect);
 			}
 			// Peak marker
 			if (peakHeight > 0 && peakHeight >= barHeight) {
 				SDL_SetRenderDrawColor(renderer_, vuMeterConfig_.peakColor.r, vuMeterConfig_.peakColor.g, vuMeterConfig_.peakColor.b, 255);
 				SDL_FRect peakRect = { barX, fftTexH_ - peakHeight - 2, actualBarWidth, 2.0f };
-				SDL_RenderFillRectF(renderer_, &peakRect);
+				SDL_RenderFillRect(renderer_, &peakRect);
 			}
 		}
 	}
@@ -1378,7 +1380,7 @@ void MusicPlayerComponent::drawIsoVisualizer(SDL_Renderer* renderer, int win_w, 
 					SDL_SetRenderDrawColor(renderer, r, g, b, 255);
 					last_r = r; last_g = g; last_b = b; have_last = true;
 				}
-				SDL_RenderDrawLineF(renderer, x1, y1, x2, y2);
+				SDL_RenderLine(renderer, x1, y1, x2, y2);
 			}
 
 			// -------- vertical segment (i-1, j) -> (i, j)
@@ -1403,7 +1405,7 @@ void MusicPlayerComponent::drawIsoVisualizer(SDL_Renderer* renderer, int win_w, 
 					SDL_SetRenderDrawColor(renderer, r, g, b, 255);
 					last_r = r; last_g = g; last_b = b;
 				}
-				SDL_RenderDrawLineF(renderer, x1, y1, x2, y2);
+				SDL_RenderLine(renderer, x1, y1, x2, y2);
 			}
 		}
 	}
@@ -1435,6 +1437,7 @@ void MusicPlayerComponent::createGstPipeline() {
 		return;
 	}
 
+	gstAudioPts_ = 0;
 	gstPipeline_ = gst_pipeline_new("vizualizer-pipeline");
 	gstAppSrc_ = gst_element_factory_make("appsrc", "audio-input");
 	GstElement* convert = gst_element_factory_make("audioconvert", "convert");
@@ -1457,9 +1460,9 @@ void MusicPlayerComponent::createGstPipeline() {
 
 	// 3. Set audio caps for appsrc
 	GstCaps* audio_caps = gst_caps_new_simple("audio/x-raw",
-		"format", G_TYPE_STRING, "S16LE",
-		"rate", G_TYPE_INT, 44100,
-		"channels", G_TYPE_INT, 2,
+		"format", G_TYPE_STRING, SDL_BYTEORDER == SDL_LIL_ENDIAN ? "F32LE" : "F32BE",
+		"rate", G_TYPE_INT, musicPlayer_->getAudioSampleRate(),
+		"channels", G_TYPE_INT, musicPlayer_->getAudioChannels(),
 		"layout", G_TYPE_STRING, "interleaved",
 		NULL);
 	g_object_set(gstAppSrc_, "caps", audio_caps,
@@ -1652,13 +1655,13 @@ void MusicPlayerComponent::updateProgressBarTexture() {
 	// Background bar color (opaque black)
 	SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 255);
 	SDL_FRect backgroundRect = { 0.0f, 0.0f, barWidth, barHeight };
-	SDL_RenderFillRectF(renderer_, &backgroundRect);
+	SDL_RenderFillRect(renderer_, &backgroundRect);
 
 	// Progress bar color (opaque white)
 	SDL_SetRenderDrawColor(renderer_, 255, 255, 255, 255);
 	if (filledWidth > 0) {
 		SDL_FRect progressRect = { 0.0f, 0.0f, filledWidth, barHeight };
-		SDL_RenderFillRectF(renderer_, &progressRect);
+		SDL_RenderFillRect(renderer_, &progressRect);
 	}
 
 	SDL_SetRenderTarget(renderer_, previousTarget);
@@ -1740,12 +1743,11 @@ void MusicPlayerComponent::loadAlbumArt() {
 	}
 	std::vector<unsigned char> albumArtData;
 	if (musicPlayer_->getAlbumArt(albumArtTrackIndex_, albumArtData) && !albumArtData.empty()) {
-		SDL_RWops* rw = SDL_RWFromConstMem(albumArtData.data(), static_cast<int>(albumArtData.size()));
+		SDL_IOStream* rw = SDL_IOFromConstMem(albumArtData.data(), static_cast<int>(albumArtData.size()));
 		if (rw) {
-			albumArtTexture_ = IMG_LoadTexture_RW(renderer_, rw, 1);
+			albumArtTexture_ = IMG_LoadTexture_IO(renderer_, rw, 1);
 			if (albumArtTexture_) {
-				SDL_QueryTexture(albumArtTexture_, nullptr, nullptr,
-					&albumArtTextureWidth_, &albumArtTextureHeight_);
+				albumArtTextureWidth_ = albumArtTexture_->w; albumArtTextureHeight_ = albumArtTexture_->h;
 				baseViewInfo.ImageWidth = static_cast<float>(albumArtTextureWidth_);
 				baseViewInfo.ImageHeight = static_cast<float>(albumArtTextureHeight_);
 				LOG_INFO("MusicPlayerComponent", "Created album art texture");
@@ -1774,8 +1776,7 @@ SDL_Texture* MusicPlayerComponent::loadDefaultAlbumArt() {
 		if (std::filesystem::exists(path)) {
 			SDL_Texture* texture = IMG_LoadTexture(renderer_, path.c_str());
 			if (texture) {
-				SDL_QueryTexture(texture, nullptr, nullptr,
-					&albumArtTextureWidth_, &albumArtTextureHeight_);
+				albumArtTextureWidth_ = texture->w; albumArtTextureHeight_ = texture->h;
 				baseViewInfo.ImageWidth = static_cast<float>(albumArtTextureWidth_);
 				baseViewInfo.ImageHeight = static_cast<float>(albumArtTextureHeight_);
 				LOG_INFO("MusicPlayerComponent", "Loaded default album art from: " + path);

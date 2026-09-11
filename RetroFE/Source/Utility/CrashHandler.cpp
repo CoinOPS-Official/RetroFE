@@ -1,6 +1,6 @@
 #include "CrashHandler.h"
 #include "Utils.h"           
-#include "SDL.h"
+#include "../SDL.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -130,7 +130,7 @@ void CrashHandler::logAndShowCrash(const std::string& errorReason, const std::st
     }
 
     SDL_QuitSubSystem(SDL_INIT_AUDIO);
-    SDL_SetRelativeMouseMode(SDL_FALSE);
+    SDL_SetWindowRelativeMouseMode(SDL::getWindow(0), false);
 
     std::string popupMsg = "RetroFE has encountered a fatal error (" + errorReason + ").\n\n"
         "A diagnostic binary minidump and call stack trace have been forced to your log file.\n"

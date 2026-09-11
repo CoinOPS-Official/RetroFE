@@ -20,7 +20,7 @@
 class GameControllerAxisHandler : public InputHandler
 {
 public:
-    GameControllerAxisHandler(int joyid, SDL_GameControllerAxis axis, Sint16 min, Sint16 max);
+    GameControllerAxisHandler(int joyid, SDL_GamepadAxis axis, Sint16 min, Sint16 max);
     bool update(SDL_Event &e);
     bool pressed();
     void reset();
@@ -28,7 +28,7 @@ public:
 
 private:
     int joyid_;
-    SDL_GameControllerAxis axis_;
+    SDL_GamepadAxis axis_;
     Sint16 min_;
     Sint16 max_;
     bool pressed_{ false };

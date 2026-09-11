@@ -13,10 +13,10 @@ void MouseButtonHandler::reset()
 
 bool MouseButtonHandler::update(SDL_Event &e)
 {
-    if(e.type != SDL_MOUSEBUTTONUP && e.type != SDL_MOUSEBUTTONDOWN) return false;
+    if(e.type != SDL_EVENT_MOUSE_BUTTON_UP && e.type != SDL_EVENT_MOUSE_BUTTON_DOWN) return false;
 
     if(e.button.button == button_) {
-        pressed_ = (e.type == SDL_MOUSEBUTTONDOWN) ? true : false;
+        pressed_ = (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) ? true : false;
         return true;
     }
 

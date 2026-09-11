@@ -30,5 +30,7 @@ CLAUDE.md
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/tasks.json
-.gitignore
 /RetroFE/Buildbak
+
+.gitignore
+!/RetroFE/Source/.gitignore

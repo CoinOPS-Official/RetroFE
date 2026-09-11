@@ -32,7 +32,7 @@
 #include <Tlhelp32.h>
 #include <winreg.h>
 
-#include <SDL_syswm.h>
+#include <SDL3/SDL.h>
 
 #include "../../../SDL.h"                 // SDL::getWindow
 #include "../../../Utility/Log.h"
@@ -244,7 +244,7 @@ namespace {
                 auto pos = line.find("\"installdir\"");
                 if (pos == std::string::npos) continue;
 
-                // We’re now somewhere on:  ..."installdir"   "Game Folder"
+                // Weï¿½re now somewhere on:  ..."installdir"   "Game Folder"
                 // Move to *after* the closing quote of "installdir"
                 const size_t keyLen = std::strlen("\"installdir\"");
                 size_t searchFrom = pos + keyLen;
@@ -618,7 +618,7 @@ static BOOL CALLBACK EnumWindowsForPidProc(HWND hwnd, LPARAM lParam) {
     if (!IsWindowVisible(hwnd))
         return TRUE;
 
-    // 2) Skip the desktop and taskbar – they belong to other processes,
+    // 2) Skip the desktop and taskbar ï¿½ they belong to other processes,
     //    but we keep these checks as a safety guard anyway.
     char className[256] = { 0 };
     GetClassNameA(hwnd, className, sizeof(className));
@@ -786,7 +786,7 @@ static bool forceForegroundForPid(DWORD pid) {
     std::vector<HWND> hwnds;
     collectWindowsForPid(pid, hwnds);
     if (hwnds.empty()) {
-        // Quiet failure – happens often while the game is still starting
+        // Quiet failure ï¿½ happens often while the game is still starting
         return false;
     }
 
@@ -980,15 +980,15 @@ WindowsProcessManager::WindowsProcessManager() {
     bool pendingForeground_ = false;
     std::chrono::steady_clock::time_point foregroundDeadline_;
 
-    SDL_SysWMinfo winfo;
-    SDL_VERSION(&winfo.version);
-
-    SDL_Window* mainWindow = SDL::getWindow(0);
-    if (mainWindow != nullptr && SDL_GetWindowWMInfo(mainWindow, &winfo) == SDL_TRUE) {
-        hRetroFEWindow_ = winfo.info.win.window;
+    hRetroFEWindow_ = nullptr;
+    if (!SDL_IsMainThread()) {
+        LOG_ERROR("ProcessManager", "Window lookup must run on the SDL main thread.");
+        return;
     }
-    else {
-        hRetroFEWindow_ = nullptr;
+    SDL_Window* mainWindow = SDL::getWindow(0);
+    if (mainWindow) {
+        hRetroFEWindow_ = static_cast<HWND>(SDL_GetPointerProperty(
+            SDL_GetWindowProperties(mainWindow), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
     }
 }
 
@@ -1269,7 +1269,7 @@ bool WindowsProcessManager::launch(const std::string& executable,
                     + g_steamGameRoot);
 
                 if (shExInfo.hProcess) {
-                    CloseHandle(shExInfo.hProcess); // don’t hold Steam’s handle
+                    CloseHandle(shExInfo.hProcess); // donï¿½t hold Steamï¿½s handle
                 }
             }
             else if (shExInfo.hProcess) {
@@ -1506,7 +1506,7 @@ WaitResult WindowsProcessManager::wait(
                                     std::to_string(newPid));
                             }
 
-                            // New main Steam game is now running – give it a foreground retry window
+                            // New main Steam game is now running ï¿½ give it a foreground retry window
                             pendingForeground_ = true;
                             foregroundDeadline_ = now + std::chrono::seconds(5);
 
@@ -1555,7 +1555,7 @@ WaitResult WindowsProcessManager::wait(
                                     std::to_string(newPid));
                             }
 
-                            // New main Epic game is now running – give it a foreground retry window
+                            // New main Epic game is now running ï¿½ give it a foreground retry window
                             pendingForeground_ = true;
                             foregroundDeadline_ = now + std::chrono::seconds(5);
 

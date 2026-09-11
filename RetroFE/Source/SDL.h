@@ -16,7 +16,7 @@
 #pragma once
 
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <string>
 #include "Graphics/ViewInfo.h"
 #include <vector>
@@ -44,15 +44,15 @@ public:
     }
 	static int getWindowWidth( int index )
     {
-        return (index < screenCount_ ? windowWidth_[index] : windowWidth_[0]);
+        return (index >= 0 && index < screenCount_ ? windowWidth_[index] : windowWidth_[0]);
     }
     static int getWindowHeight( int index )
     {
-        return (index < screenCount_ ? windowHeight_[index] : windowHeight_[0]);
+        return (index >= 0 && index < screenCount_ ? windowHeight_[index] : windowHeight_[0]);
     }
     static bool isFullscreen( int index )
     {
-        return (index < screenCount_ ? fullscreen_[index] : fullscreen_[0]);
+        return (index >= 0 && index < screenCount_ ? fullscreen_[index] : fullscreen_[0]);
     }
     static int getNumScreens( )
     {
@@ -67,19 +67,19 @@ public:
         rotation_[index] = rotation;
     }
     static int getDisplayWidth(int index) {
-        return (index < screenCount_ ? displayWidth_[index] : displayWidth_[0]);
+        return (index >= 0 && index < screenCount_ ? displayWidth_[index] : displayWidth_[0]);
     }
     static int getDisplayHeight(int index) {
-        return (index < screenCount_ ? displayHeight_[index] : displayHeight_[0]);
+        return (index >= 0 && index < screenCount_ ? displayHeight_[index] : displayHeight_[0]);
     }
     static int getDisplayRefresh(int index) {
-        return (index < screenCount_ ? displayRefresh_[index] : displayRefresh_[0]);
+        return (index >= 0 && index < screenCount_ ? displayRefresh_[index] : displayRefresh_[0]);
     }
     static bool isMirrorEnabled(int index) {
-        return (index < screenCount_ ? mirror_[index] : mirror_[0]);
+        return (index >= 0 && index < screenCount_ ? mirror_[index] : mirror_[0]);
     }
     static int getRotation(int index) {
-        return (index < screenCount_ ? (rotation_[index] & 3) : (rotation_[0] & 3));
+        return (index >= 0 && index < screenCount_ ? (rotation_[index] & 3) : (rotation_[0] & 3));
     }
 private:
     

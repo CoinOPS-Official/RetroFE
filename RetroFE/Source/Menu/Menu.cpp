@@ -19,7 +19,7 @@
 #include "../Collection/Item.h"
 #include "../Control/UserInput.h"
 #include "../Database/Configuration.h"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <iostream>
 
 
@@ -65,15 +65,15 @@ std::string Menu::getKey() const
     while ( return_value == "" ) {
         while ( SDL_PollEvent( &event ) ) {
             switch (event.type) {
-                case SDL_KEYDOWN:
+                case SDL_EVENT_KEY_DOWN:
                     if ( return_value.empty() )
-                        return_value = SDL_GetKeyName( event.key.keysym.sym);
+                        return_value = SDL_GetKeyName( event.key.key);
                     break;
-                case SDL_JOYBUTTONDOWN:
+                case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
                     if ( return_value.empty() )
                         return_value = "joyButton" + std::to_string( int( event.jbutton.button ) );
                     break;
-                case SDL_JOYAXISMOTION:
+                case SDL_EVENT_JOYSTICK_AXIS_MOTION:
                     if ((event.jaxis.value > 30000 || event.jaxis.value < -30000) && event.jaxis.axis <= 3) {
                         if ( event.jaxis.value > 0 ) {
                             if ( return_value.empty() )
@@ -85,7 +85,7 @@ std::string Menu::getKey() const
                         }
                     }
                     break;
-                case SDL_JOYHATMOTION:
+                case SDL_EVENT_JOYSTICK_HAT_MOTION:
                     switch( event.jhat.value ) {
                         case SDL_HAT_UP:
                             if ( return_value.empty() )

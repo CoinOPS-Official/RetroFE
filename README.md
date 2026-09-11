@@ -57,61 +57,42 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 * Graphics
     * A reasonably modern graphics card (Direct3D 11+ / OpenGL 4+ / Metal on MacOS)
 
-#   Building for Windows #
-### Install Requirements
+# Building the SDL3 branch on Windows
 
-	winget install -e --id Microsoft.VisualStudio.2022.Community
-	winget install -e --id Microsoft.WindowsSDK.10.0.26100
-	winget install -e --id Microsoft.DotNet.Framework.DeveloperPack_4
-	winget install -e --id Kitware.CMake
-	winget install -e --id Git.Git
+This branch builds RetroFE against SDL3, SDL3_image, SDL3_ttf and SDL3_mixer.
+Requires Visual Studio 2022 with Desktop development with C++, Windows SDK,
+CMake 3.24+, Git, and the GStreamer MSVC x64 runtime and development packages.
 
-* Open the Visual Studio Installer, modify the install and add the "Desktop development with C++" package group
+From the repository root:
 
-* Install gstreamer-runtime and gstreamer-devel MSVC 64-bit complete (https://gstreamer.freedesktop.org/download/#windows)
+```powershell
+git submodule update --init --recursive
+./RetroFE/Source/Build.ps1
+```
 
-Python 3 - Optional - Read below
+The script downloads checksum-verified SDL3 development packages into
+`RetroFE/Build/deps`, generates `RetroFE/Build/retrofe.sln`, builds Release,
+and runs RetroFE and OpenHi2txt tests. Open that solution in Visual Studio;
+`retrofe` is its startup project. No files from `Source/build-sdl3` or the
+standalone video prototype are needed. `Build-SDL3.ps1` is a compatibility alias.
 
-  	winget install -e --id Python.Python.3.11
+Use `-GStreamerRoot 'C:/path/to/gstreamer'`, `-Configuration Debug`, or
+`-BuildDirectory 'C:/path/to/build'` to override the defaults.
 
-Alternatively, manually install
-  
-* Visual Studio Community (https://visualstudio.microsoft.com/downloads)
-* Microsoft Windows SDK and .NET Framework 4 for Windows 10 and higher (https://developer.microsoft.com/windows/downloads/windows-sdk)
-* CMake (https://cmake.org/download)
-* Git (https://git-scm.com/downloads/win)
-* Python 3 (https://www.python.org/downloads/windows)
-* gstreamer-runtime and gstreamer-devel MSVC 64-bit complete (https://gstreamer.freedesktop.org/download/#windows)
+The executable and matching DLLs/plugins are in `RetroFE/Build/bin/Release`.
+Copy that directory's runtime contents into the `retrofe` directory of a test
+frontend installation. Keep its settings, layouts and media. Do not overlay the
+old SDL2 DLL bundle from `Package/Environment/Windows/retrofe` onto this output.
+The build directory alone is not a complete frontend installation.
 
-### Download and compile the source code
-Download the source code
+For Windows GPU video, set `HardwareVideoAccel=true`,
+`SDLRenderDriver=direct3d11`, and `log=INFO,WARNING,ERROR` in `settings.conf`.
+`GPU texture interop ACTIVE` in `log.txt` confirms successful GPU-frame transfer.
 
-	git clone --recurse-submodules https://github.com/CoinOPS-Official/RetroFE.git
-
-Setup Environment (to setup necessary variables and paths to compile in visual studio)
-
-	cd RetroFE
-
-Gather submodule for DLLs
-
- 	git submodule update --init --recursive
-
-Generate visual studio solution files
-
-	cmake -A x64 -B .\RetroFE\Build -D GSTREAMER_ROOT=C:\gstreamer\1.0\msvc_x86_64 -S .\RetroFE\Source
-  
-Compile RetroFE
-
-	cmake --build RetroFE/Build --config Release
-
-Copy in DLLs
-
-	mkdir .\RetroFE\Build\Release\retrofe
-	xcopy /S /I /Y .\Package\Environment\Windows\retrofe .\RetroFE\Build\Release\retrofe
-	move .\RetroFE\Build\Release\retrofe.exe .\RetroFE\Build\Release\retrofe\retrofe.exe
-	copy .\Package\Environment\Windows\RetroFE.lnk .\RetroFE\Build\Release
-
-The executable is then found in `/RetroFE/Build`, copy `RetroFE.lnk` and the `retrofe` folder
+See [SDL3 migration and validation notes](RetroFE/Source/SDL3-PORT.md).
+The Linux/macOS and packaging instructions below describe the historical SDL2
+build and are not validated for this SDL3 branch. Use the SDL3 CMake dependency
+instructions in those notes for development on other platforms.
 
 #   Building for Linux #
 

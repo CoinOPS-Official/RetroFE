@@ -14,9 +14,9 @@
  * along with RetroFE.  If not, see <http://www.gnu.org/licenses/>.
  */
 #pragma once
-#include <SDL.h>
-#include <SDL_joystick.h>
-#include <SDL_gamecontroller.h>
+#include <SDL3/SDL.h>
+#include <SDL3/SDL_joystick.h>
+#include <SDL3/SDL_gamepad.h>
 #include <map>
 #include <string>
 #include <vector>
@@ -127,6 +127,6 @@ private:
     std::vector<std::pair<InputHandler *, KeyCode_E> > keyHandlers_;
     bool lastKeyState_[KeyCodeMax]; 
     bool currentKeyState_[KeyCodeMax];
-    Uint32 lastInputTime_[KeyCodeMax];
+    Uint64 lastInputTime_[KeyCodeMax];
     static const Uint32 DEBOUNCE_MS = 100; // 100ms lockout for bouncy hardware
 };

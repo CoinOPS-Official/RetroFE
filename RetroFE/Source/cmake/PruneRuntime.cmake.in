@@ -1,0 +1,53 @@
+cmake_minimum_required(VERSION 3.24)
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_PLATFORM windows+pe)
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_TOOL dumpbin)
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "@CMAKE_LINKER@")
+# CMake's linker path is link.exe; dumpbin lives alongside it.
+get_filename_component(tool_dir "@CMAKE_LINKER@" DIRECTORY)
+set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${tool_dir}/dumpbin.exe")
+set(seeds "@runtime_dlls@")
+list(APPEND seeds ${EXTRA_FILES})
+set(scanner "@scanner@")
+file(GET_RUNTIME_DEPENDENCIES
+    LIBRARIES ${seeds}
+    EXECUTABLES "${scanner}"
+    DIRECTORIES @runtime_dirs@
+    PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
+    POST_EXCLUDE_REGEXES ".*[Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\].*"
+    RESOLVED_DEPENDENCIES_VAR dependencies
+    UNRESOLVED_DEPENDENCIES_VAR missing)
+if(missing)
+    message(FATAL_ERROR "Unresolved runtime dependencies: ${missing}")
+endif()
+set(files ${seeds} ${dependencies} "${scanner}")
+list(REMOVE_DUPLICATES files)
+set(keep)
+foreach(path IN LISTS files)
+    get_filename_component(name "${path}" NAME)
+    string(TOLOWER "${name}" name)
+    list(APPEND keep "${name}")
+    file(COPY_FILE "${path}" "${OUTPUT_DIR}/${name}" ONLY_IF_DIFFERENT)
+endforeach()
+# Remove only known GStreamer-distribution DLLs from this generated output,
+# never recurse or touch an installation, backup, or arbitrary user files.
+file(GLOB gst_candidates "@GSTREAMER_ROOT@/bin/*.dll"
+    "@GSTREAMER_ROOT@/lib/gstreamer-1.0/*.dll")
+file(REAL_PATH "${OUTPUT_DIR}" output_real)
+file(REAL_PATH "@CMAKE_BINARY_DIR@" build_real)
+cmake_path(IS_PREFIX build_real "${output_real}" NORMALIZE inside_build)
+if(NOT inside_build)
+    message(FATAL_ERROR "Refusing to prune outside the configured build directory")
+endif()
+foreach(path IN LISTS gst_candidates)
+    get_filename_component(name "${path}" NAME)
+    string(TOLOWER "${name}" name)
+    if(NOT name IN_LIST keep)
+        file(REMOVE "${output_real}/${name}")
+    endif()
+endforeach()
+list(REMOVE_DUPLICATES keep)
+list(SORT keep)
+list(JOIN keep "\n" manifest)
+file(WRITE "${OUTPUT_DIR}/runtime-files.txt" "${manifest}\n")
+list(LENGTH keep count)
+message(STATUS "Staged ${count} runtime files (curated GStreamer plugins and dependency closure)")

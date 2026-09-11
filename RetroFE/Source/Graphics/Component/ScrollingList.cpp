@@ -37,13 +37,7 @@
 #include "../../SDL.h"
 #include "../ViewInfo.h"
 #include <math.h>
-#if __has_include(<SDL_image.h>)
-#include <SDL_image.h>
-#elif __has_include(<SDL2_image/SDL_image.h>)
-#include <SDL2_image/SDL_image.h>
-#else
-#error "Cannot find SDL_image header"
-#endif
+#include <SDL3_image/SDL_image.h>
 #include <sstream>
 #include <cctype>
 #include <iomanip>

@@ -22,7 +22,7 @@
 #include <set> 
 #include <chrono>
 
-#include <SDL.h>
+#include <SDL3/SDL.h>
 
 #include "SDLJoyStickScopeGuard.h"
 #include "KeyboardBackendFactory.h"
@@ -59,6 +59,8 @@ public:
     InputMonitor& operator=(const InputMonitor&) = delete;
 
 private:
+    // The monitor and its event loop belong to the SDL main thread.
+    std::unique_ptr<SDLJoystickScopeGuard> sdlSession_;
     std::unique_ptr<IKeyboardBackend> kb_;
     std::vector<int> kbSingles_, kbCombo_;
     std::unordered_set<int> kbPressed_;

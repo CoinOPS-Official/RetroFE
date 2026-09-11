@@ -19,13 +19,8 @@
 #include <random>
 #include <filesystem>
 
-#if __has_include(<SDL_mixer.h>)
-#include <SDL_mixer.h>
-#elif __has_include(<SDL2_mixer/SDL_mixer.h>)
-#include <SDL2_mixer/SDL_mixer.h>
-#else
-#error "Cannot find SDL_mixer header"
-#endif
+#include <SDL3/SDL.h>
+#include <SDL3_mixer/SDL_mixer.h>
 
 class Configuration;
 class MusicPlayerComponent;
@@ -54,6 +49,7 @@ public:
 
     bool initialize(Configuration& config);
     void reinitialize();
+    void releaseAudio(); // Call before destroying the shared mixer.
     void onGameLaunchStart();
     void onGameLaunchEnd(bool wasSdlUnloaded);
     void shutdown();
@@ -171,7 +167,7 @@ private:
     bool parseM3UFile(const std::filesystem::path& playlistPath);
     bool isValidAudioFile(const std::filesystem::path& filePath) const;
 
-    static void musicFinishedCallback();
+    static void SDLCALL musicFinishedCallback(void*, MIX_Track*);
     int applyVolumeCurve(int logicalVolume) const;
     void beginFadeOutToAction(FinishEvent action, int index, double seekPos, int fadeOutMs, int fadeInMs);
     void beginFadeInToSteadyVolume(int fadeInMs);
@@ -180,7 +176,12 @@ private:
     static MusicPlayer* instance_;
     Configuration* config_;
 
-    Mix_Music* currentMusic_;
+    MIX_Audio* currentMusic_;
+    MIX_Track* musicTrack_ = nullptr;
+    bool ensureAudio();
+    void haltTrack();
+    int musicVolume(int volume = -1);
+    bool startTrack(double position = -1);
 
     // Keep paths as fs::path; display names as UTF-8 strings.
     std::vector<std::filesystem::path> musicFiles_;
@@ -219,7 +220,6 @@ private:
 
     MusicTransitionFade musicFade_;
     std::atomic<FinishEvent> finishEvent_{ FinishEvent::None };
-    std::atomic<int> ignoreFinishCallbacks_{ 0 };
     std::atomic<bool> isShuttingDown_;
 
     std::vector<MusicPlayerComponent*> visualizerListeners_;

@@ -15,13 +15,14 @@
  */
 
 #include "Sound.h"
+#include "AudioBus.h"
+#include <algorithm>
 
 #include "../Utility/Log.h"
 
 Sound::Sound(std::string file, std::string altfile)
     : file_(file)
     , chunk_(NULL)
-    , channel_(-1)
 {
     if(file_ != "" && !allocate())
     {
@@ -33,43 +34,45 @@ Sound::Sound(std::string file, std::string altfile)
     }
 }
 
-Sound::~Sound()
-{
-    if(chunk_) {
-        Mix_FreeChunk(chunk_);
-        chunk_ = NULL;
+Sound::~Sound() { free(); }
+
+void Sound::play() {
+    auto& bus = AudioBus::instance();
+    if (!chunk_ || !bus.initialize()) return;
+    if (generation_ != bus.generation()) {
+        voices_.clear(); // The previous mixer destroyed its tracks.
+        generation_ = bus.generation();
     }
+    MIX_Track* voice = nullptr;
+    for (auto* track : voices_) {
+        if (!MIX_TrackPlaying(track)) { voice = track; break; }
+    }
+    if (!voice) {
+        voice = MIX_CreateTrack(bus.mixer());
+        if (!voice) return;
+        voices_.push_back(voice);
+    }
+    if (!MIX_SetTrackAudio(voice, chunk_) || !MIX_PlayTrack(voice, 0))
+        LOG_WARNING("Sound", std::string("Cannot play ") + file_ + ": " + SDL_GetError());
 }
 
-void Sound::play()
-{
-    if(chunk_) {
-        channel_ = Mix_PlayChannel(-1, chunk_, 0);
-    }
-}
-
-bool Sound::free()
-{
-    if(chunk_) {
-        Mix_FreeChunk(chunk_);
-        chunk_   = NULL;
-        channel_ = -1;
-    }
-
+bool Sound::free() {
+    auto& bus = AudioBus::instance();
+    if (generation_ == bus.generation())
+        for (auto* voice : voices_) MIX_DestroyTrack(voice);
+    voices_.clear();
+    if (chunk_) MIX_DestroyAudio(chunk_);
+    chunk_ = nullptr;
     return true;
 }
 
-bool Sound::allocate()
-{
-    if(!chunk_) {
-        chunk_ = Mix_LoadWAV(file_.c_str());
-    }
-
-    return (chunk_ != NULL);
+bool Sound::allocate() {
+    if (!chunk_ && AudioBus::instance().initialize())
+        chunk_ = MIX_LoadAudio(AudioBus::instance().mixer(), file_.c_str(), true);
+    return chunk_ != nullptr;
 }
 
-
-bool Sound::isPlaying()
-{
-    return (channel_ != -1) && Mix_Playing(channel_);
+bool Sound::isPlaying() {
+    if (generation_ != AudioBus::instance().generation()) return false;
+    return std::any_of(voices_.begin(), voices_.end(), [](MIX_Track* t) { return MIX_TrackPlaying(t); });
 }

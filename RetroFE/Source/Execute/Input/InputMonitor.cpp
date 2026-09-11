@@ -32,6 +32,7 @@ InputMonitor::InputMonitor(Configuration& config) {
     // Check if GameController mode is enabled to allow semantic parsing
     sdlGameController_ = false;
     config.getProperty(OPTION_SDLGAMECONTROLLER, sdlGameController_);
+    sdlSession_ = std::make_unique<SDLJoystickScopeGuard>(sdlGameController_);
 
     auto trim = [](std::string& s) {
         s.erase(0, s.find_first_not_of(" \t\r\n"));
@@ -59,8 +60,8 @@ InputMonitor::InputMonitor(Configuration& config) {
                 // Handle optional player index (e.g., gamepad0back)
                 if (!btnName.empty() && isdigit(btnName[0])) btnName.erase(0, 1);
 
-                SDL_GameControllerButton btn = SDL_GameControllerGetButtonFromString(btnName.c_str());
-                if (btn != SDL_CONTROLLER_BUTTON_INVALID) {
+                SDL_GamepadButton btn = SDL_GetGamepadButtonFromString(btnName.c_str());
+                if (btn != SDL_GAMEPAD_BUTTON_INVALID) {
                     singleQuitButtonIndices_.insert(static_cast<int>(btn));
                     LOG_DEBUG("InputMonitor", "Registered gamepad single quit button: " + btnName);
                 }
@@ -92,8 +93,8 @@ InputMonitor::InputMonitor(Configuration& config) {
                 std::string btnName = Utils::replace(sigLower, "gamepad", "");
                 if (!btnName.empty() && isdigit(btnName[0])) btnName.erase(0, 1);
 
-                SDL_GameControllerButton btn = SDL_GameControllerGetButtonFromString(btnName.c_str());
-                if (btn != SDL_CONTROLLER_BUTTON_INVALID) {
+                SDL_GamepadButton btn = SDL_GetGamepadButtonFromString(btnName.c_str());
+                if (btn != SDL_GAMEPAD_BUTTON_INVALID) {
                     quitComboIndices_.push_back(static_cast<int>(btn));
                     LOG_DEBUG("InputMonitor", "Registered gamepad quit combo button: " + btnName);
                 }
@@ -112,7 +113,7 @@ InputMonitor::InputMonitor(Configuration& config) {
 }
 
 InputDetectionResult InputMonitor::checkInputEvents() {
-    // Keyboard first so global quit works even if SDL window isn’t focused
+    // Keyboard first so global quit works even if SDL window isnï¿½t focused
     auto k = pollKeyboard_();
     if (k == InputDetectionResult::QuitInput) return k;
 
@@ -126,31 +127,45 @@ InputDetectionResult InputMonitor::checkInputEvents() {
 }
 
 InputDetectionResult InputMonitor::pollSdlEvents_() {
+    if (!SDL_IsMainThread() || !sdlSession_->initialized_by_me)
+        return InputDetectionResult::NoInput;
     SDL_Event e;
     bool sawPlayActivity = false;
     bool firedQuit = false;
 
     while (SDL_PollEvent(&e)) {
-        if (e.type == SDL_MOUSEBUTTONDOWN) {
+        if (e.type == SDL_EVENT_JOYSTICK_ADDED) {
+            sdlSession_->open(e.jdevice.which);
+            continue;
+        }
+        if (e.type == SDL_EVENT_JOYSTICK_REMOVED) {
+            sdlSession_->remove(e.jdevice.which);
+            joystickButtonState_.erase(e.jdevice.which);
+            joystickButtonTimeState_.erase(e.jdevice.which);
+            continue;
+        }
+        if (!sdlGameController_ && (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN ||
+                                   e.type == SDL_EVENT_GAMEPAD_BUTTON_UP)) continue;
+        if (e.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
             anyInputRegistered_ = true;
             sawPlayActivity = true;
         }
-        else if (e.type == SDL_JOYBUTTONDOWN || e.type == SDL_CONTROLLERBUTTONDOWN) {
+        else if (e.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN || e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
             // If GameController mode is on, ignore raw JOY events for devices recognized as Controllers.
-            // SDL_GameControllerFromInstanceID returns a pointer if the joystick is currently open 
+            // SDL_GetGamepadFromID returns a pointer if the joystick is currently open
             // as a GameController in this process.
-            if (sdlGameController_ && e.type == SDL_JOYBUTTONDOWN) {
-                if (SDL_GameControllerFromInstanceID(e.jbutton.which) != nullptr) {
+            if (sdlGameController_ && e.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN) {
+                if (SDL_GetGamepadFromID(e.jbutton.which) != nullptr) {
                     continue;
                 }
             }
 
             int buttonIdx = -1;
-            SDL_JoystickID joyId = -1;
+            SDL_JoystickID joyId = 0;
 
-            if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                buttonIdx = e.cbutton.button;
-                joyId = e.cbutton.which;
+            if (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN) {
+                buttonIdx = e.gbutton.button;
+                joyId = e.gbutton.which;
             }
             else {
                 buttonIdx = e.jbutton.button;
@@ -200,19 +215,19 @@ InputDetectionResult InputMonitor::pollSdlEvents_() {
                 }
             }
         }
-        else if (e.type == SDL_JOYBUTTONUP || e.type == SDL_CONTROLLERBUTTONUP) {
-            if (sdlGameController_ && e.type == SDL_JOYBUTTONUP) {
-                if (SDL_GameControllerFromInstanceID(e.jbutton.which) != nullptr) {
+        else if (e.type == SDL_EVENT_JOYSTICK_BUTTON_UP || e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+            if (sdlGameController_ && e.type == SDL_EVENT_JOYSTICK_BUTTON_UP) {
+                if (SDL_GetGamepadFromID(e.jbutton.which) != nullptr) {
                     continue;
                 }
             }
 
             int buttonIdx = -1;
-            SDL_JoystickID joyId = -1;
+            SDL_JoystickID joyId = 0;
 
-            if (e.type == SDL_CONTROLLERBUTTONUP) {
-                buttonIdx = e.cbutton.button;
-                joyId = e.cbutton.which;
+            if (e.type == SDL_EVENT_GAMEPAD_BUTTON_UP) {
+                buttonIdx = e.gbutton.button;
+                joyId = e.gbutton.which;
             }
             else {
                 buttonIdx = e.jbutton.button;
@@ -266,7 +281,7 @@ InputDetectionResult InputMonitor::pollKeyboard_() {
             }
         }
         else {
-            // Key release: if it was a combo key that was never finished, 
+            // Key release: if it was a combo key that was never finished,
             // the user interacted with the game, so it counts as activity now.
             bool isComboPart = false;
             for (int c : kbCombo_) if (c == code) { isComboPart = true; break; }

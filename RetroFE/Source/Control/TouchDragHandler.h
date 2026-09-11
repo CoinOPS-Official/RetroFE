@@ -1,6 +1,6 @@
 #pragma once
 #include "InputHandler.h"
-#include <SDL_events.h>
+#include <SDL3/SDL_events.h>
 
 class TouchDragHandler : public InputHandler {
 public:
@@ -17,7 +17,7 @@ private:
     int threshold_;
     bool pressed_;
     bool isTracking_;
-    Sint64 trackingFingerId_;
+    SDL_FingerID trackingFingerId_;
     float anchorX_, anchorY_;
     float currentX_, currentY_;
     float accumulator_;

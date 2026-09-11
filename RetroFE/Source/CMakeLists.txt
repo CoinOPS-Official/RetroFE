@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.12)
+cmake_minimum_required(VERSION 3.24)
 
 if(POLICY CMP0091)
     cmake_policy(SET CMP0091 NEW)
@@ -56,15 +56,10 @@ set(RAPIDXML_ROOT "${RETROFE_THIRD_PARTY_DIR}/rapidxml-1.17")
 set(KISSFFT_ROOT "${RETROFE_THIRD_PARTY_DIR}/kissfft-131.1.0")
 
 if(WIN32)
-    if(MSVC)
-        set(SDL2_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2-2.32.10")
-        set(SDL2_IMAGE_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_image-2.8.8")
-        set(SDL2_MIXER_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_mixer-2.8.1")
-        set(SDL2_TTF_ROOT "${RETROFE_THIRD_PARTY_DIR}/SDL2_ttf-2.24.0")
-    endif()
+
 
     set(ZLIB_ROOT "${RETROFE_THIRD_PARTY_DIR}/zlib13-dll")
-    set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x64" CACHE STRING "location of where your gstreamer include and lib folders reside")
+    set(GSTREAMER_ROOT "C:/gstreamer/1.0/msvc_x86_64" CACHE STRING "location of where your gstreamer include and lib folders reside")
     set(GLIB2_ROOT "${GSTREAMER_ROOT}")
 
     # Set libusb paths
@@ -79,37 +74,28 @@ endif()
 if(WIN32)
     find_package(Glib2 REQUIRED)
     find_package(GStreamer REQUIRED)
-    find_package(SDL2 REQUIRED)
-    find_package(SDL2_image REQUIRED)
-    find_package(SDL2_mixer REQUIRED)
-    find_package(SDL2_ttf REQUIRED)
     find_package(ZLIB REQUIRED)
 
 elseif(APPLE)
-    find_package(Glib2 REQUIRED)
-    find_package(GStreamer REQUIRED)
-    find_package(SDL2 REQUIRED)
-    find_package(SDL2_image REQUIRED)
-    find_package(SDL2_mixer REQUIRED)
-    find_package(SDL2_ttf REQUIRED)
+    find_package(PkgConfig REQUIRED)
+    find_package(Threads REQUIRED)
+    find_package(CURL REQUIRED)
     find_package(ZLIB REQUIRED)
-    find_library(COREFOUNDATION CoreFoundation)
-    find_library(IOKIT IOKit)
+    find_library(COREFOUNDATION CoreFoundation REQUIRED)
+    find_library(IOKIT IOKit REQUIRED)
     pkg_check_modules(GLIB2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0)
-    pkg_check_modules(GST REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-plugins-base-1.0)
+    pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-app-1.0)
+    pkg_check_modules(LIBUSB REQUIRED libusb-1.0)
+    pkg_check_modules(LIBSERIALPORT REQUIRED libserialport)
+    include_directories(${LIBUSB_INCLUDE_DIRS} ${LIBSERIALPORT_INCLUDE_DIRS})
+    link_directories(${GLIB2_LIBRARY_DIRS} ${GSTREAMER_LIBRARY_DIRS} ${LIBUSB_LIBRARY_DIRS} ${LIBSERIALPORT_LIBRARY_DIRS})
+    list(APPEND RETROFE_LIBRARIES ${GLIB2_LIBRARIES} ${GSTREAMER_LIBRARIES}
+        ${LIBUSB_LIBRARIES} ${LIBSERIALPORT_LIBRARIES} CURL::libcurl ZLIB::ZLIB Threads::Threads)
 
-    # Manually specify paths if needed
-    set(LIBUSB_INCLUDE_DIR "/opt/homebrew/include" CACHE PATH "Path to libusb include directory")
-    set(LIBUSB_LIBRARY "/opt/homebrew/lib/libusb-1.0.dylib" CACHE FILEPATH "Path to libusb library")
-    
 else()
     include(FindPkgConfig)
     
     # Find necessary libraries using pkg-config
-    pkg_search_module(SDL2 REQUIRED sdl2)
-    pkg_search_module(SDL2_IMAGE REQUIRED SDL2_image)
-    pkg_search_module(SDL2_MIXER REQUIRED SDL2_mixer)
-    pkg_search_module(SDL2_TTF REQUIRED SDL2_ttf)
     pkg_search_module(ZLIB REQUIRED zlib)
     pkg_check_modules(GSTREAMER REQUIRED gstreamer-1.0 gstreamer-video-1.0 gstreamer-audio-1.0 gstreamer-app-1.0)
     pkg_check_modules(Glib2 REQUIRED glib-2.0 gobject-2.0 gthread-2.0 gmodule-2.0)
@@ -122,10 +108,6 @@ else()
     
     # Include directories for all found libraries
     include_directories(
-        ${SDL2_INCLUDE_DIRS}
-        ${SDL2_IMAGE_INCLUDE_DIRS}
-        ${SDL2_MIXER_INCLUDE_DIRS}
-        ${SDL2_TTF_INCLUDE_DIRS}
         ${ZLIB_INCLUDE_DIRS}
         ${GSTREAMER_INCLUDE_DIRS}
         ${GLIB2_INCLUDE_DIRS}
@@ -140,10 +122,6 @@ else()
     
     # Link directories (optional, mostly handled by pkg-config)
     link_directories(
-        ${SDL2_LIBRARY_DIRS}
-        ${SDL2_IMAGE_LIBRARY_DIRS}
-        ${SDL2_MIXER_LIBRARY_DIRS}
-        ${SDL2_TTF_LIBRARY_DIRS}
         ${ZLIB_LIBRARY_DIRS}
         ${GSTREAMER_LIBRARY_DIRS}
         ${GLIB2_LIBRARY_DIRS}
@@ -156,10 +134,6 @@ else()
     
     # Append the necessary libraries to be linked
     list(APPEND RETROFE_LIBRARIES
-        ${SDL2_LIBRARIES}
-        ${SDL2_IMAGE_LIBRARIES}
-        ${SDL2_MIXER_LIBRARIES}
-        ${SDL2_TTF_LIBRARIES}
         ${ZLIB_LIBRARIES}
         ${GSTREAMER_LIBRARIES}
         ${GLIB2_LIBRARIES}
@@ -177,21 +151,16 @@ else()
 set(RETROFE_INCLUDE_DIRS
     "${GLIB2_INCLUDE_DIRS}"
     "${GSTREAMER_INCLUDE_DIRS}"
-    "${SDL2_INCLUDE_DIRS}"
-    "${SDL2_IMAGE_INCLUDE_DIRS}"
-    "${SDL2_MIXER_INCLUDE_DIRS}"
-    "${SDL2_TTF_INCLUDE_DIRS}"
     "${ZLIB_INCLUDE_DIRS}"
     "${QRCODEGEN_ROOT}"
     "${JSON_ROOT}"
-    "${CURL_ROOT}/include"
     "${SQLITE3_ROOT}"
     "${KISSFFT_ROOT}"
     "/opt/homebrew/lib/glib-2.0/include"
 )
 
 if(WIN32)
-    list(APPEND RETROFE_INCLUDE_DIRS "${LIBUSB_ROOT}/include")
+    list(APPEND RETROFE_INCLUDE_DIRS "${LIBUSB_ROOT}/include" "${CURL_ROOT}/include")
 endif()
 
 # Link libusb library if on Windows
@@ -199,10 +168,6 @@ if(WIN32)
     set(RETROFE_LIBRARIES
     ${GLIB2_LIBRARIES}
     ${GSTREAMER_LIBRARIES}
-    ${SDL2_LIBRARIES}
-    ${SDL2_IMAGE_LIBRARIES}
-    ${SDL2_MIXER_LIBRARIES}
-    ${SDL2_TTF_LIBRARIES}
     ${ZLIB_LIBRARIES}
 )
     list(APPEND RETROFE_LIBRARIES "${LIBUSB_ROOT}/dll/libusb-1.0.lib")
@@ -216,6 +181,8 @@ endif()
 if(NOT WIN32)
     LIST(APPEND RETROFE_LIBRARIES ${CMAKE_DL_LIBS} ${CMAKE_THREAD_LIBS_INIT})
 endif()
+
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/SDL3Dependencies.cmake")
 
 set(RETROFE_HEADERS
 	"${RETROFE_DIR}/Source/Collection/CollectionInfo.h"
@@ -391,19 +358,62 @@ set(RETROFE_SOURCES
     "${KISSFFT_ROOT}/kiss_fftr.c"
 )
 
-set(EXECUTABLE_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORCE)
-set(LIBRARY_OUTPUT_PATH "${RETROFE_DIR}/Build" CACHE PATH "Build directory" FORCE)
+set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
+set(CMAKE_LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/bin")
 
 include_directories(${RETROFE_INCLUDE_DIRS})
 include_directories(SYSTEM "${RAPIDXML_ROOT}")
 set_source_files_properties("${SQLITE3_ROOT}/sqlite3.c" PROPERTIES COMPILE_FLAGS "-w")
-add_executable(retrofe  ${RETROFE_SOURCES} ${RETROFE_HEADERS})
-add_dependencies(retrofe GenerateVersioningHeader)
-
-target_link_libraries(retrofe ${RETROFE_LIBRARIES})
-target_link_libraries(retrofe openhi2txt::openhi2txt)
-
+list(REMOVE_ITEM RETROFE_SOURCES "${RETROFE_DIR}/Source/Main.cpp")
+add_library(retrofe_core OBJECT ${RETROFE_SOURCES} ${RETROFE_HEADERS}
+    Video/D3D11VideoInterop.cpp Video/D3D11VideoInterop.h)
+add_dependencies(retrofe_core GenerateVersioningHeader)
+if(UNIX AND NOT APPLE)
+    option(RETROFE_ENABLE_GSTREAMER_GL "Enable Linux shared OpenGL video textures" ON)
+    if(RETROFE_ENABLE_GSTREAMER_GL)
+        pkg_check_modules(GST_GL QUIET IMPORTED_TARGET gstreamer-gl-1.0>=1.20)
+        pkg_check_modules(GST_GL_EGL QUIET IMPORTED_TARGET gstreamer-gl-egl-1.0)
+        pkg_check_modules(GST_GL_X11 QUIET IMPORTED_TARGET gstreamer-gl-x11-1.0)
+        if(GST_GL_FOUND AND (GST_GL_EGL_FOUND OR GST_GL_X11_FOUND))
+            target_sources(retrofe_core PRIVATE Video/GLVideoInterop.cpp Video/GLVideoInterop.h)
+            target_link_libraries(retrofe_core PUBLIC PkgConfig::GST_GL)
+            target_compile_definitions(retrofe_core PUBLIC RETROFE_HAVE_GST_GL)
+            if(GST_GL_EGL_FOUND)
+                target_link_libraries(retrofe_core PUBLIC PkgConfig::GST_GL_EGL)
+                target_compile_definitions(retrofe_core PRIVATE RETROFE_GST_GL_EGL)
+            endif()
+            if(GST_GL_X11_FOUND)
+                target_link_libraries(retrofe_core PUBLIC PkgConfig::GST_GL_X11)
+                target_compile_definitions(retrofe_core PRIVATE RETROFE_GST_GL_X11)
+            endif()
+            message(STATUS "Linux GStreamer GL texture interop enabled")
+        else()
+            message(WARNING "GStreamer GL with EGL or X11 development packages not found; using CPU video upload")
+        endif()
+    endif()
+endif()
+if(WIN32)
+    find_library(GSTREAMER_D3D11_LIBRARY NAMES gstd3d11-1.0 HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
+    target_link_libraries(retrofe_core PUBLIC ${GSTREAMER_D3D11_LIBRARY} d3d11 dxgi)
+    target_include_directories(retrofe_core PUBLIC "${GSTREAMER_ROOT}/lib/gstreamer-1.0/include")
+    target_compile_definitions(retrofe_core PUBLIC GST_USE_UNSTABLE_API)
+endif()
+target_link_libraries(retrofe_core PUBLIC ${RETROFE_LIBRARIES}
+    SDL3::SDL3 SDL3_image::SDL3_image SDL3_ttf::SDL3_ttf SDL3_mixer::SDL3_mixer openhi2txt::openhi2txt)
+add_executable(retrofe "${RETROFE_DIR}/Source/Main.cpp")
+set_property(DIRECTORY PROPERTY VS_STARTUP_PROJECT retrofe)
+target_link_libraries(retrofe PRIVATE retrofe_core)
+include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRuntime.cmake")
+retrofe_stage_runtime(retrofe)
 if(RETROFE_BUILD_TESTING)
+    add_executable(retrofe_sdl3_smoke_tests Tests/Sdl3SmokeTests.cpp)
+    target_link_libraries(retrofe_sdl3_smoke_tests PRIVATE retrofe_core)
+    retrofe_stage_runtime(retrofe_sdl3_smoke_tests)
+    add_test(NAME retrofe_sdl3_smoke_tests COMMAND retrofe_sdl3_smoke_tests "${RETROFE_DIR}/../Package/Environment/Common")
+    if(WIN32)
+        set_tests_properties(retrofe_sdl3_smoke_tests PROPERTIES ENVIRONMENT
+            "GST_PLUGIN_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>;GST_PLUGIN_SCANNER=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugin-scanner.exe;GST_PLUGIN_SYSTEM_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>;GST_REGISTRY=${CMAKE_BINARY_DIR}/test-gst-pruned-registry.bin")
+    endif()
     add_executable(retrofe_high_score_change_tests
         "${RETROFE_DIR}/Source/Database/HighScoreChange.cpp"
         "${RETROFE_DIR}/Source/Tests/HighScoreChangeTests.cpp"
@@ -418,13 +428,9 @@ if(RETROFE_BUILD_TESTING)
 endif()
 
 if(APPLE)
-    target_link_libraries(retrofe
+    target_link_libraries(retrofe_core PUBLIC
         ${COREFOUNDATION}
         ${IOKIT}
-        ${SDL2_LIBRARIES}
-        ${SDL2_IMAGE_LIBRARIES}
-        ${SDL2_MIXER_LIBRARIES}
-        ${SDL2_TTF_LIBRARIES}
         ${LIBUSB_LIBRARY}
         ${GLIB2_LIBRARIES}
         ${GSTREAMER_LIBRARIES}
@@ -445,8 +451,8 @@ if(MSVC)
     set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /Zc:__cplusplus /permissive-")
 
     # Base flags: Multi-core build, dynamic runtime
-    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /WX- /MD")
-    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP /WX- /MD")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} /MP /WX-")
+    set(CMAKE_C_FLAGS "${CMAKE_C_FLAGS} /MP /WX-")
 
     # Aggressive Release Optimizations
     set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} /O2 /Oi /GL /Gw /Gy")
@@ -479,3 +485,7 @@ else()
     message(STATUS "Using C Flags: ${CMAKE_C_FLAGS}")
     message(STATUS "Using CXX Flags: ${CMAKE_CXX_FLAGS}")
 endif()
+
+
+
+install(TARGETS retrofe RUNTIME DESTINATION bin)

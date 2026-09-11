@@ -11,11 +11,11 @@
 #include <future>
 #include <memory>
 #include <limits>
-#include <SDL_image.h>
+#include <SDL3_image/SDL_image.h>
 
 struct SDL_Texture;
 struct SDL_Surface;
-struct SDL_RWops;
+struct SDL_IOStream;
 
 class Image : public Component {
 public:
@@ -39,7 +39,7 @@ private:
     enum class LoadStatus { Unloaded, Loading, Ready, Error };
 
     struct SurfaceDeleter {
-        void operator()(SDL_Surface* s) const { if (s) SDL_FreeSurface(s); }
+        void operator()(SDL_Surface* s) const { if (s) SDL_DestroySurface(s); }
     };
     using SharedSurface = std::shared_ptr<SDL_Surface>;
 
@@ -107,7 +107,7 @@ private:
     std::vector<int> frameDelays_;
 
     size_t currentFrame_ = 0;
-    Uint32 animationStartTime_ = 0;
+    Uint64 animationStartTime_ = 0;
     size_t lastRenderedFrame_ = std::numeric_limits<size_t>::max();
 
     bool useTextureCaching_;

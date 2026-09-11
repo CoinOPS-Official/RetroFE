@@ -3,7 +3,7 @@
 #ifdef __linux__
 #include <pthread.h> // for pthread_setname_np
 #endif
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <cstdlib>   // for std::getenv
 #include <algorithm> // for std::clamp
 
@@ -11,7 +11,7 @@
 ThreadPool::ThreadPool(size_t threads) : stop(false), activeWorkers(0) {
 	for (size_t i = 0; i < threads; ++i)
 		workers.emplace_back([this] {
-		if (SDL_SetThreadPriority(SDL_THREAD_PRIORITY_LOW) != 0) {
+		if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW)) {
 			LOG_WARNING("ThreadPool", "Failed to set worker priority: " + std::string(SDL_GetError()));
 		}
 #if defined(__linux__)

@@ -22,7 +22,7 @@
 #include "../../Utility/Log.h"
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
-#include "SDL_image.h"
+#include <SDL3_image/SDL_image.h>
 #include "../Font.h"
 
 #include <algorithm>
@@ -175,7 +175,7 @@ void ReloadableGlobalHiscores::snapshotPrevPage_(SDL_Renderer* r, int compositeW
     // Copy current composite (which includes QRs) into prev
     SDL_Texture* oldRT = SDL_GetRenderTarget(r);
     SDL_SetRenderTarget(r, prevCompositeTexture_);
-    SDL_RenderCopy(r, intermediateTexture_, nullptr, nullptr);
+    { SDL_RenderTexture(r, intermediateTexture_, nullptr, nullptr); }
     SDL_SetRenderTarget(r, oldRT);
 
     // Transition from SnapshotPending → Crossfading
@@ -585,7 +585,7 @@ void ReloadableGlobalHiscores::draw() {
                 SDL_Texture* oldRT = SDL_GetRenderTarget(renderer);
                 SDL_SetRenderTarget(renderer, crossfadeTexture_);
                 setAlphaIfChanged_(intermediateTexture_, newPageAlphaCache_, aNew);
-                SDL_RenderCopy(renderer, intermediateTexture_, nullptr, nullptr);
+                { SDL_RenderTexture(renderer, intermediateTexture_, nullptr, nullptr); }
                 SDL_SetRenderTarget(renderer, oldRT);
 
                 SDL::renderCopyF(crossfadeTexture_, baseAlpha, nullptr, &rect, baseViewInfo, layoutW, layoutH);
@@ -596,7 +596,7 @@ void ReloadableGlobalHiscores::draw() {
                 SDL_Texture* oldRT = SDL_GetRenderTarget(renderer);
                 SDL_SetRenderTarget(renderer, crossfadeTexture_);
                 setAlphaIfChanged_(prevCompositeTexture_, prevPageAlphaCache_, aPrev);
-                SDL_RenderCopy(renderer, prevCompositeTexture_, nullptr, nullptr);
+                { SDL_RenderTexture(renderer, prevCompositeTexture_, nullptr, nullptr); }
                 SDL_SetRenderTarget(renderer, oldRT);
 
                 SDL::renderCopyF(crossfadeTexture_, baseAlpha, nullptr, &rect, baseViewInfo, layoutW, layoutH);
@@ -613,10 +613,10 @@ void ReloadableGlobalHiscores::draw() {
             SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
             setAlphaIfChanged_(prevCompositeTexture_, prevPageAlphaCache_, aPrev);
-            SDL_RenderCopy(renderer, prevCompositeTexture_, nullptr, nullptr);
+            { SDL_RenderTexture(renderer, prevCompositeTexture_, nullptr, nullptr); }
 
             setAlphaIfChanged_(intermediateTexture_, newPageAlphaCache_, aNew);
-            SDL_RenderCopy(renderer, intermediateTexture_, nullptr, nullptr);
+            { SDL_RenderTexture(renderer, intermediateTexture_, nullptr, nullptr); }
 
             SDL_SetRenderTarget(renderer, oldRT);
 
@@ -914,12 +914,12 @@ void ReloadableGlobalHiscores::reloadTexture() {
                         if (isFill) {
                             SDL_Rect srcFill{ g.rect.x + g.fillX, g.rect.y + g.fillY, g.fillW, g.fillH };
                             SDL_FRect dstFill{ penX, ySnap, g.fillW * k, g.fillH * k };
-                            SDL_RenderCopyF(r, tex, &srcFill, &dstFill);
+                            { SDL_FRect sourceF; SDL_RectToFRect(&srcFill, &sourceF); SDL_RenderTexture(r, tex, &sourceF, &dstFill); }
                         }
                         else {
                             const SDL_Rect& src = g.rect;
                             SDL_FRect dst = { penX - g.fillX * k, ySnap - g.fillY * k, src.w * k, src.h * k };
-                            SDL_RenderCopyF(r, tex, &src, &dst);
+                            { SDL_FRect sourceF; SDL_RectToFRect(&src, &sourceF); SDL_RenderTexture(r, tex, &sourceF, &dst); }
                         }
                         penX += g.advance * k;
                     }
@@ -1213,12 +1213,12 @@ void ReloadableGlobalHiscores::reloadTexture() {
             const std::string path = Configuration::absolutePath + "/iScored/qr/" + gameIds[i] + ".png";
             if (SDL_Surface* surf = IMG_Load(path.c_str())) {
                 if (SDL_Texture* tex = SDL_CreateTextureFromSurface(renderer, surf)) {
-                    SDL_SetTextureScaleMode(tex, SDL_ScaleModeNearest);
+                    SDL_SetTextureScaleMode(tex, SDL_SCALEMODE_NEAREST);
                     SDL_SetTextureBlendMode(tex, SDL_BLENDMODE_BLEND); // set once
                     cachedQrTextures_[i] = tex;
                     cachedQrSizes_[i] = { surf->w, surf->h };
                 }
-                SDL_FreeSurface(surf);
+                SDL_DestroySurface(surf);
             }
         }
 
@@ -1526,7 +1526,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
 
         // Trust actual texture size if present
         if (tex && (qW == 0 || qH == 0)) {
-            SDL_QueryTexture(tex, nullptr, nullptr, &qW, &qH);
+            qW = tex->w; qH = tex->h;
             qrSizes[t] = { qW, qH };
         }
 
@@ -1562,7 +1562,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     if (tableTexture_) {
-        SDL_RenderCopy(renderer, tableTexture_, nullptr, nullptr);
+        { SDL_RenderTexture(renderer, tableTexture_, nullptr, nullptr); }
     }
 
     // Add QRs on top (if QR phase allows)
@@ -1580,7 +1580,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
             const auto& L = cachedTableLayouts_[t];
             // QR dst rect is cached; no per-frame math
             SDL_SetTextureAlphaMod(tex, qrAlpha); // (optional) add per-QR alpha cache to skip repeats
-            SDL_RenderCopyF(renderer, tex, nullptr, &L.qrDst);
+            { SDL_RenderTexture(renderer, tex, nullptr, &L.qrDst); }
         }
     }
 

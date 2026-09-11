@@ -7,6 +7,7 @@
  */
 
 #include "MusicPlayer.h"
+#include "AudioBus.h"
 #include "../Database/Configuration.h"
 #include "../Utility/Log.h"
 #include "../Utility/Utils.h"
@@ -34,12 +35,12 @@ namespace {
 
     inline int pctTo128(int pct) {
         pct = clampInt(pct, 0, 100);
-        return static_cast<int>((pct / 100.0f) * MIX_MAX_VOLUME + 0.5f);
+        return static_cast<int>((pct / 100.0f) * 128 + 0.5f);
     }
 
     inline int vol128ToPct(int v128) {
-        v128 = clampInt(v128, 0, MIX_MAX_VOLUME);
-        return static_cast<int>((v128 / static_cast<float>(MIX_MAX_VOLUME)) * 100.0f + 0.5f);
+        v128 = clampInt(v128, 0, 128);
+        return static_cast<int>((v128 / static_cast<float>(128)) * 100.0f + 0.5f);
     }
 
     // Convert syncsafe integer (for ID3v2.4)
@@ -239,9 +240,9 @@ MusicPlayer::MusicPlayer()
     , currentShufflePos_(-1)
     , playbackState_(PlaybackState::NONE)
     , currentIndex_(-1)
-    , volume_(MIX_MAX_VOLUME)
-    , logicalVolume_(MIX_MAX_VOLUME)
-    , previousLogicalVolume_(MIX_MAX_VOLUME)
+    , volume_(128)
+    , logicalVolume_(128)
+    , previousLogicalVolume_(128)
     , loopMode_(false)
     , shuffleMode_(false)
     , hasStartedPlaying_(false)
@@ -259,9 +260,9 @@ MusicPlayer::MusicPlayer()
     , audioChannels_(2)
     , audioSampleRate_(44100)
     , hasVuMeter_(false)
-    , sampleSize_(2) {
+    , sampleSize_(sizeof(float)) {
 
-    uint64_t seed = SDL_GetTicks64();
+    uint64_t seed = SDL_GetTicks();
     std::seed_seq seq{
         static_cast<uint32_t>(seed & 0xFFFFFFFF),
         static_cast<uint32_t>((seed >> 32) & 0xFFFFFFFF)
@@ -280,36 +281,38 @@ void MusicPlayer::shutdown() {
 
     LOG_INFO("MusicPlayer", "Shutting down music player");
 
-    int freq = 0, ch = 0; Uint16 fmt = 0;
-    const bool mixerIsOpen = (Mix_QuerySpec(&freq, &fmt, &ch) != 0);
+    const bool mixerIsOpen = musicTrack_ != nullptr;
 
     int startVol = -1;
     if (mixerIsOpen) {
-        startVol = Mix_VolumeMusic(-1);
+        startVol = musicVolume(-1);
 
-        if (Mix_PlayingMusic()) {
+        if ((musicTrack_ && (MIX_TrackPlaying(musicTrack_) || MIX_TrackPaused(musicTrack_)))) {
             int steps = 20;
             int stepMs = (fadeMs_ > 0) ? (fadeMs_ / steps) : 0;
             if (stepMs < 10) { steps = 1; stepMs = 0; }
 
             for (int i = 0; i <= steps; ++i) {
-                if (!Mix_PlayingMusic()) break;
+                if (!(musicTrack_ && (MIX_TrackPlaying(musicTrack_) || MIX_TrackPaused(musicTrack_)))) break;
                 float t = static_cast<float>(i) / static_cast<float>(steps);
-                Mix_VolumeMusic(static_cast<int>(startVol * (1.0f - t)));
+                musicVolume(static_cast<int>(startVol * (1.0f - t)));
                 if (stepMs > 0) std::this_thread::sleep_for(std::chrono::milliseconds(stepMs));
             }
         }
 
-        Mix_HaltMusic();
+        haltTrack();
 
-        if (startVol >= 0) Mix_VolumeMusic(startVol);
+        if (startVol >= 0) musicVolume(startVol);
     }
 
     if (currentMusic_) {
-        Mix_FreeMusic(currentMusic_);
+        haltTrack();
+        if (musicTrack_) MIX_SetTrackAudio(musicTrack_, nullptr);
+        MIX_DestroyAudio(currentMusic_);
         currentMusic_ = nullptr;
     }
 
+    releaseAudio();
     musicFiles_.clear();
     musicNames_.clear();
     trackMetadata_.clear();
@@ -329,7 +332,7 @@ bool MusicPlayer::initialize(Configuration& config) {
     logicalVolume_ = pctTo128(configVolume);
     setLogicalVolume(logicalVolume_);
 
-    Mix_HookMusicFinished(MusicPlayer::musicFinishedCallback);
+    if (!ensureAudio()) return false;
 
     bool configLoop = false;
     config.getProperty("musicPlayer.loop", configLoop);
@@ -370,13 +373,12 @@ bool MusicPlayer::initialize(Configuration& config) {
 
 void MusicPlayer::reinitialize() {
     LOG_INFO("MusicPlayer", "Re-initializing hooks after SDL cycle.");
-    Mix_HookMusicFinished(MusicPlayer::musicFinishedCallback);
-    Mix_VolumeMusic(volume_.load(std::memory_order_relaxed));
+    if (!ensureAudio()) return;
+    musicVolume(volume_.load(std::memory_order_relaxed));
 }
 
 void MusicPlayer::pump() {
-    int freq; Uint16 fmt; int ch;
-    if (Mix_QuerySpec(&freq, &fmt, &ch) == 0) return;
+    if (!musicTrack_) return;
     if (isShuttingDown_.load(std::memory_order_relaxed)) return;
 
     const auto ev = finishEvent_.exchange(FinishEvent::None, std::memory_order_acq_rel);
@@ -386,7 +388,7 @@ void MusicPlayer::pump() {
     }
 
     if (musicFade_.active) {
-        const uint64_t now = SDL_GetTicks64();
+        const uint64_t now = SDL_GetTicks();
         const uint64_t elapsed = now - musicFade_.startTimeMs;
         int currentLogical = 0;
 
@@ -399,7 +401,7 @@ void MusicPlayer::pump() {
         }
 
         int rawVolume = applyVolumeCurve(currentLogical);
-        Mix_VolumeMusic(rawVolume);
+        musicVolume(rawVolume);
         volume_.store(rawVolume, std::memory_order_relaxed);
 
         if (musicFade_.durationMs <= 0 || elapsed >= static_cast<uint64_t>(musicFade_.durationMs)) {
@@ -413,27 +415,25 @@ void MusicPlayer::pump() {
 
                 switch (action) {
                     case FinishEvent::PauseAfterFade:
-                    Mix_PauseMusic();
-                    Mix_VolumeMusic(0);
+                    MIX_PauseTrack(musicTrack_);
+                    musicVolume(0);
                     setPlaybackState(PlaybackState::PAUSED);
                     break;
 
                     case FinishEvent::StopAfterFade:
-                    ignoreFinishCallbacks_.fetch_add(1, std::memory_order_relaxed);
-                    Mix_HaltMusic();
-                    Mix_VolumeMusic(applyVolumeCurve(getLogicalVolume()));
+                    haltTrack();
+                    musicVolume(applyVolumeCurve(getLogicalVolume()));
                     setPlaybackState(PlaybackState::NONE);
                     break;
 
                     case FinishEvent::TrackChangeAfterFade:
-                    ignoreFinishCallbacks_.fetch_add(1, std::memory_order_relaxed);
-                    Mix_HaltMusic();
-                    Mix_VolumeMusic(0);
+                    haltTrack();
+                    musicVolume(0);
                     if (playMusic(idx, 0, seekPos)) {
                         beginFadeInToSteadyVolume(fadeInMs);
                     }
                     else {
-                        Mix_VolumeMusic(applyVolumeCurve(getLogicalVolume()));
+                        musicVolume(applyVolumeCurve(getLogicalVolume()));
                     }
                     break;
 
@@ -450,13 +450,13 @@ void MusicPlayer::pump() {
     }
 
     if (isVolumeFading_) {
-        uint64_t now = SDL_GetTicks64();
+        uint64_t now = SDL_GetTicks();
         uint64_t elapsed = now - volumeFadeStartTime_;
 
         if (elapsed >= static_cast<uint64_t>(volumeFadeDuration_)) {
             int finalLogical = volumeFadeTargetVal_;
             int finalRaw = applyVolumeCurve(finalLogical);
-            Mix_VolumeMusic(finalRaw);
+            musicVolume(finalRaw);
             volume_.store(finalRaw);
             logicalVolume_.store(finalLogical);
             isVolumeFading_ = false;
@@ -465,7 +465,7 @@ void MusicPlayer::pump() {
             float t = static_cast<float>(elapsed) / static_cast<float>(volumeFadeDuration_);
             int currentLogical = static_cast<int>(volumeFadeStartVal_ + (volumeFadeTargetVal_ - volumeFadeStartVal_) * t);
             int currentRaw = applyVolumeCurve(currentLogical);
-            Mix_VolumeMusic(currentRaw);
+            musicVolume(currentRaw);
             volume_.store(currentRaw);
             logicalVolume_.store(currentLogical);
         }
@@ -658,8 +658,11 @@ bool MusicPlayer::isValidAudioFile(const fs::path& filePath) const {
 }
 
 void MusicPlayer::loadTrack(int index) {
+    if (!ensureAudio()) return;
     if (currentMusic_) {
-        Mix_FreeMusic(currentMusic_);
+        haltTrack();
+        if (musicTrack_) MIX_SetTrackAudio(musicTrack_, nullptr);
+        MIX_DestroyAudio(currentMusic_);
         currentMusic_ = nullptr;
     }
 
@@ -670,10 +673,10 @@ void MusicPlayer::loadTrack(int index) {
 
     // SDL expects UTF-8 paths; fs::path stays native, convert at the boundary.
     const std::string pathUtf8 = toUtf8String(musicFiles_[index]);
-    currentMusic_ = Mix_LoadMUS(pathUtf8.c_str());
+    currentMusic_ = MIX_LoadAudio(AudioBus::instance().mixer(), pathUtf8.c_str(), false);
 
     if (!currentMusic_) {
-        LOG_ERROR("MusicPlayer", "Load failed: " + pathUtf8 + " " + Mix_GetError());
+        LOG_ERROR("MusicPlayer", "Load failed: " + pathUtf8 + " " + SDL_GetError());
         currentIndex_ = -1;
         return;
     }
@@ -816,13 +819,12 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
 
     if (musicFade_.active) return false;
 
-    if (Mix_PlayingMusic() || Mix_PausedMusic()) {
+    if ((musicTrack_ && (MIX_TrackPlaying(musicTrack_) || MIX_TrackPaused(musicTrack_))) || (musicTrack_ && MIX_TrackPaused(musicTrack_))) {
         if (useFadeMs > 0) {
             beginFadeOutToAction(FinishEvent::TrackChangeAfterFade, index, position, useFadeMs, useFadeMs);
             return true;
         }
-        ignoreFinishCallbacks_.fetch_add(1);
-        Mix_HaltMusic();
+        haltTrack();
     }
 
     loadTrack(index);
@@ -836,14 +838,14 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
             setShuffle(true);
     }
 
-    if (Mix_VolumeMusic(-1) != 0) Mix_VolumeMusic(steadyMusicVolume());
+    if (musicVolume(-1) != 0) musicVolume(steadyMusicVolume());
 
-    if (Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 0) == -1) {
-        LOG_ERROR("MusicPlayer", "Play error: " + std::string(Mix_GetError()));
+    if (!startTrack(position)) {
+        LOG_ERROR("MusicPlayer", "Play error: " + std::string(SDL_GetError()));
         return false;
     }
 
-    if (position > 0.0) Mix_SetMusicPosition(position);
+
 
     setPlaybackState(PlaybackState::PLAYING);
     hasStartedPlaying_ = true;
@@ -860,7 +862,7 @@ bool MusicPlayer::pauseMusic(int customFadeMs) {
         return true;
     }
 
-    Mix_PauseMusic();
+    MIX_PauseTrack(musicTrack_);
     setPlaybackState(PlaybackState::PAUSED);
     return true;
 }
@@ -869,18 +871,18 @@ bool MusicPlayer::resumeMusic(int customFadeMs) {
     if (!isPaused() || isFading()) return false;
     int useFade = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
-    Mix_VolumeMusic(0);
-    Mix_ResumeMusic();
+    musicVolume(0);
+    MIX_ResumeTrack(musicTrack_);
     setPlaybackState(PlaybackState::PLAYING);
 
     if (useFade > 0) beginFadeInToSteadyVolume(useFade);
-    else Mix_VolumeMusic(steadyMusicVolume());
+    else musicVolume(steadyMusicVolume());
 
     return true;
 }
 
 bool MusicPlayer::stopMusic(int customFadeMs) {
-    if (!Mix_PlayingMusic() && !Mix_PausedMusic()) return false;
+    if (!(musicTrack_ && (MIX_TrackPlaying(musicTrack_) || MIX_TrackPaused(musicTrack_))) && !(musicTrack_ && MIX_TrackPaused(musicTrack_))) return false;
     if (isFading()) return false;
     int useFade = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
@@ -888,10 +890,8 @@ bool MusicPlayer::stopMusic(int customFadeMs) {
         beginFadeOutToAction(FinishEvent::StopAfterFade, -1, -1, useFade, 0);
         return true;
     }
-
-    ignoreFinishCallbacks_.fetch_add(1);
-    Mix_HaltMusic();
-    Mix_VolumeMusic(steadyMusicVolume());
+    haltTrack();
+    musicVolume(steadyMusicVolume());
     setPlaybackState(PlaybackState::NONE);
     return true;
 }
@@ -931,12 +931,12 @@ bool MusicPlayer::previousTrack(int customFadeMs) {
 // -------------------------------------------------------------------------
 
 void MusicPlayer::changeVolume(bool increase) {
-    Uint64 now = SDL_GetTicks64();
+    Uint64 now = SDL_GetTicks();
     if (now - lastVolumeChangeTime_ < volumeChangeIntervalMs_) return;
     lastVolumeChangeTime_ = now;
 
     int current = getLogicalVolume();
-    int next = increase ? std::min(MIX_MAX_VOLUME, current + 1) : std::max(0, current - 1);
+    int next = increase ? std::min(128, current + 1) : std::max(0, current - 1);
     setLogicalVolume(next);
     setButtonPressed(true);
 }
@@ -945,9 +945,9 @@ void MusicPlayer::setVolume(int newVolume) {
     isVolumeFading_ = false;
     musicFade_.active = false;
 
-    int v = std::clamp(newVolume, 0, MIX_MAX_VOLUME);
+    int v = std::clamp(newVolume, 0, 128);
     volume_.store(v);
-    Mix_VolumeMusic(v);
+    musicVolume(v);
     logicalVolume_.store(v);
 
     if (config_) config_->setProperty("musicPlayer.volume", vol128ToPct(v));
@@ -957,20 +957,20 @@ void MusicPlayer::setLogicalVolume(int v) {
     isVolumeFading_ = false;
     musicFade_.active = false;
 
-    v = std::clamp(v, 0, MIX_MAX_VOLUME);
+    v = std::clamp(v, 0, 128);
     logicalVolume_.store(v);
     if (config_) config_->setProperty("musicPlayer.volume", vol128ToPct(v));
 
     int raw = applyVolumeCurve(v);
     volume_.store(raw);
-    Mix_VolumeMusic(raw);
+    musicVolume(raw);
 }
 
 void MusicPlayer::fadeToVolume(int targetLogical, int customFadeMs) {
     if (musicFade_.active) return;
 
     int duration = (customFadeMs >= 0) ? customFadeMs : fadeMs_;
-    targetLogical = std::clamp(targetLogical, 0, MIX_MAX_VOLUME);
+    targetLogical = std::clamp(targetLogical, 0, 128);
     previousLogicalVolume_.store(getLogicalVolume());
 
     if (getLogicalVolume() == targetLogical || duration <= 0) {
@@ -981,7 +981,7 @@ void MusicPlayer::fadeToVolume(int targetLogical, int customFadeMs) {
     volumeFadeStartVal_ = getLogicalVolume();
     volumeFadeTargetVal_ = targetLogical;
     volumeFadeDuration_ = duration;
-    volumeFadeStartTime_ = SDL_GetTicks64();
+    volumeFadeStartTime_ = SDL_GetTicks();
     isVolumeFading_ = true;
 }
 
@@ -990,27 +990,76 @@ void MusicPlayer::fadeBackToPreviousVolume() {
 }
 
 int MusicPlayer::applyVolumeCurve(int v) const {
-    v = std::clamp(v, 0, MIX_MAX_VOLUME);
+    v = std::clamp(v, 0, 128);
     if (v == 0) return 0;
 
     float norm = static_cast<float>(v) / 128.0f;
     float gain = std::pow(10.0f, (norm * 40.0f - 40.0f) / 20.0f);
-    return std::clamp(static_cast<int>(gain * MIX_MAX_VOLUME + 0.5f), 0, MIX_MAX_VOLUME);
+    return std::clamp(static_cast<int>(gain * 128 + 0.5f), 0, 128);
 }
 
 // -------------------------------------------------------------------------
 // Helpers
 // -------------------------------------------------------------------------
 
-void MusicPlayer::musicFinishedCallback() {
-    if (instance_ && !instance_->isShuttingDown_.load(std::memory_order_relaxed)) {
-        if (instance_->ignoreFinishCallbacks_.load() > 0) {
-            instance_->ignoreFinishCallbacks_.fetch_sub(1);
-        }
-        else {
-            instance_->finishEvent_.store(FinishEvent::NaturalEnd, std::memory_order_release);
-        }
+void SDLCALL MusicPlayer::musicFinishedCallback(void* userdata, MIX_Track*) {
+    auto* self = static_cast<MusicPlayer*>(userdata);
+    if (!self->isShuttingDown_.load(std::memory_order_relaxed))
+        self->finishEvent_.store(FinishEvent::NaturalEnd, std::memory_order_release);
+}
+
+bool MusicPlayer::ensureAudio() {
+    auto& bus = AudioBus::instance();
+    if (!bus.initialize()) return false;
+    if (!musicTrack_) {
+        musicTrack_ = MIX_CreateTrack(bus.mixer());
+        if (!musicTrack_) return false;
+        MIX_SetTrackStoppedCallback(musicTrack_, musicFinishedCallback, this);
+        musicVolume(volume_.load());
+        audioChannels_ = bus.dev_channels();
+        audioSampleRate_ = bus.dev_rate();
+        sampleSize_ = sizeof(float);
+        audioLevels_.assign(audioChannels_, 0.0f);
     }
+    bus.setMusicPlayer(this);
+    return true;
+}
+
+void MusicPlayer::haltTrack() {
+    if (!musicTrack_) return;
+    // Explicit stops must never advance the playlist, including already-ended tracks.
+    MIX_SetTrackStoppedCallback(musicTrack_, nullptr, nullptr);
+    MIX_StopTrack(musicTrack_, 0);
+    MIX_SetTrackStoppedCallback(musicTrack_, musicFinishedCallback, this);
+    finishEvent_.store(FinishEvent::None, std::memory_order_release);
+}
+
+int MusicPlayer::musicVolume(int value) {
+    const int previous = musicTrack_ ? static_cast<int>(MIX_GetTrackGain(musicTrack_) * 128 + 0.5f) : volume_.load();
+    if (value >= 0 && musicTrack_) MIX_SetTrackGain(musicTrack_, std::clamp(value, 0, 128) / 128.0f);
+    return previous;
+}
+
+bool MusicPlayer::startTrack(double position) {
+    if (!musicTrack_ || !currentMusic_ || !MIX_SetTrackAudio(musicTrack_, currentMusic_)) return false;
+    const auto options = SDL_CreateProperties();
+    if (!options) return false;
+    bool ok = SDL_SetNumberProperty(options, MIX_PROP_PLAY_LOOPS_NUMBER, loopMode_ ? -1 : 0);
+    if (position > 0 && std::isfinite(position))
+        ok = ok && SDL_SetNumberProperty(options, MIX_PROP_PLAY_START_MILLISECOND_NUMBER, static_cast<Sint64>(position * 1000));
+    ok = ok && MIX_PlayTrack(musicTrack_, options);
+    SDL_DestroyProperties(options);
+    return ok;
+}
+
+void MusicPlayer::releaseAudio() {
+    AudioBus::instance().setMusicPlayer(nullptr);
+    if (musicTrack_) MIX_DestroyTrack(musicTrack_);
+    musicTrack_ = nullptr;
+    if (currentMusic_) MIX_DestroyAudio(currentMusic_);
+    currentMusic_ = nullptr;
+    finishEvent_.store(FinishEvent::None, std::memory_order_release);
+    cancelFade();
 }
 
 void MusicPlayer::beginFadeOutToAction(FinishEvent action, int index, double seekPos, int fadeOutMs, int fadeInMs) {
@@ -1019,7 +1068,7 @@ void MusicPlayer::beginFadeOutToAction(FinishEvent action, int index, double see
 
     musicFade_.active = true;
     musicFade_.fadingOut = true;
-    musicFade_.startTimeMs = SDL_GetTicks64();
+    musicFade_.startTimeMs = SDL_GetTicks();
     musicFade_.durationMs = duration;
     musicFade_.startVol = getLogicalVolume();
     musicFade_.targetVol = 0;
@@ -1036,7 +1085,7 @@ void MusicPlayer::beginFadeInToSteadyVolume(int fadeInMs) {
 
     musicFade_.active = true;
     musicFade_.fadingOut = false;
-    musicFade_.startTimeMs = SDL_GetTicks64();
+    musicFade_.startTimeMs = SDL_GetTicks();
     musicFade_.durationMs = duration;
     musicFade_.startVol = 0;
     musicFade_.targetVol = target;
@@ -1053,15 +1102,10 @@ int MusicPlayer::steadyMusicVolume() const {
 void MusicPlayer::addVisualizerListener(MusicPlayerComponent* listener) {
     std::lock_guard<std::mutex> lock(visualizerMutex_);
 
-    int f; Uint16 fmt; int c;
-    if (Mix_QuerySpec(&f, &fmt, &c) == 1) {
-        audioChannels_ = c;
-        audioSampleRate_ = f;
-        if (fmt == AUDIO_U8 || fmt == AUDIO_S8) sampleSize_ = 1;
-        else if (fmt == AUDIO_U16LSB || fmt == AUDIO_S16LSB || fmt == AUDIO_U16MSB || fmt == AUDIO_S16MSB) sampleSize_ = 2;
-        else sampleSize_ = 4;
-        audioLevels_.resize(audioChannels_, 0.0f);
-    }
+    audioChannels_ = AudioBus::instance().dev_channels();
+    audioSampleRate_ = AudioBus::instance().dev_rate();
+    sampleSize_ = sizeof(float);
+    audioLevels_.resize(audioChannels_, 0.0f);
 
     if (std::find(visualizerListeners_.begin(), visualizerListeners_.end(), listener) == visualizerListeners_.end()) {
         visualizerListeners_.push_back(listener);
@@ -1156,8 +1200,8 @@ bool MusicPlayer::setShuffle(bool shuffle) {
 void MusicPlayer::setLoop(bool loop) {
     loopMode_ = loop;
     if (isPlaying() && currentMusic_) {
-        Mix_HaltMusic();
-        Mix_PlayMusic(currentMusic_, loopMode_ ? -1 : 0);
+        haltTrack();
+        startTrack();
     }
     if (config_) config_->setProperty("musicPlayer.loop", loopMode_);
 }
@@ -1213,8 +1257,8 @@ std::string MusicPlayer::getFormattedTrackInfo(int index) const {
 std::string MusicPlayer::getTrackArtist(int index) const { return getTrackMetadata(index).artist; }
 std::string MusicPlayer::getTrackAlbum(int index) const { return getTrackMetadata(index).album; }
 
-bool MusicPlayer::isPlaying() const { return Mix_PlayingMusic() == 1 && !Mix_PausedMusic(); }
-bool MusicPlayer::isPaused() const { return Mix_PausedMusic() == 1; }
+bool MusicPlayer::isPlaying() const { return (musicTrack_ && (MIX_TrackPlaying(musicTrack_) || MIX_TrackPaused(musicTrack_))) == 1 && !(musicTrack_ && MIX_TrackPaused(musicTrack_)); }
+bool MusicPlayer::isPaused() const { return (musicTrack_ && MIX_TrackPaused(musicTrack_)) == 1; }
 bool MusicPlayer::hasStartedPlaying() const { return hasStartedPlaying_; }
 bool MusicPlayer::isFading() const { return musicFade_.active || isVolumeFading_; }
 
@@ -1229,21 +1273,25 @@ bool MusicPlayer::isPlayingNewTrack() { return isPlaying() && hasTrackChanged();
 
 double MusicPlayer::saveCurrentMusicPosition() {
     if (!currentMusic_) return 0.0;
-#if SDL_MIXER_MAJOR_VERSION > 2 || (SDL_MIXER_MAJOR_VERSION == 2 && SDL_MIXER_MINOR_VERSION >= 6)
-    return Mix_GetMusicPosition(currentMusic_);
-#else
-    return 0.0;
-#endif
+    return getCurrent();
 }
 
-double MusicPlayer::getCurrent() { return currentMusic_ ? Mix_GetMusicPosition(currentMusic_) : -1.0; }
-double MusicPlayer::getDuration() { return currentMusic_ ? Mix_MusicDuration(currentMusic_) : -1.0; }
+double MusicPlayer::getCurrent() {
+    if (!musicTrack_ || !currentMusic_) return -1.0;
+    const auto frames = MIX_GetTrackPlaybackPosition(musicTrack_);
+    return frames < 0 ? -1.0 : MIX_TrackFramesToMS(musicTrack_, frames) / 1000.0;
+}
+double MusicPlayer::getDuration() {
+    if (!currentMusic_) return -1.0;
+    const auto frames = MIX_GetAudioDuration(currentMusic_);
+    return frames < 0 ? -1.0 : MIX_AudioFramesToMS(currentMusic_, frames) / 1000.0;
+}
 
 std::pair<int, int> MusicPlayer::getCurrentAndDurationSec() {
     if (!currentMusic_) return { -1, -1 };
     return {
-        static_cast<int>(Mix_GetMusicPosition(currentMusic_)),
-        static_cast<int>(Mix_MusicDuration(currentMusic_))
+        static_cast<int>(getCurrent()),
+        static_cast<int>(getDuration())
     };
 }
 

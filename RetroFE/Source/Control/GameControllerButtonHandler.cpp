@@ -16,7 +16,7 @@
 
 #include "GameControllerButtonHandler.h"
 
-GameControllerButtonHandler::GameControllerButtonHandler(int joynum, SDL_GameControllerButton button)
+GameControllerButtonHandler::GameControllerButtonHandler(int joynum, SDL_GamepadButton button)
     : joynum_(joynum)
     , button_(button)
 {
@@ -29,10 +29,10 @@ void GameControllerButtonHandler::reset()
 
 bool GameControllerButtonHandler::update(SDL_Event &e)
 {
-    if (e.type != SDL_CONTROLLERBUTTONUP && e.type != SDL_CONTROLLERBUTTONDOWN) return false;
+    if (e.type != SDL_EVENT_GAMEPAD_BUTTON_UP && e.type != SDL_EVENT_GAMEPAD_BUTTON_DOWN) return false;
 
-    if ((joynum_ == -1 || e.cbutton.which == joynum_) && static_cast<SDL_GameControllerButton>(e.cbutton.button) == button_) {
-        pressed_ = (e.type == SDL_CONTROLLERBUTTONDOWN);
+    if ((joynum_ == -1 || e.gbutton.which == joynum_) && static_cast<SDL_GamepadButton>(e.gbutton.button) == button_) {
+        pressed_ = (e.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN);
         return true;
     }
 

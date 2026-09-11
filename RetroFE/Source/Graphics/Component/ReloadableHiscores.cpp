@@ -203,12 +203,12 @@ namespace {
 					if (isFill) {
 						SDL_Rect srcFill{ g->rect.x + g->fillX, g->rect.y + g->fillY, g->fillW, g->fillH };
 						SDL_FRect dstFill{ penX, ySnap, g->fillW * k, g->fillH * k };
-						SDL_RenderCopyF(r, texToUse, &srcFill, &dstFill);
+						{ SDL_FRect sourceF; SDL_RectToFRect(&srcFill, &sourceF); SDL_RenderTexture(r, texToUse, &sourceF, &dstFill); }
 					}
 					else {
 						const SDL_Rect& src = g->rect;
 						SDL_FRect dst = { penX - g->fillX * k, ySnap - g->fillY * k, src.w * k, src.h * k };
-						SDL_RenderCopyF(r, texToUse, &src, &dst);
+						{ SDL_FRect sourceF; SDL_RectToFRect(&src, &sourceF); SDL_RenderTexture(r, texToUse, &sourceF, &dst); }
 					}
 					penX += g->advance * k;
 				}
@@ -633,7 +633,7 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 		int actualW, actualH;
 		bool sizeMismatch = true;
 		if (tex) {
-			SDL_QueryTexture(tex, nullptr, nullptr, &actualW, &actualH);
+			actualW = tex->w; actualH = tex->h;
 			if (actualW == w && actualH == h) sizeMismatch = false;
 		}
 
@@ -755,7 +755,7 @@ void ReloadableHiscores::renderNoDataMessage(SDL_Renderer* renderer, FontManager
 	int currentW, currentH;
 	bool needsNewTexture = true;
 	if (headerTexture_) {
-		SDL_QueryTexture(headerTexture_, nullptr, nullptr, &currentW, &currentH);
+		currentW = headerTexture_->w; currentH = headerTexture_->h;
 		if (currentW == targetW && currentH == targetH) needsNewTexture = false;
 	}
 
@@ -924,10 +924,11 @@ void ReloadableHiscores::buildCurrentPage_(bool resetPresentation) {
 			? rowCount * glyphH + (static_cast<float>(rowCount) - 0.5f) * padH
 			: 0.0f;
 		panel.maxScroll = std::max(0.0f, panel.rowsHeight - std::max(0.0f, fullH - panel.headerHeight));
-		SDL_RendererInfo rendererInfo{};
-		if (SDL_GetRendererInfo(renderer, &rendererInfo) == 0 && rendererInfo.max_texture_height > 0) {
+		const auto maxTextureSize = SDL_GetNumberProperty(SDL_GetRendererProperties(renderer),
+            SDL_PROP_RENDERER_MAX_TEXTURE_SIZE_NUMBER, 0);
+		if (maxTextureSize > 0) {
 			panel.rowsPerTile = std::max(1, std::min(panel.rowsPerTile,
-				rendererInfo.max_texture_height / std::max(1, (int)std::ceil(panel.lineStep))));
+				static_cast<int>(maxTextureSize) / std::max(1, (int)std::ceil(panel.lineStep))));
 		}
 
 		const float colPad = baseColumnPadding_ * font->getMaxHeight() * panel.scale;
@@ -974,11 +975,11 @@ void ReloadableHiscores::buildCurrentPage_(bool resetPresentation) {
 					float x=startX,y=panel.lineStep*rr;
 					SDL_Rect rowClip{0,(int)std::floor(y),std::max(1,(int)std::ceil(cellW)),
 						std::max(1,(int)std::ceil(panel.lineStep))};
-					SDL_RenderSetClipRect(renderer,&rowClip);
+					SDL_SetRenderClipRect(renderer,&rowClip);
 					const auto& row=table.rows[first+rr];
 					for(size_t ci=0;ci<panel.visibleColumns.size();++ci){size_t c=panel.visibleColumns[ci];std::string s=c<row.size()?row[c]:"";renderTextOutlined(renderer,font,mip,mip->fillTexture,mip->outlineTexture,s,x+(panel.columnWidths[ci]-measureTextWidthExact(font,s,panel.scale))*0.5f,y,panel.scale,k);x+=panel.columnWidths[ci]+colPad;}
 				}
-				SDL_RenderSetClipRect(renderer,nullptr);
+				SDL_SetRenderClipRect(renderer,nullptr);
 			}
 			panel.rowTiles.push_back(tile);
 		}
@@ -1019,7 +1020,7 @@ void ReloadableHiscores::renderCurrentTable_(SDL_Renderer* renderer, float origi
 	const float x = originX + (effectiveViewWidth - cachedTotalTableWidth_) * 0.5f;
 	SDL_SetTextureAlphaMod(headerTexture_, alpha);
 	SDL_FRect headerDst{ x, originY, cachedTotalTableWidth_, static_cast<float>(headerTextureHeight_) };
-	SDL_RenderCopyF(renderer, headerTexture_, nullptr, &headerDst);
+	{ SDL_RenderTexture(renderer, headerTexture_, nullptr, &headerDst); }
 
 	const float rowsAreaHeight = baseViewInfo.ScaledHeight() - headerTextureHeight_;
 	if (!tableRowsTexture_ || tableRowsTextureHeight_ <= 0 || rowsAreaHeight <= 0.0f) return;
@@ -1032,7 +1033,7 @@ void ReloadableHiscores::renderCurrentTable_(SDL_Renderer* renderer, float origi
 
 	SDL_Rect src{ 0, static_cast<int>(scrollY), static_cast<int>(cachedTotalTableWidth_), visibleH };
 	SDL_FRect dst{ x, originY + headerTextureHeight_, cachedTotalTableWidth_, static_cast<float>(visibleH) };
-	SDL_RenderCopyF(renderer, tableRowsTexture_, &src, &dst);
+	{ SDL_FRect sourceF; SDL_RectToFRect(&src, &sourceF); SDL_RenderTexture(renderer, tableRowsTexture_, &sourceF, &dst); }
 }
 
 void ReloadableHiscores::beginTableTransition_() {
@@ -1066,7 +1067,7 @@ void ReloadableHiscores::renderPanel_(SDL_Renderer* renderer, const PagePanel& p
 	if (panel.header) {
 		SDL_SetTextureAlphaMod(panel.header, alpha);
 		SDL_FRect destination{x, originY, panel.width, panel.headerHeight};
-		SDL_RenderCopyF(renderer, panel.header, nullptr, &destination);
+		SDL_RenderTexture(renderer, panel.header, nullptr, &destination);
 	}
 	const float viewport = std::max(0.0f, baseViewInfo.ScaledHeight() - panel.headerHeight);
 	const float scroll = panel.maxScroll > 0.0f
@@ -1077,7 +1078,7 @@ void ReloadableHiscores::renderPanel_(SDL_Renderer* renderer, const PagePanel& p
 		if (!tile) continue;
 		int tileWidth = 0;
 		int tileHeight = 0;
-		SDL_QueryTexture(tile, nullptr, nullptr, &tileWidth, &tileHeight);
+		tileWidth = tile->w; tileHeight = tile->h;
 		const float top = panel.headerHeight + tileIndex * panel.rowsPerTile * panel.lineStep - scroll;
 		const float bottom = top + tileHeight;
 		const float clippedTop = std::max(panel.headerHeight, top);
@@ -1092,7 +1093,7 @@ void ReloadableHiscores::renderPanel_(SDL_Renderer* renderer, const PagePanel& p
 		};
 		SDL_FRect destination{x, originY + clippedTop, panel.width, static_cast<float>(source.h)};
 		SDL_SetTextureAlphaMod(tile, alpha);
-		SDL_RenderCopyF(renderer, tile, &source, &destination);
+		{ SDL_FRect sourceF; SDL_RectToFRect(&source, &sourceF); SDL_RenderTexture(renderer, tile, &sourceF, &destination); }
 	}
 }
 
@@ -1420,7 +1421,7 @@ bool ReloadableHiscores::ensureCompositeTexture_(
 	}
 
 	SDL_SetTextureBlendMode(replacement, SDL_BLENDMODE_BLEND);
-	SDL_SetTextureScaleMode(replacement, SDL_ScaleModeLinear);
+	SDL_SetTextureScaleMode(replacement, SDL_SCALEMODE_LINEAR);
 
 	if (compositeTexture_) {
 		SDL_DestroyTexture(compositeTexture_);
@@ -1502,7 +1503,7 @@ void ReloadableHiscores::drawPages_() {
 
 	SDL_Texture* previousTarget = SDL_GetRenderTarget(renderer);
 
-	if (SDL_SetRenderTarget(renderer, compositeTexture_) != 0) {
+	if (!SDL_SetRenderTarget(renderer, compositeTexture_)) {
 		LOG_ERROR(
 			"ReloadableHiscores",
 			"Failed to select foreground composite target: " +
@@ -1554,7 +1555,7 @@ void ReloadableHiscores::drawPages_() {
 					componentWidth,
 					componentHeight
 				};
-				SDL_RenderCopyF(renderer, previousTableTexture_, nullptr, &previousDestination);
+				{ SDL_RenderTexture(renderer, previousTableTexture_, nullptr, &previousDestination); }
 			}
 			else {
 				for (const auto& previousPanel : previousPanelStates_) {
@@ -1574,7 +1575,7 @@ void ReloadableHiscores::drawPages_() {
 						static_cast<float>(sourceWidth),
 						componentHeight
 					};
-					SDL_RenderCopyF(renderer, previousTableTexture_, &source, &destination);
+					{ SDL_FRect sourceF; SDL_RectToFRect(&source, &sourceF); SDL_RenderTexture(renderer, previousTableTexture_, &sourceF, &destination); }
 				}
 			}
 		}
@@ -1593,7 +1594,7 @@ void ReloadableHiscores::drawPages_() {
 		}
 	}
 
-	if (SDL_SetRenderTarget(renderer, previousTarget) != 0) {
+	if (!SDL_SetRenderTarget(renderer, previousTarget)) {
 		LOG_ERROR(
 			"ReloadableHiscores",
 			"Failed to restore page render target: " +
@@ -1768,7 +1769,7 @@ void ReloadableHiscores::renderHeaderTexture(
 #ifndef NDEBUG
 	SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red, opaque
 	SDL_Rect outlineRect = { 0, 0, static_cast<int>(totalTableWidth) - 1, headerTextureHeight_ - 1 };
-	SDL_RenderDrawRect(renderer, &outlineRect);
+	{ SDL_FRect outlineF; SDL_RectToFRect(&outlineRect, &outlineF); SDL_RenderRect(renderer, &outlineF); }
 #endif
 	SDL_SetRenderTarget(renderer, oldTarget);
 }
@@ -1824,7 +1825,7 @@ void ReloadableHiscores::renderTableRowsTexture(
 #ifndef NDEBUG
 	SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255); // Red, opaque
 	SDL_Rect outlineRect = { 0, 0, static_cast<int>(totalTableWidth) - 1, tableRowsTextureHeight_ - 1 };
-	SDL_RenderDrawRect(renderer, &outlineRect);
+	{ SDL_FRect outlineF; SDL_RectToFRect(&outlineRect, &outlineF); SDL_RenderRect(renderer, &outlineF); }
 #endif
 	SDL_SetRenderTarget(renderer, oldTarget);
 }

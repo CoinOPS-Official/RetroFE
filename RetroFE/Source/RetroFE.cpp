@@ -15,6 +15,7 @@
  */
 
 #include "RetroFE.h"
+#include "Video/D3D11VideoInterop.h"
 #include "Collection/CollectionInfo.h"
 #include "Collection/CollectionInfoBuilder.h"
 #include "Collection/Item.h"
@@ -51,13 +52,7 @@
 #include <cmath>
 #include <cstdint>
 #include <curl/curl.h>
-#if __has_include(<SDL_ttf.h>)
-#include <SDL_ttf.h>
-#elif __has_include(<SDL2_ttf/SDL_ttf.h>)
-#include <SDL2_ttf/SDL_ttf.h>
-#else
-#error "Cannot find SDL_ttf header"
-#endif
+#include <SDL3_ttf/SDL_ttf.h>
 
 #if defined(__linux) || defined(__APPLE__)
 #include <csignal>
@@ -68,8 +63,8 @@
 #endif
 
 #ifdef WIN32
-#include <SDL_syswm.h>
-#include <SDL_thread.h>
+
+#include <SDL3/SDL_thread.h>
 #include <Windows.h>
 #endif
 
@@ -100,45 +95,15 @@ bool g_isRestrictorCheckDone = false;
 
 namespace fs = std::filesystem;
 
-static inline void sleepUntilTicks(uint64_t targetTicks, uint64_t freq, double frameInterval_s) {
-	if (freq == 0) return;
-
-	// How much of the tail do we reserve for spinning?
-	// - For long frames (idle 60Hz), spin a little more.
-	// - For short frames (143Hz), spin a little less.
-	// Values are seconds.
-	const double spinTail_s = std::clamp(frameInterval_s * 0.10, 0.00015, 0.00150); // 0.15ms .. 1.5ms
-
-	while (true)
-	{
-		const uint64_t nowTicks = SDL_GetPerformanceCounter();
-		if (nowTicks >= targetTicks) return;
-
-		const uint64_t remainingTicks = targetTicks - nowTicks;
-		const double remaining_s = (double)remainingTicks / (double)freq;
-
-		// If we have "enough" time, sleep most of it, leaving a tail for spin
-		if (remaining_s > spinTail_s)
-		{
-			const double sleep_s = remaining_s - spinTail_s;
-
-			// Avoid micro-sleeps that can overshoot on some systems
-			if (sleep_s > 0.0002) { // > 0.2ms
-				Utils::preciseSleep(sleep_s);
-			}
-			else {
-				// fall through to spin
-				while (SDL_GetPerformanceCounter() < targetTicks) { /* spin */ }
-				return;
-			}
-		}
-		else
-		{
-			// Final tail: spin until target
-			while (SDL_GetPerformanceCounter() < targetTicks) { /* spin */ }
-			return;
-		}
-	}
+// SDL3 handles the platform-specific sleep/spin balance for precise frame pacing.
+static inline void sleepUntilTicks(uint64_t targetTicks, uint64_t freq, double) {
+    if (freq == 0) return;
+    const uint64_t now = SDL_GetPerformanceCounter();
+    if (now < targetTicks) {
+        const auto remainingNs = static_cast<Uint64>(
+            static_cast<long double>(targetTicks - now) * 1000000000.0L / freq);
+        SDL_DelayPrecise(remainingNs);
+    }
 }
 
 RetroFE::~RetroFE() {
@@ -192,7 +157,8 @@ void RetroFE::render() {
 			continue;
 		}
 
-		if (SDL_SetRenderTarget(rr, rt) < 0) {
+		D3D11RenderLock renderLock(rr);
+		if (!SDL_SetRenderTarget(rr, rt)) {
 			LOG_ERROR(
 				"SDL",
 				"SetRenderTarget failed: " +
@@ -212,7 +178,7 @@ void RetroFE::render() {
 			255
 		);
 
-		if (SDL_RenderClear(rr) < 0) {
+		if (!SDL_RenderClear(rr)) {
 			LOG_ERROR(
 				"SDL",
 				"RenderClear failed: " +
@@ -249,7 +215,8 @@ void RetroFE::render() {
 			continue;
 		}
 
-		if (SDL_SetRenderTarget(rr, nullptr) < 0) {
+		D3D11RenderLock renderLock(rr);
+		if (!SDL_SetRenderTarget(rr, nullptr)) {
 			LOG_ERROR(
 				"SDL",
 				"SetRenderTarget(backbuffer) failed: " +
@@ -265,12 +232,12 @@ void RetroFE::render() {
 		 * Copy the completed virtual-screen render target to the
 		 * physical output.
 		 */
-		if (SDL_RenderCopy(
+		if (!SDL_RenderTexture(
 			rr,
 			rt,
 			nullptr,
 			nullptr
-		) < 0)
+		))
 		{
 			LOG_ERROR(
 				"SDL",
@@ -317,14 +284,14 @@ void RetroFE::render() {
 			i == 0 &&
 			fpsOverlayTexture_)
 		{
-			SDL_Rect dst{
+			SDL_FRect dst{
 				20,
 				20,
-				fpsOverlayW_,
-				fpsOverlayH_
+				static_cast<float>(fpsOverlayW_),
+				static_cast<float>(fpsOverlayH_)
 			};
 
-			SDL_RenderCopy(
+			SDL_RenderTexture(
 				rr,
 				fpsOverlayTexture_,
 				nullptr,
@@ -332,7 +299,8 @@ void RetroFE::render() {
 			);
 		}
 
-		SDL_RenderPresent(rr);
+		renderLock.finish();
+		if (SDL_RenderPresent(rr)) D3D11VideoInterop::presented(rr);
 	}
 
 	// ---------------------------------------------------------
@@ -360,10 +328,10 @@ void RetroFE::render() {
 
 	if (showFpsJustEnabled) {
 		lastFpsUpdateTimestamp =
-			SDL_GetTicks64();
+			SDL_GetTicks();
 
 		lastVisualUpdateTimestamp =
-			SDL_GetTicks64();
+			SDL_GetTicks();
 
 		framesSinceFpsUpdate = 0;
 		accumulatedRenderMs = 0.0;
@@ -380,7 +348,7 @@ void RetroFE::render() {
 
 	if (showFps_) {
 		const uint64_t now_ticks64 =
-			SDL_GetTicks64();
+			SDL_GetTicks();
 
 		// --- A. Per-frame math ---
 		framesSinceFpsUpdate++;
@@ -497,7 +465,7 @@ void RetroFE::render() {
 				SDL::getRenderer(0);
 
 			if (renderer0) {
-				SDL_GetRendererOutputSize(
+				SDL_GetCurrentRenderOutputSize(
 					renderer0,
 					&outW,
 					&outH
@@ -562,6 +530,7 @@ void RetroFE::render() {
 						TTF_RenderText_Solid(
 							debugFont_,
 							overlayText,
+							0,
 							color
 						);
 
@@ -580,7 +549,7 @@ void RetroFE::render() {
 								surf->h;
 						}
 
-						SDL_FreeSurface(surf);
+						SDL_DestroySurface(surf);
 					}
 				}
 			}
@@ -740,7 +709,7 @@ void RetroFE::initializeMusicPlayer() {
 // Launch a game/program
 void RetroFE::launchEnter() {
 	currentPage_->setIsLaunched(true);
-	SDL_SetWindowGrab(SDL::getWindow(0), SDL_FALSE);
+	SDL_SetWindowMouseGrab(SDL::getWindow(0), false);
 
 	// --- NEW: Check if a reboot is already happening ---
 	std::string launcherName = currentPage_->getSelectedItem()->collectionInfo->launcher;
@@ -764,7 +733,7 @@ void RetroFE::launchEnter() {
 		LOG_INFO("RetroFE", "Skipping unloadSDL cycle; a full application reboot is scheduled.");
 	}
 #ifdef __APPLE__
-	SDL_SetRelativeMouseMode(SDL_FALSE);
+	SDL_SetWindowRelativeMouseMode(SDL::getWindow(0), false);
 #endif
 	if (musicPlayer_) {
 		musicPlayer_->onGameLaunchStart();
@@ -796,12 +765,10 @@ void RetroFE::launchExit(bool userInitiated) {
 	}
 
 #ifdef WIN32
-	SDL_SysWMinfo wminfo{};
-	SDL_VERSION(&wminfo.version);
-
-	if (SDL_GetWindowWMInfo(SDL::getWindow(0), &wminfo))
+	HWND retroFeHWND = static_cast<HWND>(SDL_GetPointerProperty(
+		SDL_GetWindowProperties(SDL::getWindow(0)), SDL_PROP_WINDOW_WIN32_HWND_POINTER, nullptr));
+	if (retroFeHWND)
 	{
-		HWND retroFeHWND = wminfo.info.win.window;
 		SetForegroundWindow(retroFeHWND);
 		ShowWindow(retroFeHWND, SW_RESTORE);
 	}
@@ -843,7 +810,7 @@ void RetroFE::launchExit(bool userInitiated) {
 #endif
 
 #ifdef __APPLE__
-	SDL_SetRelativeMouseMode(SDL_TRUE);
+	SDL_SetWindowRelativeMouseMode(SDL::getWindow(0), true);
 #endif
 
 	const LocalScoreQuery launchedGame{
@@ -1134,7 +1101,7 @@ bool RetroFE::run() {
 
 	SDL_RestoreWindow(SDL::getWindow(0));
 	SDL_RaiseWindow(SDL::getWindow(0));
-	SDL_SetWindowGrab(SDL::getWindow(0), SDL_TRUE);
+	SDL_SetWindowMouseGrab(SDL::getWindow(0), true);
 
 	double preloadTime = 0;
 

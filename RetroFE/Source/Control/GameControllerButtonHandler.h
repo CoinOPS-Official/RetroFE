@@ -20,7 +20,7 @@
 class GameControllerButtonHandler : public InputHandler
 {
 public:
-    GameControllerButtonHandler(int joynum, SDL_GameControllerButton button);
+    GameControllerButtonHandler(int joynum, SDL_GamepadButton button);
     bool update(SDL_Event &e);
     bool pressed();
     void reset();
@@ -28,6 +28,6 @@ public:
 
 private:
     int joynum_;
-    SDL_GameControllerButton button_;
+    SDL_GamepadButton button_;
     bool pressed_{ false };
 };
