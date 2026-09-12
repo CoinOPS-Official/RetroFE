@@ -128,6 +128,10 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
             initial = false;
             if (held) {
                 SDL_FlushRenderer(renderer);
+                GLint previousFramebuffer = 0, previousViewport[4]{}, positionEnabled = 0;
+                glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
+                glGetIntegerv(GL_VIEWPORT, previousViewport);
+                glGetVertexAttribiv(0, GL_VERTEX_ATTRIB_ARRAY_ENABLED, &positionEnabled);
                 GstVideoInfoDmaDrm drm{}; gst_video_info_dma_drm_init(&drm);
                 check(gst_video_info_dma_drm_from_caps(&drm, gst_sample_get_caps(held)), "DMA caps failed");
                 auto* buffer = gst_sample_get_buffer(held);
@@ -198,8 +202,14 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
                 glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 0, nullptr);
                 glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
                 check(glGetError() == GL_NO_ERROR, "external texture conversion GL error");
-                glDisableVertexAttribArray(0); glBindBuffer(GL_ARRAY_BUFFER, 0);
-                glBindFramebuffer(GL_FRAMEBUFFER, 0); glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0); glUseProgram(0);
+                // SDL GLES keeps its position array enabled across draws.
+                // Disabling it unconditionally collapses subsequent SDL geometry.
+                if (positionEnabled) glEnableVertexAttribArray(0);
+                else glDisableVertexAttribArray(0);
+                glBindBuffer(GL_ARRAY_BUFFER, 0);
+                glBindFramebuffer(GL_FRAMEBUFFER, previousFramebuffer);
+                glViewport(previousViewport[0], previousViewport[1], previousViewport[2], previousViewport[3]);
+                glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0); glUseProgram(0);
                 releaseInput();
                 SDL_FlushRenderer(renderer); // invalidate SDL state after custom GL rendering
                 visible = true;
