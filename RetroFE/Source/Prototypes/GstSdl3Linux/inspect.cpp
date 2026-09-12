@@ -41,6 +41,15 @@ int inspectDmaBuf(const char* file) {
         g_object_set(input, "location", file, nullptr);
         gst_object_unref(input);
         sink = gst_bin_get_by_name(GST_BIN(pipeline), "output");
+        // DMA-BUF export requires a consumer that understands non-default
+        // plane layouts. Caps alone do not advertise this allocation contract.
+        g_object_set(sink, "emit-signals", TRUE, nullptr);
+        g_signal_connect(sink, "propose-allocation", G_CALLBACK(+[](GstElement*, GstQuery* query, gpointer) -> gboolean {
+            if (!gst_query_find_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr))
+                gst_query_add_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr);
+            std::cout << "Allocation: advertising GstVideoMeta support; decoder supplies DMA-BUF pool" << std::endl;
+            return TRUE;
+        }), nullptr);
         bus = gst_element_get_bus(pipeline);
         check(gst_element_set_state(pipeline, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE, "start failed");
         const Uint64 start = SDL_GetTicks();
