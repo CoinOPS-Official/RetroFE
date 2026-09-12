@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include "demux-link.h"
 
 void playExternal(SDL_Renderer*, GstElement*, GstElement*, GstBus*, GstSample*);
 
@@ -34,11 +35,12 @@ int inspectDmaBuf(const char* file, bool playback) {
         std::cout << "SDL=" << SDL_GetVersion() << " EGL extensions: "
                   << (extensions ? extensions : "unavailable") << std::endl;
         GError* error = nullptr;
-        pipeline = gst_parse_launch("filesrc name=input ! qtdemux ! h264parse ! vah264dec ! "
+        pipeline = gst_parse_launch("filesrc name=input ! qtdemux name=demux h264parse name=parser ! vah264dec ! "
             "video/x-raw(memory:DMABuf),format=DMA_DRM ! appsink name=output "
             "max-buffers=1 drop=true sync=false enable-last-sample=false", &error);
         if (error) { std::string why(error->message); g_clear_error(&error); throw std::runtime_error(why); }
         check(pipeline, "pipeline creation failed");
+        connectVideoDemux(pipeline);
         auto* input = gst_bin_get_by_name(GST_BIN(pipeline), "input");
         g_object_set(input, "location", file, nullptr);
         gst_object_unref(input);

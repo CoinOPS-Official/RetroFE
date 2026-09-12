@@ -9,6 +9,7 @@
 #include <stdexcept>
 #include <string>
 #include <cstdlib>
+#include "demux-link.h"
 
 static void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(std::string(message) + ": " + SDL_GetError());
@@ -100,7 +101,7 @@ int main(int argc, char** argv) {
         appContext = gst_context_new("gst.gl.app_context", TRUE);
         gst_structure_set(gst_context_writable_structure(appContext), "context", GST_TYPE_GL_CONTEXT, context, nullptr);
         auto createPipeline = [&]() {
-            const std::string chain = std::string("filesrc name=input ! qtdemux ! h264parse ! vah264dec ! ") +
+            const std::string chain = std::string("filesrc name=input ! qtdemux name=demux h264parse name=parser ! vah264dec ! ") +
                 "video/x-raw(memory:DMABuf),format=DMA_DRM ! glupload ! " +
                 (nv12 ? "" : "glcolorconvert ! ") +
                 "video/x-raw(memory:GLMemory),format=" + (nv12 ? "NV12" : "RGBA") +
@@ -108,6 +109,7 @@ int main(int argc, char** argv) {
             pipeline = gst_parse_launch(chain.c_str(), &error);
             if (error) { std::string message = error->message; g_clear_error(&error); throw std::runtime_error(message); }
             require(pipeline != nullptr, "pipeline");
+            connectVideoDemux(pipeline);
             auto* input = gst_bin_get_by_name(GST_BIN(pipeline), "input");
             g_object_set(input, "location", argv[1], nullptr);
             gst_object_unref(input);
