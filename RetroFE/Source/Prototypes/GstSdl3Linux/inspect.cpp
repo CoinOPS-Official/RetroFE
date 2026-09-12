@@ -10,8 +10,10 @@
 #include <string>
 #include <vector>
 
-// Inspection only: no GstGLContext, GL texture import, or CPU pixel mapping.
-int inspectDmaBuf(const char* file) {
+void playExternal(SDL_Renderer*, GstElement*, GstElement*, GstBus*, GstSample*);
+
+// Both modes avoid GstGLContext and CPU pixel mapping.
+int inspectDmaBuf(const char* file, bool playback) {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     GstElement* pipeline = nullptr;
@@ -41,6 +43,7 @@ int inspectDmaBuf(const char* file) {
         g_object_set(input, "location", file, nullptr);
         gst_object_unref(input);
         sink = gst_bin_get_by_name(GST_BIN(pipeline), "output");
+        g_object_set(sink, "sync", playback ? TRUE : FALSE, nullptr);
         // DMA-BUF export requires a consumer that understands non-default
         // plane layouts. Caps alone do not advertise this allocation contract.
         g_object_set(sink, "emit-signals", TRUE, nullptr);
@@ -123,7 +126,10 @@ int inspectDmaBuf(const char* file) {
                       << (external[i] ? "true" : "false") << std::endl;
         }
         if (!found) std::cout << "Exact modifier NOT advertised by EGL; no compatible import established\n";
-        std::cout << "Inspection complete. No image imported or rendered; advertised support is not proof of SDL plane compatibility.\n";
+        if (playback) {
+            check(found, "exact modifier not advertised; refusing import");
+            playExternal(renderer, pipeline, sink, bus, sample);
+        } else std::cout << "Inspection complete. No image imported or rendered; advertised support is not proof of SDL plane compatibility.\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << " (SDL: " << SDL_GetError() << ")\n"; result = 1;
     }

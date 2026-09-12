@@ -7,7 +7,7 @@ GStreamer development packages; no SDL_image, SDL_ttf, SDL_mixer or codec builds
 ## Build and run (repository root)
 
 The build also requires EGL and GStreamer allocators development files, exposed
-through the `egl` and `gstreamer-allocators-1.0` pkg-config packages.
+through the `egl`, `glesv2` and `gstreamer-allocators-1.0` pkg-config packages.
 
 ```sh
 cmake -S RetroFE/Source/Prototypes/GstSdl3Linux -B RetroFE/Source/Prototypes/GstSdl3Linux/build -DCMAKE_BUILD_TYPE=RelWithDebInfo
@@ -27,8 +27,6 @@ Use the same H.264 MP4 in both modes.
 - R destroys and rebuilds the pipeline while retaining the SDL renderer/context.
 - Escape exits; EOS loops the file.
 
-### Automated stress
-
 ### DMA-BUF inspection
 
 ```sh
@@ -47,6 +45,36 @@ can be created. This mode does not yet create EGLImages or display video; the
 window is only used to establish SDL's EGL context. It exits after inspection
 or a 15-second sample timeout. Stress environment variables apply only to the
 rendering modes. Missing metadata/query support fails explicitly.
+
+### Direct EGL playback
+
+```sh
+./RetroFE/Source/Prototypes/GstSdl3Linux/build/gst_sdl3_linux /absolute/path/video.mp4 dmabuf-egl
+```
+
+Runs the inspection first, then imports each two-plane NV12 DMA-BUF as an
+EGLImage using its actual plane FD-relative offsets, pitches and DRM modifier.
+An external-texture shader samples it into one persistent RGBA texture, wrapped
+by SDL. That RGBA allocation/wrapper is reused until dimensions change. There is
+no glupload, glcolorconvert or GstGLContext in this mode and no RGBA-to-RGBA copy.
+It still performs a conversion draw into an RGBA intermediate. Verify colors and
+orientation against `rgba` mode; successful import alone is insufficient.
+
+The prototype supports BT.601/709 full/limited-range hints and rejects unknown
+colorimetry, non-NV12, extra planes and explicit crop metadata. It relies on the
+VA export/DMA-BUF implicit producer synchronization path; no explicit native
+producer fence is imported. Consumer glFinish holds the sample alive until the
+conversion completes. This deliberately blocking experiment is not a benchmark.
+Borrowed FDs are never closed. Import/shader/layout failures are visible errors,
+not silent CPU fallbacks. The first inspected sample remains referenced by the
+inspection harness until playback returns.
+
+Space performs a READY unload/reopen. R performs a NULL reset/restart of the
+same GstPipeline object (not object destruction/recreation). The three PROTO_*
+stress options work here too; PROTO_REBUILD_EVERY selects periodic NULL resets.
+Escape exits; EOS seeks to the beginning. True pipeline-object recreation and
+multiple videos remain follow-up tests. This mode has not been compiled/run
+locally on Linux. Reconfigure CMake to pick up the GLES dependency/source file.
 
 ### Rendering stress controls
 
