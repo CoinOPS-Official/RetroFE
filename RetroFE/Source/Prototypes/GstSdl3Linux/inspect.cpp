@@ -4,7 +4,7 @@
 #include <gst/app/gstappsink.h>
 #include <gst/allocators/gstdmabuf.h>
 #include <gst/video/video.h>
-#include <gst/video/video-info-dma-drm.h>
+#include <gst/video/video-info-dma.h>
 #include <iostream>
 #include <stdexcept>
 #include <string>
