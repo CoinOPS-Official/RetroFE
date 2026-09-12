@@ -57,9 +57,10 @@ extern "C" {
 
 // Unified State Machine Enum
 enum class PipelineLifecycle {
-    Idle,      // Not currently processing a file
-    Starting,  // URI set, waiting for Preroll
-    Ready,     // Preroll complete, ready to stream data
+    Idle,      // Pipeline is quiescent and safe for reuse
+    Starting,  // URI set, waiting for initial preroll
+    Ready,     // Preroll complete, active playback pipeline
+    Draining,  // Transitioning asynchronously to READY/NULL
     Failed     // Hard failure
 };
 
@@ -219,8 +220,14 @@ private:
 
     // Validation helper mapped to new state
     inline bool isCurrentEpoch(uint64_t e) const {
-        return e == playbackEpoch_.load(std::memory_order_acquire) &&
-            lifecycle_.load(std::memory_order_acquire) != PipelineLifecycle::Idle;
+        if (e != playbackEpoch_.load(std::memory_order_acquire))
+            return false;
+
+        const PipelineLifecycle life =
+            lifecycle_.load(std::memory_order_acquire);
+
+        return life == PipelineLifecycle::Starting ||
+            life == PipelineLifecycle::Ready;
     }
 
     static gboolean busCallback(GstBus* bus, GstMessage* msg, gpointer user_data);
