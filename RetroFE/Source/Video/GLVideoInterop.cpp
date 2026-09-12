@@ -41,7 +41,7 @@ struct GLVideoInterop::Impl {
     std::string error = "OpenGL/OpenGL ES renderer required";
     struct Slot { GLuint native = 0; SDL_Texture* texture = nullptr; };
     std::array<Slot, 3> slots{};
-    struct Pending { GstSample* sample; GLsync fence; };
+    struct Pending { GstSample* sample; GLsync fence; SDL_Texture* texture = nullptr; };
     std::vector<Pending> pending;
     GLuint framebuffer = 0;
     int width = 0, height = 0;
@@ -51,13 +51,16 @@ struct GLVideoInterop::Impl {
     // producer buffer out of its pool until those reads finish on the GPU.
     void releaseDirect() {
         if (!directSample) return;
-        SDL_DestroyTexture(directTexture); // SDL wrapper only; GStreamer owns GL storage.
-        directTexture = nullptr;
         auto* gl = wrapped->gl_vtable;
         GLsync fence = gl->FenceSync && gl->ClientWaitSync && gl->DeleteSync
             ? gl->FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0) : nullptr;
-        if (fence) { pending.push_back({directSample, fence}); gl->Flush(); }
-        else { gl->Finish(); gst_sample_unref(directSample); }
+        if (fence) { pending.push_back({directSample, fence, directTexture}); gl->Flush(); }
+        else {
+            gl->Finish();
+            SDL_DestroyTexture(directTexture);
+            gst_sample_unref(directSample);
+        }
+        directTexture = nullptr;
         directSample = nullptr;
     }
     void retire(bool wait) {
@@ -68,6 +71,7 @@ struct GLVideoInterop::Impl {
             if (state == GL_ALREADY_SIGNALED || state == GL_CONDITION_SATISFIED || state == GL_WAIT_FAILED) {
                 if (state == GL_WAIT_FAILED) gl->Finish();
                 gl->DeleteSync(it->fence);
+                if (it->texture) SDL_DestroyTexture(it->texture);
                 gst_sample_unref(it->sample);
                 it = pending.erase(it);
             } else ++it;
