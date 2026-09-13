@@ -39,7 +39,7 @@ Uint64 option(const char* name) {
 }
 
 void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink,
-                  GstBus* bus, GstSample* first) {
+                  GstBus* bus, GstSample* first, bool direct) {
     auto display = static_cast<EGLDisplay>(SDL_EGL_GetCurrentDisplay());
     auto createImage = reinterpret_cast<PFNEGLCREATEIMAGEKHRPROC>(eglGetProcAddress("eglCreateImageKHR"));
     auto destroyImage = reinterpret_cast<PFNEGLDESTROYIMAGEKHRPROC>(eglGetProcAddress("eglDestroyImageKHR"));
@@ -54,8 +54,10 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
     GstSample* held = nullptr;
     int width = 0, height = 0;
     auto releaseInput = [&]() {
-        // Finish conversion before VA may recycle the imported surface.
+        // Direct mode must submit and finish SDL sampling before VA reuse.
+        SDL_FlushRenderer(renderer);
         glFinish();
+        if (direct && texture) { SDL_DestroyTexture(texture); texture = nullptr; }
         if (input) glDeleteTextures(1, &input);
         input = 0;
         if (image != EGL_NO_IMAGE_KHR) destroyImage(display, image);
@@ -77,6 +79,7 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
     };
     try {
         SDL_FlushRenderer(renderer);
+        if (!direct) {
         vertex = shader(GL_VERTEX_SHADER, "attribute vec2 pos; varying vec2 uv; void main(){uv=(pos+1.0)*0.5;gl_Position=vec4(pos,0.0,1.0);}");
         fragment = shader(GL_FRAGMENT_SHADER, "#extension GL_OES_EGL_image_external : require\nprecision mediump float; varying vec2 uv; uniform samplerExternalOES video; void main(){gl_FragColor=texture2D(video,uv);}");
         program = glCreateProgram(); glAttachShader(program, vertex); glAttachShader(program, fragment);
@@ -90,6 +93,8 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
         glGenBuffers(1, &vbo); glBindBuffer(GL_ARRAY_BUFFER, vbo);
         glBufferData(GL_ARRAY_BUFFER, sizeof(quad), quad, GL_STATIC_DRAW);
         glGenFramebuffers(1, &fbo);
+        }
+        if (direct) std::cout << "Direct EGL external texture -> SDL; no RGBA intermediate; blocking GPU completion baseline" << std::endl;
         const Uint64 cycleMs = option("PROTO_CYCLE_MS"), duration = option("PROTO_DURATION_MS");
         const Uint64 rebuildEvery = option("PROTO_REBUILD_EVERY");
         const Uint64 start = SDL_GetTicks(); Uint64 lastCycle = start, frames = 0, cycles = 0;
@@ -124,9 +129,11 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
                     check(gst_element_seek_simple(pipeline, GST_FORMAT_TIME, GST_SEEK_FLAG_FLUSH, 0), "loop failed");
                 gst_message_unref(message);
             }
-            held = initial ? gst_sample_ref(first) : gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 0);
+            auto* next = initial ? gst_sample_ref(first) : gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 0);
             initial = false;
-            if (held) {
+            if (next) {
+                releaseInput();
+                held = next;
                 SDL_FlushRenderer(renderer);
                 GLint previousFramebuffer = 0, previousViewport[4]{}, positionEnabled = 0;
                 glGetIntegerv(GL_FRAMEBUFFER_BINDING, &previousFramebuffer);
@@ -158,7 +165,12 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
                         pitchKeys[i], meta->stride[i], lowKeys[i], static_cast<EGLint>(drm.drm_modifier & 0xffffffffu),
                         highKeys[i], static_cast<EGLint>(drm.drm_modifier >> 32)});
                 }
-                const auto color = drm.vinfo.colorimetry;
+                auto color = drm.vinfo.colorimetry;
+                GstVideoInfo defaults{};
+                check(gst_video_info_set_format(&defaults, GST_VIDEO_FORMAT_NV12, drm.vinfo.width, drm.vinfo.height), "default colorimetry failed");
+                if (color.matrix == GST_VIDEO_COLOR_MATRIX_UNKNOWN) color.matrix = defaults.colorimetry.matrix;
+                if (color.range == GST_VIDEO_COLOR_RANGE_UNKNOWN) color.range = defaults.colorimetry.range;
+                check(color.transfer != GST_VIDEO_TRANSFER_SMPTE2084 && color.transfer != GST_VIDEO_TRANSFER_ARIB_STD_B67, "HDR not supported");
                 check(color.matrix == GST_VIDEO_COLOR_MATRIX_BT709 || color.matrix == GST_VIDEO_COLOR_MATRIX_BT601, "only BT.601/709 supported");
                 check(color.range == GST_VIDEO_COLOR_RANGE_0_255 || color.range == GST_VIDEO_COLOR_RANGE_16_235, "unknown YUV range");
                 attrs.insert(attrs.end(), {EGL_YUV_COLOR_SPACE_HINT_EXT, color.matrix == GST_VIDEO_COLOR_MATRIX_BT709 ? EGL_ITU_REC709_EXT : EGL_ITU_REC601_EXT,
@@ -171,6 +183,19 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
                 glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
                 glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
                 glTexParameteri(GL_TEXTURE_EXTERNAL_OES, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+                if (direct) {
+                    auto props = SDL_CreateProperties();
+                    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_EXTERNAL_OES);
+                    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STATIC);
+                    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, drm.vinfo.width);
+                    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, drm.vinfo.height);
+                    SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_OPENGLES2_TEXTURE_NUMBER, input);
+                    texture = SDL_CreateTextureWithProperties(renderer, props);
+                    SDL_DestroyProperties(props);
+                    check(texture, "SDL external wrapper unsupported/failed");
+                    glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0);
+                    SDL_FlushRenderer(renderer);
+                } else {
                 if (width != drm.vinfo.width || height != drm.vinfo.height) {
                     glFinish();
                     if (texture) SDL_DestroyTexture(texture);
@@ -212,8 +237,9 @@ void playExternal(SDL_Renderer* renderer, GstElement* pipeline, GstElement* sink
                 glBindTexture(GL_TEXTURE_EXTERNAL_OES, 0); glUseProgram(0);
                 releaseInput();
                 SDL_FlushRenderer(renderer); // invalidate SDL state after custom GL rendering
+                }
                 visible = true;
-                if (++frames == 1 || frames % 300 == 0) std::cout << "EGL imported/converted " << frames << " frames; persistent RGBA output, no GStreamer GL context" << std::endl;
+                if (++frames == 1 || frames % 300 == 0) std::cout << (direct ? "SDL directly sampled " : "EGL imported/converted ") << frames << (direct ? " frames; external NV12 storage, no RGBA intermediate" : " frames; persistent RGBA output, no GStreamer GL context") << std::endl;
             }
             SDL_SetRenderDrawColor(renderer, 20, 20, 20, 255); SDL_RenderClear(renderer);
             if (visible) check(SDL_RenderTexture(renderer, texture, nullptr, nullptr), "SDL draw failed");

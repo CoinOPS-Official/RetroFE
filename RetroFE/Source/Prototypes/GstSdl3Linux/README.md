@@ -123,3 +123,22 @@ interop or migrate lifecycle changes while diagnosing this prototype.
 
 If a crash occurs, use GDB with debuginfod and capture all thread backtraces.
 Do not treat successful startup or a short run as long-term stability.
+# Direct SDL external-texture experiment
+
+`dmabuf-direct` uses the same DMA-BUF/EGL import as `dmabuf-egl`, but wraps the external texture with `SDL_PIXELFORMAT_EXTERNAL_OES`. SDL performs the final draw without an intermediate RGBA texture or custom conversion shader. Unsupported SDL/driver combinations fail explicitly.
+
+From this prototype's directory:
+
+```sh
+cmake -S . -B build
+cmake --build build --parallel
+./build/gst_sdl3_linux ~/ARISEMicro/retrofe/collections/_common/medium_artwork/video/19xx.mp4 dmabuf-direct
+```
+
+Check orientation, colors, black levels and the red SDL overlay against `dmabuf-egl`. Then test reopen/reset:
+
+```sh
+env PROTO_CYCLE_MS=2000 PROTO_REBUILD_EVERY=10 PROTO_DURATION_MS=600000 ./build/gst_sdl3_linux ~/ARISEMicro/retrofe/collections/_common/medium_artwork/video/19xx.mp4 dmabuf-direct 2>&1 | tee egl-direct.log
+```
+
+This is a blocking correctness baseline: the sample, EGL image, native texture and SDL wrapper stay alive while displayed. Before replacement/reopen/cleanup, SDL commands are flushed and GPU completion is awaited with glFinish, then the wrapper and import are released. There are no GStreamer GL contexts. It retains the existing prototype's two-plane NV12/no-crop restrictions. Missing matrix/range use GStreamer's NV12 defaults; HDR is rejected. Production code is unchanged by this experiment. Linux build/runtime validation is required.

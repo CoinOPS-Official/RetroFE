@@ -11,10 +11,10 @@
 #include <vector>
 #include "demux-link.h"
 
-void playExternal(SDL_Renderer*, GstElement*, GstElement*, GstBus*, GstSample*);
+void playExternal(SDL_Renderer*, GstElement*, GstElement*, GstBus*, GstSample*, bool);
 
 // Both modes avoid GstGLContext and CPU pixel mapping.
-int inspectDmaBuf(const char* file, bool playback) {
+int inspectDmaBuf(const char* file, bool playback, bool direct) {
     SDL_Window* window = nullptr;
     SDL_Renderer* renderer = nullptr;
     GstElement* pipeline = nullptr;
@@ -130,7 +130,7 @@ int inspectDmaBuf(const char* file, bool playback) {
         if (!found) std::cout << "Exact modifier NOT advertised by EGL; no compatible import established\n";
         if (playback) {
             check(found, "exact modifier not advertised; refusing import");
-            playExternal(renderer, pipeline, sink, bus, sample);
+            playExternal(renderer, pipeline, sink, bus, sample, direct);
         } else std::cout << "Inspection complete. No image imported or rendered; advertised support is not proof of SDL plane compatibility.\n";
     } catch (const std::exception& error) {
         std::cerr << error.what() << " (SDL: " << SDL_GetError() << ")\n"; result = 1;

@@ -15,17 +15,17 @@ static void require(bool ok, const char* message) {
     if (!ok) throw std::runtime_error(std::string(message) + ": " + SDL_GetError());
 }
 
-int inspectDmaBuf(const char* file, bool playback);
+int inspectDmaBuf(const char* file, bool playback, bool direct);
 
 int main(int argc, char** argv) {
     if (argc < 2) {
-        std::cerr << "Usage: gst_sdl3_linux FILE.mp4 [nv12|rgba|dmabuf-inspect|dmabuf-egl]\n"
+        std::cerr << "Usage: gst_sdl3_linux FILE.mp4 [nv12|rgba|dmabuf-inspect|dmabuf-egl|dmabuf-direct]\n"
                      "Space: unload/reopen same pipeline; R: rebuild pipeline; Escape: exit\n";
         return 2;
     }
-    if (argc > 2 && (std::string(argv[2]) == "dmabuf-inspect" || std::string(argv[2]) == "dmabuf-egl")) {
+    if (argc > 2 && (std::string(argv[2]) == "dmabuf-inspect" || std::string(argv[2]) == "dmabuf-egl" || std::string(argv[2]) == "dmabuf-direct")) {
         gst_init(nullptr, nullptr);
-        return inspectDmaBuf(argv[1], std::string(argv[2]) == "dmabuf-egl");
+        return inspectDmaBuf(argv[1], std::string(argv[2]) != "dmabuf-inspect", std::string(argv[2]) == "dmabuf-direct");
     }
     const bool nv12 = argc < 3 || std::string(argv[2]) == "nv12";
     if (argc > 2 && std::string(argv[2]) != "nv12" && std::string(argv[2]) != "rgba") return 2;
