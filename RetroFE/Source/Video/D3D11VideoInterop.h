@@ -13,7 +13,7 @@ public:
     SDL_Texture* copy(GstSample* sample);
     const char* reason() const;
     GstElement* wrapSink(GstElement* sink) { return sink; }
-    static const char* caps() { return "video/x-raw(memory:D3D11Memory),format=NV12,pixel-aspect-ratio=1/1;video/x-raw,format=NV12,pixel-aspect-ratio=1/1"; }
+    static const char* caps() { return "video/x-raw(memory:D3D11Memory),format=NV12;video/x-raw,format=NV12"; }
     static SDL_PixelFormat pixelFormat() { return SDL_PIXELFORMAT_NV12; }
     static const char* description() { return "D3D11 NV12 GPU copy to SDL3 texture, no CPU readback/upload"; }
     static void presented(SDL_Renderer* renderer);

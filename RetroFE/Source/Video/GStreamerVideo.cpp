@@ -1016,7 +1016,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	GstCaps* videoCaps = nullptr;
 	if (hasPerspective_) {
 		videoCaps = gst_caps_from_string(
-			"video/x-raw,format=(string)RGBA,pixel-aspect-ratio=(fraction)1/1");
+			"video/x-raw,format=(string)RGBA");
 		sdlFormat_ = SDL_PIXELFORMAT_ABGR8888;
 		LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_ABGR8888 (Perspective enabled)");
 	}
@@ -1025,13 +1025,13 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			videoCaps = gst_caps_from_string(
 				gpuInterop_ && gpuInterop_->available()
 				? NativeVideoInterop::caps()
-				: "video/x-raw,format=(string)NV12,pixel-aspect-ratio=(fraction)1/1");
+				: "video/x-raw,format=(string)NV12");
 			sdlFormat_ = gpuInterop_ && gpuInterop_->available() ? NativeVideoInterop::pixelFormat() : SDL_PIXELFORMAT_NV12;
 			LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_NV12 (HW accel: true)");
 		}
 		else {
 			videoCaps = gst_caps_from_string(
-				"video/x-raw,format=(string)I420,pixel-aspect-ratio=(fraction)1/1");
+				"video/x-raw,format=(string)I420");
 			elementSetupHandlerId_ = g_signal_connect(pipeline_, "element-setup",
 				G_CALLBACK(elementSetupCallback), this);
 			sdlFormat_ = SDL_PIXELFORMAT_IYUV;
