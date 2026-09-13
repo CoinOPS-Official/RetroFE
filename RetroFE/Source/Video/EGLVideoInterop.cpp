@@ -278,6 +278,22 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
         glFlush(); return p.texture;
     } catch (const std::exception& e) {
         p.error=e.what();
+        // Preserve the exact negotiated metadata: an unknown matrix and an
+        // explicitly unsupported matrix must be distinguishable in reports.
+        if (auto* caps = gst_sample_get_caps(sample)) {
+            gchar* text = gst_caps_to_string(caps);
+            p.error += std::string("; negotiated caps: ") + (text ? text : "unavailable");
+            g_free(text);
+            GstVideoInfoDmaDrm info{};
+            gst_video_info_dma_drm_init(&info);
+            if (gst_video_info_dma_drm_from_caps(&info, caps)) {
+                const auto& color = info.vinfo.colorimetry;
+                p.error += "; parsed colorimetry matrix=" + std::to_string(color.matrix)
+                    + " range=" + std::to_string(color.range)
+                    + " transfer=" + std::to_string(color.transfer)
+                    + " primaries=" + std::to_string(color.primaries);
+            }
+        }
         // Release imported storage only after any partially issued GPU work.
         try { Context current(p.renderer,p.native); glFinish(); if(input)glDeleteTextures(1,&input); if(image!=EGL_NO_IMAGE_KHR)p.destroyImage(p.display,image); } catch (...) {}
         return nullptr;

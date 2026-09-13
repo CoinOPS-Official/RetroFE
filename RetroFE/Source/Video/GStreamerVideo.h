@@ -148,6 +148,7 @@ public:
     static void disablePlugin(const std::string& pluginName);
 
 private:
+    bool openMedia(const std::string& file, bool cpuFallback);
     // Main-thread handle: prevents old READY jobs overlapping stop or reopen.
     std::shared_future<void> unloadCompletion_;
     // --- Callback context to avoid UAF in GStreamer/GLib callbacks ---

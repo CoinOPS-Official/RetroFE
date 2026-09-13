@@ -1164,6 +1164,10 @@ VideoSnapshot GStreamerVideo::getSnapshot() const {
 }
 
 bool GStreamerVideo::open(const std::string& file) {
+	return openMedia(file, false);
+}
+
+bool GStreamerVideo::openMedia(const std::string& file, bool cpuFallback) {
 	if (unloadCompletion_.valid() && unloadCompletion_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
 	if (!initialized_)
 		return false;
@@ -1179,6 +1183,13 @@ bool GStreamerVideo::open(const std::string& file) {
 			"open(): rejected while pipeline is draining: " + file);
 
 		return false;
+	}
+
+	// Only an internal recovery open preserves CPU fallback. A new media
+	// request retries GPU negotiation, rebuilding a retained CPU pipeline.
+	if (!cpuFallback && disableInterop_) {
+		stop();
+		disableInterop_ = false;
 	}
 
 	const uint64_t newEpoch = nextUniquePlaybackEpoch_++;
@@ -1712,7 +1723,7 @@ void GStreamerVideo::updateFrame() {
 		const auto file = currentFile_;
 		disableInterop_ = true;
 		stop();
-		if (!file.empty() && !open(file)) lifecycle_.store(PipelineLifecycle::Failed, std::memory_order_release);
+		if (!file.empty() && !openMedia(file, true)) lifecycle_.store(PipelineLifecycle::Failed, std::memory_order_release);
 		return;
 	}
 	GstSample* sampleToProcess = nullptr;

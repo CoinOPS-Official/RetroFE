@@ -30,5 +30,6 @@ Linux runtime validation is required:
 - Exercise crop metadata and multi-FD samples when available; inspect color and orientation.
 - Run multiple simultaneous videos and watch process memory and FD counts over time.
 - Confirm unsupported inputs log fallback and continue playback.
+- Play a rejected clip followed by a previously working clip on the same instance. The second clip must retry GPU import and log ACTIVE. Internal recovery of the rejected clip must remain on CPU without repeatedly reopening. Fallback logs include negotiated caps and parsed matrix/range/transfer/primaries values; retain these when reporting colorimetry failures.
 
 Renderer flushes remain per-video for this first integration. Renderer-wide batching and shared shader resources are follow-up optimizations; resources currently persist per instance. Windows D3D11 is unchanged.
