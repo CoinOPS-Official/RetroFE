@@ -24,6 +24,7 @@
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
 #include "../Font.h"
+#include "../GeometryBatch.h"
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -50,7 +51,7 @@ namespace {
 	static float measureTextWidthExact(FontManager* f, const std::string& s, float scale) {
 		if (!f || s.empty()) return 0.0f;
 		const float targetH = scale * f->getMaxHeight();
-		const FontManager::MipLevel* mip = f->getMipLevelForSize((int)targetH);
+		const FontManager::MipLevel* mip = f->getMipLevelForHeight(targetH);
 		if (!mip || !mip->fillTexture) {
 			return (float)f->getWidth(s) * scale;
 		}
@@ -89,7 +90,7 @@ namespace {
 			else { prev = 0; continue; }
 
 			const Uint32 ch = codepoint;
-			if (prev) penX += f->getKerning(prev, ch) * scale;
+			if (prev) penX += f->getKerning(*mip, prev, ch) * k;
 
 			// FIXED: Safe multi-map lookup using pointers instead of cross-container iterators
 			const FontManager::GlyphInfo* g = nullptr;
@@ -145,6 +146,7 @@ namespace {
 		if (!r || !f || !mip || !staticFillTex || s.empty()) return;
 
 		const float ySnap = std::round(y);
+		GeometryBatch batch;
 
 		// Helper to perform a single pass (Outline or Fill)
 		auto doPass = [&](SDL_Texture* staticTex, SDL_Texture* dynamicTex, bool isFill) {
@@ -180,7 +182,7 @@ namespace {
 				else { prev = 0; continue; }
 
 				const Uint32 ch = codepoint;
-				if (prev) penX += f->getKerning(prev, ch) * finalScale;
+				if (prev) penX += f->getKerning(*mip, prev, ch) * k;
 
 				// FIXED: Safe multi-map lookup
 				const FontManager::GlyphInfo* g = nullptr;
@@ -203,12 +205,12 @@ namespace {
 					if (isFill) {
 						SDL_Rect srcFill{ g->rect.x + g->fillX, g->rect.y + g->fillY, g->fillW, g->fillH };
 						SDL_FRect dstFill{ penX, ySnap, g->fillW * k, g->fillH * k };
-						{ SDL_FRect sourceF; SDL_RectToFRect(&srcFill, &sourceF); SDL_RenderTexture(r, texToUse, &sourceF, &dstFill); }
+						batch.appendTexture(r, texToUse, srcFill, dstFill);
 					}
 					else {
 						const SDL_Rect& src = g->rect;
 						SDL_FRect dst = { penX - g->fillX * k, ySnap - g->fillY * k, src.w * k, src.h * k };
-						{ SDL_FRect sourceF; SDL_RectToFRect(&src, &sourceF); SDL_RenderTexture(r, texToUse, &sourceF, &dst); }
+						batch.appendTexture(r, texToUse, src, dst);
 					}
 					penX += g->advance * k;
 				}
@@ -221,6 +223,7 @@ namespace {
 
 		// --- Fill pass ---
 		doPass(staticFillTex, mip->dynamicFillTexture, true);
+		batch.flush();
 	}
 
 } // namespace
@@ -654,7 +657,7 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 
 	// Mipmapping Setup
 	const float targetPixelHeight = finalScale * font->getMaxHeight();
-	const FontManager::MipLevel* mip = font->getMipLevelForSize(static_cast<int>(targetPixelHeight));
+	const FontManager::MipLevel* mip = font->getMipLevelForHeight(targetPixelHeight);
 	if (mip) {
 		const float mipRelativeScale = (mip->height > 0) ? (targetPixelHeight / mip->height) : 1.0f;
 		SDL_Texture* fillTex = mip->fillTexture;
@@ -769,7 +772,7 @@ void ReloadableHiscores::renderNoDataMessage(SDL_Renderer* renderer, FontManager
 
 	// 6. Setup Mipmapping
 	const float targetPixelHeight = scale * font->getMaxHeight();
-	const FontManager::MipLevel* mip = font->getMipLevelForSize(static_cast<int>(targetPixelHeight));
+	const FontManager::MipLevel* mip = font->getMipLevelForHeight(targetPixelHeight);
 
 	// 7. Render Pass
 	SDL_Texture* oldTarget = SDL_GetRenderTarget(renderer);
@@ -947,7 +950,7 @@ void ReloadableHiscores::buildCurrentPage_(bool resetPresentation) {
 		SDL_Texture* old = SDL_GetRenderTarget(renderer);
 		if (panel.header) {
 			SDL_SetRenderTarget(renderer, panel.header); SDL_SetRenderDrawColor(renderer, 0,0,0,0); SDL_RenderClear(renderer);
-			const float pixelH = panel.scale * font->getMaxHeight(); const auto* mip = font->getMipLevelForSize((int)pixelH);
+			const float pixelH = panel.scale * font->getMaxHeight(); const auto* mip = font->getMipLevelForHeight(pixelH);
 			if (mip) {
 				SDL_SetTextureColorMod(mip->fillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
 				if (mip->dynamicFillTexture) SDL_SetTextureColorMod(mip->dynamicFillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
@@ -970,7 +973,7 @@ void ReloadableHiscores::buildCurrentPage_(bool resetPresentation) {
 			SDL_SetRenderTarget(renderer, tile);
 			SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
 			SDL_RenderClear(renderer);
-			const float pixelH=panel.scale*font->getMaxHeight(); const auto* mip=font->getMipLevelForSize((int)pixelH); if(mip){SDL_SetTextureColorMod(mip->fillTexture,baseViewInfo.textColor.r,baseViewInfo.textColor.g,baseViewInfo.textColor.b);if(mip->dynamicFillTexture)SDL_SetTextureColorMod(mip->dynamicFillTexture,baseViewInfo.textColor.r,baseViewInfo.textColor.g,baseViewInfo.textColor.b);const float k=mip->height>0?pixelH/mip->height:1.0f;
+			const float pixelH=panel.scale*font->getMaxHeight(); const auto* mip=font->getMipLevelForHeight(pixelH); if(mip){SDL_SetTextureColorMod(mip->fillTexture,baseViewInfo.textColor.r,baseViewInfo.textColor.g,baseViewInfo.textColor.b);if(mip->dynamicFillTexture)SDL_SetTextureColorMod(mip->dynamicFillTexture,baseViewInfo.textColor.r,baseViewInfo.textColor.g,baseViewInfo.textColor.b);const float k=mip->height>0?pixelH/mip->height:1.0f;
 				for(size_t rr=0;rr<count;++rr){
 					float x=startX,y=panel.lineStep*rr;
 					SDL_Rect rowClip{0,(int)std::floor(y),std::max(1,(int)std::ceil(cellW)),
@@ -1736,7 +1739,7 @@ void ReloadableHiscores::renderHeaderTexture(
 
 	// Mipmapping Setup
 	const float targetPixelHeight = scale * font->getMaxHeight();
-	const FontManager::MipLevel* mip = font->getMipLevelForSize(static_cast<int>(targetPixelHeight));
+	const FontManager::MipLevel* mip = font->getMipLevelForHeight(targetPixelHeight);
 	if (!mip) {
 		SDL_SetRenderTarget(renderer, oldTarget);
 		return;
@@ -1797,7 +1800,7 @@ void ReloadableHiscores::renderTableRowsTexture(
 
 	// Mipmapping Setup
 	const float targetPixelHeight = scale * font->getMaxHeight();
-	const FontManager::MipLevel* mip = font->getMipLevelForSize(static_cast<int>(targetPixelHeight));
+	const FontManager::MipLevel* mip = font->getMipLevelForHeight(targetPixelHeight);
 	if (!mip) {
 		SDL_SetRenderTarget(renderer, oldTarget);
 		return;

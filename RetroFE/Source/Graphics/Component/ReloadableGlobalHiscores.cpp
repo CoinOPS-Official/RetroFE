@@ -24,6 +24,7 @@
 #include "../../SDL.h"
 #include <SDL3_image/SDL_image.h>
 #include "../Font.h"
+#include "../GeometryBatch.h"
 
 #include <algorithm>
 #include <cmath>
@@ -746,10 +747,10 @@ void ReloadableGlobalHiscores::computeGridBaseline_(
                 // Width: max per-column string width + padding between columns
                 float width0 = 0.0f;
                 for (size_t c = 0; c < table.columns.size(); ++c) {
-                    float w = (float)font->getWidth(table.columns[c]) * baseScale;
+                    float w = font->getWidthForHeight(table.columns[c], drawableH0);
                     for (const auto& row : table.rows) {
                         if (c < row.size()) {
-                            w = std::max(w, (float)font->getWidth(row[c]) * baseScale);
+                            w = std::max(w, font->getWidthForHeight(row[c], drawableH0));
                         }
                     }
                     width0 += w;
@@ -760,7 +761,7 @@ void ReloadableGlobalHiscores::computeGridBaseline_(
 
                 // Title can force width
                 if (!table.id.empty()) {
-                    width0 = std::max(width0, (float)font->getWidth(table.id) * baseScale);
+                    width0 = std::max(width0, font->getWidthForHeight(table.id, drawableH0));
                 }
 
                 // Height: title (optional) + header + kRowsPerPage rows
@@ -869,13 +870,14 @@ void ReloadableGlobalHiscores::reloadTexture() {
             if (s.empty()) return;
 
             const float targetH = finalScale * f->getMaxHeight();
-            const FontManager::MipLevel* mip = f->getMipLevelForSize((int)targetH);
+            const FontManager::MipLevel* mip = f->getMipLevelForHeight(targetH);
             if (!mip || !mip->fillTexture) return;
 
             const float k = (mip->height > 0) ? (targetH / mip->height) : 1.0f;
             SDL_Texture* fillTex = mip->fillTexture;
             SDL_Texture* outlineTex = mip->outlineTexture;
             const float ySnap = std::round(y);
+            GeometryBatch batch;
 
             SDL_SetTextureColorMod(fillTex, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
             if (mip->dynamicFillTexture) {
@@ -906,7 +908,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
                     }
                     else { ptr++; continue; }
 
-                    if (prev) penX += f->getKerning(prev, (Uint16)ch) * finalScale;
+                    if (prev) penX += f->getKerning(*mip, prev, ch) * k;
 
                     auto it = mip->glyphs.find((Uint16)ch);
                     if (it != mip->glyphs.end()) {
@@ -914,12 +916,12 @@ void ReloadableGlobalHiscores::reloadTexture() {
                         if (isFill) {
                             SDL_Rect srcFill{ g.rect.x + g.fillX, g.rect.y + g.fillY, g.fillW, g.fillH };
                             SDL_FRect dstFill{ penX, ySnap, g.fillW * k, g.fillH * k };
-                            { SDL_FRect sourceF; SDL_RectToFRect(&srcFill, &sourceF); SDL_RenderTexture(r, tex, &sourceF, &dstFill); }
+                            batch.appendTexture(r, tex, srcFill, dstFill);
                         }
                         else {
                             const SDL_Rect& src = g.rect;
                             SDL_FRect dst = { penX - g.fillX * k, ySnap - g.fillY * k, src.w * k, src.h * k };
-                            { SDL_FRect sourceF; SDL_RectToFRect(&src, &sourceF); SDL_RenderTexture(r, tex, &sourceF, &dst); }
+                            batch.appendTexture(r, tex, src, dst);
                         }
                         penX += g.advance * k;
                     }
@@ -929,13 +931,14 @@ void ReloadableGlobalHiscores::reloadTexture() {
 
             renderPass(outlineTex, false);
             renderPass(fillTex, true);
+            batch.flush();
         };
 
     // --- Exact width measure (mip + kerning + outline overhang) ---
     auto measureTextWidthExact = [&](FontManager* f, const std::string& s, float scale) -> float {
         if (!f || s.empty()) return 0.0f;
         const float targetH = scale * f->getMaxHeight();
-        const FontManager::MipLevel* mip = f->getMipLevelForSize((int)targetH);
+        const FontManager::MipLevel* mip = f->getMipLevelForHeight(targetH);
         if (!mip || !mip->fillTexture) return (float)f->getWidth(s) * scale;
 
         const float k = (mip->height > 0) ? (targetH / mip->height) : 1.0f;
@@ -962,7 +965,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
             }
             else { ptr++; continue; }
 
-            if (prev) penX += f->getKerning(prev, (Uint16)ch) * scale;
+            if (prev) penX += f->getKerning(*mip, prev, ch) * k;
 
             auto it = mip->glyphs.find((Uint16)ch);
             if (it != mip->glyphs.end()) {
