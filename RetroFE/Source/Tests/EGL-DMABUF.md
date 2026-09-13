@@ -25,6 +25,10 @@ Plane offsets and pitches come from VideoMeta, including multi-FD layouts. EGL m
 
 Linux runtime validation is required:
 
+Unspecified YUV colorimetry fields now use GStreamer's defaults for the actual DRM-mapped pixel format and coded dimensions (`gst_video_info_set_format`). Explicit fields are preserved. For untagged 1080p NV12 this selects limited-range BT.709; SD at 576 lines or below uses limited-range BT.601. A defaults message is emitted on change and after unload, not every frame. Explicit unsupported matrices and HDR transfer functions still take the fallback path.
+
+Compare untagged `videoFULL/espgal2.mp4` with tagged `video/espgal2.mp4`: the untagged clip should log `EGL colorimetry defaults applied` with `resolved=bt709`, then ACTIVE rather than CPU fallback. The tagged clip should remain ACTIVE without a defaults message. Check colors and black levels visually; defaults cannot recover the encoding intent of untagged content.
+
 - Repeated attract-mode unload/reopen, then rapid playlist changes and shutdown.
 - Alternate resolutions, aspect ratios, NV12 and SDR P010 media on the same instance.
 - Exercise crop metadata and multi-FD samples when available; inspect color and orientation.

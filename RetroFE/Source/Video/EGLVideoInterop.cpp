@@ -39,6 +39,7 @@ GLuint compile(GLenum type, const char* source) {
 struct Frame {
     GstVideoInfoDmaDrm drm{};
     SDL_Rect crop{};
+    std::string colorDefaults;
     std::vector<EGLint> attrs;
     explicit Frame(GstSample* sample) {
         gst_video_info_dma_drm_init(&drm);
@@ -77,10 +78,36 @@ struct Frame {
         ensure(gst_video_info_dma_drm_to_video_info(&drm, &ordinary), "unknown DRM pixel format");
         // RGBA8 is the SDR output contract. P010 SDR imports are allowed, but
         // reduced to 8 bits. Reject HDR rather than silently displaying it wrong.
-        const auto color = drm.vinfo.colorimetry;
+        auto color = drm.vinfo.colorimetry;
         ensure(color.transfer != GST_VIDEO_TRANSFER_SMPTE2084 && color.transfer != GST_VIDEO_TRANSFER_ARIB_STD_B67,
                "HDR DMA-BUF requires tone mapping; selecting CPU fallback");
         if (GST_VIDEO_INFO_IS_YUV(&ordinary)) {
+            // DMA_DRM caps can leave colorimetry unknown. Ask GStreamer for
+            // defaults using the actual pixel format and coded dimensions,
+            // not DMA_DRM or the padded allocation/cropped display size.
+            GstVideoInfo defaults{};
+            ensure(gst_video_info_set_format(&defaults, GST_VIDEO_INFO_FORMAT(&ordinary),
+                       drm.vinfo.width, drm.vinfo.height), "cannot resolve default YUV colorimetry");
+            std::string fields;
+            if (color.matrix == GST_VIDEO_COLOR_MATRIX_UNKNOWN) {
+                color.matrix = defaults.colorimetry.matrix; fields += " matrix";
+            }
+            if (color.range == GST_VIDEO_COLOR_RANGE_UNKNOWN) {
+                color.range = defaults.colorimetry.range; fields += " range";
+            }
+            if (color.transfer == GST_VIDEO_TRANSFER_UNKNOWN) {
+                color.transfer = defaults.colorimetry.transfer; fields += " transfer";
+            }
+            if (color.primaries == GST_VIDEO_COLOR_PRIMARIES_UNKNOWN) {
+                color.primaries = defaults.colorimetry.primaries; fields += " primaries";
+            }
+            if (!fields.empty()) {
+                gchar* resolved = gst_video_colorimetry_to_string(&color);
+                colorDefaults = "EGL colorimetry defaults applied to unspecified fields:" + fields
+                    + "; resolved=" + (resolved ? std::string(resolved) : "unknown")
+                    + "; coded size=" + std::to_string(drm.vinfo.width) + "x" + std::to_string(drm.vinfo.height);
+                g_free(resolved);
+            }
             ensure(color.matrix == GST_VIDEO_COLOR_MATRIX_BT709 || color.matrix == GST_VIDEO_COLOR_MATRIX_BT601,
                    "unsupported YUV matrix (only SDR BT.601/709 supported)");
             ensure(color.range == GST_VIDEO_COLOR_RANGE_0_255 || color.range == GST_VIDEO_COLOR_RANGE_16_235, "unknown YUV range");
@@ -105,6 +132,7 @@ struct EGLVideoInterop::Impl {
     PFNEGLDESTROYSYNCKHRPROC destroySync = nullptr;
     bool ready = false;
     std::string error = "EGL opengles2 renderer required";
+    std::string lastColorDefaults;
     GLuint program = 0, vbo = 0, fbo = 0, output = 0;
     SDL_Texture* texture = nullptr;
     int width = 0, height = 0;
@@ -229,6 +257,7 @@ GstElement* EGLVideoInterop::wrapSink(GstElement* sink) {
 }
 void EGLVideoInterop::discardFrames() {
     auto& p=*impl_; if (!p.ready) return;
+    p.lastColorDefaults.clear();
     Context current(p.renderer,p.native); SDL_FlushRenderer(p.renderer); p.retire(true);
     // Keep output, wrapper, FBO and shader for compatible future media.
 }
@@ -237,6 +266,10 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
     EGLImageKHR image=EGL_NO_IMAGE_KHR; GLuint input=0;
     try {
         Frame frame(sample);
+        if (frame.colorDefaults != p.lastColorDefaults) {
+            if (!frame.colorDefaults.empty()) LOG_INFO("GStreamerVideo", frame.colorDefaults);
+            p.lastColorDefaults = frame.colorDefaults;
+        }
         Context current(p.renderer,p.native);
         ensure(p.supports(frame),"EGL does not advertise this DRM format/modifier");
         SDL_FlushRenderer(p.renderer); p.retire(p.pending.size()>=4);
