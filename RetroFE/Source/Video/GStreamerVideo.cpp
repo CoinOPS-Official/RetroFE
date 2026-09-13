@@ -594,6 +594,7 @@ void GStreamerVideo::destroyTextures() {
 }
 
 bool GStreamerVideo::stop() {
+	if (unloadCompletion_.valid()) unloadCompletion_.wait();
 	glPipelineActive_.store(false);
 	pendingCpuFallback_.store(false);
 	const uint64_t deadEpoch = playbackEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
@@ -662,6 +663,7 @@ bool GStreamerVideo::stop() {
 }
 
 bool GStreamerVideo::isReadyForReuse() const {
+	if (unloadCompletion_.valid() && unloadCompletion_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
 	if (!pipeline_) return true;
 
 	// The C++ state machine marks this instance as Idle via unload().
@@ -672,6 +674,7 @@ bool GStreamerVideo::isReadyForReuse() const {
 }
 
 bool GStreamerVideo::unload() {
+	if (unloadCompletion_.valid()) unloadCompletion_.wait();
 	pendingCpuFallback_.store(false, std::memory_order_release);
 
 #ifdef RETROFE_HAVE_GST_GL
@@ -748,9 +751,12 @@ bool GStreamerVideo::unload() {
 	GstElement* p = pipeline_;
 	gst_object_ref(p);
 
+	auto completion = std::make_shared<std::promise<void>>();
+	unloadCompletion_ = completion->get_future().share();
 	// deadEpoch is also the generation token for this specific drain.
 	ThreadPool::getInstance().enqueue(
-		[weak, p, taskEpoch = deadEpoch]() {
+		[weak, p, taskEpoch = deadEpoch, completion]() {
+			struct Complete { std::shared_ptr<std::promise<void>> p; bool done = false; void finish() { if (!done) { done = true; p->set_value(); } } ~Complete() { finish(); } } complete{completion};
 
 			// Move the reusable pipeline back to READY. This releases the
 			// active decoder/file resources while preserving the playbin.
@@ -787,6 +793,10 @@ bool GStreamerVideo::unload() {
 			}
 
 			gst_object_unref(p);
+
+			// Publish pipeline completion before a temporary self reference can
+			// become the last owner and invoke stop() on this worker.
+			complete.finish();
 
 			if (auto self = weak.lock()) {
 				// This async completion is allowed to publish Idle only if
@@ -1154,6 +1164,7 @@ VideoSnapshot GStreamerVideo::getSnapshot() const {
 }
 
 bool GStreamerVideo::open(const std::string& file) {
+	if (unloadCompletion_.valid() && unloadCompletion_.wait_for(std::chrono::seconds(0)) != std::future_status::ready) return false;
 	if (!initialized_)
 		return false;
 
@@ -1738,6 +1749,9 @@ void GStreamerVideo::updateFrame() {
 		if (SDL_Texture* imported = gpuInterop_->copy(sampleToProcess)) {
 			if (texture_ && texture_ != gpuTexture_) SDL_DestroyTexture(texture_);
 			texture_ = gpuTexture_ = imported;
+#ifdef RETROFE_HAVE_EGL_DMABUF
+			dimensions_.store({gpuInterop_->width(), gpuInterop_->height()}, std::memory_order_release);
+#endif
 			++gpuFrameCount_;
 			SDL_SetTextureBlendMode(texture_, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
 			isTextureReady_ = true;
@@ -1749,6 +1763,14 @@ void GStreamerVideo::updateFrame() {
 			return;
 		}
 		if (!loggedUpload_) LOG_INFO("GStreamerVideo", std::string("GPU texture interop fallback: ") + gpuInterop_->reason() + "; " + currentFile_);
+#ifdef RETROFE_HAVE_EGL_DMABUF
+		// Never CPU-map a tiled DMA_DRM frame as ordinary NV12/RGBA. Reopen
+		// with system-memory negotiation through the existing recovery path.
+		isTextureReady_ = false;
+		pendingCpuFallback_.store(true, std::memory_order_release);
+		gst_sample_unref(sampleToProcess);
+		return;
+#endif
 	}
 	if (texture_ == gpuTexture_) { texture_ = nullptr; gpuTexture_ = nullptr; }
 	createSdlTexture();

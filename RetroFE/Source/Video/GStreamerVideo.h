@@ -22,7 +22,10 @@
 #include "../Sound/AudioBus.h" 
 #include "IVideo.h"
 #include "D3D11VideoInterop.h"
-#ifdef RETROFE_HAVE_GST_GL
+#ifdef RETROFE_HAVE_EGL_DMABUF
+#include "EGLVideoInterop.h"
+using NativeVideoInterop = EGLVideoInterop;
+#elif defined(RETROFE_HAVE_GST_GL)
 #include "GLVideoInterop.h"
 using NativeVideoInterop = GLVideoInterop;
 #else
@@ -33,6 +36,7 @@ using NativeVideoInterop = D3D11VideoInterop;
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <future>
 
 extern "C" {
 #if (__APPLE__)
@@ -144,6 +148,8 @@ public:
     static void disablePlugin(const std::string& pluginName);
 
 private:
+    // Main-thread handle: prevents old READY jobs overlapping stop or reopen.
+    std::shared_future<void> unloadCompletion_;
     // --- Callback context to avoid UAF in GStreamer/GLib callbacks ---
     struct CallbackCtx {
         grefcount ref;
