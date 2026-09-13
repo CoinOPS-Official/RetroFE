@@ -16,7 +16,7 @@ public:
     const char* reason() const;
     static const char* caps() { return "video/x-raw(memory:DMABuf),format=DMA_DRM"; }
     static SDL_PixelFormat pixelFormat() { return SDL_PIXELFORMAT_ABGR8888; }
-    static const char* description() { return "EGL DMA-BUF conversion to reusable SDL RGBA texture; GPU fences; no GStreamer GL context"; }
+    const char* description() const;
     int width() const;
     int height() const;
 private:

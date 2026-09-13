@@ -9,6 +9,7 @@
 #include <gst/video/video-info-dma.h>
 #include <array>
 #include <climits>
+#include <cstdlib>
 #include <map>
 #include <stdexcept>
 #include <string>
@@ -136,7 +137,28 @@ struct EGLVideoInterop::Impl {
     GLuint program = 0, vbo = 0, fbo = 0, output = 0;
     SDL_Texture* texture = nullptr;
     int width = 0, height = 0;
-    struct Pending { GstSample* sample; EGLImageKHR image; GLuint texture; EGLSyncKHR fence; };
+    struct Pending { GstSample* sample; EGLImageKHR image; GLuint texture; EGLSyncKHR fence; SDL_Texture* wrapper = nullptr; };
+    Pending direct{};
+    bool preferDirect = true;
+    int visibleWidth = 0, visibleHeight = 0;
+    // Called only once the caller will stop using the old returned texture.
+    // Flush queues its LAST SDL reads, then fence those reads in the same context.
+    void releaseDirect() {
+        if (!direct.sample) return;
+        SDL_FlushRenderer(renderer);
+        direct.fence = createSync(display, EGL_SYNC_FENCE_KHR, nullptr);
+        if (direct.fence == EGL_NO_SYNC_KHR) {
+            glFinish(); // failed fence recovery, not the steady-state path
+            SDL_DestroyTexture(direct.wrapper);
+            glDeleteTextures(1, &direct.texture);
+            destroyImage(display, direct.image);
+            gst_sample_unref(direct.sample);
+        } else {
+            pending.push_back(direct);
+            glFlush();
+        }
+        direct = {};
+    }
     std::vector<Pending> pending;
     std::map<std::pair<guint32,guint64>, bool> supported;
     explicit Impl(SDL_Renderer* r) : renderer(r) {}
@@ -147,6 +169,7 @@ struct EGLVideoInterop::Impl {
             if (result == EGL_TIMEOUT_EXPIRED_KHR) { ++it; continue; }
             if (result != EGL_CONDITION_SATISFIED_KHR) glFinish(); // failure recovery only
             destroySync(display, it->fence);
+            if (it->wrapper) SDL_DestroyTexture(it->wrapper);
             glDeleteTextures(1, &it->texture); destroyImage(display, it->image); gst_sample_unref(it->sample);
             it = pending.erase(it);
         }
@@ -192,6 +215,7 @@ struct EGLVideoInterop::Impl {
         if (!native) return;
         try {
             Context current(renderer,native); SDL_FlushRenderer(renderer);
+            releaseDirect();
             if (!pending.empty()) retire(true);
             if (texture) SDL_DestroyTexture(texture);
             if (output) glDeleteTextures(1,&output);
@@ -205,6 +229,9 @@ struct EGLVideoInterop::Impl {
 
 EGLVideoInterop::EGLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_unique<Impl>(renderer)) {
     auto& p=*impl_;
+    const char* mode = std::getenv("RETROFE_EGL_DIRECT");
+    p.preferDirect = !mode || std::string(mode) != "0";
+    p.pending.reserve(8);
     if (!renderer || std::string(SDL_GetRendererName(renderer)) != "opengles2") return;
     p.native=static_cast<SDL_GLContext>(SDL_GetPointerProperty(SDL_GetRendererProperties(renderer),"retrofe.gl.context",nullptr));
     if (!p.native) return;
@@ -240,9 +267,14 @@ EGLVideoInterop::EGLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_uniqu
 }
 EGLVideoInterop::~EGLVideoInterop()=default;
 bool EGLVideoInterop::available() const { return impl_->ready; }
+const char* EGLVideoInterop::description() const {
+    return impl_->direct.sample
+        ? "EGL DMA-BUF direct SDL external texture; GPU fences; no RGBA intermediate; no GStreamer GL context"
+        : "EGL DMA-BUF conversion to reusable SDL RGBA texture; GPU fences; no GStreamer GL context";
+}
 const char* EGLVideoInterop::reason() const { return impl_->error.c_str(); }
-int EGLVideoInterop::width() const { return impl_->width; }
-int EGLVideoInterop::height() const { return impl_->height; }
+int EGLVideoInterop::width() const { return impl_->visibleWidth; }
+int EGLVideoInterop::height() const { return impl_->visibleHeight; }
 GstElement* EGLVideoInterop::wrapSink(GstElement* sink) {
     auto* pad=gst_element_get_static_pad(sink,"sink");
     // A query probe handles allocation independently of appsink callback ABI.
@@ -258,7 +290,7 @@ GstElement* EGLVideoInterop::wrapSink(GstElement* sink) {
 void EGLVideoInterop::discardFrames() {
     auto& p=*impl_; if (!p.ready) return;
     p.lastColorDefaults.clear();
-    Context current(p.renderer,p.native); SDL_FlushRenderer(p.renderer); p.retire(true);
+    Context current(p.renderer,p.native); SDL_FlushRenderer(p.renderer); p.releaseDirect(); p.retire(true);
     // Keep output, wrapper, FBO and shader for compatible future media.
 }
 SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
@@ -272,7 +304,7 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
         }
         Context current(p.renderer,p.native);
         ensure(p.supports(frame),"EGL does not advertise this DRM format/modifier");
-        SDL_FlushRenderer(p.renderer); p.retire(p.pending.size()>=4);
+        SDL_FlushRenderer(p.renderer); p.releaseDirect(); p.retire(p.pending.size()>=4);
         GLint framebuffer=0,viewport[4]{},enabled=0;
         glGetIntegerv(GL_FRAMEBUFFER_BINDING,&framebuffer); glGetIntegerv(GL_VIEWPORT,viewport);
         glGetVertexAttribiv(0,GL_VERTEX_ATTRIB_ARRAY_ENABLED,&enabled);
@@ -286,7 +318,6 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
                 SDL_FlushRenderer(r);
             }
         } restore{p.renderer,framebuffer,viewport,enabled};
-        p.resize(frame.crop.w,frame.crop.h);
         image=p.createImage(p.display,EGL_NO_CONTEXT,EGL_LINUX_DMA_BUF_EXT,nullptr,frame.attrs.data());
         ensure(image!=EGL_NO_IMAGE_KHR,"EGL DMA-BUF image import failed");
         glActiveTexture(GL_TEXTURE0); glGenTextures(1,&input); glBindTexture(GL_TEXTURE_EXTERNAL_OES,input);
@@ -295,6 +326,35 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
         glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
         glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
         glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+        auto* allocation = gst_buffer_get_video_meta(gst_sample_get_buffer(sample));
+        // A direct wrapper exposes the whole image. Use conversion for crop or
+        // padded visible dimensions until the render API carries a source rect.
+        const bool wholeImage = frame.crop.x == 0 && frame.crop.y == 0 &&
+            frame.crop.w == static_cast<int>(allocation->width) &&
+            frame.crop.h == static_cast<int>(allocation->height);
+        if (p.preferDirect && wholeImage && frame.drm.drm_fourcc == 0x3231564e) {
+            auto props = SDL_CreateProperties();
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_EXTERNAL_OES);
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STATIC);
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, frame.crop.w);
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, frame.crop.h);
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_OPENGLES2_TEXTURE_NUMBER, input);
+            auto* wrapper = SDL_CreateTextureWithProperties(p.renderer, props);
+            SDL_DestroyProperties(props);
+            if (wrapper) {
+                p.direct = {gst_sample_ref(sample), image, input, EGL_NO_SYNC_KHR, wrapper};
+                image = EGL_NO_IMAGE_KHR; input = 0;
+                p.visibleWidth = frame.crop.w; p.visibleHeight = frame.crop.h;
+                return wrapper;
+            }
+            LOG_INFO("GStreamerVideo", std::string("SDL external texture unavailable; using EGL RGBA conversion: ") + SDL_GetError());
+            p.preferDirect = false; // renderer capability failure; avoid per-frame retries
+            // Clear errors from the failed wrapper attempt before conversion.
+            while (glGetError() != GL_NO_ERROR) {}
+        }
+        p.resize(frame.crop.w,frame.crop.h);
+        p.visibleWidth = frame.crop.w; p.visibleHeight = frame.crop.h;
+        glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_EXTERNAL_OES,input);
         glBindFramebuffer(GL_FRAMEBUFFER,p.fbo); glFramebufferTexture2D(GL_FRAMEBUFFER,GL_COLOR_ATTACHMENT0,GL_TEXTURE_2D,p.output,0);
         ensure(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"EGL conversion FBO incomplete");
         glViewport(0,0,p.width,p.height); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);

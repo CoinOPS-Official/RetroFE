@@ -1,4 +1,12 @@
-# Linux EGL DMA-BUF integration (experimental)
+# Linux EGL DMA-BUF integration
+
+Direct SDL external sampling is now preferred for whole-image NV12 imports. The ACTIVE description includes `direct SDL external texture` and `no RGBA intermediate`. Cropped/padded visible images and other formats use the existing RGBA conversion; SDL wrapper rejection also selects RGBA. Failed EGL imports still use CPU fallback.
+
+For comparison, run `env RETROFE_EGL_DIRECT=0 ./retrofe` to force the overnight-tested RGBA path. With the variable unset, direct sampling is preferred. RETROFE_GL_DIRECT controls the older GStreamer GL backend, not this importer.
+
+Direct buffers and SDL wrappers remain retained while displayed. On replacement, unload or teardown, SDL reads are flushed before inserting a completion fence. Retired imports are released only after the fence signals. This covers repeated draws of a paused frame without treating presentation as GPU completion. There is no steady-state glFinish; fence-error recovery may use it. Pending imports remain bounded with backpressure.
+
+Repeat attract-mode and playlist-switch stress tests for this production integration, including shutdown, paused/repeated frames and transitions between direct and cropped RGBA media. The prototype passed playback; production direct sampling still needs Linux build/runtime and overnight validation. Existing CMake caches that disabled RETROFE_ENABLE_EGL_DMABUF need it explicitly enabled; fresh builds default it ON when dependencies are available.
 
 Configure from the repository root:
 
@@ -17,9 +25,9 @@ SDLRenderDriver=opengles2
 log=INFO,WARNING,ERROR
 ```
 
-The ACTIVE log must mention `EGL DMA-BUF conversion`, `GPU fences`, and `no GStreamer GL context`. RETROFE_GL_DIRECT does not select this backend. This build option replaces the old GL backend; desktop opengl does not use the EGL importer. Configure EGL_DMABUF OFF to return to the previous GL implementation.
+The ACTIVE log identifies direct sampling or RGBA conversion, plus `GPU fences` and `no GStreamer GL context`. RETROFE_GL_DIRECT does not select this backend. This build option replaces the old GL backend; desktop opengl does not use the EGL importer. Configure EGL_DMABUF OFF to return to the previous GL implementation.
 
-The importer retains decoder samples, EGL images and external textures until conversion fences complete. The RGBA output, SDL wrapper, shader and FBO survive unload/reopen; output allocation changes when visible dimensions change. Imports are recreated per frame to avoid stale FD reuse. Capability caching is bounded. Up to four pending conversions are retained before waiting. Teardown and resize may wait; ordinary frames poll fences. Driver-error recovery may still call glFinish.
+The importer retains decoder samples, EGL images and external textures until their last GPU reads complete. The RGBA output, SDL wrapper, shader and FBO survive unload/reopen; output allocation changes when visible dimensions change. Imports are recreated per frame to avoid stale FD reuse. Capability caching is bounded. Up to four pending conversions are retained before waiting. Teardown and resize may wait; ordinary frames poll fences. Driver-error recovery may still call glFinish.
 
 Plane offsets and pitches come from VideoMeta, including multi-FD layouts. EGL must advertise the exact FourCC/modifier and accept the import. Crop is applied during conversion. SDR BT.601/709 YUV is supported; P010 is reduced to RGBA8 when importable. HDR tone mapping is not implemented. Unsupported imports renegotiate system-memory upload; this fallback is not a guarantee of correct HDR rendering.
 

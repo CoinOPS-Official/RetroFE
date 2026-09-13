@@ -595,6 +595,10 @@ void GStreamerVideo::destroyTextures() {
 
 bool GStreamerVideo::stop() {
 	if (unloadCompletion_.valid()) unloadCompletion_.wait();
+#ifdef RETROFE_HAVE_EGL_DMABUF
+	// Retire decoder-backed textures before shutting down their buffer pool.
+	if (gpuInterop_) gpuInterop_->discardFrames();
+#endif
 	glPipelineActive_.store(false);
 	pendingCpuFallback_.store(false);
 	const uint64_t deadEpoch = playbackEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
