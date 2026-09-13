@@ -137,8 +137,22 @@ struct EGLVideoInterop::Impl {
     GLuint program = 0, vbo = 0, fbo = 0, output = 0;
     SDL_Texture* texture = nullptr;
     int width = 0, height = 0;
-    struct Pending { GstSample* sample; EGLImageKHR image; GLuint texture; EGLSyncKHR fence; SDL_Texture* wrapper = nullptr; };
+    struct Pending { GstSample* sample; EGLImageKHR image; GLuint texture; EGLSyncKHR fence; SDL_Texture* wrapper = nullptr; int width = 0, height = 0; };
     Pending direct{};
+    std::vector<Pending> idle;
+    // Only completed direct imports enter this cache. No sample or EGLImage
+    // is cached: a new image always describes the current decoder allocation.
+    void recycle(Pending& frame) {
+        if (frame.image != EGL_NO_IMAGE_KHR) destroyImage(display, frame.image);
+        if (frame.sample) gst_sample_unref(frame.sample);
+        if (frame.wrapper && idle.size() < 4) {
+            idle.push_back({nullptr, EGL_NO_IMAGE_KHR, frame.texture, EGL_NO_SYNC_KHR,
+                            frame.wrapper, frame.width, frame.height});
+        } else {
+            if (frame.wrapper) SDL_DestroyTexture(frame.wrapper);
+            if (frame.texture) glDeleteTextures(1, &frame.texture);
+        }
+    }
     bool preferDirect = true;
     int visibleWidth = 0, visibleHeight = 0;
     // Called only once the caller will stop using the old returned texture.
@@ -149,10 +163,7 @@ struct EGLVideoInterop::Impl {
         direct.fence = createSync(display, EGL_SYNC_FENCE_KHR, nullptr);
         if (direct.fence == EGL_NO_SYNC_KHR) {
             glFinish(); // failed fence recovery, not the steady-state path
-            SDL_DestroyTexture(direct.wrapper);
-            glDeleteTextures(1, &direct.texture);
-            destroyImage(display, direct.image);
-            gst_sample_unref(direct.sample);
+            recycle(direct);
         } else {
             pending.push_back(direct);
             glFlush();
@@ -169,8 +180,7 @@ struct EGLVideoInterop::Impl {
             if (result == EGL_TIMEOUT_EXPIRED_KHR) { ++it; continue; }
             if (result != EGL_CONDITION_SATISFIED_KHR) glFinish(); // failure recovery only
             destroySync(display, it->fence);
-            if (it->wrapper) SDL_DestroyTexture(it->wrapper);
-            glDeleteTextures(1, &it->texture); destroyImage(display, it->image); gst_sample_unref(it->sample);
+            recycle(*it);
             it = pending.erase(it);
         }
     }
@@ -217,6 +227,11 @@ struct EGLVideoInterop::Impl {
             Context current(renderer,native); SDL_FlushRenderer(renderer);
             releaseDirect();
             if (!pending.empty()) retire(true);
+            for (auto& slot : idle) {
+                SDL_DestroyTexture(slot.wrapper);
+                glDeleteTextures(1, &slot.texture);
+            }
+            idle.clear();
             if (texture) SDL_DestroyTexture(texture);
             if (output) glDeleteTextures(1,&output);
             if (fbo) glDeleteFramebuffers(1,&fbo);
@@ -232,6 +247,7 @@ EGLVideoInterop::EGLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_uniqu
     const char* mode = std::getenv("RETROFE_EGL_DIRECT");
     p.preferDirect = !mode || std::string(mode) != "0";
     p.pending.reserve(8);
+    p.idle.reserve(4);
     if (!renderer || std::string(SDL_GetRendererName(renderer)) != "opengles2") return;
     p.native=static_cast<SDL_GLContext>(SDL_GetPointerProperty(SDL_GetRendererProperties(renderer),"retrofe.gl.context",nullptr));
     if (!p.native) return;
@@ -295,7 +311,7 @@ void EGLVideoInterop::discardFrames() {
 }
 SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
     auto& p=*impl_; if (!p.ready) return nullptr;
-    EGLImageKHR image=EGL_NO_IMAGE_KHR; GLuint input=0;
+    EGLImageKHR image=EGL_NO_IMAGE_KHR; GLuint input=0; SDL_Texture* reusableWrapper=nullptr;
     try {
         Frame frame(sample);
         if (frame.colorDefaults != p.lastColorDefaults) {
@@ -320,29 +336,49 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
         } restore{p.renderer,framebuffer,viewport,enabled};
         image=p.createImage(p.display,EGL_NO_CONTEXT,EGL_LINUX_DMA_BUF_EXT,nullptr,frame.attrs.data());
         ensure(image!=EGL_NO_IMAGE_KHR,"EGL DMA-BUF image import failed");
-        glActiveTexture(GL_TEXTURE0); glGenTextures(1,&input); glBindTexture(GL_TEXTURE_EXTERNAL_OES,input);
-        p.imageTarget(GL_TEXTURE_EXTERNAL_OES,image);
-        glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
-        glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
-        glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
         auto* allocation = gst_buffer_get_video_meta(gst_sample_get_buffer(sample));
         // A direct wrapper exposes the whole image. Use conversion for crop or
         // padded visible dimensions until the render API carries a source rect.
         const bool wholeImage = frame.crop.x == 0 && frame.crop.y == 0 &&
             frame.crop.w == static_cast<int>(allocation->width) &&
             frame.crop.h == static_cast<int>(allocation->height);
-        if (p.preferDirect && wholeImage && frame.drm.drm_fourcc == 0x3231564e) {
-            auto props = SDL_CreateProperties();
-            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_EXTERNAL_OES);
-            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STATIC);
-            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, frame.crop.w);
-            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, frame.crop.h);
-            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_OPENGLES2_TEXTURE_NUMBER, input);
-            auto* wrapper = SDL_CreateTextureWithProperties(p.renderer, props);
-            SDL_DestroyProperties(props);
+        const bool tryDirect = p.preferDirect && wholeImage && frame.drm.drm_fourcc == 0x3231564e;
+        if (tryDirect && !p.idle.empty()) {
+            size_t selected = p.idle.size()-1;
+            for (size_t i=0; i<p.idle.size(); ++i)
+                if (p.idle[i].width == frame.crop.w && p.idle[i].height == frame.crop.h) { selected=i; break; }
+            auto slot=p.idle[selected];
+            p.idle.erase(p.idle.begin()+selected);
+            input=slot.texture;
+            if (slot.width == frame.crop.w && slot.height == frame.crop.h) reusableWrapper=slot.wrapper;
+            else SDL_DestroyTexture(slot.wrapper); // dimensions are part of SDL's wrapper
+        }
+        glActiveTexture(GL_TEXTURE0); if (!input) glGenTextures(1,&input); glBindTexture(GL_TEXTURE_EXTERNAL_OES,input);
+        p.imageTarget(GL_TEXTURE_EXTERNAL_OES,image);
+        // Preserve sampler settings that SDL caches on a reused wrapper.
+        if (!reusableWrapper) {
+            glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_MIN_FILTER,GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_MAG_FILTER,GL_LINEAR);
+            glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);
+            glTexParameteri(GL_TEXTURE_EXTERNAL_OES,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
+        }
+        ensure(glGetError()==GL_NO_ERROR, "EGL external texture rebind failed");
+        if (tryDirect) {
+            auto* wrapper = reusableWrapper;
+            reusableWrapper = nullptr;
+            if (!wrapper) {
+                auto props = SDL_CreateProperties();
+                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_EXTERNAL_OES);
+                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STATIC);
+                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, frame.crop.w);
+                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, frame.crop.h);
+                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_OPENGLES2_TEXTURE_NUMBER, input);
+                wrapper = SDL_CreateTextureWithProperties(p.renderer, props);
+                SDL_DestroyProperties(props);
+                if (wrapper) LOG_DEBUG("GStreamerVideo", "Created reusable EGL direct texture slot " + std::to_string(frame.crop.w) + "x" + std::to_string(frame.crop.h));
+            }
             if (wrapper) {
-                p.direct = {gst_sample_ref(sample), image, input, EGL_NO_SYNC_KHR, wrapper};
+                p.direct = {gst_sample_ref(sample), image, input, EGL_NO_SYNC_KHR, wrapper, frame.crop.w, frame.crop.h};
                 image = EGL_NO_IMAGE_KHR; input = 0;
                 p.visibleWidth = frame.crop.w; p.visibleHeight = frame.crop.h;
                 return wrapper;
@@ -388,7 +424,7 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
             }
         }
         // Release imported storage only after any partially issued GPU work.
-        try { Context current(p.renderer,p.native); glFinish(); if(input)glDeleteTextures(1,&input); if(image!=EGL_NO_IMAGE_KHR)p.destroyImage(p.display,image); } catch (...) {}
+        try { Context current(p.renderer,p.native); glFinish(); if(reusableWrapper)SDL_DestroyTexture(reusableWrapper); if(input)glDeleteTextures(1,&input); if(image!=EGL_NO_IMAGE_KHR)p.destroyImage(p.display,image); } catch (...) {}
         return nullptr;
     }
 }

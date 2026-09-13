@@ -1,5 +1,9 @@
 # Linux EGL DMA-BUF integration
 
+Direct-mode GL texture handles and SDL wrappers now enter a bounded idle cache (up to four slots) after their final-read fence completes. Matching dimensions reuse both; different dimensions reuse the native handle but recreate its SDL wrapper. Slots survive unload/reopen and are destroyed with the interop instance. EGL images are still imported per frame, never cached by FD. Idle slots hold no GstSample or EGLImage handle, although their GL image siblings may retain bounded backing storage until rebound or destroyed.
+
+For reuse validation, enable DEBUG logging and look for `Created reusable EGL direct texture slot`. Creation should stop after warm-up for fixed-size playback and compatible reopen cycles. Then alternate resolutions and direct/RGBA media, check scaling and orientation, and verify memory remains bounded during playlist switches. This slot-rebinding change requires Linux runtime testing; a clean diff check is not a GPU correctness test.
+
 Direct SDL external sampling is now preferred for whole-image NV12 imports. The ACTIVE description includes `direct SDL external texture` and `no RGBA intermediate`. Cropped/padded visible images and other formats use the existing RGBA conversion; SDL wrapper rejection also selects RGBA. Failed EGL imports still use CPU fallback.
 
 For comparison, run `env RETROFE_EGL_DIRECT=0 ./retrofe` to force the overnight-tested RGBA path. With the variable unset, direct sampling is preferred. RETROFE_GL_DIRECT controls the older GStreamer GL backend, not this importer.
