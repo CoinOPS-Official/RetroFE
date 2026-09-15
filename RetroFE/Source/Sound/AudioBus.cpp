@@ -222,12 +222,7 @@ void AudioBus::setMusicPlayer(MusicPlayer* player) {
 void SDLCALL AudioBus::postMix(void* userdata, MIX_Mixer*, const SDL_AudioSpec* spec, float* pcm, int samples) {
     auto& bus = *static_cast<AudioBus*>(userdata);
     if (!pcm || samples <= 0 || spec->channels != bus.devChans_ || spec->freq != bus.devRate_) return;
-    {
-        std::lock_guard<std::mutex> lock(bus.callbackMutex_);
-        if (bus.musicPlayer_)
-            bus.musicPlayer_->processAudioData(reinterpret_cast<Uint8*>(pcm), samples * static_cast<int>(sizeof(float)));
-    }
-    // Keep visualization before injected video audio, as in the original postmix.
+    // Visualizers consume the music track directly, before sound effects are mixed.
     // Fixed scratch storage bounds callback allocations and handles arbitrary block sizes.
     std::array<int16_t, 4096> injected{};
     const int capacity = static_cast<int>(injected.size()) / spec->channels * spec->channels;
@@ -646,5 +641,4 @@ void AudioBus::rebuildSnapshotLocked() {
     std::shared_ptr<ConstSourceVec> publish = fresh;
     std::atomic_store_explicit(&snapshot_, publish, std::memory_order_release);
 }
-
 

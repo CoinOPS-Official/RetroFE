@@ -168,6 +168,7 @@ private:
     bool isValidAudioFile(const std::filesystem::path& filePath) const;
 
     static void SDLCALL musicFinishedCallback(void*, MIX_Track*);
+    static void SDLCALL musicMixCallback(void*, MIX_Track*, const SDL_AudioSpec*, float*, int);
     int applyVolumeCurve(int logicalVolume) const;
     void beginFadeOutToAction(FinishEvent action, int index, double seekPos, int fadeOutMs, int fadeInMs);
     void beginFadeInToSteadyVolume(int fadeInMs);
