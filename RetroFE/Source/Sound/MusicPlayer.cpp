@@ -1008,6 +1008,13 @@ void SDLCALL MusicPlayer::musicFinishedCallback(void* userdata, MIX_Track*) {
         self->finishEvent_.store(FinishEvent::NaturalEnd, std::memory_order_release);
 }
 
+void SDLCALL MusicPlayer::musicMixCallback(void* userdata, MIX_Track*, const SDL_AudioSpec* spec, float* pcm, int samples) {
+    auto* self = static_cast<MusicPlayer*>(userdata);
+    if (!pcm || samples <= 0 || spec->channels != self->audioChannels_ || spec->freq != self->audioSampleRate_) return;
+    // Cooked PCM includes music gain/fades, but no sound effects or video audio.
+    self->processAudioData(reinterpret_cast<Uint8*>(pcm), samples * static_cast<int>(sizeof(float)));
+}
+
 bool MusicPlayer::ensureAudio() {
     auto& bus = AudioBus::instance();
     if (!bus.initialize()) return false;
@@ -1020,6 +1027,11 @@ bool MusicPlayer::ensureAudio() {
         audioSampleRate_ = bus.dev_rate();
         sampleSize_ = sizeof(float);
         audioLevels_.assign(audioChannels_, 0.0f);
+        if (!MIX_SetTrackCookedCallback(musicTrack_, musicMixCallback, this)) {
+            MIX_DestroyTrack(musicTrack_);
+            musicTrack_ = nullptr;
+            return false;
+        }
     }
     bus.setMusicPlayer(this);
     return true;
@@ -1054,7 +1066,10 @@ bool MusicPlayer::startTrack(double position) {
 
 void MusicPlayer::releaseAudio() {
     AudioBus::instance().setMusicPlayer(nullptr);
-    if (musicTrack_) MIX_DestroyTrack(musicTrack_);
+    if (musicTrack_) {
+        MIX_SetTrackCookedCallback(musicTrack_, nullptr, nullptr);
+        MIX_DestroyTrack(musicTrack_);
+    }
     musicTrack_ = nullptr;
     if (currentMusic_) MIX_DestroyAudio(currentMusic_);
     currentMusic_ = nullptr;
