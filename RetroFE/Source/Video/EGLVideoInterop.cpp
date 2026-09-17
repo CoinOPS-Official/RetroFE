@@ -114,6 +114,32 @@ struct Frame {
             ensure(color.range == GST_VIDEO_COLOR_RANGE_0_255 || color.range == GST_VIDEO_COLOR_RANGE_16_235, "unknown YUV range");
             attrs.insert(attrs.end(), {EGL_YUV_COLOR_SPACE_HINT_EXT,color.matrix == GST_VIDEO_COLOR_MATRIX_BT709 ? EGL_ITU_REC709_EXT : EGL_ITU_REC601_EXT,
                 EGL_SAMPLE_RANGE_HINT_EXT,color.range == GST_VIDEO_COLOR_RANGE_0_255 ? EGL_YUV_FULL_RANGE_EXT : EGL_YUV_NARROW_RANGE_EXT});
+
+            // EGL_EXT_image_dma_buf_import lets the importer know where chroma
+            // samples sit relative to luma. GStreamer represents this as flags:
+            // H_COSITED => horizontal position 0 instead of 0.5
+            // V_COSITED => vertical position 0 instead of 0.5
+            //
+            // ALT_LINE (used by DV-style siting) alternates vertically between
+            // lines and cannot be represented by EGL's single vertical siting
+            // hint, so leave both hints unspecified in that case.
+            const GstVideoChromaSite chromaSite = ordinary.chroma_site;
+            if (chromaSite != GST_VIDEO_CHROMA_SITE_UNKNOWN &&
+                !(chromaSite & GST_VIDEO_CHROMA_SITE_ALT_LINE)) {
+                const EGLint horizontal =
+                    (chromaSite & GST_VIDEO_CHROMA_SITE_H_COSITED)
+                        ? EGL_YUV_CHROMA_SITING_0_EXT
+                        : EGL_YUV_CHROMA_SITING_0_5_EXT;
+                const EGLint vertical =
+                    (chromaSite & GST_VIDEO_CHROMA_SITE_V_COSITED)
+                        ? EGL_YUV_CHROMA_SITING_0_EXT
+                        : EGL_YUV_CHROMA_SITING_0_5_EXT;
+
+                attrs.insert(attrs.end(), {
+                    EGL_YUV_CHROMA_HORIZONTAL_SITING_HINT_EXT, horizontal,
+                    EGL_YUV_CHROMA_VERTICAL_SITING_HINT_EXT, vertical
+                });
+            }
         }
         attrs.push_back(EGL_NONE);
     }
