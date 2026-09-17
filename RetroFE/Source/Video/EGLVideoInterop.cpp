@@ -466,6 +466,23 @@ struct EGLVideoInterop::Impl {
 
             if (texture)
                 SDL_DestroyTexture(texture);
+
+            // The GL object lifetime rules already make deleting an attached
+            // texture safe, but detach explicitly so teardown leaves no stale
+            // attachment relationship behind. Preserve whichever framebuffer
+            // the caller had bound unless it happens to be this FBO itself.
+            if (fbo) {
+                GLint oldFramebuffer = 0;
+                glGetIntegerv(GL_FRAMEBUFFER_BINDING, &oldFramebuffer);
+                glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+                glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
+                                       GL_TEXTURE_2D, 0, 0);
+                glBindFramebuffer(GL_FRAMEBUFFER,
+                                  oldFramebuffer == static_cast<GLint>(fbo)
+                                      ? 0u
+                                      : static_cast<GLuint>(oldFramebuffer));
+            }
+
             if (output)
                 glDeleteTextures(1, &output);
             if (fbo)
@@ -516,6 +533,15 @@ EGLVideoInterop::EGLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_uniqu
         p.videoUniform = glGetUniformLocation(p.program, "video");
         p.cropUniform = glGetUniformLocation(p.program, "crop");
         ensure(p.videoUniform >= 0 && p.cropUniform >= 0, "EGL conversion shader uniforms missing");
+
+        // The external-video sampler is invariant: conversion always samples
+        // GL_TEXTURE0. Set it once instead of updating the uniform every frame.
+        GLint oldProgram = 0;
+        glGetIntegerv(GL_CURRENT_PROGRAM, &oldProgram);
+        glUseProgram(p.program);
+        glUniform1i(p.videoUniform, 0);
+        glUseProgram(static_cast<GLuint>(oldProgram));
+
         const GLfloat quad[]={-1,-1,1,-1,-1,1,1,1};
         GLint oldBuffer=0; glGetIntegerv(GL_ARRAY_BUFFER_BINDING,&oldBuffer);
         glGenBuffers(1,&p.vbo); glBindBuffer(GL_ARRAY_BUFFER,p.vbo); glBufferData(GL_ARRAY_BUFFER,sizeof(quad),quad,GL_STATIC_DRAW);
@@ -569,12 +595,17 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
         // SDL3 always batches renderer work. Flush exactly once before touching
         // the underlying GLES context directly.
         SDL_FlushRenderer(p.renderer);
+
+        // Everything below this point is raw EGL/GL work. Snapshot SDL's GL
+        // state immediately after flushing its batch so the whole interop
+        // operation is transactional, including fence retirement.
+        GLStateGuard restore;
+
         p.releaseDirectAfterFlush();
         p.retireCompleted();
         if (p.pending.size() >= Impl::kMaxPending)
             p.waitOldest();
 
-        GLStateGuard restore;
         image=p.createImage(p.display,EGL_NO_CONTEXT,EGL_LINUX_DMA_BUF_EXT,nullptr,frame.attrs.data());
         ensure(image!=EGL_NO_IMAGE_KHR,"EGL DMA-BUF image import failed");
         auto* allocation = gst_buffer_get_video_meta(gst_sample_get_buffer(sample));
@@ -636,7 +667,7 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
         ensure(glCheckFramebufferStatus(GL_FRAMEBUFFER)==GL_FRAMEBUFFER_COMPLETE,"EGL conversion FBO incomplete");
         glViewport(0,0,p.width,p.height); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
         glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_CULL_FACE); glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
-        glUseProgram(p.program); glUniform1i(p.videoUniform,0);
+        glUseProgram(p.program);
         auto* meta=gst_buffer_get_video_meta(gst_sample_get_buffer(sample));
         glUniform4f(p.cropUniform,float(frame.crop.x)/meta->width,float(frame.crop.y)/meta->height,
                     float(frame.crop.w)/meta->width,float(frame.crop.h)/meta->height);
