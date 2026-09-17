@@ -36,7 +36,6 @@ using NativeVideoInterop = D3D11VideoInterop;
 #include <vector>
 #include <memory>
 #include <mutex>
-#include <future>
 
 extern "C" {
 #if (__APPLE__)
@@ -64,7 +63,7 @@ enum class PipelineLifecycle {
     Idle,      // Pipeline is quiescent and safe for reuse
     Starting,  // URI set, waiting for initial preroll
     Ready,     // Preroll complete, active playback pipeline
-    Draining,  // Transitioning asynchronously to READY/NULL
+    Draining,  // Asynchronously settling the retained pipeline to PAUSED/READY
     Failed     // Hard failure
 };
 
@@ -93,6 +92,9 @@ public:
     bool initialize() override;
     bool deInitialize() override;
     bool unload() override;
+    // Quiesce the current URI for an in-place same-list retarget while
+    // preserving the playbin/decoder graph for instant-uri reuse.
+    bool prepareForRetarget();
     bool createPipelineIfNeeded();
     bool open(const std::string& file) override; // Renamed from play
     bool stop() override;
@@ -149,8 +151,6 @@ public:
 
 private:
     bool openMedia(const std::string& file, bool cpuFallback);
-    // Main-thread handle: prevents old READY jobs overlapping stop or reopen.
-    std::shared_future<void> unloadCompletion_;
     // --- Callback context to avoid UAF in GStreamer/GLib callbacks ---
     struct CallbackCtx {
         grefcount ref;
@@ -173,12 +173,7 @@ private:
     // The "Truth": Updated via GST_MESSAGE_STATE_CHANGED
     std::atomic<GstState> actualGstState_{ GST_STATE_NULL };
 
-    // === Hardware Budget / CPU Preroll Gatekeeper ===
-    std::atomic<uint64_t> prerollToken_{ 0 };
-    static std::atomic<uint64_t> nextUniquePrerollToken_;
-
-    void releaseDecodeSlot(uint64_t tokenToRelease);
-    void forceReleaseDecodeSlot();
+    void completeInitialPreroll(uint64_t epoch);
 
     // === Tagged Sample Lock (Consumer/Producer Barrier) ===
     std::mutex sampleMutex_;
@@ -189,6 +184,12 @@ private:
     std::atomic<int> playCount_{ 0 };
     std::atomic<int> numLoops_{ 0 };
     std::string currentFile_{};
+    Uint64 startupOpenedNs_ = 0;
+    std::atomic<Uint64> startupWorkerNs_{0};
+    std::atomic<Uint64> startupSampleNs_{0};
+    bool startupLogged_ = false;
+    bool startupInstantSwitch_ = false;
+    void logStartupTiming();
     float volume_{ 0.0f };
 
     int allocatedWidth_{ 0 };
@@ -210,6 +211,7 @@ private:
 
     // === GStreamer and SDL resource pointers ===
     GstElement* pipeline_{ nullptr };
+    bool instantUriEnabled_{ false };
     GstElement* videoSink_{ nullptr };
     GstElement* perspective_{ nullptr };
     int lastPerspectiveW_{ -1 };

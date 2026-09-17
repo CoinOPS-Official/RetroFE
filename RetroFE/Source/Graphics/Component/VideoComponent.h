@@ -22,6 +22,7 @@
 
 class IVideo;
 class Page;
+class Image;
 struct VideoSnapshot;
 
 enum class PlaybackTarget {
@@ -53,7 +54,8 @@ public:
     void pause();
     void resume();
     void restart();
-    void setHighPriority(bool isHigh) override { isHighPriority_ = isHigh; }
+    void setHighPriority(bool isHigh) override;
+    void setStartupArtwork(const std::string& path);
 
     // Properties
     unsigned long long getCurrent();
@@ -65,7 +67,10 @@ public:
 
     // Pooling / Recycling
     bool recycleAsVideo(const std::string& path, const std::string& /*name*/);
+    void preserveInstanceOnNextRecycle();
+    bool prepareRetainedVideoForRetarget();
     std::shared_ptr<IVideo> extractVideo();
+    void adoptVideo(std::shared_ptr<IVideo> video);
 
 private:
     std::string videoFile_;
@@ -86,6 +91,7 @@ private:
     bool dimensionsUpdated_ = false;
     bool instanceReady_ = false;
     bool isHighPriority_ = false;
+    bool preserveInstanceOnNextRecycle_ = false;
 
     // --- Deferred Retry Logic ---
     bool pendingVideoRetry_ = false;
@@ -105,6 +111,8 @@ private:
 
     // Orchestration Pipeline Helpers
     bool checkVisibility() const;
+    bool canStartBackgroundVideo() const;
+    std::unique_ptr<Image> startupArtwork_;
     void computeDesiredIntent(bool visibleNow, const VideoSnapshot& snap);
     void syncPlaybackIntent(const VideoSnapshot& snap);
 };

@@ -14,8 +14,10 @@ public:
     void discardFrames();
     SDL_Texture* copy(GstSample* sample);
     const char* reason() const;
-    static const char* caps() { return "video/x-raw(memory:GLMemory),format=RGBA,texture-target=2D,pixel-aspect-ratio=1/1"; }
-    static SDL_PixelFormat pixelFormat() { return SDL_PIXELFORMAT_ABGR8888; }
+    // RETROFE_GL_DIRECT=1 requests native NV12 GLMemory. The default keeps
+    // the proven RGBA GPU-copy compatibility path.
+    static const char* caps();
+    static SDL_PixelFormat pixelFormat();
     const char* description() const;
 private:
     struct Impl;

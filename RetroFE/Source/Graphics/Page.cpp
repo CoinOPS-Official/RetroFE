@@ -1937,10 +1937,13 @@ void Page::allocateMenuSpritePoints(bool updatePlaylistMenu) const {
 }
 
 
-void Page::reallocateMenuSpritePoints(bool updatePlaylistMenu) const {
+void Page::reallocateMenuSpritePoints(
+	bool updatePlaylistMenu,
+	VideoPoolPolicy videoPoolPolicy) const
+{
 	for (ScrollingList* menu : activeMenu_) {
 		if (menu && (!menu->isPlaylist() || updatePlaylistMenu)) {
-			menu->reallocateSpritePoints();
+			menu->reallocateSpritePoints(videoPoolPolicy);
 		}
 	}
 }

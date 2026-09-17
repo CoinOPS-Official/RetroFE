@@ -1,0 +1,293 @@
+diff --git a/include/SDL3/SDL_render.h b/include/SDL3/SDL_render.h
+index 986130ce4..000000000 100644
+--- a/include/SDL3/SDL_render.h
++++ b/include/SDL3/SDL_render.h
+@@ -712,6 +712,10 @@ extern SDL_DECLSPEC SDL_Texture * SDLCALL SDL_CreateTextureWithProperties(SDL_Ren
+  *
+  * - `SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER`: the ID3D11Texture2D
+  *   associated with the texture, if you want to wrap an existing texture.
++ * - `SDL_PROP_TEXTURE_CREATE_D3D11_SUBRESOURCE_NUMBER`: the D3D11 subresource
++ *   to expose from `SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER`. This is
++ *   useful for wrapping a single mip/array slice from an external Texture2D
++ *   array. If unset, the existing whole-texture behavior is used.
+  * - `SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_U_POINTER`: the ID3D11Texture2D
+  *   associated with the U plane of a YUV texture, if you want to wrap an
+  *   existing texture.
+@@ -808,6 +812,7 @@ extern SDL_DECLSPEC SDL_Texture * SDLCALL SDL_CreateTextureWithProperties(SDL_Ren
+ #define SDL_PROP_TEXTURE_CREATE_SDR_WHITE_POINT_FLOAT           "SDL.texture.create.SDR_white_point"
+ #define SDL_PROP_TEXTURE_CREATE_HDR_HEADROOM_FLOAT              "SDL.texture.create.HDR_headroom"
+ #define SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER           "SDL.texture.create.d3d11.texture"
++#define SDL_PROP_TEXTURE_CREATE_D3D11_SUBRESOURCE_NUMBER        "SDL.texture.create.d3d11.subresource"
+ #define SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_U_POINTER         "SDL.texture.create.d3d11.texture_u"
+ #define SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_V_POINTER         "SDL.texture.create.d3d11.texture_v"
+ #define SDL_PROP_TEXTURE_CREATE_D3D12_TEXTURE_POINTER           "SDL.texture.create.d3d12.texture"
+diff --git a/src/render/direct3d11/D3D11_PixelShader_Common.hlsli b/src/render/direct3d11/D3D11_PixelShader_Common.hlsli
+index 4a4cedd06..000000000 100644
+--- a/src/render/direct3d11/D3D11_PixelShader_Common.hlsli
++++ b/src/render/direct3d11/D3D11_PixelShader_Common.hlsli
+@@ -1,7 +1,16 @@
+-
++#ifdef SDL_D3D11_TEXTURE_ARRAY
++Texture2DArray texture0 : register(t0);
++Texture2DArray texture1 : register(t1);
++Texture2DArray texture2 : register(t2);
++#define SDL_D3D11_SAMPLE(tex, sampler, uv) tex.Sample(sampler, float3((uv), 0.0))
++#define SDL_D3D11_SAMPLE_GRAD(tex, sampler, uv, dx, dy) tex.SampleGrad(sampler, float3((uv), 0.0), float3((dx), 0.0), float3((dy), 0.0))
++#else
+ Texture2D texture0 : register(t0);
+ Texture2D texture1 : register(t1);
+ Texture2D texture2 : register(t2);
++#define SDL_D3D11_SAMPLE(tex, sampler, uv) tex.Sample(sampler, uv)
++#define SDL_D3D11_SAMPLE_GRAD(tex, sampler, uv, dx, dy) tex.SampleGrad(sampler, uv, dx, dy)
++#endif
+ SamplerState sampler0 : register(s0);
+ SamplerState sampler1 : register(s1);
+
+@@ -25,6 +35,8 @@ static const float TEXTURETYPE_PALETTE_PIXELART = 5;
+ static const float TEXTURETYPE_NV12 = 6;
+ static const float TEXTURETYPE_NV21 = 7;
+ static const float TEXTURETYPE_YUV = 8;
++static const float TEXTURETYPE_NV12_ARRAY = 9;
++static const float TEXTURETYPE_NV21_ARRAY = 10;
+
+ static const float INPUTTYPE_UNSPECIFIED = 0;
+ static const float INPUTTYPE_SRGB = 1;
+@@ -119,8 +131,8 @@ float3 ApplyTonemap(float3 v)
+
+ float4 SamplePaletteNearest(float2 uv)
+ {
+-    float index = texture0.Sample(sampler0, uv).r * 255;
+-    return texture1.Sample(sampler1, float2((index + 0.5) / 256, 0.5));
++    float index = SDL_D3D11_SAMPLE(texture0, sampler0, uv).r * 255;
++    return SDL_D3D11_SAMPLE(texture1, sampler1, float2((index + 0.5) / 256, 0.5));
+ }
+
+ // Implementation with thanks from bgolus:
+@@ -166,10 +178,10 @@ float4 GetInputColor(PixelShaderInput input)
+     if (texture_type == TEXTURETYPE_NONE) {
+         rgba = 1.0;
+     } else if (texture_type == TEXTURETYPE_RGB) {
+-        rgba = texture0.Sample(sampler0, input.tex);
++        rgba = SDL_D3D11_SAMPLE(texture0, sampler0, input.tex);
+     } else if (texture_type == TEXTURETYPE_RGB_PIXELART) {
+         float2 uv = GetPixelArtUV(input.tex);
+-        rgba = texture0.SampleGrad(sampler0, uv, ddx(input.tex), ddy(input.tex));
++        rgba = SDL_D3D11_SAMPLE_GRAD(texture0, sampler0, uv, ddx(input.tex), ddy(input.tex));
+     } else if (texture_type == TEXTURETYPE_PALETTE_NEAREST) {
+         rgba = SamplePaletteNearest(input.tex);
+     } else if (texture_type == TEXTURETYPE_PALETTE_LINEAR) {
+@@ -179,20 +191,20 @@ float4 GetInputColor(PixelShaderInput input)
+     } else if (texture_type == TEXTURETYPE_PALETTE_PIXELART) {
+         float2 uv = GetPixelArtUV(input.tex);
+         rgba = SamplePaletteLinear(uv);
+-    } else if (texture_type == TEXTURETYPE_NV12) {
++    } else if (texture_type == TEXTURETYPE_NV12 || texture_type == TEXTURETYPE_NV12_ARRAY) {
+         float3 yuv;
+-        yuv.x = texture0.Sample(sampler0, input.tex).r;
+-        yuv.yz = texture1.Sample(sampler0, input.tex).rg;
++        yuv.x = SDL_D3D11_SAMPLE(texture0, sampler0, input.tex).r;
++        yuv.yz = SDL_D3D11_SAMPLE(texture1, sampler0, input.tex).rg;
+
+         yuv += Yoffset.xyz;
+         rgba.r = dot(yuv, Rcoeff.xyz);
+         rgba.g = dot(yuv, Gcoeff.xyz);
+         rgba.b = dot(yuv, Bcoeff.xyz);
+         rgba.a = 1.0;
+-    } else if (texture_type == TEXTURETYPE_NV21) {
++    } else if (texture_type == TEXTURETYPE_NV21 || texture_type == TEXTURETYPE_NV21_ARRAY) {
+         float3 yuv;
+-        yuv.x = texture0.Sample(sampler0, input.tex).r;
+-        yuv.yz = texture1.Sample(sampler0, input.tex).gr;
++        yuv.x = SDL_D3D11_SAMPLE(texture0, sampler0, input.tex).r;
++        yuv.yz = SDL_D3D11_SAMPLE(texture1, sampler0, input.tex).gr;
+
+         yuv += Yoffset.xyz;
+         rgba.r = dot(yuv, Rcoeff.xyz);
+@@ -204,9 +216,9 @@ float4 GetInputColor(PixelShaderInput input)
+         rgba.a = 1.0;
+     } else if (texture_type == TEXTURETYPE_YUV) {
+         float3 yuv;
+-        yuv.x = texture0.Sample(sampler0, input.tex).r;
+-        yuv.y = texture1.Sample(sampler0, input.tex).r;
+-        yuv.z = texture2.Sample(sampler0, input.tex).r;
++        yuv.x = SDL_D3D11_SAMPLE(texture0, sampler0, input.tex).r;
++        yuv.y = SDL_D3D11_SAMPLE(texture1, sampler0, input.tex).r;
++        yuv.z = SDL_D3D11_SAMPLE(texture2, sampler0, input.tex).r;
+
+         yuv += Yoffset.xyz;
+         rgba.r = dot(yuv, Rcoeff.xyz);
+diff --git a/src/render/direct3d11/D3D11_PixelShader_AdvancedArray.hlsl b/src/render/direct3d11/D3D11_PixelShader_AdvancedArray.hlsl
+new file mode 100644
+index 000000000..000000000
+--- /dev/null
++++ b/src/render/direct3d11/D3D11_PixelShader_AdvancedArray.hlsl
+@@ -0,0 +1,8 @@
++#define SDL_D3D11_TEXTURE_ARRAY 1
++#include "D3D11_PixelShader_Common.hlsli"
++
++float4 main(PixelShaderInput input) : SV_TARGET
++{
++    return AdvancedPixelShader(input);
++}
++
+diff --git a/src/render/direct3d11/SDL_shaders_d3d11.h b/src/render/direct3d11/SDL_shaders_d3d11.h
+index 7c3892508..000000000 100644
+--- a/src/render/direct3d11/SDL_shaders_d3d11.h
++++ b/src/render/direct3d11/SDL_shaders_d3d11.h
+@@ -28,6 +28,7 @@ typedef enum
+     SHADER_SOLID,
+     SHADER_RGB,
+     SHADER_ADVANCED,
++    SHADER_ADVANCED_ARRAY,
+     NUM_SHADERS
+ } D3D11_Shader;
+
+diff --git a/src/render/direct3d11/SDL_shaders_d3d11.c b/src/render/direct3d11/SDL_shaders_d3d11.c
+index d360d64e4..000000000 100644
+--- a/src/render/direct3d11/SDL_shaders_d3d11.c
++++ b/src/render/direct3d11/SDL_shaders_d3d11.c
+@@ -42,6 +42,10 @@
+ #include "D3D11_PixelShader_Advanced.h"
+ #undef g_main
+
++#define g_main D3D11_PixelShader_AdvancedArray
++#include "D3D11_PixelShader_AdvancedArray.h"
++#undef g_main
++
+ #define g_main D3D11_VertexShader
+ #include "D3D11_VertexShader.h"
+ #undef g_main
+@@ -56,6 +60,7 @@ static struct
+     { D3D11_PixelShader_Colors, sizeof(D3D11_PixelShader_Colors) },
+     { D3D11_PixelShader_Textures, sizeof(D3D11_PixelShader_Textures) },
+     { D3D11_PixelShader_Advanced, sizeof(D3D11_PixelShader_Advanced) },
++    { D3D11_PixelShader_AdvancedArray, sizeof(D3D11_PixelShader_AdvancedArray) },
+ };
+ SDL_COMPILE_TIME_ASSERT(D3D11_shaders, SDL_arraysize(D3D11_shaders) == NUM_SHADERS);
+
+diff --git a/src/render/direct3d11/SDL_render_d3d11.c b/src/render/direct3d11/SDL_render_d3d11.c
+index 5f2f4cd7b..000000000 100644
+--- a/src/render/direct3d11/SDL_render_d3d11.c
++++ b/src/render/direct3d11/SDL_render_d3d11.c
+@@ -57,6 +57,8 @@ static const float TEXTURETYPE_PALETTE_PIXELART = 5;
+ static const float TEXTURETYPE_NV12 = 6;
+ static const float TEXTURETYPE_NV21 = 7;
+ static const float TEXTURETYPE_YUV = 8;
++static const float TEXTURETYPE_NV12_ARRAY = 9;
++static const float TEXTURETYPE_NV21_ARRAY = 10;
+
+ static const float INPUTTYPE_UNSPECIFIED = 0;
+ static const float INPUTTYPE_SRGB = 1;
+@@ -89,6 +91,7 @@ typedef struct
+     int lockedTexturePositionX;
+     int lockedTexturePositionY;
+     const float *YCbCr_matrix;
++    bool arrayTexture;
+ #ifdef SDL_HAVE_YUV
+     // YV12 texture support
+     bool yuv;
+@@ -1228,7 +1231,10 @@ static bool D3D11_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture, SDL
+     HRESULT result;
+     DXGI_FORMAT textureFormat = SDLPixelFormatToDXGITextureFormat(texture->format, renderer->output_colorspace);
+     D3D11_TEXTURE2D_DESC textureDesc;
++    D3D11_TEXTURE2D_DESC externalTextureDesc;
+     D3D11_SHADER_RESOURCE_VIEW_DESC resourceViewDesc;
++    UINT subresourceMip = 0;
++    UINT subresourceArraySlice = 0;
+
+     if (!rendererData->d3dDevice) {
+         return SDL_SetError("Device lost and couldn't be recovered");
+@@ -1284,6 +1290,42 @@ static bool D3D11_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture, SDL
+     if (!GetTextureProperty(create_props, SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER, &textureData->mainTexture)) {
+         return false;
+     }
++    const Sint64 requestedSubresource = SDL_GetNumberProperty(
++        create_props, SDL_PROP_TEXTURE_CREATE_D3D11_SUBRESOURCE_NUMBER, -1);
++    if (requestedSubresource >= 0) {
++        if (!textureData->mainTexture) {
++            return SDL_SetError("%s requires %s",
++                                SDL_PROP_TEXTURE_CREATE_D3D11_SUBRESOURCE_NUMBER,
++                                SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER);
++        }
++        if (texture->format != SDL_PIXELFORMAT_NV12 &&
++            texture->format != SDL_PIXELFORMAT_NV21 &&
++            texture->format != SDL_PIXELFORMAT_P010) {
++            return SDL_SetError("%s currently supports NV12, NV21, and P010 textures",
++                                SDL_PROP_TEXTURE_CREATE_D3D11_SUBRESOURCE_NUMBER);
++        }
++
++        ID3D11Texture2D_GetDesc(textureData->mainTexture, &externalTextureDesc);
++        if (externalTextureDesc.MipLevels == 0 || externalTextureDesc.ArraySize == 0) {
++            return SDL_SetError("Invalid D3D11 texture description for external subresource");
++        }
++
++        const Uint64 subresourceCount =
++            (Uint64)externalTextureDesc.MipLevels * (Uint64)externalTextureDesc.ArraySize;
++        if ((Uint64)requestedSubresource >= subresourceCount) {
++            return SDL_SetError("D3D11 subresource %" SDL_PRIs64
++                                " is outside the texture's %" SDL_PRIu64 " subresources",
++                                requestedSubresource, subresourceCount);
++        }
++
++        subresourceMip = (UINT)((Uint64)requestedSubresource % externalTextureDesc.MipLevels);
++        subresourceArraySlice = (UINT)((Uint64)requestedSubresource / externalTextureDesc.MipLevels);
++        textureData->arrayTexture = true;
++
++        if (!(externalTextureDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE)) {
++            return SDL_SetError("External D3D11 texture subresource is not shader-readable");
++        }
++    }
+     if (!textureData->mainTexture) {
+         result = ID3D11Device_CreateTexture2D(rendererData->d3dDevice,
+                                               &textureDesc,
+@@ -1362,9 +1404,17 @@ static bool D3D11_CreateTexture(SDL_Renderer *renderer, SDL_Texture *texture, SDL
+ #endif // SDL_HAVE_YUV
+     SDL_zero(resourceViewDesc);
+     resourceViewDesc.Format = SDLPixelFormatToDXGIMainResourceViewFormat(texture->format, renderer->output_colorspace);
+-    resourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+-    resourceViewDesc.Texture2D.MostDetailedMip = 0;
+-    resourceViewDesc.Texture2D.MipLevels = textureDesc.MipLevels;
++    if (textureData->arrayTexture) {
++        resourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
++        resourceViewDesc.Texture2DArray.MostDetailedMip = subresourceMip;
++        resourceViewDesc.Texture2DArray.MipLevels = 1;
++        resourceViewDesc.Texture2DArray.FirstArraySlice = subresourceArraySlice;
++        resourceViewDesc.Texture2DArray.ArraySize = 1;
++    } else {
++        resourceViewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
++        resourceViewDesc.Texture2D.MostDetailedMip = 0;
++        resourceViewDesc.Texture2D.MipLevels = textureDesc.MipLevels;
++    }
+     result = ID3D11Device_CreateShaderResourceView(rendererData->d3dDevice,
+                                                    (ID3D11Resource *)textureData->mainTexture,
+                                                    &resourceViewDesc,
+@@ -2182,15 +2235,15 @@ static void D3D11_SetupShaderConstants(SDL_Renderer *renderer, const SDL_RenderCo
+             constants->input_type = INPUTTYPE_SRGB;
+             break;
+         case SDL_PIXELFORMAT_NV12:
+-            constants->texture_type = TEXTURETYPE_NV12;
++            constants->texture_type = textureData->arrayTexture ? TEXTURETYPE_NV12_ARRAY : TEXTURETYPE_NV12;
+             constants->input_type = INPUTTYPE_SRGB;
+             break;
+         case SDL_PIXELFORMAT_NV21:
+-            constants->texture_type = TEXTURETYPE_NV21;
++            constants->texture_type = textureData->arrayTexture ? TEXTURETYPE_NV21_ARRAY : TEXTURETYPE_NV21;
+             constants->input_type = INPUTTYPE_SRGB;
+             break;
+         case SDL_PIXELFORMAT_P010:
+-            constants->texture_type = TEXTURETYPE_NV12;
++            constants->texture_type = textureData->arrayTexture ? TEXTURETYPE_NV12_ARRAY : TEXTURETYPE_NV12;
+             constants->input_type = INPUTTYPE_HDR10;
+             break;
+         default:
+@@ -2249,5 +2302,10 @@ static D3D11_Shader SelectShader(const D3D11_PixelShaderConstants *shader_constan
+         return SHADER_RGB;
+     }
+
++    if (shader_constants->texture_type == TEXTURETYPE_NV12_ARRAY ||
++        shader_constants->texture_type == TEXTURETYPE_NV21_ARRAY) {
++        return SHADER_ADVANCED_ARRAY;
++    }
++
+     return SHADER_ADVANCED;
+ }

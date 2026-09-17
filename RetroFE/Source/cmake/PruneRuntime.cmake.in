@@ -7,11 +7,20 @@ get_filename_component(tool_dir "@CMAKE_LINKER@" DIRECTORY)
 set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${tool_dir}/dumpbin.exe")
 set(seeds "@runtime_dlls@")
 list(APPEND seeds ${EXTRA_FILES})
+# Source-built packages can expose only configuration-specific locations.
+# Include resolved target DLL directories when locating their dependencies.
+set(search_dirs)
+foreach(path IN LISTS EXTRA_FILES)
+    get_filename_component(dir "${path}" DIRECTORY)
+    list(APPEND search_dirs "${dir}")
+endforeach()
+list(APPEND search_dirs @runtime_dirs@)
+list(REMOVE_DUPLICATES search_dirs)
 set(scanner "@scanner@")
 file(GET_RUNTIME_DEPENDENCIES
     LIBRARIES ${seeds}
     EXECUTABLES "${scanner}"
-    DIRECTORIES @runtime_dirs@
+    DIRECTORIES ${search_dirs}
     PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
     POST_EXCLUDE_REGEXES ".*[Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\].*"
     RESOLVED_DEPENDENCIES_VAR dependencies

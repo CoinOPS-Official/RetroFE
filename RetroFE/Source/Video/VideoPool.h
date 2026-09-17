@@ -22,6 +22,7 @@
 #include <memory>
 #include <string>
 #include <deque>
+#include <unordered_set>
 
 class IVideo;
 
@@ -36,6 +37,11 @@ public:
     using VideoPtr = std::shared_ptr<IVideo>;
 
     static VideoPtr acquireVideo(int monitor, int listId, bool softOverlay);
+
+    // Reuse an already-warm READY instance for a playlist handoff.
+    // Never creates a new instance.
+    static VideoPtr acquireWarmForReset(int monitor, int listId, bool softOverlay);
+
     static void releaseVideo(VideoPtr vid, int monitor, int listId);
     static void releaseVideoBatch(std::vector<VideoPtr>& videos, int monitor, int listId);
 
@@ -63,7 +69,12 @@ private:
         size_t currentActive = 0;
         size_t requiredInstanceCount = 0;
         size_t observedMaxActive = 0;
-        size_t purgeOnReleaseCount = 0;
+
+        // Exact identity tracking avoids release-order bugs when an old
+        // playlist handoff overlaps newly-created videos.
+        std::unordered_set<IVideo*> activeVideos;
+        std::unordered_set<IVideo*> retireOnRelease;
+
         bool initialCountLatched = false;
         bool markedForCleanup = false;
     };

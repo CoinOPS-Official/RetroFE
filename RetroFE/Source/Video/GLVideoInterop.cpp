@@ -9,6 +9,7 @@
 #include <gst/gl/x11/gstgldisplay_x11.h>
 #endif
 #include <array>
+#include <cstdlib>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,28 @@ struct SharedContexts {
     GstContext* app;
     ~SharedContexts() { gst_context_unref(display); gst_context_unref(app); }
 };
+
+bool directNv12Requested() {
+    return g_strcmp0(g_getenv("RETROFE_GL_DIRECT"), "1") == 0;
+}
+
+SDL_Colorspace sdlColorspaceForNv12(const GstVideoInfo& info) {
+    GstVideoColorimetry color = info.colorimetry;
+    GstVideoInfo defaults{};
+    if (gst_video_info_set_format(&defaults, GST_VIDEO_FORMAT_NV12,
+            GST_VIDEO_INFO_WIDTH(&info), GST_VIDEO_INFO_HEIGHT(&info))) {
+        if (color.matrix == GST_VIDEO_COLOR_MATRIX_UNKNOWN)
+            color.matrix = defaults.colorimetry.matrix;
+        if (color.range == GST_VIDEO_COLOR_RANGE_UNKNOWN)
+            color.range = defaults.colorimetry.range;
+    }
+    const bool full = color.range == GST_VIDEO_COLOR_RANGE_0_255;
+    if (color.matrix == GST_VIDEO_COLOR_MATRIX_BT709)
+        return full ? SDL_COLORSPACE_BT709_FULL : SDL_COLORSPACE_BT709_LIMITED;
+    if (color.matrix == GST_VIDEO_COLOR_MATRIX_BT601)
+        return full ? SDL_COLORSPACE_BT601_FULL : SDL_COLORSPACE_BT601_LIMITED;
+    return SDL_COLORSPACE_YUV_DEFAULT;
+}
 }
 
 struct GLVideoInterop::Impl {
@@ -35,7 +58,7 @@ struct GLVideoInterop::Impl {
     GstGLContext* wrapped = nullptr;
     bool ready = false;
     bool gles = false;
-    bool direct = false;
+    bool direct = false; // true = native NV12 GLMemory Y/UV wrapping
     SDL_Texture* directTexture = nullptr;
     GstSample* directSample = nullptr;
     std::string error = "OpenGL/OpenGL ES renderer required";
@@ -145,12 +168,17 @@ GLVideoInterop::GLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_unique<
     gst_gl_context_activate(p.wrapped, FALSE);
     if (!filled) return;
     auto* gl = p.wrapped->gl_vtable;
-    if (!gl->GenFramebuffers || !gl->FramebufferTexture2D || !gl->CopyTexSubImage2D) {
+    if (!p.direct && (!gl->GenFramebuffers || !gl->FramebufferTexture2D || !gl->CopyTexSubImage2D)) {
         p.error = "framebuffer texture copying unsupported by GL context"; return;
     }
-    for (const char* name : {"glupload", "glcolorconvert"}) {
-        auto* factory = gst_element_factory_find(name);
-        if (!factory) { p.error = std::string("missing GStreamer plugin: ") + name; return; }
+    {
+        auto* factory = gst_element_factory_find("glupload");
+        if (!factory) { p.error = "missing GStreamer plugin: glupload"; return; }
+        gst_object_unref(factory);
+    }
+    if (!p.direct) {
+        auto* factory = gst_element_factory_find("glcolorconvert");
+        if (!factory) { p.error = "missing GStreamer plugin: glcolorconvert"; return; }
         gst_object_unref(factory);
     }
     p.ready = true;
@@ -162,8 +190,17 @@ GLVideoInterop::~GLVideoInterop() = default;
 bool GLVideoInterop::available() const { return impl_->ready; }
 const char* GLVideoInterop::reason() const { return impl_->error.c_str(); }
 const char* GLVideoInterop::description() const {
-    return impl_->direct ? "OpenGL direct RGBA texture wrapping; no final GPU copy"
+    return impl_->direct
+        ? "OpenGL direct NV12 GLMemory Y/UV wrapping; SDL YUV conversion; no RGBA intermediate"
         : "OpenGL RGBA GPU copy to SDL3 texture";
+}
+const char* GLVideoInterop::caps() {
+    return directNv12Requested()
+        ? "video/x-raw(memory:GLMemory),format=(string)NV12,texture-target=(string)2D,pixel-aspect-ratio=1/1"
+        : "video/x-raw(memory:GLMemory),format=(string)RGBA,texture-target=(string)2D,pixel-aspect-ratio=1/1";
+}
+SDL_PixelFormat GLVideoInterop::pixelFormat() {
+    return directNv12Requested() ? SDL_PIXELFORMAT_NV12 : SDL_PIXELFORMAT_ABGR8888;
 }
 void GLVideoInterop::discardFrames() {
     if (!available()) return;
@@ -199,54 +236,66 @@ void GLVideoInterop::configure(GstElement* pipeline) {
 }
 
 GstElement* GLVideoInterop::wrapSink(GstElement* sink) {
+    auto& p = *impl_;
     auto* bin = gst_bin_new(nullptr);
     auto* gpuInput = gst_element_factory_make("capsfilter", nullptr);
     auto* upload = gst_element_factory_make("glupload", nullptr);
-    auto* convert = gst_element_factory_make("glcolorconvert", nullptr);
-    if (!bin || !gpuInput || !upload || !convert) {
+    GstElement* convert = p.direct ? nullptr : gst_element_factory_make("glcolorconvert", nullptr);
+    if (!bin || !gpuInput || !upload || (!p.direct && !convert)) {
         if (bin) gst_object_unref(bin);
         if (gpuInput) gst_object_unref(gpuInput);
         if (upload) gst_object_unref(upload);
         if (convert) gst_object_unref(convert);
         return nullptr;
     }
-    // Do not let playbin negotiate system memory merely because glupload can
-    // upload it. Leave DRM formats/modifiers to the decoder and EGL importer.
-    // Unsupported GPU paths use GStreamerVideo's existing CPU retry.
     auto* inputCaps = gst_caps_from_string(
         "video/x-raw(memory:DMABuf);video/x-raw(memory:GLMemory)");
     g_object_set(gpuInput, "caps", inputCaps, nullptr);
     gst_caps_unref(inputCaps);
-    // Preserve the caller's sink if bin construction fails after parenting it.
+
     const bool floating = g_object_is_floating(sink);
     gst_object_ref(sink);
-    gst_bin_add_many(GST_BIN(bin), gpuInput, upload, convert, sink, nullptr);
+    if (p.direct) gst_bin_add_many(GST_BIN(bin), gpuInput, upload, sink, nullptr);
+    else gst_bin_add_many(GST_BIN(bin), gpuInput, upload, convert, sink, nullptr);
+
     auto* inputPad = gst_element_get_static_pad(gpuInput, "sink");
     auto* ghost = gst_ghost_pad_new("sink", inputPad);
     gst_object_unref(inputPad);
-    auto* pad = gst_element_get_static_pad(upload, "sink");
-    // Log actual memory negotiation before glupload, independently of GL output.
-    gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
-        [](GstPad*, GstPadProbeInfo* info, gpointer) {
-            auto* event = GST_PAD_PROBE_INFO_EVENT(info);
-            if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
-                GstCaps* caps = nullptr;
-                gst_event_parse_caps(event, &caps);
-                gchar* text = gst_caps_to_string(caps);
-                LOG_INFO("GStreamerVideo", std::string("GL upload input caps: ") + text);
-                g_free(text);
-            }
-            return GST_PAD_PROBE_OK;
-        }, nullptr, nullptr);
-    gst_object_unref(pad);
-    if (!ghost || !gst_element_add_pad(bin, ghost) || !gst_element_link_many(gpuInput, upload, convert, sink, nullptr)) {
+
+    auto addCapsLogger = [](GstElement* element, const char* padName, const char* label) {
+        auto* pad = gst_element_get_static_pad(element, padName);
+        if (!pad) return;
+        gst_pad_add_probe(pad, GST_PAD_PROBE_TYPE_EVENT_DOWNSTREAM,
+            [](GstPad*, GstPadProbeInfo* info, gpointer user) {
+                auto* event = GST_PAD_PROBE_INFO_EVENT(info);
+                if (GST_EVENT_TYPE(event) == GST_EVENT_CAPS) {
+                    GstCaps* caps = nullptr;
+                    gst_event_parse_caps(event, &caps);
+                    gchar* text = gst_caps_to_string(caps);
+                    LOG_INFO("GStreamerVideo", std::string(static_cast<const char*>(user)) + (text ? text : "unavailable"));
+                    g_free(text);
+                }
+                return GST_PAD_PROBE_OK;
+            }, const_cast<char*>(label), nullptr);
+        gst_object_unref(pad);
+    };
+    addCapsLogger(upload, "sink", "GL upload input caps: ");
+    addCapsLogger(upload, "src", "GL upload output caps: ");
+
+    bool linked = ghost && gst_element_add_pad(bin, ghost);
+    if (linked) linked = p.direct
+        ? gst_element_link_many(gpuInput, upload, sink, nullptr)
+        : gst_element_link_many(gpuInput, upload, convert, sink, nullptr);
+    if (!linked) {
         if (ghost && !GST_OBJECT_PARENT(ghost)) gst_object_unref(ghost);
         gst_object_unref(bin);
         if (floating) g_object_force_floating(G_OBJECT(sink));
         return nullptr;
     }
     gst_object_unref(sink);
-    LOG_INFO("GStreamerVideo", "GL input requires DMA-BUF or GLMemory; CPU upload fallback on negotiation failure");
+    LOG_INFO("GStreamerVideo", p.direct
+        ? "GL direct mode: DMA-BUF/GLMemory -> glupload -> NV12 GLMemory; glcolorconvert bypassed"
+        : "GL compatibility mode: DMA-BUF/GLMemory -> glupload -> glcolorconvert -> RGBA copy ring");
     return bin;
 }
 
@@ -256,43 +305,92 @@ SDL_Texture* GLVideoInterop::copy(GstSample* sample) {
     auto* buffer = gst_sample_get_buffer(sample);
     GstVideoInfo info{};
     auto* caps = gst_sample_get_caps(sample);
-    p.error = "expected a shared RGBA GLMemory texture";
-    if (!buffer || !caps || !gst_video_info_from_caps(&info, caps) ||
-        GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_RGBA || gst_buffer_n_memory(buffer) != 1) return nullptr;
-    auto* memory = gst_buffer_peek_memory(buffer, 0);
-    if (!gst_is_gl_memory(memory)) return nullptr;
-    auto* source = reinterpret_cast<GstGLMemory*>(memory);
-    if (gst_gl_memory_get_texture_target(source) != GST_GL_TEXTURE_TARGET_2D ||
-        !gst_gl_context_can_share(p.wrapped, source->mem.context)) return nullptr;
+    if (!buffer || !caps || !gst_video_info_from_caps(&info, caps)) {
+        p.error = "invalid GL video sample";
+        return nullptr;
+    }
+
     CurrentContext current(p.renderer, p.native);
     if (!current.valid || !gst_gl_context_activate(p.wrapped, TRUE)) return nullptr;
     struct Deactivate { GstGLContext* context; ~Deactivate() { gst_gl_context_activate(context, FALSE); } } deactivate{p.wrapped};
     SDL_FlushRenderer(p.renderer);
     auto* gl = p.wrapped->gl_vtable;
     p.retire(p.pending.size() >= 4);
-    if (auto* sync = gst_buffer_get_gl_sync_meta(buffer)) gst_gl_sync_meta_wait(sync, p.wrapped);
-    else gst_gl_context_thread_add(source->mem.context, [](GstGLContext* c, gpointer) { c->gl_vtable->Finish(); }, nullptr);
-    const int w = gst_gl_memory_get_texture_width(source), h = gst_gl_memory_get_texture_height(source);
-    if (w <= 0 || h <= 0) return nullptr;
+
     if (p.direct) {
+        p.error = "expected shared NV12 GLMemory Y/UV planes";
+        if (GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_NV12 ||
+            GST_VIDEO_INFO_N_PLANES(&info) != 2) return nullptr;
+
+        GstGLMemory* plane[2] = {nullptr, nullptr};
+        for (guint i = 0; i < gst_buffer_n_memory(buffer); ++i) {
+            auto* memory = gst_buffer_peek_memory(buffer, i);
+            if (!gst_is_gl_memory(memory)) return nullptr;
+            auto* gm = reinterpret_cast<GstGLMemory*>(memory);
+            if (gm->plane >= 2 || plane[gm->plane] ||
+                gst_gl_memory_get_texture_target(gm) != GST_GL_TEXTURE_TARGET_2D ||
+                !gst_gl_context_can_share(p.wrapped, gm->mem.context)) return nullptr;
+            plane[gm->plane] = gm;
+        }
+        if (!plane[0] || !plane[1]) return nullptr;
+
+        if (auto* sync = gst_buffer_get_gl_sync_meta(buffer)) {
+            gst_gl_sync_meta_wait(sync, p.wrapped);
+        } else {
+            // Correctness fallback only; log once through reason if this becomes common.
+            gst_gl_context_thread_add(plane[0]->mem.context,
+                [](GstGLContext* c, gpointer) { c->gl_vtable->Finish(); }, nullptr);
+        }
+
+        const int w = GST_VIDEO_INFO_WIDTH(&info);
+        const int h = GST_VIDEO_INFO_HEIGHT(&info);
+        if (w <= 0 || h <= 0) return nullptr;
+        const GLuint y = gst_gl_memory_get_texture_id(plane[0]);
+        const GLuint uv = gst_gl_memory_get_texture_id(plane[1]);
+        if (!y || !uv) return nullptr;
+
         auto props = SDL_CreateProperties();
-        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_ABGR8888);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_NV12);
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STATIC);
         SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
         SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
-        SDL_SetNumberProperty(props, p.gles ? SDL_PROP_TEXTURE_CREATE_OPENGLES2_TEXTURE_NUMBER
-            : SDL_PROP_TEXTURE_CREATE_OPENGL_TEXTURE_NUMBER, gst_gl_memory_get_texture_id(source));
+        SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, sdlColorspaceForNv12(info));
+        if (p.gles) {
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_OPENGLES2_TEXTURE_NUMBER, y);
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_OPENGLES2_TEXTURE_UV_NUMBER, uv);
+        } else {
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_OPENGL_TEXTURE_NUMBER, y);
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_OPENGL_TEXTURE_UV_NUMBER, uv);
+        }
         auto* texture = SDL_CreateTextureWithProperties(p.renderer, props);
         SDL_DestroyProperties(props);
-        if (texture) {
-            p.releaseDirect();
-            p.directSample = gst_sample_ref(sample);
-            p.directTexture = texture;
-            return texture;
+        if (!texture) {
+            p.error = std::string("SDL NV12 GL wrapper creation failed: ") + SDL_GetError();
+            return nullptr;
         }
-        LOG_WARNING("GStreamerVideo", std::string("Direct GL wrapping failed; using GPU copy: ") + SDL_GetError());
+
+        // The old wrapper/sample cannot be released until SDL's queued reads are
+        // fenced. Do not cache wrappers after their GstSample is returned.
         p.releaseDirect();
-        p.direct = false;
+        p.directSample = gst_sample_ref(sample);
+        p.directTexture = texture;
+        return texture;
     }
+
+    // Existing stable RGBA GPU-copy path.
+    p.error = "expected a shared RGBA GLMemory texture";
+    if (GST_VIDEO_INFO_FORMAT(&info) != GST_VIDEO_FORMAT_RGBA || gst_buffer_n_memory(buffer) != 1) return nullptr;
+    auto* memory = gst_buffer_peek_memory(buffer, 0);
+    if (!gst_is_gl_memory(memory)) return nullptr;
+    auto* source = reinterpret_cast<GstGLMemory*>(memory);
+    if (gst_gl_memory_get_texture_target(source) != GST_GL_TEXTURE_TARGET_2D ||
+        !gst_gl_context_can_share(p.wrapped, source->mem.context)) return nullptr;
+
+    if (auto* sync = gst_buffer_get_gl_sync_meta(buffer)) gst_gl_sync_meta_wait(sync, p.wrapped);
+    else gst_gl_context_thread_add(source->mem.context, [](GstGLContext* c, gpointer) { c->gl_vtable->Finish(); }, nullptr);
+
+    const int w = gst_gl_memory_get_texture_width(source), h = gst_gl_memory_get_texture_height(source);
+    if (w <= 0 || h <= 0) return nullptr;
     if (w != p.width || h != p.height) {
         p.clear();
         GLint oldTexture = 0, oldUnpack = 0;
@@ -348,6 +446,7 @@ SDL_Texture* GLVideoInterop::copy(GstSample* sample) {
     if (!ok) { gl->Finish(); p.error = "GL framebuffer copy failed"; return nullptr; }
     GLsync fence = gl->FenceSync && gl->ClientWaitSync && gl->DeleteSync ? gl->FenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0) : nullptr;
     if (fence) { p.pending.push_back({gst_sample_ref(sample), fence}); gl->Flush(); }
-    else gl->Finish(); // Older GLES contexts: wait safely without CPU pixel transfers.
+    else gl->Finish();
     return slot.texture;
 }
+

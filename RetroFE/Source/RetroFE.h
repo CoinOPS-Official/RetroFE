@@ -78,7 +78,9 @@ private:
 	double lastFrameTimeMs_ = 0.0;
 	double lastFrameTimePointMs_ = 0.0;
 
-    double lastWorkMs_ = 0.0;
+    double lastWorkMs_ = 0.0;          // Total measured loop work (may include Present/VSync wait).
+    double lastBusyWorkMs_ = 0.0;      // Main-thread work with SDL_RenderPresent wait removed.
+    double lastPresentWaitMs_ = 0.0;   // Time spent blocked inside SDL_RenderPresent().
     double lastLateUs_ = 0.0;
 
     void initializeMusicPlayer();
@@ -90,6 +92,12 @@ private:
     int fpsOverlayW_ = 0;
     int fpsOverlayH_ = 0;
     std::string lastOverlayText_ = "";
+
+    SDL_Texture* fpsStatsOverlayTexture_ = nullptr;
+    int fpsStatsOverlayW_ = 0;
+    int fpsStatsOverlayH_ = 0;
+    std::string lastStatsOverlayText_ = "";
+
     bool showFps_ = false;
 
     enum RETROFE_STATE {

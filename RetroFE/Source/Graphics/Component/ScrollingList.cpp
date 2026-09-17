@@ -330,6 +330,18 @@ void ScrollingList::deallocateSpritePoints() {
     }
 }
 
+void ScrollingList::refreshVideoPriorities() {
+    const size_t N = components_.size();
+
+    for (size_t i = 0; i < N; ++i) {
+        if (Component* component = components_[i]) {
+            // Priority follows the semantic slot, not the lifetime of the
+            // component object. The selected slot is visible or becoming visible.
+            component->setHighPriority(i == selectedOffsetIndex_);
+        }
+    }
+}
+
 void ScrollingList::allocateSpritePoints() {
     if (!items_ || items_->empty()) return;
     if (!scrollPoints_ || scrollPoints_->empty()) return;
@@ -348,58 +360,161 @@ void ScrollingList::allocateSpritePoints() {
             resetTweens(c, (*tweenPoints_)[i], view, view, 0);
         }
     }
+
+    refreshVideoPriorities();
 }
 
-void ScrollingList::reallocateSpritePoints() {
+void ScrollingList::reallocateSpritePoints(Page::VideoPoolPolicy videoPoolPolicy) {
     if (!items_ || items_->empty()) return;
     if (!scrollPoints_ || scrollPoints_->empty()) return;
     if (components_.empty()) return;
 
-    size_t scrollPointsSize = scrollPoints_->size();
-    size_t itemsSize = items_->size();
-    int monitor = baseViewInfo.Monitor;
+    const size_t scrollPointsSize = scrollPoints_->size();
+    const size_t itemsSize = items_->size();
+    const int monitor = baseViewInfo.Monitor;
 
-    // --- NEW: Reset the pool before we start releasing the current batch ---
-    // 1. Clears all idle/cached videos from VRAM instantly.
-    // 2. Increments the generation ID, ensuring the videos we are about to 
-    //    extract are marked as "obsolete".
-    VideoPool::reset(baseViewInfo.Monitor, listId_);
+    // Same-list teleport: letter/meta/sub skip, return-from-game, or another
+    // direct position jump. Keep active pipelines attached and simply retarget.
+    if (videoPoolPolicy == Page::VideoPoolPolicy::Preserve) {
+        auto initializePreservedSlot = [&](size_t i) {
+            const size_t index = loopIncrement(itemIndex_, i, itemsSize);
 
-    // --- Step 1: Extract video instances for batch release ---
-    std::vector<VideoPool::VideoPtr> pooledVideos;
+            if (auto* video = dynamic_cast<VideoComponent*>(components_[i])) {
+                video->preserveInstanceOnNextRecycle();
+            }
+
+            allocateTexture(i, index);
+
+            if (Component* c = components_[i]) {
+                c->allocateGraphicsMemory();
+
+                ViewInfo* view = (*scrollPoints_)[i];
+                resetTweens(c, (*tweenPoints_)[i], view, view, 0);
+            }
+        };
+
+        // Presentation-critical slot first.
+        if (selectedOffsetIndex_ < scrollPointsSize) {
+            initializePreservedSlot(selectedOffsetIndex_);
+        }
+
+        for (size_t i = 0; i < scrollPointsSize; ++i) {
+            if (i == selectedOffsetIndex_) continue;
+            initializePreservedSlot(i);
+        }
+
+        refreshVideoPriorities();
+        return;
+    }
+
+    // Playlist/collection generation change: keep at most one temporary warm
+    // handoff, but retain the hard reset/retirement hygiene boundary.
+    VideoComponent* selectedVideo = nullptr;
+
+    if (selectedOffsetIndex_ < components_.size()) {
+        selectedVideo =
+            dynamic_cast<VideoComponent*>(components_[selectedOffsetIndex_]);
+    }
+
+    // Prefer a genuinely idle warm pipeline if one exists.
+    VideoPool::VideoPtr handoff =
+        VideoPool::acquireWarmForReset(monitor, listId_, false);
+
+    std::vector<VideoPool::VideoPtr> oldVideos;
+    oldVideos.reserve(scrollPointsSize);
+
+    if (selectedVideo) {
+        if (handoff) {
+            // A cached READY instance won. The current selected video remains
+            // ordinary old-generation state and will retire at the boundary.
+            auto selectedFallback = selectedVideo->extractVideo();
+            if (selectedFallback) {
+                oldVideos.push_back(std::move(selectedFallback));
+            }
+        }
+        else {
+            // No cached READY resource exists, so the current selected active
+            // pipeline is our only zero-growth handoff candidate. Sanitize it
+            // first using the same quiesce/drain path used by same-list jumps.
+            //
+            // If preparation fails, do NOT reuse it: retire it with the rest
+            // of the old generation and let CENTER cold-create cleanly.
+            const bool prepared =
+                selectedVideo->prepareRetainedVideoForRetarget();
+
+            auto selectedFallback = selectedVideo->extractVideo();
+
+            if (prepared && selectedFallback) {
+                handoff = std::move(selectedFallback);
+            }
+            else if (selectedFallback) {
+                oldVideos.push_back(std::move(selectedFallback));
+            }
+        }
+    }
 
     for (size_t i = 0; i < scrollPointsSize; ++i) {
+        if (i == selectedOffsetIndex_) continue;
+
         Component* comp = components_[i];
         if (!comp) continue;
 
-        auto video = comp->extractVideo();   // nullptr for Image/Text, valid for VideoComponent
-        if (video)
-            pooledVideos.push_back(std::move(video));
+        auto video = comp->extractVideo();
+        if (video) {
+            oldVideos.push_back(std::move(video));
+        }
     }
 
-    // --- Step 2: Batch release to pool ---
-    if (!pooledVideos.empty()) {
-        // Because we called reset() above, releaseVideo will now detect 
-        // the generation mismatch and physically destroy these instances 
-        // instead of caching them.
-        VideoPool::releaseVideoBatch(pooledVideos, monitor, listId_);
+    VideoPool::reset(monitor, listId_);
+
+    if (!oldVideos.empty()) {
+        VideoPool::releaseVideoBatch(oldVideos, monitor, listId_);
     }
 
-    // --- Step 4: Reallocate components and assign tweens ---
-    for (size_t i = 0; i < scrollPointsSize; ++i) {
-        size_t index = loopIncrement(itemIndex_, i, itemsSize);
+    auto initializeResetSlot = [&](size_t i, VideoPool::VideoPtr* preferredVideo) {
+        const size_t index = loopIncrement(itemIndex_, i, itemsSize);
 
-        // allocateTexture will now call VideoPool::acquireVideo, which 
-        // will find an empty pool and create brand-new instances.
         allocateTexture(i, index);
 
         Component* c = components_[i];
-        if (c) {
-            c->allocateGraphicsMemory();
-            ViewInfo* view = (*scrollPoints_)[i];
-            resetTweens(c, (*tweenPoints_)[i], view, view, 0);
+        if (!c) {
+            if (preferredVideo && *preferredVideo) {
+                VideoPool::releaseVideo(
+                    std::move(*preferredVideo), monitor, listId_);
+            }
+            return;
         }
+
+        if (preferredVideo && *preferredVideo) {
+            if (auto* video = dynamic_cast<VideoComponent*>(c)) {
+                video->adoptVideo(std::move(*preferredVideo));
+            }
+            else {
+                VideoPool::releaseVideo(
+                    std::move(*preferredVideo), monitor, listId_);
+            }
+        }
+
+        c->allocateGraphicsMemory();
+
+        ViewInfo* view = (*scrollPoints_)[i];
+        resetTweens(c, (*tweenPoints_)[i], view, view, 0);
+    };
+
+    if (selectedOffsetIndex_ < scrollPointsSize) {
+        initializeResetSlot(selectedOffsetIndex_, &handoff);
     }
+
+    for (size_t i = 0; i < scrollPointsSize; ++i) {
+        if (i == selectedOffsetIndex_) continue;
+        initializeResetSlot(i, nullptr);
+    }
+
+    if (handoff) {
+        VideoPool::releaseVideo(std::move(handoff), monitor, listId_);
+    }
+
+    refreshVideoPriorities();
 }
 
 void ScrollingList::destroyItems() {
@@ -1151,6 +1266,10 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
     if (!media.videoPath.empty()) {
         std::string logicalName = item->name; // Basic fallback name
         t = videoBuild.createVideoFromResolved(media.videoPath, logicalName, page, baseViewInfo.Monitor, -1, false, listId_, perspectiveCornersInitialized_ ? perspectiveCorners_ : nullptr, existingComponent);
+        if (auto* video = dynamic_cast<VideoComponent*>(t)) {
+            video->setStartupArtwork((isSelectedItem && !media.selectedImagePath.empty())
+                ? media.selectedImagePath : media.idleImagePath);
+        }
     }
 
     // 2. Instantly load Image from exact resolved path
@@ -1392,6 +1511,10 @@ void ScrollingList::scrollToSelectedIndex(size_t newSelectedIndex, bool forward,
 
     components_.rotate(forward);
 
+    // After rotation, logical indices describe destination slots. Promote the
+    // component that has just moved into the selected slot immediately.
+    refreshVideoPriorities();
+
     itemIndex_ = newItemIndex;
 
     cachedIdle_ = false;
@@ -1462,6 +1585,10 @@ void ScrollingList::scroll(bool forward) {
     }
 
     components_.rotate(forward);
+
+    // The incoming-to-center component is now selected/high-priority; the newly
+    // allocated lookahead component remains ordinary background work.
+    refreshVideoPriorities();
 
     cachedIdle_ = false;
     cachedAttractIdle_ = false;

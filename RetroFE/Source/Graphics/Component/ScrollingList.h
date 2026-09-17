@@ -186,7 +186,7 @@ public:
     bool horizontalScroll{ false };
     void deallocateSpritePoints();
     void allocateSpritePoints();
-    void reallocateSpritePoints();
+    void reallocateSpritePoints(Page::VideoPoolPolicy videoPoolPolicy = Page::VideoPoolPolicy::Reset);
     void resetScrollPeriod();
     void updateScrollPeriod();
 
@@ -215,7 +215,8 @@ private:
     void clearPoints();
     void clearTweenPoints();
     
-    // Change to:
+        void refreshVideoPriorities();
+// Change to:
     void resetTweens(Component* c, const std::shared_ptr<AnimationEvents>& sets, ViewInfo* currentViewInfo, ViewInfo* nextViewInfo, float scrollTime) const;
     inline size_t loopIncrement(size_t offset, size_t index, size_t size) const;
     inline size_t loopDecrement(size_t offset, size_t index, size_t size) const;

@@ -52,7 +52,6 @@ void VideoPool::pumpDrainingToReady(PoolInfo& pool) {
 VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOverlay) {
     if (shuttingDown_) return nullptr;
 
-    // Non-pooled (listId -1)
     if (listId == -1) return createNewVideo(monitor, softOverlay);
 
     PoolInfo& pool = pools_[monitor][listId];
@@ -61,62 +60,118 @@ VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOv
         return nullptr;
     }
 
-    // 1. Passive Observation: Advance any finished videos to the ready queue
     pumpDrainingToReady(pool);
 
-    // 2. Instant O(1) Hot-Path Reuse
     if (!pool.ready.empty()) {
         auto vid = std::move(pool.ready.back());
         pool.ready.pop_back();
+
         pool.currentActive++;
+        pool.activeVideos.insert(vid.get());
+
         vid->setSoftOverlay(softOverlay);
         LOG_DEBUG("VideoPool", "Acquire (Ready Reuse) " + poolStateStr(monitor, listId, pool));
         return vid;
     }
 
-    // 3. Growth Logic
-    size_t totalCached = pool.ready.size() + pool.draining.size();
-    if (!pool.initialCountLatched || (pool.currentActive + totalCached < pool.requiredInstanceCount)) {
+    const size_t totalCached = pool.ready.size() + pool.draining.size();
+
+    if (!pool.initialCountLatched ||
+        (pool.currentActive + totalCached < pool.requiredInstanceCount))
+    {
+        auto vid = createNewVideo(monitor, softOverlay);
+        if (!vid) {
+            LOG_DEBUG("VideoPool", "Acquire (New create FAIL) " + poolStateStr(monitor, listId, pool));
+            return nullptr;
+        }
+
         pool.currentActive++;
+        pool.activeVideos.insert(vid.get());
 
         if (!pool.initialCountLatched) {
             pool.observedMaxActive = std::max(pool.observedMaxActive, pool.currentActive);
         }
 
-        auto vid = createNewVideo(monitor, softOverlay);
-        if (!vid) {
-            pool.currentActive--; // Prevent permanent inflation on failure
-            LOG_DEBUG("VideoPool", "Acquire (New create FAIL) " + poolStateStr(monitor, listId, pool));
-            return nullptr; // Fail Fast
-        }
         LOG_DEBUG("VideoPool", "Acquire (New instance created) " + poolStateStr(monitor, listId, pool));
         return vid;
     }
 
-    // 4. STRICT FAIL FAST
     LOG_DEBUG("VideoPool", "Acquire (FAIL FAST - Pool saturated) " + poolStateStr(monitor, listId, pool));
     return nullptr;
+}
+
+VideoPool::VideoPtr VideoPool::acquireWarmForReset(
+    int monitor,
+    int listId,
+    bool softOverlay)
+{
+    if (shuttingDown_ || listId == -1) return nullptr;
+
+    auto mit = pools_.find(monitor);
+    if (mit == pools_.end()) return nullptr;
+
+    auto lit = mit->second.find(listId);
+    if (lit == mit->second.end()) return nullptr;
+
+    PoolInfo& pool = lit->second;
+    if (pool.markedForCleanup) return nullptr;
+
+    // Non-blocking: only completed drains move to READY.
+    pumpDrainingToReady(pool);
+
+    if (pool.ready.empty()) {
+        LOG_DEBUG("VideoPool",
+            "Playlist handoff: no warm cached instance " +
+            poolStateStr(monitor, listId, pool));
+        return nullptr;
+    }
+
+    auto vid = std::move(pool.ready.back());
+    pool.ready.pop_back();
+
+    pool.currentActive++;
+    pool.activeVideos.insert(vid.get());
+
+    vid->setSoftOverlay(softOverlay);
+
+    LOG_DEBUG("VideoPool",
+        "Playlist handoff: claimed warm cached instance " +
+        poolStateStr(monitor, listId, pool));
+
+    return vid;
 }
 
 void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
     if (!vid || shuttingDown_ || listId == -1) return;
 
     PoolInfo& pool = pools_[monitor][listId];
+    IVideo* raw = vid.get();
 
-    if (pool.currentActive > 0) pool.currentActive--;
-
-    // --- FIX: Allow pre-reset videos to destroy themselves completely ---
-    if (pool.purgeOnReleaseCount > 0) {
-        pool.purgeOnReleaseCount--;
-        LOG_DEBUG("VideoPool", "Release (Purging video for GStreamer cleanup) " + poolStateStr(monitor, listId, pool));
-        return; // Early exit: reference drops to 0 and the pipeline is instantly destroyed
+    if (pool.activeVideos.erase(raw) > 0) {
+        if (pool.currentActive > 0) pool.currentActive--;
+    }
+    else {
+        LOG_DEBUG("VideoPool",
+            "Release (instance was not tracked active) " +
+            poolStateStr(monitor, listId, pool));
     }
 
-    // Eviction ceiling — destroy without unloading, stop() handles cleanup
+    // Old-generation instances may finish their current ownership, but must
+    // never re-enter draining/ready. The temporary playlist handoff is covered
+    // by this same rule and dies on its first release after the reset.
+    if (pool.retireOnRelease.erase(raw) > 0) {
+        LOG_DEBUG("VideoPool",
+            "Release (Retiring pre-reset video for GStreamer cleanup) " +
+            poolStateStr(monitor, listId, pool));
+        return;
+    }
+
     if (pool.initialCountLatched) {
-        size_t totalCached = pool.ready.size() + pool.draining.size();
+        const size_t totalCached = pool.ready.size() + pool.draining.size();
         if (totalCached >= pool.requiredInstanceCount) {
-            LOG_DEBUG("VideoPool", "Release (Evicting excess video) " + poolStateStr(monitor, listId, pool));
+            LOG_DEBUG("VideoPool",
+                "Release (Evicting excess video) " +
+                poolStateStr(monitor, listId, pool));
             return;
         }
     }
@@ -126,7 +181,6 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
         return;
     }
 
-    // Only unload videos that are actually being returned to the pool
     if (auto* gsv = static_cast<GStreamerVideo*>(vid.get())) {
         gsv->unload();
     }
@@ -134,12 +188,19 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
     pool.draining.push_back(std::move(vid));
 
     if (!pool.initialCountLatched) {
-        pool.requiredInstanceCount = pool.observedMaxActive + POOL_BUFFER_INSTANCES;
+        pool.requiredInstanceCount =
+            pool.observedMaxActive + POOL_BUFFER_INSTANCES;
         pool.initialCountLatched = true;
-        LOG_DEBUG("VideoPool", "Release (LATCHED cap=" + std::to_string(pool.requiredInstanceCount) + ") " + poolStateStr(monitor, listId, pool));
+
+        LOG_DEBUG("VideoPool",
+            "Release (LATCHED cap=" +
+            std::to_string(pool.requiredInstanceCount) + ") " +
+            poolStateStr(monitor, listId, pool));
     }
     else {
-        LOG_DEBUG("VideoPool", "Release (Cache to draining) " + poolStateStr(monitor, listId, pool));
+        LOG_DEBUG("VideoPool",
+            "Release (Cache to draining) " +
+            poolStateStr(monitor, listId, pool));
     }
 }
 
@@ -204,6 +265,7 @@ std::string VideoPool::poolStateStr(int monitor, int listId, const PoolInfo& p) 
         " Active=" + std::to_string(p.currentActive) +
         " Ready=" + std::to_string(p.ready.size()) +
         " Draining=" + std::to_string(p.draining.size()) +
+        " Retire=" + std::to_string(p.retireOnRelease.size()) +
         " Req=" + std::to_string(p.requiredInstanceCount) +
         (p.initialCountLatched ? " LATCHED" : " PRELATCH");
 }
@@ -221,14 +283,31 @@ void VideoPool::reset(int monitor, int listId) {
     auto lit = mit->second.find(listId);
     if (lit == mit->second.end()) return;
 
-    LOG_INFO("VideoPool", "Resetting pool cache for Mon:" + std::to_string(monitor)
-        + " List:" + std::to_string(listId));
-
     auto& pool = lit->second;
 
+    LOG_INFO("VideoPool",
+        "Resetting pool cache for Mon:" + std::to_string(monitor) +
+        " List:" + std::to_string(listId) +
+        " Active=" + std::to_string(pool.currentActive) +
+        " Ready=" + std::to_string(pool.ready.size()) +
+        " Draining=" + std::to_string(pool.draining.size()));
+
+    // Hard hygiene boundary for cached state.
+    // A warm handoff that should survive must be acquired BEFORE reset(),
+    // which makes it active and therefore marks it for retirement below.
     pool.ready.clear();
     pool.draining.clear();
 
-    // Mark all currently active videos to be completely destroyed when released
-    pool.purgeOnReleaseCount = pool.currentActive;
+    // Every instance active at the boundary is old-generation. It may remain
+    // owned temporarily, but its next release destroys it instead of caching it.
+    pool.retireOnRelease.insert(
+        pool.activeVideos.begin(),
+        pool.activeVideos.end());
+
+    LOG_DEBUG("VideoPool",
+        "Reset armed retirement for " +
+        std::to_string(pool.retireOnRelease.size()) +
+        " active instance(s): " +
+        poolStateStr(monitor, listId, pool));
 }
+

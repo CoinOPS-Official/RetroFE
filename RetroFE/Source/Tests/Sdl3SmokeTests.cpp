@@ -9,6 +9,9 @@
 #include "../Graphics/FontCache.h"
 #include "../Video/GStreamerVideo.h"
 #include "../Video/GlibLoop.h"
+#include "../Video/VideoPool.h"
+#include "../Graphics/Component/VideoComponent.h"
+#include "../Graphics/Page.h"
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
 #include <cstdlib>
@@ -331,7 +334,7 @@ void mediaChecks(const std::string& assets) {
         while (SDL_GetTicks() < playbackDeadline) {
             video->updateFrame();
             auto* renderer = SDL::getRenderer(0);
-            D3D11RenderLock renderLock(renderer);
+
             require(SDL_SetRenderTarget(renderer, nullptr), "Set video backbuffer");
             const auto dim = video->getDimensions();
             SDL_FRect source{0, 0, float(dim.w), float(dim.h)};
@@ -340,9 +343,7 @@ void mediaChecks(const std::string& assets) {
             SDL_FRect overlay{4, 4, 8, 8};
             require(SDL_RenderFillRect(renderer, &overlay), "Draw overlay above video");
             require(pixel(renderer, 6, 6).r == 255, "Video preserves overlay rendering");
-            renderLock.finish();
             require(SDL_RenderPresent(renderer), "Present decoded video");
-            D3D11VideoInterop::presented(renderer);
             ++presented;
             SDL_Delay(10);
         }
@@ -368,9 +369,113 @@ void mediaChecks(const std::string& assets) {
 }
 }
 
+void scrollingVideoStartupChecks(Configuration& config, const std::string& file) {
+    Page page(config, 64, 64);
+    GlibLoop::instance().start();
+    {
+        VideoComponent foreground(page, file, 0, 0, false, 9002);
+        foreground.baseViewInfo.Width = foreground.baseViewInfo.Height = 32;
+        foreground.baseViewInfo.X = foreground.baseViewInfo.Y = 0;
+        foreground.baseViewInfo.Alpha = 1;
+        VideoComponent video(page, file, 0, 0, false, 9001);
+        video.baseViewInfo.Width = video.baseViewInfo.Height = 32;
+        video.baseViewInfo.X = video.baseViewInfo.Y = 0;
+        video.baseViewInfo.Alpha = 0;
+        video.allocateGraphicsMemory();
+        video.update(0);
+        require(!video.isPaused() && !video.isPlaying(), "Transparent list video does not start preroll");
+        video.baseViewInfo.Alpha = 1;
+        video.baseViewInfo.X = 200;
+        video.update(0);
+        require(!video.isPaused() && !video.isPlaying(), "Offscreen list video does not start preroll");
+        video.baseViewInfo.X = 0;
+        const auto deadline = SDL_GetTicks() + 10000;
+        while (!video.isPlaying() && SDL_GetTicks() < deadline) {
+            video.update(0.001f);
+            SDL_Delay(1);
+        }
+        require(video.isPlaying(), "List video starts when revealed");
+        auto* renderer = SDL::getRenderer(0);
+        SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
+        SDL_RenderClear(renderer);
+        video.draw();
+        const auto before = pixel(renderer, 16, 16);
+        require(!(before.r == 255 && before.g == 0 && before.b == 255), "Video covers loading placeholder");
+        require(video.recycleAsVideo(file + ".next", ""), "Recycle video for another game");
+        SDL_RenderClear(renderer);
+        video.draw();
+        const auto after = pixel(renderer, 16, 16);
+        require(after.r == 255 && after.g == 0 && after.b == 255,
+            "Replacement never displays the previous game's frame");
+        require(video.recycleAsVideo(file + ".next-again", ""), "Rapid recycle before a new frame");
+        SDL_RenderClear(renderer);
+        video.draw();
+        const auto again = pixel(renderer, 16, 16);
+        require(after.r == again.r && after.g == again.g && after.b == again.b,
+            "Repeated fast recycling never displays stale frames");
+    }
+    VideoPool::cleanup(0, 9001);
+    VideoPool::cleanup(0, 9002);
+    GlibLoop::instance().stop();
+}
+
+// Optional measurement mode: keep the renderer identical for CPU/GPU decode.
+// Report observations rather than asserting machine-dependent timing limits.
+void startupBenchmark(const std::string& file, const std::string& alternate) {
+    gst_init(nullptr, nullptr);
+    GlibLoop::instance().start();
+    for (int count : {1, 7}) {
+        std::vector<std::shared_ptr<GStreamerVideo>> videos;
+        for (int i = 0; i < count; ++i) videos.push_back(std::make_shared<GStreamerVideo>(0));
+        for (int trial = 0; trial < 3; ++trial) {
+            std::vector<Uint64> starts(count), ready(count);
+            const auto batchStart = SDL_GetTicksNS();
+            for (int i = 0; i < count; ++i) {
+                starts[i] = SDL_GetTicksNS();
+                require(videos[i]->open(trial % 2 ? alternate : file), "Open benchmark video");
+            }
+            int remaining = count;
+            while (remaining && SDL_GetTicksNS() - batchStart < 15000000000ULL) {
+                SDL_PumpEvents();
+                for (int i = 0; i < count; ++i) {
+                    if (ready[i]) continue;
+                    videos[i]->updateFrame();
+                    require(!videos[i]->hasError(), "Benchmark decode succeeds");
+                    if (videos[i]->getTexture()) {
+                        ready[i] = SDL_GetTicksNS();
+                        --remaining;
+                        require(videos[i]->usingGpuTexture() == Configuration::HardwareVideoAccel,
+                            "Benchmark uses requested decode path");
+                        std::cout << "STARTUP count=" << count << " trial=" << trial
+                            << " video=" << i << " ms=" << double(ready[i] - starts[i]) / 1e6 << '\n';
+                    }
+                }
+                if (remaining) SDL_Delay(1);
+            }
+            require(remaining == 0, "Benchmark first frames arrive");
+            std::cout << "STARTUP_BATCH count=" << count << " trial=" << trial
+                << " ms=" << double(SDL_GetTicksNS() - batchStart) / 1e6 << '\n';
+            for (auto& video : videos) require(video->unload(), "Unload benchmark video for reuse");
+            const auto drainStart = SDL_GetTicksNS();
+            while (!std::all_of(videos.begin(), videos.end(), [](const auto& video) { return video->isReadyForReuse(); }) &&
+                   SDL_GetTicksNS() - drainStart < 15000000000ULL) {
+                SDL_PumpEvents();
+                SDL_Delay(1);
+            }
+            require(std::all_of(videos.begin(), videos.end(), [](const auto& video) { return video->isReadyForReuse(); }),
+                "All benchmark instances drain for reuse");
+            std::cout << "STARTUP_DRAIN count=" << count << " trial=" << trial
+                << " ms=" << double(SDL_GetTicksNS() - drainStart) / 1e6 << '\n';
+        }
+        for (auto& video : videos) video->stop();
+    }
+    GlibLoop::instance().stop();
+}
+
 int main(int argc, char** argv) {
     const bool hardware = argc > 2 && std::string(argv[2]) == "--hardware";
-    if (!hardware) SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+    const bool benchmark = argc > 3 && std::string(argv[3]) == "--startup-benchmark";
+    if (!hardware && !benchmark) SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
 #ifdef _WIN32
     const char* hardwareRenderer = "direct3d11";
 #else
@@ -379,9 +484,9 @@ int main(int argc, char** argv) {
 #endif
     SDL_SetHint(SDL_HINT_AUDIO_DRIVER, "dummy");
     Configuration config;
-    config.setProperty("log", std::string("INFO,WARNING,ERROR"));
+    config.setProperty("log", std::string(benchmark ? "DEBUG,INFO,WARNING,ERROR" : "INFO,WARNING,ERROR"));
     require(Logger::initialize(hardware ? "sdl3-hardware-runtime.log" : "sdl3-software-runtime.log", &config), "Initialize runtime log");
-    config.setProperty("SDLRenderDriver", std::string(hardware ? hardwareRenderer : "software"));
+    config.setProperty("SDLRenderDriver", std::string(hardware || benchmark ? hardwareRenderer : "software"));
     config.setProperty("HardwareVideoAccel", hardware);
     config.setProperty("screenOrder", std::string("0"));
     config.setProperty("horizontal0", 64);
@@ -390,9 +495,18 @@ int main(int argc, char** argv) {
     config.setProperty("hideMouse", false);
     config.setProperty("vSync", false);
     config.setProperty("layoutScaleMode", std::string("stretch"));
+    if (benchmark) {
+        require(SDL::initialize(config), "Initialize benchmark renderer");
+        const std::string file = argc > 4 ? argv[4] : std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4";
+        startupBenchmark(file, argc > 5 ? argv[5] : file);
+        require(SDL::deInitialize(true), "Shutdown benchmark renderer");
+        Logger::deInitialize();
+        return EXIT_SUCCESS;
+    }
     renderChecks(config, true);
     inputChecks(config);
     if (argc > 1) mediaChecks(argv[1]);
+    if (argc > 1) scrollingVideoStartupChecks(config, std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4");
     require(SDL::deInitialize(false), "Unload video while retaining audio/input");
     renderChecks(config, true);
     require(SDL::deInitialize(true), "Full SDL shutdown");

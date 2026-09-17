@@ -43,6 +43,12 @@ public:
         ScrollDirectionPlaylistBack,
     };
 
+    enum class VideoPoolPolicy
+    {
+        Preserve,
+        Reset
+    };
+
     Page(Configuration &c, int layoutWidth, int layoutHeight );
     virtual ~Page();
     void deInitialize();
@@ -155,7 +161,9 @@ public:
     void  removePlaylist();
     void  togglePlaylist();
     void consumeDirtyPlaylistsForActiveCollection();
-    void  reallocateMenuSpritePoints(bool updatePlaylistMenu = true) const;
+    void reallocateMenuSpritePoints(
+        bool updatePlaylistMenu = true,
+        VideoPoolPolicy videoPoolPolicy = VideoPoolPolicy::Reset) const;
     bool  isMenuScrolling() const;
     bool  isUserScrollInputActive() const;
     void  setUserScrollInputActive(bool active);

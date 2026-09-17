@@ -15,16 +15,20 @@
  */
 
 #include "VideoComponent.h"
+#include "Image.h"
 #include <string>
 #include <string_view>
 #include <utility>
 #include <memory>
 #include <algorithm>
+#include <cmath>
+#include <vector>
 
 #include "../../Graphics/ViewInfo.h"
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
 #include "../../Video/IVideo.h"
+#include "../../Video/GStreamerVideo.h"
 #include "../../Video/VideoFactory.h"
 #include "../../Video/VideoPool.h"
 #include "../Page.h"
@@ -37,9 +41,13 @@
 #include <SDL3/SDL_render.h>
 #endif
 
+// Components and their startup decisions are owned by the main thread.
+static std::vector<VideoComponent*> listVideos;
+
 VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
     : Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), listId_(listId), currentPage_(&p) {
     isHighPriority_ = (listId_ == -1);
+    if (listId_ != -1) listVideos.push_back(this);
     if (perspectiveCorners) {
         std::copy(perspectiveCorners, perspectiveCorners + 8, perspectiveCorners_);
         hasPerspective_ = true;
@@ -47,6 +55,7 @@ VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monito
 }
 
 VideoComponent::~VideoComponent() {
+    std::erase(listVideos, this);
     LOG_DEBUG("VideoComponent", "Destroying VideoComponent for file: " + videoFile_);
     VideoComponent::freeGraphicsMemory();
 }
@@ -54,18 +63,34 @@ VideoComponent::~VideoComponent() {
 bool VideoComponent::recycleAsVideo(const std::string& path, const std::string&) {
     if (path.empty()) return false;
 
+    // One-shot request used by same-list jumps. Preserve the currently-owned
+    // warm pipeline while changing the component's media target.
+    bool preserveInstance = preserveInstanceOnNextRecycle_;
+    preserveInstanceOnNextRecycle_ = false;
+
+    // An active pipeline may still contain queued samples from the previous
+    // URI. Quiesce and drain it before keeping it attached for this retarget.
+    // If that cannot be done safely, fall back to the normal release/reacquire
+    // path rather than risk displaying stale media.
+    if (preserveInstance && videoInst_) {
+        auto* gstVideo = dynamic_cast<GStreamerVideo*>(videoInst_.get());
+        if (!gstVideo || !gstVideo->prepareForRetarget()) {
+            preserveInstance = false;
+        }
+    }
+
     if (videoFile_ == path && videoInst_ && !videoInst_->hasError()) {
         return true;
     }
 
+    startupArtwork_.reset();
     this->Component::freeGraphicsMemory();
     videoFile_ = path;
 
-    // Reset state flags
     instanceReady_ = false;
     dimensionsUpdated_ = false;
-	baseViewInfo.ImageWidth = 0;
-	baseViewInfo.ImageHeight = 0;
+    baseViewInfo.ImageWidth = 0;
+    baseViewInfo.ImageHeight = 0;
     hasBeenOnScreen_ = false;
     wasVisible_ = false;
     wasPlayingBeforeFastScroll_ = false;
@@ -77,36 +102,106 @@ bool VideoComponent::recycleAsVideo(const std::string& path, const std::string&)
     nextRetryTime_ = 0;
     lastVolume_ = -1.0f;
 
-    // --- THE FIX ---
-    if (videoInst_) {
-        // Do not manually unload. Route it through the pool's safety queues.
+    if (videoInst_ && !preserveInstance) {
         if (listId_ != -1) {
             auto video = std::move(videoInst_);
             VideoPool::releaseVideo(std::move(video), monitor_, listId_);
         }
         else {
-            // Standalone videos bypass the pool, so we safely destroy the pipeline
             videoInst_.reset();
         }
     }
 
-    // Acquire a fresh, fully-drained pipeline
-    allocateGraphicsMemory();
-
+    // ScrollingList calls allocateGraphicsMemory() after rebinding the slot.
+    // With preserveInstance=true, videoInst_ remains attached and the next
+    // update retargets the same warm GStreamerVideo to videoFile_.
     return true;
 }
 
+void VideoComponent::preserveInstanceOnNextRecycle() {
+    preserveInstanceOnNextRecycle_ = true;
+}
+
+bool VideoComponent::prepareRetainedVideoForRetarget() {
+    if (!videoInst_)
+        return false;
+
+    auto* gstVideo = dynamic_cast<GStreamerVideo*>(videoInst_.get());
+    if (!gstVideo)
+        return false;
+
+    return gstVideo->prepareForRetarget();
+}
+
 bool VideoComponent::checkVisibility() const {
+    if (baseViewInfo.Alpha <= 0.0f) return false;
     float x = baseViewInfo.XRelativeToOrigin();
     float y = baseViewInfo.YRelativeToOrigin();
     float w = baseViewInfo.ScaledWidth();
     float h = baseViewInfo.ScaledHeight();
+    // Intrinsic video dimensions may be unknown until preroll. Do not prevent
+    // that first decode merely because an auto-sized component has no bounds.
+    if (!std::isfinite(w) || !std::isfinite(h) || w <= 0.0f || h <= 0.0f) return true;
 
     float screenW = static_cast<float>(currentPage_->getLayoutWidthByMonitor(baseViewInfo.Monitor));
     float screenH = static_cast<float>(currentPage_->getLayoutHeightByMonitor(baseViewInfo.Monitor));
 
     bool physicallyOnScreen = (x + w > 0.0f) && (x < screenW) && (y + h > 0.0f) && (y < screenH);
     return (baseViewInfo.Alpha > 0.0f) && physicallyOnScreen;
+}
+
+bool VideoComponent::canStartBackgroundVideo() const {
+    // The selected/destination slot is presentation-critical. It may still be
+    // hidden at the first update of a tween (alpha 0 / just off-screen), so
+    // priority must bypass ordinary background throttling.
+    if (isHighPriority_) return true;
+
+    for (auto* other : listVideos) {
+        if (other == this || other->videoFile_.empty()) continue;
+        if (other->videoInst_ && other->videoInst_->hasError()) continue;
+
+        const bool waiting =
+            !other->instanceReady_ ||
+            !other->videoInst_ ||
+            !other->videoInst_->getTexture();
+
+        if (!waiting) continue;
+
+        // A selected/incoming video outranks all speculative hidden preloads,
+        // even while its current alpha is still zero.
+        if (other->isHighPriority_) return false;
+
+        // A truly visible video also outranks hidden preloading.
+        if (other->checkVisibility()) return false;
+
+        // Admit only one ordinary hidden preroll at a time.
+        if (other->instanceReady_) return false;
+    }
+
+    return true;
+}
+
+void VideoComponent::setHighPriority(bool isHigh) {
+    if (isHighPriority_ == isHigh) return;
+
+    const bool promoted = isHigh && !isHighPriority_;
+    isHighPriority_ = isHigh;
+
+    if (promoted) {
+        // Background work may have accumulated retry delay while this component
+        // was off-screen. Once it becomes the selected/destination video, make
+        // the very next update eligible to acquire/open immediately.
+        pendingVideoRetry_ = false;
+        retryAttempts_ = 0;
+        nextRetryTime_ = 0;
+    }
+}
+
+void VideoComponent::setStartupArtwork(const std::string& path) {
+    if (path.empty()) { startupArtwork_.reset(); return; }
+    if (startupArtwork_ && startupArtwork_->filePath() == path) return;
+    startupArtwork_ = std::make_unique<Image>(path, "", page, monitor_);
+    startupArtwork_->allocateGraphicsMemory();
 }
 
 void VideoComponent::computeDesiredIntent(bool visibleNow, const VideoSnapshot& snap) {
@@ -187,11 +282,14 @@ bool VideoComponent::update(float dt) {
     // 1. Fast-abort if hidden (Lazy Activation)
     if (!visibleNow) {
         pendingVideoRetry_ = false; // Drop retries if user scrolls past
-        if (!videoInst_) return Component::update(dt);
+        // Existing hidden streams can pause normally. New background work waits
+        // for visible first frames and is limited to one outstanding preroll.
+        if (listId_ != -1 && !instanceReady_ && !canStartBackgroundVideo()) return Component::update(dt);
+        if (listId_ == -1 && !videoInst_) return Component::update(dt);
     }
 
-    // 2. Enforce the Retry Backoff Timer!
-    // This stops the 60fps log spam if the pool OR the CPU is full.
+    // 2. Enforce the retry backoff timer.
+    // This prevents repeated open/acquire failures from being retried at 60 Hz.
     if (pendingVideoRetry_) {
         if (SDL_GetTicks() < nextRetryTime_) {
             return Component::update(dt); // Wait patiently
@@ -221,7 +319,7 @@ bool VideoComponent::update(float dt) {
         instanceReady_ = videoInst_->open(videoFile_);
 
         if (!instanceReady_) {
-            // CPU Preroll limit hit! Trigger exponential backoff.
+            // Open was not accepted/ready. Retry with exponential backoff.
             pendingVideoRetry_ = true;
             retryAttempts_ = std::max(1u, retryAttempts_ + 1); // Use std::max to ensure we scale correctly
             const uint32_t delay = std::min(250u, 16u * (1u << std::min(retryAttempts_, 4u)));
@@ -290,8 +388,39 @@ std::shared_ptr<IVideo> VideoComponent::extractVideo() {
     return std::move(videoInst_);
 }
 
+void VideoComponent::adoptVideo(std::shared_ptr<IVideo> video) {
+    if (!video || videoInst_ == video) return;
+
+    if (videoInst_) {
+        if (listId_ != -1) {
+            auto old = std::move(videoInst_);
+            VideoPool::releaseVideo(std::move(old), monitor_, listId_);
+        }
+        else {
+            videoInst_.reset();
+        }
+    }
+
+    videoInst_ = std::move(video);
+    videoInst_->setSoftOverlay(softOverlay_);
+
+    instanceReady_ = false;
+    dimensionsUpdated_ = false;
+    hasBeenOnScreen_ = false;
+    wasVisible_ = false;
+    wasPlayingBeforeFastScroll_ = false;
+    desiredState_ = PlaybackTarget::Paused;
+    pendingCommand_ = PlaybackCommand::None;
+
+    pendingVideoRetry_ = false;
+    retryAttempts_ = 0;
+    nextRetryTime_ = 0;
+    lastVolume_ = -1.0f;
+}
+
 void VideoComponent::freeGraphicsMemory() {
     Component::freeGraphicsMemory();
+    startupArtwork_.reset();
 
     if (!videoInst_) return;
 
@@ -305,12 +434,22 @@ void VideoComponent::freeGraphicsMemory() {
 }
 
 void VideoComponent::draw() {
-    if (!videoInst_ || !currentPage_ || !instanceReady_) {
+    if (!currentPage_) {
         return;
     }
 
 
-    SDL_Texture* texture = videoInst_->getTexture();
+    SDL_Texture* texture = videoInst_ && instanceReady_ ? videoInst_->getTexture() : nullptr;
+    if (!texture && startupArtwork_) {
+        startupArtwork_->pumpGraphicsPreparation();
+        if (startupArtwork_->isGraphicsReadyForFirstRender() && startupArtwork_->baseViewInfo.ImageWidth > 0) {
+            baseViewInfo.ImageWidth = startupArtwork_->baseViewInfo.ImageWidth;
+            baseViewInfo.ImageHeight = startupArtwork_->baseViewInfo.ImageHeight;
+            startupArtwork_->baseViewInfo = baseViewInfo;
+            startupArtwork_->draw();
+            return;
+        }
+    }
 
     if (texture) {
         SDL_FRect rect = {

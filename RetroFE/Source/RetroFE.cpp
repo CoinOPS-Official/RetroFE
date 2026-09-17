@@ -1,4 +1,4 @@
-﻿/* This file is part of RetroFE.
+/* This file is part of RetroFE.
  *
  * RetroFE is free software: you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -41,6 +41,7 @@
 #include "Video/VideoFactory.h"
 #include "Video/VideoPool.h"
 #include <algorithm>
+#include <array>
 #include <filesystem>
 #include <fstream>
 #include <gst/gst.h>
@@ -139,11 +140,28 @@ void RetroFE::render() {
 	static double displayedLateAvgUs = 0.0;
 	static double displayedLateMaxUs = 0.0;
 
+	// --- Rolling frame-work distribution (only active while FPS overlay is enabled) ---
+	// Fixed storage avoids per-frame allocation. At 60/120/144/240 Hz, 512 samples
+	// comfortably covers the one-second reporting window.
+	static std::array<double, 512> workSamples{};
+	static size_t workSampleCount = 0;
+	static double displayedWorkAvgMs = 0.0;
+	static double displayedWorkP95Ms = 0.0;
+	static double displayedWorkP99Ms = 0.0;
+	static double displayedWorkMaxMs = 0.0;
+	static uint32_t displayedWorkOver833 = 0;
+	static uint32_t displayedWorkOver1667 = 0;
+
 	// --- Visual Throttling ---
 	static uint64_t lastVisualUpdateTimestamp = 0;
 	const uint32_t visualUpdateInterval = 250; // Rebuild texture at 4Hz
 
 	const uint64_t r_startTicks = SDL_GetPerformanceCounter();
+
+	// Only profile SDL_RenderPresent() when the FPS overlay is enabled.
+	// With the overlay disabled this adds no extra performance-counter reads
+	// around Present and therefore remains effectively benign.
+	double presentWaitMsThisRender = 0.0;
 
 	// ---------------------------------------------------------
 	// 1. Clear render targets and draw the current page
@@ -157,7 +175,7 @@ void RetroFE::render() {
 			continue;
 		}
 
-		D3D11RenderLock renderLock(rr);
+
 		if (!SDL_SetRenderTarget(rr, rt)) {
 			LOG_ERROR(
 				"SDL",
@@ -215,7 +233,7 @@ void RetroFE::render() {
 			continue;
 		}
 
-		D3D11RenderLock renderLock(rr);
+
 		if (!SDL_SetRenderTarget(rr, nullptr)) {
 			LOG_ERROR(
 				"SDL",
@@ -281,26 +299,73 @@ void RetroFE::render() {
 		 * Draw it after Fit masking so the bars cannot cover it.
 		 */
 		if (showFps_ &&
-			i == 0 &&
-			fpsOverlayTexture_)
+			i == 0)
 		{
-			SDL_FRect dst{
-				20,
-				20,
-				static_cast<float>(fpsOverlayW_),
-				static_cast<float>(fpsOverlayH_)
-			};
+			if (fpsOverlayTexture_)
+			{
+				SDL_FRect dst{
+					20,
+					20,
+					static_cast<float>(fpsOverlayW_),
+					static_cast<float>(fpsOverlayH_)
+				};
 
-			SDL_RenderTexture(
-				rr,
-				fpsOverlayTexture_,
-				nullptr,
-				&dst
-			);
+				SDL_RenderTexture(
+					rr,
+					fpsOverlayTexture_,
+					nullptr,
+					&dst
+				);
+			}
+
+			if (fpsStatsOverlayTexture_)
+			{
+				SDL_FRect statsDst{
+					20,
+					24.0f + static_cast<float>(fpsOverlayH_),
+					static_cast<float>(fpsStatsOverlayW_),
+					static_cast<float>(fpsStatsOverlayH_)
+				};
+
+				SDL_RenderTexture(
+					rr,
+					fpsStatsOverlayTexture_,
+					nullptr,
+					&statsDst
+				);
+			}
 		}
 
-		renderLock.finish();
-		if (SDL_RenderPresent(rr)) D3D11VideoInterop::presented(rr);
+		if (showFps_)
+		{
+			const uint64_t presentStartTicks =
+				SDL_GetPerformanceCounter();
+
+			SDL_RenderPresent(rr);
+
+			const uint64_t presentEndTicks =
+				SDL_GetPerformanceCounter();
+
+			presentWaitMsThisRender +=
+				static_cast<double>(
+					presentEndTicks - presentStartTicks
+					) *
+				1000.0 /
+				static_cast<double>(freq_);
+		}
+		else
+		{
+			SDL_RenderPresent(rr);
+		}
+	}
+
+	if (showFps_)
+	{
+		lastPresentWaitMs_ = presentWaitMsThisRender;
+	}
+	else
+	{
+		lastPresentWaitMs_ = 0.0;
 	}
 
 	// ---------------------------------------------------------
@@ -316,6 +381,14 @@ void RetroFE::render() {
 			) *
 		1000.0 /
 		static_cast<double>(freq_);
+
+	const double currentRenderBusyMs =
+		showFps_
+		? std::max(
+			0.0,
+			currentRenderDurationMs - presentWaitMsThisRender
+		)
+		: currentRenderDurationMs;
 
 	// ---------------------------------------------------------
 	// 4. FPS display logic
@@ -344,6 +417,14 @@ void RetroFE::render() {
 		lateMaxUsInWindow = 0.0;
 		displayedLateAvgUs = 0.0;
 		displayedLateMaxUs = 0.0;
+
+		workSampleCount = 0;
+		displayedWorkAvgMs = 0.0;
+		displayedWorkP95Ms = 0.0;
+		displayedWorkP99Ms = 0.0;
+		displayedWorkMaxMs = 0.0;
+		displayedWorkOver833 = 0;
+		displayedWorkOver1667 = 0;
 	}
 
 	if (showFps_) {
@@ -354,10 +435,18 @@ void RetroFE::render() {
 		framesSinceFpsUpdate++;
 
 		accumulatedRenderMs +=
-			currentRenderDurationMs;
+			currentRenderBusyMs;
 
 		workSumMsInWindow +=
-			this->lastWorkMs_;
+			this->lastBusyWorkMs_;
+
+		// lastBusyWorkMs_ is the completed previous frame's main-thread work
+		// with SDL_RenderPresent/VSync blocking removed.
+		if (this->lastBusyWorkMs_ > 0.0 &&
+			workSampleCount < workSamples.size())
+		{
+			workSamples[workSampleCount++] = this->lastBusyWorkMs_;
+		}
 
 		lateSumUsInWindow +=
 			this->lastLateUs_;
@@ -405,9 +494,98 @@ void RetroFE::render() {
 			displayedLateMaxUs =
 				lateMaxUsInWindow;
 
+			if (workSampleCount > 0)
+			{
+				std::array<double, 512> sortedWork = workSamples;
+				std::sort(
+					sortedWork.begin(),
+					sortedWork.begin() + static_cast<std::ptrdiff_t>(workSampleCount)
+				);
+
+				auto percentile = [&](double p) -> double
+					{
+						if (workSampleCount == 0)
+							return 0.0;
+
+						const double rank =
+							p * static_cast<double>(workSampleCount - 1);
+
+						const size_t lo =
+							static_cast<size_t>(std::floor(rank));
+						const size_t hi =
+							std::min(lo + 1, workSampleCount - 1);
+
+						const double frac =
+							rank - static_cast<double>(lo);
+
+						return sortedWork[lo] +
+							(sortedWork[hi] - sortedWork[lo]) * frac;
+					};
+
+				double workSum = 0.0;
+				double workMax = 0.0;
+				uint32_t over833 = 0;
+				uint32_t over1667 = 0;
+
+				for (size_t i = 0; i < workSampleCount; ++i)
+				{
+					const double ms = workSamples[i];
+					workSum += ms;
+					workMax = std::max(workMax, ms);
+
+					if (ms > 8.33)
+						++over833;
+					if (ms > 16.67)
+						++over1667;
+				}
+
+				displayedWorkAvgMs =
+					workSum / static_cast<double>(workSampleCount);
+				displayedWorkP95Ms = percentile(0.95);
+				displayedWorkP99Ms = percentile(0.99);
+				displayedWorkMaxMs = workMax;
+				displayedWorkOver833 = over833;
+				displayedWorkOver1667 = over1667;
+			}
+			else
+			{
+				displayedWorkAvgMs = 0.0;
+				displayedWorkP95Ms = 0.0;
+				displayedWorkP99Ms = 0.0;
+				displayedWorkMaxMs = 0.0;
+				displayedWorkOver833 = 0;
+				displayedWorkOver1667 = 0;
+			}
+
 			displayedMemMB =
 				Utils::getMemoryUsage() /
 				1024;
+
+			// Emit one profiler record per completed one-second window.
+			// This is intentionally outside the per-frame hot path and only runs
+			// while the existing FPS/profiler display is enabled.
+			{
+				std::ostringstream perfLog;
+				perfLog.setf(std::ios::fixed);
+				perfLog.precision(2);
+
+				perfLog
+					<< "mode="
+					<< (Configuration::HardwareVideoAccel ? "HW" : "SW")
+					<< " fps=" << displayedFps
+					<< " busy_avg_ms=" << displayedWorkAvgMs
+					<< " busy_p95_ms=" << displayedWorkP95Ms
+					<< " busy_p99_ms=" << displayedWorkP99Ms
+					<< " busy_max_ms=" << displayedWorkMaxMs
+					<< " over_8_33=" << displayedWorkOver833
+					<< " over_16_67=" << displayedWorkOver1667
+					<< " present_ms=" << this->lastPresentWaitMs_
+					<< " draw_avg_ms=" << displayedRenderMs
+					<< " late_avg_us=" << displayedLateAvgUs
+					<< " late_max_us=" << displayedLateMaxUs;
+
+				LOG_DEBUG("FramePerf", perfLog.str());
+			}
 
 			lastFpsUpdateTimestamp =
 				now_ticks64 -
@@ -420,6 +598,7 @@ void RetroFE::render() {
 			workSumMsInWindow = 0.0;
 			lateSumUsInWindow = 0.0;
 			lateMaxUsInWindow = 0.0;
+			workSampleCount = 0;
 		}
 
 		// --- C. Live Work Update (10Hz) ---
@@ -442,7 +621,7 @@ void RetroFE::render() {
 
 			displayedWorkMsLive =
 				std::round(
-					this->lastWorkMs_ *
+					this->lastBusyWorkMs_ *
 					100.0
 				) /
 				100.0;
@@ -456,7 +635,8 @@ void RetroFE::render() {
 			lastVisualUpdateTimestamp =
 				now_ticks64;
 
-			char overlayText[420];
+			char overlayText[480];
+			char statsText[320];
 
 			int outW = 0;
 			int outH = 0;
@@ -476,11 +656,18 @@ void RetroFE::render() {
 				snprintf(
 					overlayText,
 					sizeof(overlayText),
-					"FPS: -- | Frame: -- ms | Work: -- ms | "
-					"Late(avg/max): --/-- us | Draw: -- ms | "
-					"Mem: -- MB | Res: %dx%d",
+					"FPS: -- | Frame: -- ms | Busy: -- ms | "
+					"Present: -- ms | Late(avg/max): --/-- us | "
+					"Draw: -- ms | Mem: -- MB | Res: %dx%d",
 					outW,
 					outH
+				);
+
+				snprintf(
+					statsText,
+					sizeof(statsText),
+					"Busy 1s avg/p95/p99/max: --/--/--/-- ms | "
+					">8.33: -- | >16.67: --"
 				);
 			}
 			else {
@@ -488,19 +675,33 @@ void RetroFE::render() {
 					overlayText,
 					sizeof(overlayText),
 					"FPS: %.1f | Frame: %.2f ms | "
-					"Work: %.2f ms | "
+					"Busy: %.2f ms | Present: %.2f ms | "
 					"Late(avg/max): %.1f/%.0f us | "
 					"Draw: %.2f ms | Mem: %zu MB | "
 					"Res: %dx%d",
 					displayedFps,
 					this->lastFrameTimeMs_,
 					displayedWorkMsLive,
+					this->lastPresentWaitMs_,
 					displayedLateAvgUs,
 					displayedLateMaxUs,
 					displayedRenderMs,
 					displayedMemMB,
 					outW,
 					outH
+				);
+
+				snprintf(
+					statsText,
+					sizeof(statsText),
+					"Busy 1s avg/p95/p99/max: %.2f/%.2f/%.2f/%.2f ms | "
+					">8.33: %u | >16.67: %u",
+					displayedWorkAvgMs,
+					displayedWorkP95Ms,
+					displayedWorkP99Ms,
+					displayedWorkMaxMs,
+					displayedWorkOver833,
+					displayedWorkOver1667
 				);
 			}
 
@@ -553,6 +754,48 @@ void RetroFE::render() {
 					}
 				}
 			}
+
+			// Second line: rolling busy-work distribution.
+			if (lastStatsOverlayText_ != statsText) {
+				lastStatsOverlayText_ = statsText;
+
+				if (fpsStatsOverlayTexture_) {
+					SDL_DestroyTexture(fpsStatsOverlayTexture_);
+					fpsStatsOverlayTexture_ = nullptr;
+				}
+
+				if (debugFont_) {
+					SDL_Color color{
+						255,
+						255,
+						0,
+						255
+					};
+
+					SDL_Surface* surf =
+						TTF_RenderText_Solid(
+							debugFont_,
+							statsText,
+							0,
+							color
+						);
+
+					if (surf) {
+						if (renderer0) {
+							fpsStatsOverlayTexture_ =
+								SDL_CreateTextureFromSurface(
+									renderer0,
+									surf
+								);
+
+							fpsStatsOverlayW_ = surf->w;
+							fpsStatsOverlayH_ = surf->h;
+						}
+
+						SDL_DestroySurface(surf);
+					}
+				}
+			}
 		}
 	}
 	else {
@@ -572,7 +815,16 @@ void RetroFE::render() {
 		fpsOverlayW_ = 0;
 		fpsOverlayH_ = 0;
 
+		if (fpsStatsOverlayTexture_) {
+			SDL_DestroyTexture(fpsStatsOverlayTexture_);
+			fpsStatsOverlayTexture_ = nullptr;
+		}
+
+		fpsStatsOverlayW_ = 0;
+		fpsStatsOverlayH_ = 0;
+
 		lastOverlayText_.clear();
+		lastStatsOverlayText_.clear();
 
 		lastVisualUpdateTimestamp = 0;
 
@@ -592,6 +844,14 @@ void RetroFE::render() {
 
 		displayedLateAvgUs = 0.0;
 		displayedLateMaxUs = 0.0;
+
+		workSampleCount = 0;
+		displayedWorkAvgMs = 0.0;
+		displayedWorkP95Ms = 0.0;
+		displayedWorkP99Ms = 0.0;
+		displayedWorkMaxMs = 0.0;
+		displayedWorkOver833 = 0;
+		displayedWorkOver1667 = 0;
 	}
 }
 
@@ -943,6 +1203,7 @@ bool RetroFE::deInitialize() {
 	if (db_) { delete db_; db_ = nullptr; }
 	if (debugFont_) { TTF_CloseFont(debugFont_); debugFont_ = nullptr; }
 	if (fpsOverlayTexture_) { SDL_DestroyTexture(fpsOverlayTexture_); fpsOverlayTexture_ = nullptr; }
+	if (fpsStatsOverlayTexture_) { SDL_DestroyTexture(fpsStatsOverlayTexture_); fpsStatsOverlayTexture_ = nullptr; }
 
 	initialized = false;
 	Image::cleanupTextureCache();
@@ -3257,6 +3518,11 @@ bool RetroFE::run() {
 				lastWorkMs_ =
 					static_cast<double>(workEndTicks - frameStartTicks) * 1000.0 / static_cast<double>(freq_);
 
+				lastBusyWorkMs_ =
+					showFps_
+					? std::max(0.0, lastWorkMs_ - lastPresentWaitMs_)
+					: 0.0;
+
 				// 5. High-precision sleep
 				sleepUntilTicks(sleepTargetTicks, (uint64_t)freq_, frameInterval_s);
 
@@ -3276,8 +3542,15 @@ bool RetroFE::run() {
 				const uint64_t loopEnd = SDL_GetPerformanceCounter();
 				const double frameTimeMs =
 					static_cast<double>(loopEnd - frameStartTicks) * 1000.0 / static_cast<double>(freq_);
-				// With V-Sync, "Work" includes the time spent waiting inside SDL_RenderPresent.
+				// Total loop time includes the block inside SDL_RenderPresent().
 				lastWorkMs_ = frameTimeMs;
+
+				// For profiling, remove Present/VSync blocking so this represents
+				// actual main-thread work performed by RetroFE.
+				lastBusyWorkMs_ =
+					showFps_
+					? std::max(0.0, frameTimeMs - lastPresentWaitMs_)
+					: 0.0;
 
 				// Calculate Late: Did the frame take longer than the hardware interval?
 				// We use a 0.5ms epsilon to ignore minor OS scheduling fluctuations.
