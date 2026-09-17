@@ -32,7 +32,8 @@ enum class PlaybackTarget {
 
 enum class PlaybackCommand {
     None,
-    Restart
+    Restart,
+    RewindAndPause
 };
 
 class VideoComponent : public Component {

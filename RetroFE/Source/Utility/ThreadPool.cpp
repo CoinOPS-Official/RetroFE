@@ -11,7 +11,7 @@
 ThreadPool::ThreadPool(size_t threads) : stop(false), activeWorkers(0) {
 	for (size_t i = 0; i < threads; ++i)
 		workers.emplace_back([this] {
-		if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW)) {
+		if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_NORMAL)) {
 			LOG_WARNING("ThreadPool", "Failed to set worker priority: " + std::string(SDL_GetError()));
 		}
 #if defined(__linux__)

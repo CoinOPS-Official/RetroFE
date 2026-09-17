@@ -1106,7 +1106,6 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		"qos", FALSE,
 		"drop", TRUE,
 		"sync", TRUE,
-		"async", FALSE,
 		"enable-last-sample", FALSE,
 		"wait-on-eos", FALSE,
 		nullptr);
@@ -1363,6 +1362,11 @@ bool GStreamerVideo::openMedia(const std::string& file, bool cpuFallback) {
 
 	const uint64_t newEpoch = nextUniquePlaybackEpoch_++;
 	playbackEpoch_.store(newEpoch, std::memory_order_release);
+
+	// A retarget supersedes any hide-time rewind belonging to the old URI.
+	// Bump the request id first so an old worker cannot clear a newer request.
+	rewindRequestId_.fetch_add(1, std::memory_order_acq_rel);
+	rewindPending_.store(false, std::memory_order_release);
 
 	if (cbCtx_) {
 		cbCtx_->epoch.store(newEpoch, std::memory_order_release);
@@ -2178,6 +2182,13 @@ void GStreamerVideo::resume() {
 		return;
 	}
 
+	// A visible component calls resume() every update while Playing is desired.
+	// If its hide-time rewind has not finished issuing yet, simply defer this
+	// attempt; the next update will try again. This prevents separate pool
+	// workers from racing PLAYING against PAUSED + seek(0).
+	if (rewindPending_.load(std::memory_order_acquire))
+		return;
+
 	if (playbackState_.load(std::memory_order_acquire) ==
 		PlaybackState::Playing)
 	{
@@ -2217,6 +2228,74 @@ void GStreamerVideo::restart() {
 			GST_SEEK_TYPE_SET, 0,
 			GST_SEEK_TYPE_NONE, GST_CLOCK_TIME_NONE);
 		gst_object_unref(p);
+		});
+}
+
+void GStreamerVideo::rewindAndPause() {
+	if (!pipeline_ ||
+		lifecycle_.load(std::memory_order_acquire) != PipelineLifecycle::Ready)
+	{
+		return;
+	}
+
+	// Publish the desired target immediately. This also makes the normal pause()
+	// path deduplicate while the combined operation is pending.
+	playbackState_.store(
+		PlaybackState::Paused,
+		std::memory_order_release);
+
+	const uint64_t requestId =
+		rewindRequestId_.fetch_add(1, std::memory_order_acq_rel) + 1;
+	const uint64_t epoch =
+		playbackEpoch_.load(std::memory_order_acquire);
+
+	rewindPending_.store(true, std::memory_order_release);
+
+	std::weak_ptr<GStreamerVideo> weak = weak_from_this();
+	GstElement* p = pipeline_;
+	gst_object_ref(p);
+
+	ThreadPool::getInstance().enqueue(
+		[weak, p, epoch, requestId]() {
+			auto self = weak.lock();
+
+			const bool stillCurrent =
+				self &&
+				self->rewindRequestId_.load(std::memory_order_acquire) == requestId &&
+				self->playbackEpoch_.load(std::memory_order_acquire) == epoch &&
+				self->lifecycle_.load(std::memory_order_acquire) == PipelineLifecycle::Ready;
+
+			if (stillCurrent) {
+				// Keep both operations on one worker so the hide transition itself is
+				// ordered. A flushing seek while PAUSED causes the start of the stream
+				// to preroll without intentionally returning it to PLAYING.
+				gst_element_set_state(p, GST_STATE_PAUSED);
+
+				// Retarget/unload may have happened while set_state() was being issued.
+				if (self->rewindRequestId_.load(std::memory_order_acquire) == requestId &&
+					self->playbackEpoch_.load(std::memory_order_acquire) == epoch &&
+					self->lifecycle_.load(std::memory_order_acquire) == PipelineLifecycle::Ready)
+				{
+					gst_element_seek(
+						p,
+						1.0,
+						GST_FORMAT_TIME,
+						(GstSeekFlags)(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT),
+						GST_SEEK_TYPE_SET,
+						0,
+						GST_SEEK_TYPE_NONE,
+						GST_CLOCK_TIME_NONE);
+				}
+			}
+
+			// Only the worker owning the current request may release the gate.
+			if (self &&
+				self->rewindRequestId_.load(std::memory_order_acquire) == requestId)
+			{
+				self->rewindPending_.store(false, std::memory_order_release);
+			}
+
+			gst_object_unref(p);
 		});
 }
 

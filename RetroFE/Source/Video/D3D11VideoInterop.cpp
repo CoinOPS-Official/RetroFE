@@ -6,6 +6,8 @@
 #include <mutex>
 #include <sstream>
 #include <iomanip>
+#include <unordered_map>
+#include <cstdint>
 #ifdef _WIN32
 #include <d3d11.h>
 #include <d3d11_4.h>
@@ -21,6 +23,29 @@ namespace {
     double elapsedMs(Uint64 startNs, Uint64 endNs) {
         return static_cast<double>(endNs - startNs) / 1000000.0;
     }
+
+    struct WrapperKey {
+        uintptr_t resource = 0;
+        UINT subresource = 0;
+        SDL_Colorspace colorspace = SDL_COLORSPACE_UNKNOWN;
+
+        bool operator==(const WrapperKey& other) const noexcept {
+            return resource == other.resource &&
+                   subresource == other.subresource &&
+                   colorspace == other.colorspace;
+        }
+    };
+
+    struct WrapperKeyHash {
+        size_t operator()(const WrapperKey& key) const noexcept {
+            size_t h = std::hash<uintptr_t>{}(key.resource);
+            h ^= std::hash<UINT>{}(key.subresource) +
+                 0x9e3779b9u + (h << 6) + (h >> 2);
+            h ^= std::hash<Uint32>{}(static_cast<Uint32>(key.colorspace)) +
+                 0x9e3779b9u + (h << 6) + (h >> 2);
+            return h;
+        }
+    };
 
     void logInteropPerf(
         const char* operation,
@@ -99,6 +124,54 @@ struct D3D11VideoInterop::Impl {
     ID3D11Query* currentFence = nullptr;
     std::vector<PendingFrame> pending;
 
+    // Decoder surfaces repeat heavily (observed 15 stable resources per
+    // decoder), so keep the SDL wrapper/SRVs alive and reuse them. The key
+    // includes colorspace because that is baked into SDL's YUV conversion
+    // state at texture creation time.
+    static constexpr size_t MAX_WRAPPER_CACHE = 32;
+    std::unordered_map<WrapperKey, SDL_Texture*, WrapperKeyHash> wrapperCache;
+
+    bool wrapperInFlight(SDL_Texture* texture) const {
+        if (!texture)
+            return false;
+
+        if (currentTexture == texture)
+            return true;
+
+        for (const auto& frame : pending) {
+            if (frame.texture == texture)
+                return true;
+        }
+
+        return false;
+    }
+
+    void pruneWrapperCache(size_t targetSize) {
+        if (wrapperCache.size() <= targetSize)
+            return;
+
+        for (auto it = wrapperCache.begin();
+             it != wrapperCache.end() && wrapperCache.size() > targetSize;)
+        {
+            SDL_Texture* texture = it->second;
+            if (wrapperInFlight(texture)) {
+                ++it;
+                continue;
+            }
+
+            SDL_DestroyTexture(texture);
+            it = wrapperCache.erase(it);
+        }
+    }
+
+    void destroyWrapperCache() {
+        for (auto& entry : wrapperCache) {
+            if (entry.second)
+                SDL_DestroyTexture(entry.second);
+        }
+        wrapperCache.clear();
+    }
+
     explicit Impl(SDL_Renderer* r) : renderer(r) {}
 
     ID3D11DeviceContext* context() const {
@@ -106,10 +179,10 @@ struct D3D11VideoInterop::Impl {
     }
 
     void destroyFrame(PendingFrame& frame) {
-        if (frame.texture) {
-            SDL_DestroyTexture(frame.texture);
-            frame.texture = nullptr;
-        }
+        // frame.texture is owned by wrapperCache and is intentionally retained
+        // across decoder-surface reuse. Only the per-use sample/fence retire.
+        frame.texture = nullptr;
+
         if (frame.sample) {
             gst_sample_unref(frame.sample);
             frame.sample = nullptr;
@@ -132,6 +205,7 @@ struct D3D11VideoInterop::Impl {
 
         auto* ctx = context();
         ctx->End(currentFence);
+        // The texture pointer is non-owning; wrapperCache owns the SDL texture.
         pending.push_back({ currentTexture, currentSample, currentFence });
         currentFence = nullptr;
 
@@ -156,13 +230,9 @@ struct D3D11VideoInterop::Impl {
                 continue;
             }
 
-            // GPU has finished sampling this decoder-owned surface.
-            // SDL texture destruction and fence release are cheap and stay
-            // on the main thread.
-            if (it->texture) {
-                SDL_DestroyTexture(it->texture);
-                it->texture = nullptr;
-            }
+            // GPU has finished sampling this decoder-owned surface. The SDL
+            // wrapper stays cached; only this use's fence and GstSample retire.
+            it->texture = nullptr;
 
             if (it->fence) {
                 it->fence->Release();
@@ -185,6 +255,12 @@ struct D3D11VideoInterop::Impl {
                     });
             }
         }
+
+        // Normally the active decoder pool is much smaller than this limit.
+        // If instant-URI retargeting replaces the pool, stale wrappers become
+        // evictable once their last GPU use has retired.
+        if (wrapperCache.size() > MAX_WRAPPER_CACHE)
+            pruneWrapperCache(MAX_WRAPPER_CACHE);
     }
 
     // Normal retarget/reuse path.
@@ -258,6 +334,11 @@ struct D3D11VideoInterop::Impl {
         }
 
         pending.clear();
+
+        // All renderer reads are complete here, so cached SDL wrappers can be
+        // safely destroyed and release their COM references to decoder textures.
+        destroyWrapperCache();
+        currentTexture = nullptr;
     }
 
     ~Impl() {
@@ -392,65 +473,88 @@ SDL_Texture* D3D11VideoInterop::copy(GstSample* sample) {
     if (info.colorimetry.matrix == GST_VIDEO_COLOR_MATRIX_BT2020)
         color = full ? SDL_COLORSPACE_BT2020_FULL : SDL_COLORSPACE_BT2020_LIMITED;
 
-    SDL_PropertiesID props = SDL_CreateProperties();
-    if (!props) {
-        sourceTexture->Release();
-        p.error = SDL_GetError();
-        return nullptr;
-    }
-
-    SDL_SetNumberProperty(
-        props,
-        SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
-        SDL_PIXELFORMAT_NV12);
-
-    SDL_SetNumberProperty(
-        props,
-        SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER,
-        SDL_TEXTUREACCESS_STATIC);
-
-    SDL_SetNumberProperty(
-        props,
-        SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER,
-        sourceDesc.Width);
-
-    SDL_SetNumberProperty(
-        props,
-        SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER,
-        sourceDesc.Height);
-
-    SDL_SetNumberProperty(
-        props,
-        SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER,
-        color);
-
-    SDL_SetPointerProperty(
-        props,
-        SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER,
-        sourceTexture);
-
-    SDL_SetNumberProperty(
-        props,
-        SDL_PROP_TEXTURE_CREATE_D3D11_SUBRESOURCE_NUMBER,
-        static_cast<Sint64>(subresource));
+    const WrapperKey key{
+        reinterpret_cast<uintptr_t>(sourceTexture),
+        subresource,
+        color
+    };
 
     const Uint64 importStartNs = SDL_GetTicksNS();
 
-    SDL_Texture* texture =
-        SDL_CreateTextureWithProperties(p.renderer, props);
+    SDL_Texture* texture = nullptr;
+    bool insertedWrapper = false;
+    auto cached = p.wrapperCache.find(key);
+
+    if (cached != p.wrapperCache.end()) {
+        texture = cached->second;
+    } else {
+        // Make room before adding a new decoder pool entry. Only wrappers with
+        // no current/pending GPU use are eligible for eviction.
+        if (p.wrapperCache.size() >= Impl::MAX_WRAPPER_CACHE)
+            p.pruneWrapperCache(Impl::MAX_WRAPPER_CACHE - 1);
+
+        SDL_PropertiesID props = SDL_CreateProperties();
+        if (!props) {
+            sourceTexture->Release();
+            p.error = SDL_GetError();
+            return nullptr;
+        }
+
+        SDL_SetNumberProperty(
+            props,
+            SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER,
+            SDL_PIXELFORMAT_NV12);
+
+        SDL_SetNumberProperty(
+            props,
+            SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER,
+            SDL_TEXTUREACCESS_STATIC);
+
+        SDL_SetNumberProperty(
+            props,
+            SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER,
+            sourceDesc.Width);
+
+        SDL_SetNumberProperty(
+            props,
+            SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER,
+            sourceDesc.Height);
+
+        SDL_SetNumberProperty(
+            props,
+            SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER,
+            color);
+
+        SDL_SetPointerProperty(
+            props,
+            SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER,
+            sourceTexture);
+
+        SDL_SetNumberProperty(
+            props,
+            SDL_PROP_TEXTURE_CREATE_D3D11_SUBRESOURCE_NUMBER,
+            static_cast<Sint64>(subresource));
+
+        texture = SDL_CreateTextureWithProperties(p.renderer, props);
+        SDL_DestroyProperties(props);
+
+        if (!texture) {
+            sourceTexture->Release();
+            p.error = SDL_GetError();
+            return nullptr;
+        }
+
+        SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
+
+        p.wrapperCache.emplace(key, texture);
+        insertedWrapper = true;
+    }
 
     const double importMs =
         elapsedMs(importStartNs, SDL_GetTicksNS());
 
-    SDL_DestroyProperties(props);
+    // SDL's cached wrapper owns its own COM reference to the decoder texture.
     sourceTexture->Release();
-
-    if (!texture) {
-        p.error = SDL_GetError();
-        return nullptr;
-    }
-
-    SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_LINEAR);
 
     // Allocate the completion query before exposing the decoder surface to SDL.
     // A context Flush alone cannot make early sample release safe.
@@ -458,7 +562,12 @@ SDL_Texture* D3D11VideoInterop::copy(GstSample* sample) {
     D3D11_QUERY_DESC queryDesc{};
     queryDesc.Query = D3D11_QUERY_EVENT;
     if (!p.context() || FAILED(g_device->CreateQuery(&queryDesc, &fence))) {
-        SDL_DestroyTexture(texture);
+        if (insertedWrapper) {
+            auto it = p.wrapperCache.find(key);
+            if (it != p.wrapperCache.end() && it->second == texture)
+                p.wrapperCache.erase(it);
+            SDL_DestroyTexture(texture);
+        }
         p.error = "could not create decoder surface completion query";
         return nullptr;
     }

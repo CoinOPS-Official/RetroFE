@@ -28,7 +28,7 @@ void GlibLoop::start() {
     loop_ = g_main_loop_new(ctx_, FALSE);
 
     th_ = std::thread([this] {
-        if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_LOW)) {
+        if (!SDL_SetCurrentThreadPriority(SDL_THREAD_PRIORITY_NORMAL)) {
             // Optionally log this once, though not critical
         }
         g_main_context_push_thread_default(ctx_);

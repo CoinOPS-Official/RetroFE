@@ -205,10 +205,13 @@ void VideoComponent::setStartupArtwork(const std::string& path) {
 }
 
 void VideoComponent::computeDesiredIntent(bool visibleNow, const VideoSnapshot& snap) {
-    // 1. Edge detection for "Rewind on Hide" (so it starts fresh next time user sees it)
+    // 1. Edge detection for "Rewind on Hide". The backend combines the
+    // rewind and pause into one ordered async operation, so a retained video
+    // is prepared at the beginning while it is off-screen.
     if (!visibleNow && wasVisible_ && hasBeenOnScreen_) {
-        pendingCommand_ = PlaybackCommand::Restart;
-        wasVisible_ = visibleNow;
+        desiredState_ = PlaybackTarget::Paused;
+        pendingCommand_ = PlaybackCommand::RewindAndPause;
+        wasVisible_ = false;
         return;
     }
     wasVisible_ = visibleNow;
@@ -261,7 +264,22 @@ void VideoComponent::syncPlaybackIntent(const VideoSnapshot& snap) {
         hasBeenOnScreen_ = true;
     }
 
-    // Dispatch the intended transient command
+    // Dispatch the intended transient command. Hide-time rewind/pause is one
+    // backend operation; do not immediately follow it with a second pause job.
+    if (pendingCommand_ == PlaybackCommand::RewindAndPause) {
+        if (auto* gstVideo = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
+            gstVideo->rewindAndPause();
+        }
+        else {
+            // Generic fallback for any future non-GStreamer backend.
+            videoInst_->restart();
+            videoInst_->pause();
+        }
+
+        pendingCommand_ = PlaybackCommand::None;
+        return;
+    }
+
     if (pendingCommand_ == PlaybackCommand::Restart) {
         videoInst_->restart();
         pendingCommand_ = PlaybackCommand::None; // Consume it
@@ -288,8 +306,8 @@ bool VideoComponent::update(float dt) {
         if (listId_ == -1 && !videoInst_) return Component::update(dt);
     }
 
-    // 2. Enforce the retry backoff timer.
-    // This prevents repeated open/acquire failures from being retried at 60 Hz.
+    // 2. Enforce the Retry Backoff Timer!
+    // This stops the 60fps log spam if the pool OR the CPU is full.
     if (pendingVideoRetry_) {
         if (SDL_GetTicks() < nextRetryTime_) {
             return Component::update(dt); // Wait patiently
@@ -319,7 +337,7 @@ bool VideoComponent::update(float dt) {
         instanceReady_ = videoInst_->open(videoFile_);
 
         if (!instanceReady_) {
-            // Open was not accepted/ready. Retry with exponential backoff.
+            // CPU Preroll limit hit! Trigger exponential backoff.
             pendingVideoRetry_ = true;
             retryAttempts_ = std::max(1u, retryAttempts_ + 1); // Use std::max to ensure we scale correctly
             const uint32_t delay = std::min(250u, 16u * (1u << std::min(retryAttempts_, 4u)));
