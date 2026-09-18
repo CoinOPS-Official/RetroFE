@@ -27,7 +27,6 @@ namespace {
 
 struct Options {
     std::string media;
-    bool shaderPool = false;
     bool hidden = false;
     bool vsync = false;
     bool bounce = false;
@@ -89,7 +88,6 @@ std::optional<Options> parseOptions(int argc, char** argv) {
             printUsage(argv[0]);
             return std::nullopt;
         }
-        if (argument == "--shader-pool") { options.shaderPool = true; continue; }
         if (argument == "--hidden") {
             options.hidden = true;
             continue;
@@ -886,38 +884,6 @@ private:
 
         GstPad* sinkPad =
             gst_element_get_static_pad(videoAppSink_, "sink");
-        if (options_.shaderPool) gst_pad_add_probe(sinkPad, GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,
-            [](GstPad*, GstPadProbeInfo* probe, gpointer data) {
-                auto* self = static_cast<Nv12CopyPlayer*>(data);
-                auto* query = GST_PAD_PROBE_INFO_QUERY(probe);
-                if (GST_QUERY_TYPE(query) != GST_QUERY_ALLOCATION) return GST_PAD_PROBE_OK;
-                GstCaps* caps = nullptr;
-                gst_query_parse_allocation(query, &caps, nullptr);
-                GstVideoInfo info{};
-                if (!caps || !gst_video_info_from_caps(&info, caps)) return GST_PAD_PROBE_OK;
-                auto* pool = gst_d3d11_buffer_pool_new(self->gstDevice_);
-                auto* config = gst_buffer_pool_get_config(pool);
-                gst_buffer_pool_config_set_params(config, caps, static_cast<guint>(info.size), 0, 0);
-                gst_buffer_pool_config_add_option(config, GST_BUFFER_POOL_OPTION_VIDEO_META);
-                auto* params = gst_d3d11_allocation_params_new(self->gstDevice_, &info,
-                    GST_D3D11_ALLOCATION_FLAG_DEFAULT, D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET, 0);
-                if (!params) { gst_structure_free(config); gst_object_unref(pool); return GST_PAD_PROBE_OK; }
-                gst_buffer_pool_config_set_d3d11_allocation_params(config, params);
-                gst_d3d11_allocation_params_free(params);
-                if (!gst_buffer_pool_set_config(pool, config)) {
-                    logLine("Shader-readable pool configuration rejected");
-                    gst_object_unref(pool); return GST_PAD_PROBE_OK;
-                }
-                config = gst_buffer_pool_get_config(pool);
-                guint size = 0;
-                gst_buffer_pool_config_get_params(config, nullptr, &size, nullptr, nullptr);
-                gst_structure_free(config);
-                gst_query_add_allocation_pool(query, pool, size, 0, 0);
-                gst_query_add_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr);
-                gst_object_unref(pool);
-                logLine("Allocation: offered shared-device shader-readable/render-target pool (0x28)");
-                return GST_PAD_PROBE_HANDLED;
-            }, this, nullptr);
         GstPad* ghostPad = gst_ghost_pad_new("sink", sinkPad);
         gst_object_unref(sinkPad);
         if (!ghostPad || !gst_element_add_pad(bin, ghostPad)) {
@@ -1043,66 +1009,6 @@ private:
                 "Rejected NV12 copy source with native format ",
                 dxgiFormatName(description.Format));
             return std::nullopt;
-        }
-
-        if (!inspectedNative_ || description.Width != inspectedDescription_.Width ||
-            description.Height != inspectedDescription_.Height || description.ArraySize != inspectedDescription_.ArraySize ||
-            description.BindFlags != inspectedDescription_.BindFlags || description.MiscFlags != inspectedDescription_.MiscFlags ||
-            description.Format != inspectedDescription_.Format) {
-            inspectedNative_ = true;
-            inspectedDescription_ = description;
-            logLine("Native decoder allocation: ", description.Width, "x", description.Height,
-                "; visible=", info.width, "x", info.height,
-                "; format=", dxgiFormatName(description.Format),
-                "; arraySize=", description.ArraySize, "; mipLevels=", description.MipLevels,
-                "; subresource=", subresource, "; sampleCount=", description.SampleDesc.Count,
-                "; bindFlags=0x", std::hex, description.BindFlags,
-                "; miscFlags=0x", description.MiscFlags, "; cpuAccess=0x", description.CPUAccessFlags,
-                std::dec, "; sameDevice=true; shaderReadableFlag=",
-                (description.BindFlags & D3D11_BIND_SHADER_RESOURCE) != 0);
-            if (auto* crop = gst_buffer_get_video_crop_meta(buffer))
-                logLine("Crop metadata: ", crop->x, ",", crop->y, " ", crop->width, "x", crop->height);
-            logLine("Colorimetry: matrix=", info.colorimetry.matrix, "; range=", info.colorimetry.range,
-                    "; transfer=", info.colorimetry.transfer, "; primaries=", info.colorimetry.primaries);
-            // Probe views of this exact decoder allocation, not a copy target.
-            // No draws or resource-content changes are issued by these probes.
-            d3dMultithread_->Enter();
-            for (DXGI_FORMAT plane : {DXGI_FORMAT_R8_UNORM, DXGI_FORMAT_R8G8_UNORM}) {
-                D3D11_SHADER_RESOURCE_VIEW_DESC view{};
-                view.Format = plane;
-                if (description.ArraySize > 1) {
-                    view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
-                    view.Texture2DArray.MostDetailedMip = subresource % description.MipLevels;
-                    view.Texture2DArray.MipLevels = 1;
-                    view.Texture2DArray.FirstArraySlice = subresource / description.MipLevels;
-                    view.Texture2DArray.ArraySize = 1;
-                } else {
-                    view.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
-                    view.Texture2D.MostDetailedMip = subresource;
-                    view.Texture2D.MipLevels = 1;
-                }
-                ID3D11ShaderResourceView* srv = nullptr;
-                const HRESULT result = sdlDevice_->CreateShaderResourceView(nativeTexture, &view, &srv);
-                logLine("Decoder plane SRV probe ", plane == DXGI_FORMAT_R8_UNORM ? "Y" : "UV",
-                        ": HRESULT=0x", std::hex, static_cast<unsigned long>(result), std::dec);
-                if (srv) srv->Release();
-            }
-            if (description.ArraySize == 1 && subresource == 0) {
-                auto props = SDL_CreateProperties();
-                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_NV12);
-                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, description.Width);
-                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, description.Height);
-                SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, sdlColorspaceFor(info));
-                SDL_SetPointerProperty(props, SDL_PROP_TEXTURE_CREATE_D3D11_TEXTURE_POINTER, nativeTexture);
-                auto* wrapped = SDL_CreateTextureWithProperties(renderer_, props);
-                SDL_DestroyProperties(props);
-                logLine("Direct SDL wrapper probe: ", wrapped ? "SUCCESS (not a playback test)" : SDL_GetError());
-                if (wrapped) SDL_DestroyTexture(wrapped);
-            } else {
-                logLine("Direct SDL wrapper probe skipped: decoder array/subresource needs a compatible SDL view path");
-            }
-            d3dMultithread_->Leave();
-            logLine("Inspection complete; continuing existing NV12 GPU-copy playback");
         }
 
         return copyNv12Sample(
@@ -1455,8 +1361,6 @@ private:
     std::uint64_t activeCpuStart100ns_ = processCpuTime100ns();
     bool activeMeasurementStarted_ = false;
 
-    D3D11_TEXTURE2D_DESC inspectedDescription_{};
-    bool inspectedNative_ = false;
     bool loggedCaps_ = false;
     bool finished_ = false;
     bool failed_ = false;

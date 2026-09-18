@@ -20,7 +20,6 @@
 #include "../Page.h"
 #include <SDL3/SDL.h>
 #include <vector>
-#include <cstdint>
 
 
 class FontManager;
@@ -60,8 +59,6 @@ private:
     float cachedHeight_ = 0;
     float lastScale_ = 0;
     float lastMaxWidth_ = 0;
-    FontManager* lastFont_ = nullptr;
-    uint64_t lastFontGeneration_ = 0;
-    int lastMipSize_ = 0;
     bool needsUpdate_ = true;
 };
+

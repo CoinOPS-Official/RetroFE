@@ -120,18 +120,3 @@ presentation time, wall time, and process CPU use.
 In the validated 30-second 1920x1080 H.264 run, this lifecycle accepted all 899
 received frames, made 899 GPU copies and 1,795 presents, dropped no frames, and
 used 9 percent steady-state process CPU.
-# Decoder allocation investigation
-
-Source/runtime follow-up: GStreamer 1.28.7 `gstd3d11decoder.cpp` creates its own decoder pool; it uses the downstream pool for copied output, not decoding. Its separate shader-readable decoder textures are enabled only when the selected DXVA configuration reports ConfigDecoderSpecific bit 0x4000. This machine's H.264 runtime trace reports `ConfigDecoderSpecific 0x0`, so that path is not selected. For direct decoder output it returns the internal buffer; otherwise it allocates a downstream buffer and calls crop_and_copy_buffer. Offering the shader pool therefore does not force shader-readable decoding. Trace saved in `build/decoder-policy-1.28.7.log`. Debug logging also emitted a GStreamer `category != NULL` assertion; this diagnostic run is not a clean stress test.
-
-For the tested H.264 configuration, retain the one-copy NV12 path. Forcing downstream output could move a GPU copy into GStreamer but would not establish zero-copy. Results do not rule out other codecs, driver configurations or decoder backends.
-
-After updating to GStreamer 1.28.7, the identical `--shader-pool` kof99.mp4 test produced the same allocation result: ArraySize=6, BindFlags=0x200, shaderReadableFlag=0, and both SRV probes failed with 0x80070057. Playback completed with 181 accepted frames, zero rejected/dropped frames and three reusable copy wrappers. Output: `build/shader-pool-1.28.7.log`. Updating alone did not enable direct sampling in this configuration.
-
-GStreamer 1.28.1 allocation experiment: `--shader-pool` offers a shared-device output pool with SHADER_RESOURCE | RENDER_TARGET (0x28) and VideoMeta. Testing the same kof99.mp4 still delivered decoder-only NV12 arrays (ArraySize=6, BindFlags=0x200); both plane SRV probes failed with 0x80070057. No standalone shader-readable output was observed during that run. Playback completed: 180 accepted, zero rejected, one callback drop, three copy wrappers. Full baseline output is saved locally in `build/shader-pool-1.28.1.log`. Repeat this exact test after updating GStreamer; offering the pool does not guarantee the decoder will use it for every output.
-
-The prototype logs native dimensions, visible dimensions, array size, subresource, bind flags and colorimetry on the first frame and allocation-layout changes. It probes Y/UV shader-resource views of the actual input texture and, for standalone subresource-zero textures, SDL wrapping. These are creation-only probes; playback continues through the existing NV12 copy ring. Wrapper success would not establish safe direct playback or zero internal decoder copies.
-
-Local test (2026-09-13), `videoFULL/kof99.mp4`: initial NV12 1920x1088 allocation (visible 1920x1080), ArraySize=10, BindFlags=0x200 (decoder only). Later input used ArraySize=1, BindFlags=0x20 (render target only). Both lacked shader-resource binding; Y/UV probes returned 0x80070057. SDL rejected wrapping the standalone texture. Playback completed with 180 accepted frames, zero rejected frames and three copy wrappers (one callback-dropped frame).
-
-Next investigation: request shader-readable downstream allocation through GStreamer's allocation negotiation, then repeat these probes and determine whether GStreamer performs an internal copy. Merely inserting a conversion/copy element would not demonstrate end-to-end zero-copy. Production D3D11 interop is unchanged.

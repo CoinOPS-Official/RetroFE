@@ -6,10 +6,8 @@
 #include <SDL3_ttf/SDL_ttf.h>
 
 #include <string>
-#include <cstdint>
 #include <unordered_map>
 #include <map>
-#include <set>
 #include <vector>  // NEW: needed for std::vector<TmpGlyph>
 
 class FontManager {
@@ -26,7 +24,6 @@ public:
     // Each MipLevel corresponds to a specific font size.
     struct MipLevel {
         int fontSize = 0;
-        int outlinePx = 0;
         int height = 0, ascent = 0, descent = 0;
         SDL_Texture* fillTexture = nullptr;      // prebuilt atlas (static glyphs)
         SDL_Texture* outlineTexture = nullptr;   // prebuilt outlines (optional)
@@ -43,7 +40,6 @@ public:
         std::unordered_map<Uint32, GlyphInfo> glyphs;
 
         // Simple shelf packing
-        int dynamicAtlasSize = 0;
         int dynamicNextX = 0;
         int dynamicNextY = 0;
         int dynamicRowHeight = 0;
@@ -60,7 +56,6 @@ public:
     // Lifetime methods
     bool initialize();
     void deInitialize();
-    uint64_t getResourceGeneration() const { return resourceGeneration_; }
 
     // Styling knobs (mostly unchanged)
     void setOutline(int px, SDL_Color color) { outlinePx_ = (px < 0 ? 0 : px); outlineColor_ = color; }
@@ -69,25 +64,19 @@ public:
     // --- NEW AND MODIFIED QUERIES ---
 
     // NEW: The primary method to get font data for rendering.
-    // Read-only ceiling selection; oversized requests use the largest prepared atlas.
-    const MipLevel* getMipLevelForSize(float targetSize) const;
-    const MipLevel* getMipLevelForHeight(float targetHeight) const;
-    // Preparation only: called while parsing layouts, never by draw/select.
-    bool prepareSize(float size);
-    bool prepareHeight(float height);
+    // Given a target render size, it returns the most appropriate pre-generated atlas.
+    const MipLevel* getMipLevelForSize(int targetSize) const;
 
-    // Stable loadFontSize reference metrics, retained for height-based layout.
+    // MODIFIED: These now return metrics for the highest-resolution atlas,
+    // which are needed for stable layout calculations.
     int       getMaxHeight()   const { return max_height_; }
     int       getMaxAscent()   const { return max_ascent_; }
     int       getMaxFontSize() const { return maxFontSize_; }
     SDL_Color getColor()       const { return color_; }
 
-    // Legacy overloads use loadFontSize; selected-mip overloads match drawing.
+    // Metrics will now use the highest-resolution font for maximum precision.
     int getKerning(Uint32 prevChar, Uint32 curChar) const;  // ? was Uint16
-    int getKerning(const MipLevel& mip, Uint32 prevChar, Uint32 curChar) const;
     int getWidth(const std::string& text);
-    int getWidth(const std::string& text, const MipLevel& mip) const;
-    float getWidthForHeight(const std::string& text, float height) const;
     int getOutlinePx() const;  // FIXED: removed trailing backslash
 
     const std::string& getFontPath() const { return fontPath_; }
@@ -122,24 +111,20 @@ private:
 
     // --- MODIFIED RUNTIME MEMBERS ---
 
-    // The loadFontSize handle is the stable reference for legacy height-based layout.
-    // Exact requested raster sizes may also be prepared above this size.
+    // We only keep the TTF_Font handle for the largest size open for metrics.
     TTF_Font* max_font_ = nullptr;
     int max_height_ = 0, max_descent_ = 0, max_ascent_ = 0;
 
     // std::map keeps the sizes sorted, which makes finding the best fit easy.
     std::map<int, MipLevel*> mipLevels_;
-    std::set<int> preparedSizes_;
-    uint64_t resourceGeneration_ = 0;
 
     // Internal helpers
-    void clearMips();
-    bool buildMip(int currentSize);
+    void clearMips(); // Replaces clearAtlas()
     static SDL_Surface* applyVerticalGrayGradient(SDL_Surface* s, Uint8 topGray = 255, Uint8 bottomGray = 64);
     static void fillHolesInOutline(SDL_Surface* s, int alphaThresh, int minHoleArea, int minHoleW, int minHoleH);
 
     // NEW: Helper to preload a range of glyphs into the atlas
-    void preloadGlyphRange(TTF_Font* font, int outlinePx,
+    void preloadGlyphRange(TTF_Font* font,
         Uint32 start, Uint32 end,
         int& x, int& y,
         int atlasWidth, int& atlasHeight,

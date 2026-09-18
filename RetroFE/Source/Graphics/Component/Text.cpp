@@ -19,8 +19,6 @@
 #include "../../Utility/Log.h"
 #include "../../SDL.h"
 #include "../Font.h"
-#include "../GeometryBatch.h"
-#include <cmath>
 #include <sstream>
 
 Text::Text( const std::string& text, Page &p, FontManager *font, int monitor )
@@ -68,7 +66,7 @@ void Text::draw() {
     const float effectiveFontSize = baseViewInfo.FontSize > 0
         ? baseViewInfo.FontSize
         : static_cast<float>(font->getMaxFontSize());
-    const int targetFontSize = static_cast<int>(std::ceil(effectiveFontSize));
+    const int targetFontSize = static_cast<int>(effectiveFontSize);
     const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
     if (!mip || !mip->fillTexture) return;
 
@@ -80,15 +78,11 @@ void Text::draw() {
         (baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0)
         ? baseViewInfo.Width : baseViewInfo.MaxWidth;
 
-    if (needsUpdate_ || lastFont_ != font || lastFontGeneration_ != font->getResourceGeneration() ||
-        lastMipSize_ != mip->fontSize || lastScale_ != scale || lastMaxWidth_ != maxW) {
+    if (needsUpdate_ || lastScale_ != scale || lastMaxWidth_ != maxW) {
         updateGlyphPositions(font, scale, maxW);
         needsUpdate_ = false;
         lastScale_ = scale;
         lastMaxWidth_ = maxW;
-        lastFont_ = font;
-        lastFontGeneration_ = font->getResourceGeneration();
-        lastMipSize_ = mip->fontSize;
     }
     if (cachedPositions_.empty()) return;
 
@@ -118,7 +112,6 @@ void Text::draw() {
     const int layoutH = page.getLayoutHeightByMonitor(baseViewInfo.Monitor);
 
     // --- PASS 1: OUTLINE ---
-    GeometryBatch batch;
     for (const auto& cg : cachedPositions_) {
         if (cg.outlineTex) {
             SDL_FRect dst = {
@@ -127,7 +120,7 @@ void Text::draw() {
                 cg.dstOutlineW,
                 cg.dstOutlineH
             };
-            SDL::appendCopyF(batch, cg.outlineTex, baseViewInfo.Alpha, &cg.srcOutline, &dst, baseViewInfo, layoutW, layoutH);
+            SDL::renderCopyF(cg.outlineTex, baseViewInfo.Alpha, &cg.srcOutline, &dst, baseViewInfo, layoutW, layoutH);
         }
     }
 
@@ -140,11 +133,10 @@ void Text::draw() {
                 cg.dstFillW,
                 cg.dstFillH
             };
-            SDL::appendCopyF(batch, cg.fillTex, baseViewInfo.Alpha, &cg.srcFill, &dst, baseViewInfo, layoutW, layoutH);
+            SDL::renderCopyF(cg.fillTex, baseViewInfo.Alpha, &cg.srcFill, &dst, baseViewInfo, layoutW, layoutH);
         }
     }
 
-    batch.flush();
     baseViewInfo.ImageWidth = oldIW;
     baseViewInfo.ImageHeight = oldIH;
 }
@@ -157,27 +149,61 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
     cachedPositions_.reserve(textData_.size());
 
     const int targetFontSize = baseViewInfo.FontSize > 0
-        ? static_cast<int>(std::ceil(baseViewInfo.FontSize))
+        ? static_cast<int>(baseViewInfo.FontSize)
         : font->getMaxFontSize();
     const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
     if (!mip) return;
 
     const float ascent_f = static_cast<float>(mip->ascent);
-    const float outline_f = static_cast<float>(mip->outlinePx);
+    const float outline_f = static_cast<float>(font->getOutlinePx());
+
+    const float kerningScale =
+    (font->getMaxFontSize() > 0)
+    ? static_cast<float>(targetFontSize) / static_cast<float>(font->getMaxFontSize())
+    : 1.0f;
 
     double penX = 0.0;
     Uint32 prev = 0;
 
     const char* ptr = textData_.c_str();
-    size_t remaining = textData_.size();
+    const char* end = ptr + textData_.size();
 
-    while (remaining) {
-        const Uint32 ch = SDL_StepUTF8(&ptr, &remaining);
-        if (!ch) break;
-        if (ch < 32) {
+    while (ptr < end) {
+        uint32_t codepoint = 0;
+        unsigned char c = static_cast<unsigned char>(*ptr++);
+
+        if (c < 0x80) {
+            codepoint = c;
+        }
+        else if ((c & 0xE0) == 0xC0) {
+            if (ptr + 1 > end) break;
+            unsigned char b1 = static_cast<unsigned char>(*ptr++);
+            codepoint = ((c & 0x1F) << 6) | (b1 & 0x3F);
+        }
+        else if ((c & 0xF0) == 0xE0) {
+            if (ptr + 2 > end) break;
+            unsigned char b1 = static_cast<unsigned char>(*ptr++);
+            unsigned char b2 = static_cast<unsigned char>(*ptr++);
+            codepoint = ((c & 0x0F) << 12) |
+            ((b1 & 0x3F) << 6) |
+            (b2 & 0x3F);
+        }
+        else if ((c & 0xF8) == 0xF0) {
+            if (ptr + 3 > end) break;
+            unsigned char b1 = static_cast<unsigned char>(*ptr++);
+            unsigned char b2 = static_cast<unsigned char>(*ptr++);
+            unsigned char b3 = static_cast<unsigned char>(*ptr++);
+            codepoint = ((c & 0x07) << 18) |
+            ((b1 & 0x3F) << 12) |
+            ((b2 & 0x3F) << 6) |
+            (b3 & 0x3F);
+        }
+        else {
             prev = 0;
             continue;
         }
+
+        const Uint32 ch = codepoint;
 
         bool isDynamic = false;
 
@@ -188,22 +214,30 @@ void Text::updateGlyphPositions(FontManager* font, float scale, float maxWidth) 
             isDynamic = true; // 2. Flag it the moment we touch the dynamic map
 
             if (it == mip->dynamicGlyphs.end()) {
-                if (!font->loadGlyphOnDemand(ch, const_cast<FontManager::MipLevel*>(mip))) {
+                if (ch >= 1024) {
+                    if (font->loadGlyphOnDemand(ch, const_cast<FontManager::MipLevel*>(mip))) {
+                        it = mip->dynamicGlyphs.find(ch);
+                        if (it == mip->dynamicGlyphs.end() || it->second.rect.h <= 0) {
+                            prev = 0;
+                            continue;
+                        }
+                    }
+                    else {
+                        prev = 0;
+                        continue;
+                    }
+                }
+                else {
                     prev = 0;
                     continue;
                 }
-                it = mip->dynamicGlyphs.find(ch);
-            }
-            if (it == mip->dynamicGlyphs.end() || it->second.rect.h <= 0) {
-                prev = 0;
-                continue;
             }
         }
 
         const auto& g = it->second;
 
-        const int   kern_fp = font->getKerning(*mip, prev, ch);
-        const float kern_px = static_cast<float>(kern_fp) * scale;
+        const int   kern_fp = font->getKerning(prev, ch);
+        const float kern_px = static_cast<float>(kern_fp) * kerningScale;
         penX += static_cast<double>(kern_px);
 
         const float packedX = static_cast<float>(penX) - (outline_f * scale);

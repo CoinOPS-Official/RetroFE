@@ -24,8 +24,6 @@
 #include <utility>
 #include <deque>
 #include <cstring>
-#include <memory>
-#include <limits>
 
 static constexpr int DYNAMIC_ATLAS_SIZE = 2048;
 
@@ -261,14 +259,11 @@ SDL_Surface* FontManager::applyVerticalGrayGradient(SDL_Surface* s, Uint8 topGra
 
 // NEW: Replaces clearAtlas, cleans up all mip levels
 void FontManager::clearMips() {
-    ++resourceGeneration_;
-    max_font_ = nullptr;
-    max_height_ = max_ascent_ = max_descent_ = 0;
     for (auto& kv : mipLevels_) delete kv.second;
     mipLevels_.clear();
 }
 
-void FontManager::preloadGlyphRange(TTF_Font* font, int outlinePx,
+void FontManager::preloadGlyphRange(TTF_Font* font,
     Uint32 start, Uint32 end,
     int& x, int& y,
     int atlasWidth, int& atlasHeight,
@@ -301,8 +296,8 @@ void FontManager::preloadGlyphRange(TTF_Font* font, int outlinePx,
         // Outline (optional)
         SDL_Surface* outline = nullptr;
         int dx = 0, dy = 0;
-        if (outlinePx > 0) {
-            TTF_SetFontOutline(font, outlinePx);
+        if (outlinePx_ > 0) {
+            TTF_SetFontOutline(font, outlinePx_);
             outline = TTF_RenderGlyph_Blended(font, ch, outlineColor_);
             TTF_SetFontOutline(font, 0);
             if (outline) {
@@ -312,7 +307,7 @@ void FontManager::preloadGlyphRange(TTF_Font* font, int outlinePx,
                     outline = conv;
                     if (!outline) { SDL_DestroySurface(fill); continue; }
                 }
-                const int px = outlinePx;
+                const int px = outlinePx_;
                 int minArea = 0, minW = 0, minH = 0;
                 if (px >= 3) {
                     minArea = (px * px * 3) / 2;
@@ -369,54 +364,9 @@ void FontManager::preloadGlyphRange(TTF_Font* font, int outlinePx,
 
 bool FontManager::initialize() {
     clearMips();
-    if (maxFontSize_ <= 0) return SDL_SetError("Invalid font size");
-    preparedSizes_.insert(maxFontSize_);
-    // Interleave full and three-quarter octaves: 96,72,48,36,24,18,12.
-    constexpr int minimumSize = 12;
-    for (double size = maxFontSize_; size >= minimumSize; size *= 0.5) {
-        preparedSizes_.insert(static_cast<int>(std::lround(size)));
-        if (size * 0.75 >= minimumSize)
-            preparedSizes_.insert(static_cast<int>(std::lround(size * 0.75)));
-    }
-    if (maxFontSize_ > minimumSize) preparedSizes_.insert(minimumSize);
-    for (int size : preparedSizes_) {
-        if (!buildMip(size)) {
-            clearMips();
-            return false;
-        }
-    }
-    return true;
-}
 
-bool FontManager::prepareSize(float size) {
-    if (maxFontSize_ <= 0 || !std::isfinite(size) || size <= 0 || double(size) >= std::numeric_limits<int>::max())
-        return SDL_SetError("Invalid prepared font size");
-    const int rasterSize = static_cast<int>(std::ceil(size));
-    if (!buildMip(rasterSize)) return false;
-    preparedSizes_.insert(rasterSize);
-    return true;
-}
-
-bool FontManager::prepareHeight(float height) {
-    if (!max_font_ || !std::isfinite(height) || height <= 0 ||
-        double(height) * maxFontSize_ / max_height_ >= std::numeric_limits<int>::max() - 1) return false;
-    // Height-based consumers use the line box, not the point size. Prepare an
-    // estimate and adjust for font hinting until its actual height covers it.
-    int size = std::max(1, static_cast<int>(std::ceil(double(height) * maxFontSize_ / max_height_)));
-    do {
-        if (!prepareSize(static_cast<float>(size))) return false;
-        if (mipLevels_.at(size)->height >= height) return true;
-        ++size;
-    } while (size < std::numeric_limits<int>::max());
-    return false;
-}
-
-bool FontManager::buildMip(int currentSize) {
-    if (mipLevels_.count(currentSize)) return true;
-    // Preserve the outline's proportion to loadFontSize, with a minimum of
-    // one raster pixel for outlined fonts. SDL_ttf uses integer outlines.
-    const int outlinePx = outlinePx_ > 0
-        ? std::max(1, static_cast<int>(std::lround(double(outlinePx_) * currentSize / maxFontSize_))) : 0;
+    // We only initialize the specific size target requested by PageBuilder.
+    int currentSize = maxFontSize_;
 
     TTF_Font* font = TTF_OpenFont(fontPath_.c_str(), currentSize);
     if (!font) {
@@ -430,13 +380,12 @@ bool FontManager::buildMip(int currentSize) {
 
     auto* mip = new MipLevel();
     mip->fontSize = currentSize;
-    mip->outlinePx = outlinePx;
     mip->height = TTF_GetFontHeight(font);
     mip->ascent = TTF_GetFontAscent(font);
     mip->descent = TTF_GetFontDescent(font);
     mip->font = font; // Held per-mip handle
 
-    const int GLYPH_SPACING = std::max(1, std::max(outlinePx + 1, currentSize / 16));
+    const int GLYPH_SPACING = std::max(1, std::max(outlinePx_ + 1, currentSize / 16));
     int atlasWidth = std::min(1024, currentSize * 16);
     int atlasHeight = 0;
     int x = 0, y = 0;
@@ -449,7 +398,7 @@ bool FontManager::buildMip(int currentSize) {
     // Instead of rendering ASCII 32 through 1023 on startup, we only preload basic 
     // keyboard ASCII (32 to 126). Extended layout parameters, foreign characters, and symbols 
     // stream seamlessly into the streaming atlas dynamically via FontManager::loadGlyphOnDemand.
-    preloadGlyphRange(font, outlinePx, 32, 126, x, y, atlasWidth, atlasHeight, GLYPH_SPACING, tmp, temp_build);
+    preloadGlyphRange(font, 32, 126, x, y, atlasWidth, atlasHeight, GLYPH_SPACING, tmp, temp_build);
 
     atlasWidth = std::max(atlasWidth, x);
     atlasHeight += y + GLYPH_SPACING;
@@ -457,7 +406,6 @@ bool FontManager::buildMip(int currentSize) {
     SDL_Surface* atlasFill = SDL_CreateSurface(atlasWidth, atlasHeight, SDL_PIXELFORMAT_RGBA32);
     if (!atlasFill) {
         LOG_WARNING("Font", "Failed to create fill atlas surface for size " + std::to_string(currentSize));
-        for (auto& glyph : tmp) { SDL_DestroySurface(glyph.fill); SDL_DestroySurface(glyph.outline); }
         for (auto& p : temp_build) delete p.second;
         delete mip;
         return false;
@@ -465,11 +413,10 @@ bool FontManager::buildMip(int currentSize) {
     SDL_FillSurfaceRect(atlasFill, nullptr, SDL_MapSurfaceRGBA(atlasFill, 0, 0, 0, 0));
 
     SDL_Surface* atlasOutline = nullptr;
-    if (outlinePx > 0) {
+    if (outlinePx_ > 0) {
         atlasOutline = SDL_CreateSurface(atlasWidth, atlasHeight, SDL_PIXELFORMAT_RGBA32);
         if (!atlasOutline) {
             SDL_DestroySurface(atlasFill);
-            for (auto& glyph : tmp) { SDL_DestroySurface(glyph.fill); SDL_DestroySurface(glyph.outline); }
             for (auto& p : temp_build) delete p.second;
             delete mip;
             return false;
@@ -514,28 +461,21 @@ bool FontManager::buildMip(int currentSize) {
     SDL_DestroySurface(atlasFill);
     if (atlasOutline) SDL_DestroySurface(atlasOutline);
 
-    // Reserve Unicode space now, proportionate to raster size. Round upward
-    // to a power of two so smaller glyphs retain ample packing capacity.
-    mip->dynamicAtlasSize = 512;
-    const double desiredAtlasSize = double(DYNAMIC_ATLAS_SIZE) * currentSize / maxFontSize_;
-    while (mip->dynamicAtlasSize < DYNAMIC_ATLAS_SIZE && mip->dynamicAtlasSize < desiredAtlasSize)
-        mip->dynamicAtlasSize *= 2;
-
     // Dynamic atlases - STREAMING
     mip->dynamicFillTexture = SDL_CreateTexture(
         SDL::getRenderer(monitor_),
         SDL_PIXELFORMAT_ARGB8888,
         SDL_TEXTUREACCESS_STREAMING,
-        mip->dynamicAtlasSize, mip->dynamicAtlasSize);
+        DYNAMIC_ATLAS_SIZE, DYNAMIC_ATLAS_SIZE);
     if (mip->dynamicFillTexture) {
         SDL_SetTextureScaleMode(mip->dynamicFillTexture, SDL_SCALEMODE_LINEAR);
         SDL_SetTextureBlendMode(mip->dynamicFillTexture, SDL_BLENDMODE_BLEND);
         SDL_SetTextureColorMod(mip->dynamicFillTexture, color_.r, color_.g, color_.b);
         void* pixels = nullptr; int pitch = 0;
-        SDL_Rect full{ 0,0,mip->dynamicAtlasSize,mip->dynamicAtlasSize };
+        SDL_Rect full{ 0,0,DYNAMIC_ATLAS_SIZE,DYNAMIC_ATLAS_SIZE };
         if (SDL_LockTexture(mip->dynamicFillTexture, &full, &pixels, &pitch)) {
-            for (int y0 = 0; y0 < mip->dynamicAtlasSize; ++y0) {
-                std::memset((Uint8*)pixels + y0 * pitch, 0x00, mip->dynamicAtlasSize * 4);
+            for (int y0 = 0; y0 < DYNAMIC_ATLAS_SIZE; ++y0) {
+                std::memset((Uint8*)pixels + y0 * pitch, 0x00, DYNAMIC_ATLAS_SIZE * 4);
             }
             SDL_UnlockTexture(mip->dynamicFillTexture);
         }
@@ -544,20 +484,20 @@ bool FontManager::buildMip(int currentSize) {
         LOG_WARNING("Font", "Failed to create dynamic fill texture");
     }
 
-    if (outlinePx > 0) {
+    if (outlinePx_ > 0) {
         mip->dynamicOutlineTexture = SDL_CreateTexture(
             SDL::getRenderer(monitor_),
             SDL_PIXELFORMAT_ARGB8888,
             SDL_TEXTUREACCESS_STREAMING,
-            mip->dynamicAtlasSize, mip->dynamicAtlasSize);
+            DYNAMIC_ATLAS_SIZE, DYNAMIC_ATLAS_SIZE);
         if (mip->dynamicOutlineTexture) {
             SDL_SetTextureScaleMode(mip->dynamicOutlineTexture, SDL_SCALEMODE_LINEAR);
             SDL_SetTextureBlendMode(mip->dynamicOutlineTexture, SDL_BLENDMODE_BLEND);
             void* pixels = nullptr; int pitch = 0;
-            SDL_Rect full{ 0,0,mip->dynamicAtlasSize,mip->dynamicAtlasSize };
+            SDL_Rect full{ 0,0,DYNAMIC_ATLAS_SIZE,DYNAMIC_ATLAS_SIZE };
             if (SDL_LockTexture(mip->dynamicOutlineTexture, &full, &pixels, &pitch)) {
-                for (int y0 = 0; y0 < mip->dynamicAtlasSize; ++y0) {
-                    std::memset((Uint8*)pixels + y0 * pitch, 0x00, mip->dynamicAtlasSize * 4);
+                for (int y0 = 0; y0 < DYNAMIC_ATLAS_SIZE; ++y0) {
+                    std::memset((Uint8*)pixels + y0 * pitch, 0x00, DYNAMIC_ATLAS_SIZE * 4);
                 }
                 SDL_UnlockTexture(mip->dynamicOutlineTexture);
             }
@@ -579,18 +519,13 @@ bool FontManager::buildMip(int currentSize) {
 
     mipLevels_[currentSize] = mip;
 
-    if (!mip->fillTexture || (outlinePx && !mip->outlineTexture) ||
-        !mip->dynamicFillTexture || (outlinePx && !mip->dynamicOutlineTexture)) {
-        mipLevels_.erase(currentSize);
-        delete mip;
-        return false;
-    }
-    if (currentSize == maxFontSize_) {
-        max_font_ = mip->font;
-        max_height_ = mip->height;
-        max_ascent_ = mip->ascent;
-        max_descent_ = mip->descent;
-    }
+    // Establish maximum size pointer constraints for layout dimension operations
+    max_font_ = font; // same pointer as mip->font for largest size
+    max_height_ = mip->height;
+    max_ascent_ = mip->ascent;
+    max_descent_ = mip->descent;
+
+    setColor(color_); // ensure color mod on static & dynamic fill textures
     return true;
 }
 
@@ -609,9 +544,7 @@ bool FontManager::loadGlyphOnDemand(Uint32 ch, MipLevel* mip) {
         return false;
     }
 
-    const int outlinePx = mip->outlinePx;
     TTF_Font* font = mip->font;
-    if (!TTF_FontHasGlyph(font, ch)) return false;
 
     int minx, maxx, miny, maxy, adv;
     if (!TTF_GetGlyphMetrics(font, ch, &minx, &maxx, &miny, &maxy, &adv)) {
@@ -623,6 +556,12 @@ bool FontManager::loadGlyphOnDemand(Uint32 ch, MipLevel* mip) {
     SDL_Color white{ 255, 255, 255, 255 };
     SDL_Surface* fill = TTF_RenderGlyph_Blended(font, ch, white);
     if (!fill) return false;
+
+    if (adv > 0 && fill->w > 0 && adv < fill->w * 0.8f) {
+        LOG_INFO("Font", "Broken advance U+" + std::to_string(ch) +
+            " adv=" + std::to_string(adv) + " < surface w=" + std::to_string(fill->w) + "; clamping");
+        adv = (int)(fill->w * 0.9f);
+    }
 
     if (gradient_) {
         fill = applyVerticalGrayGradient(fill, 255, 128);
@@ -637,8 +576,8 @@ bool FontManager::loadGlyphOnDemand(Uint32 ch, MipLevel* mip) {
 
     SDL_Surface* outline = nullptr;
     int dx = 0, dy = 0;
-    if (outlinePx > 0) {
-        TTF_SetFontOutline(font, outlinePx);
+    if (outlinePx_ > 0) {
+        TTF_SetFontOutline(font, outlinePx_);
         outline = TTF_RenderGlyph_Blended(font, ch, outlineColor_);
         TTF_SetFontOutline(font, 0);
         if (outline) {
@@ -648,7 +587,7 @@ bool FontManager::loadGlyphOnDemand(Uint32 ch, MipLevel* mip) {
                 outline = conv;
                 if (!outline) { SDL_DestroySurface(fill); return false; }
             }
-            const int px = outlinePx;
+            const int px = outlinePx_;
             int minArea = 0, minW = 0, minH = 0;
             if (px >= 3) {
                 minArea = (px * px * 3) / 2;
@@ -663,15 +602,15 @@ bool FontManager::loadGlyphOnDemand(Uint32 ch, MipLevel* mip) {
 
     const int packedW = outline ? outline->w : fill->w;
     const int packedH = outline ? outline->h : fill->h;
-    const int GLYPH_SPACING = std::max(1, std::max(outlinePx + 1, mip->fontSize / 16));
+    const int GLYPH_SPACING = std::max(1, std::max(outlinePx_ + 1, mip->fontSize / 16));
 
     // Shelf wrap
-    if (mip->dynamicNextX + packedW + GLYPH_SPACING > mip->dynamicAtlasSize) {
+    if (mip->dynamicNextX + packedW + GLYPH_SPACING > DYNAMIC_ATLAS_SIZE) {
         mip->dynamicNextY += mip->dynamicRowHeight + GLYPH_SPACING;
         mip->dynamicNextX = 0;
         mip->dynamicRowHeight = 0;
     }
-    if (mip->dynamicNextY + packedH + GLYPH_SPACING > mip->dynamicAtlasSize) {
+    if (mip->dynamicNextY + packedH + GLYPH_SPACING > DYNAMIC_ATLAS_SIZE) {
         LOG_WARNING("Font", "Dynamic atlas full; cannot load glyph U+" + std::to_string(ch));
         SDL_DestroySurface(fill);
         if (outline) SDL_DestroySurface(outline);
@@ -748,23 +687,32 @@ void FontManager::setColor(SDL_Color c) {
 // NEW: Gets the best mip level for a target rendering size
 // In Font.cpp
 
-const FontManager::MipLevel* FontManager::getMipLevelForSize(float targetSize) const {
-    if (mipLevels_.empty() || !std::isfinite(targetSize)) return nullptr;
-    for (const auto& [size, mip] : mipLevels_) {
-        if (size >= targetSize) return mip;
-    }
-    return mipLevels_.rbegin()->second;
-}
+const FontManager::MipLevel* FontManager::getMipLevelForSize(int targetSize) const {
+    if (mipLevels_.empty()) return nullptr;
 
-const FontManager::MipLevel* FontManager::getMipLevelForHeight(float targetHeight) const {
-    if (mipLevels_.empty() || !std::isfinite(targetHeight)) return nullptr;
+    auto itCeil = mipLevels_.lower_bound(targetSize);
     const MipLevel* best = nullptr;
-    const MipLevel* largest = nullptr;
-    for (const auto& [size, mip] : mipLevels_) {
-        if (!largest || mip->height > largest->height) largest = mip;
-        if (mip->height >= targetHeight && (!best || mip->height < best->height)) best = mip;
+
+    if (itCeil == mipLevels_.begin()) {
+        best = itCeil->second;
     }
-    return best ? best : largest;
+    else if (itCeil == mipLevels_.end()) {
+        best = std::prev(itCeil)->second;
+    }
+    else {
+        auto itFloor = std::prev(itCeil);
+        const float UPSCALE_TOLERANCE_PERCENT = 0.15f;
+        int floorSize = itFloor->first;
+        if ((targetSize - floorSize) <= (floorSize * UPSCALE_TOLERANCE_PERCENT)) {
+            int dUp = std::abs(itCeil->first - targetSize);
+            int dDown = std::abs(floorSize - targetSize);
+            best = (dDown < dUp) ? itFloor->second : itCeil->second;
+        }
+        else {
+            best = itCeil->second;
+        }
+    }
+    return best;
 }
 
 // MODIFIED: Uses the max-resolution font handle for best precision
@@ -774,46 +722,78 @@ int FontManager::getKerning(Uint32 prevChar, Uint32 curChar) const {  // ? was U
     return TTF_GetGlyphKerning(max_font_, prevChar, curChar, &kerning) ? kerning : 0;
 }
 
-int FontManager::getKerning(const MipLevel& mip, Uint32 prevChar, Uint32 curChar) const {
-    if (!mip.font || !prevChar || !curChar) return 0;
-    int kerning = 0;
-    return TTF_GetGlyphKerning(mip.font, prevChar, curChar, &kerning) ? kerning : 0;
-}
-
+// MODIFIED: Calculates width based on the metrics of the highest-resolution font
 int FontManager::getWidth(const std::string& text) {
-    const auto it = mipLevels_.find(maxFontSize_);
-    return it == mipLevels_.end() ? 0 : getWidth(text, *it->second);
-}
+    if (mipLevels_.empty() || !max_font_) return 0;
 
-float FontManager::getWidthForHeight(const std::string& text, float height) const {
-    const auto* mip = getMipLevelForHeight(height);
-    return mip && mip->height > 0 ? getWidth(text, *mip) * height / mip->height : 0.0f;
-}
-
-int FontManager::getWidth(const std::string& text, const MipLevel& mip) const {
-    if (!mip.font) return 0;
+    const MipLevel* maxMip = mipLevels_.rbegin()->second;
 
     int width = 0;
     Uint32 prev = 0;
     bool haveGlyph = false;
+
     const char* ptr = text.c_str();
-    size_t remaining = text.size();
-    while (remaining) {
-        const Uint32 ch = SDL_StepUTF8(&ptr, &remaining);
-        if (!ch) break;
-        int advance = 0;
-        // Measurement must not depend on which glyphs have been uploaded.
-        if (ch < 32 || !TTF_FontHasGlyph(mip.font, ch) ||
-            !TTF_GetGlyphMetrics(mip.font, ch, nullptr, nullptr, nullptr, nullptr, &advance)) {
+    const char* end = ptr + text.size();
+
+    while (ptr < end) {
+        // --- safer UTF-8 decode (see next section) ---
+        uint32_t ch = 0;
+        unsigned char c = static_cast<unsigned char>(*ptr++);
+
+        if (c < 0x80) {
+            ch = c;
+        }
+        else if ((c & 0xE0) == 0xC0) {
+            if (ptr >= end) break;
+            unsigned char c1 = static_cast<unsigned char>(*ptr++);
+            if ((c1 & 0xC0) != 0x80) { prev = 0; continue; }
+            ch = ((c & 0x1F) << 6) | (c1 & 0x3F);
+        }
+        else if ((c & 0xF0) == 0xE0) {
+            if (ptr + 1 >= end) break;
+            unsigned char c1 = static_cast<unsigned char>(*ptr++);
+            unsigned char c2 = static_cast<unsigned char>(*ptr++);
+            if ((c1 & 0xC0) != 0x80 || (c2 & 0xC0) != 0x80) { prev = 0; continue; }
+            ch = ((c & 0x0F) << 12) | ((c1 & 0x3F) << 6) | (c2 & 0x3F);
+        }
+        else if ((c & 0xF8) == 0xF0) {
+            if (ptr + 2 >= end) break;
+            unsigned char c1 = static_cast<unsigned char>(*ptr++);
+            unsigned char c2 = static_cast<unsigned char>(*ptr++);
+            unsigned char c3 = static_cast<unsigned char>(*ptr++);
+            if ((c1 & 0xC0) != 0x80 || (c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80) { prev = 0; continue; }
+            ch = ((c & 0x07) << 18) | ((c1 & 0x3F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+        }
+        else {
             prev = 0;
             continue;
         }
-        haveGlyph = true;
-        width += getKerning(mip, prev, ch) + advance;
-        prev = ch;
+
+        const GlyphInfo* g = nullptr;
+
+        auto itStatic = maxMip->glyphs.find(ch);
+        if (itStatic != maxMip->glyphs.end()) {
+            g = &itStatic->second;
+        }
+        else {
+            auto itDyn = maxMip->dynamicGlyphs.find(ch);
+            if (itDyn != maxMip->dynamicGlyphs.end()) {
+                g = &itDyn->second;
+            }
+        }
+
+        if (g) {
+            haveGlyph = true;
+            width += getKerning(prev, ch);
+            width += g->advance;
+            prev = ch;
+        }
+        else {
+            prev = 0;
+        }
     }
 
-    if (haveGlyph && mip.outlinePx > 0) width += 2 * mip.outlinePx;
+    if (haveGlyph && outlinePx_ > 0) width += 2 * outlinePx_;
     return width;
 }
 

@@ -53,8 +53,32 @@ FontManager* FontCache::getFont(const std::string& fontPath, int maxFontSize, bo
         return it->second.get();
     }
 
-    // loadFontSize defines default text size and outline proportions. Sharing
-    // a different reference size would make those depend on layout parse order.
+    // 2. Fallback: Search for an existing larger font that can satisfy this request via mipmapping
+    FontManager* bestMatch = nullptr;
+    int closestLargerSize = std::numeric_limits<int>::max();
+
+    for (const auto& [key, fontPtr] : fontFaceMap_) {
+        // FIX: Verify structural layout attributes match perfectly, ignoring color paths completely
+        if (fontPtr->getOutlinePx() == outlinePx &&
+            fontPtr->getGradient() == gradient &&
+            fontPtr->getMonitor() == monitor &&
+            fontPtr->getFontPath() == fontPath)
+        {
+            int existingSize = fontPtr->getMaxFontSize();
+
+            // Is it larger than what we need, but smaller than any other candidate we've seen?
+            if (existingSize >= maxFontSize && existingSize < closestLargerSize) {
+                closestLargerSize = existingSize;
+                bestMatch = fontPtr.get();
+            }
+        }
+    }
+
+    if (bestMatch) {
+        LOG_INFO("FontCache", "[PERF] Shared font hit! Using existing size " +
+            std::to_string(closestLargerSize) + " to satisfy request for size " + std::to_string(maxFontSize));
+        return bestMatch;
+    }
 
     return nullptr;
 }
@@ -70,14 +94,14 @@ std::string FontCache::buildFontKey(std::string font, int maxFontSize, bool grad
 }
 
 bool FontCache::loadFont(std::string fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor) {
-    // Check if we already have an identical font available that satisfies this layout component
+    // Check if we already have an identical or larger font available that satisfies this layout component
     if (getFont(fontPath, maxFontSize, gradient, outlinePx, monitor) != nullptr) {
         return true; // Short-circuit completely! A valid target asset handle is already warm
     }
 
     std::string key = buildFontKey(fontPath, maxFontSize, gradient, outlinePx, monitor);
 
-    // Only compile a cold initialization pass if this reference-size/style combination is not prepared
+    // Only compile a cold initialization pass if absolutely no larger matching variant exists
     auto font = std::make_unique<FontManager>(fontPath, maxFontSize, color, gradient, outlinePx, monitor);
     if (font->initialize()) {
         fontFaceMap_[key] = std::move(font);
