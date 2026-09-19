@@ -17,14 +17,8 @@ BP Files/RetroFE.cpp
 RetroFE/BuildRelease
 .DS_Store
 .vscode/settings.json
-RetroFE/ThirdPartyMac/*
-RetroFE/xcode/CMakeFiles/3.27.8/*
 *.xcuserstate
-RetroFE/xcode/retrofe.xcodeproj/project.xcworkspace/xcuserdata/aiden.xcuserdatad/UserInterfaceState.xcuserstate
-/RetroFE/ThirdParty/SDL2-2.30.0/include/SDL2/SDL_ttf.h
 *.log
-!RetroFE/ThirdPartyMac/libminizip.dylib
-!RetroFE/ThirdPartyMac/libusb-1.0.0.dylib
 RetroFE/Source/autogen/versioning.h
 CLAUDE.md
 .vscode/c_cpp_properties.json
@@ -34,3 +28,7 @@ CLAUDE.md
 
 .gitignore
 !/RetroFE/Source/.gitignore
+
+# Build products and a locally retained, retired dependency checkout.
+/RetroFE/Build-*/
+/Package/Environment/Windows/retrofe/

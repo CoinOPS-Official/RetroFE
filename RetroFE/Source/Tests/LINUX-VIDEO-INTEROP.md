@@ -1,8 +1,9 @@
 # Linux GPU video interop testing
 
-This backend is experimental and has not yet been compiled or run on Linux.
-The Windows D3D11 path is retained. Linux uses GStreamer GL with SDL's OpenGL
-or OpenGL ES renderer; Vulkan rendering currently uses CPU texture uploads.
+Linux supports EGL DMA-BUF import with SDL's OpenGL ES renderer and a
+GStreamer GL backend for OpenGL/OpenGL ES. Vulkan rendering currently uses
+CPU texture uploads. The EGL path has been exercised in extended playback
+testing; hardware/driver combinations still require their own validation.
 
 ## Dependencies and build
 
@@ -28,7 +29,7 @@ ctest --test-dir RetroFE/Build-linux --output-on-failure
 CMake must report `Linux GStreamer GL texture interop enabled`. If development
 packages are missing, it warns and builds the CPU-upload path instead.
 SDL3 config packages are used when present; otherwise the existing CMake helper
-fetches pinned SDL3 sources. The legacy README's SDL2 package list is insufficient.
+fetches pinned, unmodified SDL3 sources. See [build instructions](../BUILDING.md).
 Fetched SDL3_image defaults to AVIF support disabled, avoiding its vendored
 dav1d and aom builds. This does not affect GStreamer video decoding. When
 reusing a build directory configured before this default changed, add
@@ -70,13 +71,26 @@ draws first. The code preserves the GL bindings it changes.
 
 ## Focused test
 
+### EGL DMA-BUF (preferred with opengles2)
+
+With GStreamer video >= 1.24, allocators, EGL and GLES development packages,
+CMake also reports `Linux EGL DMA-BUF video interop enabled (opengles2)`.
+The decoder exports DMA-BUF memory directly to this backend, without a
+GStreamer GL context. Compatible frames use SDL external textures; other
+supported imports convert into reusable RGBA output. GPU fences protect
+sample lifetime. The ACTIVE message distinguishes direct external textures
+from conversion into reusable RGBA textures. Unsupported negotiation falls
+back; verify the runtime log rather than assuming hardware acceleration.
+
 ### Experimental direct wrapping
 
 Set `RETROFE_GL_DIRECT=1` in the process environment to wrap GStreamer's RGBA
 GL texture with SDL_CreateTextureWithProperties instead of copying into the
 texture ring. For fish, launch with `env RETROFE_GL_DIRECT=1 ./retrofe` from
 the normal runtime directory. Omit the variable to use the tested GPU-copy path.
-This is experimental and has not been compiled or tested on Linux locally.
+This older GStreamer GL direct-wrap mode is an optional diagnostic path,
+separate from the preferred EGL DMA-BUF backend. Earlier stress tests exposed
+driver crashes in this mode; leave it unset for ordinary playback.
 
 The ACTIVE log reports `OpenGL direct RGBA texture wrapping; no final GPU copy`.
 Color conversion still runs upstream. Each new frame creates an SDL wrapper,
@@ -91,7 +105,7 @@ Run from the build directory so logs stay with generated files:
 
 ```sh
 cd RetroFE/Build-linux
-RETROFE_TEST_RENDERER=opengles2 ./bin/retrofe_sdl3_smoke_tests \
+RETROFE_TEST_RENDERER=opengles2 ./tests/Release/retrofe_sdl3_smoke_tests \
   ../../Package/Environment/Common --hardware
 ```
 

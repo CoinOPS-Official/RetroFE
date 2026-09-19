@@ -3,6 +3,9 @@ cmake_minimum_required(VERSION 3.24)
 if(POLICY CMP0091)
     cmake_policy(SET CMP0091 NEW)
 endif()
+if(POLICY CMP0144)
+    cmake_policy(SET CMP0144 NEW)
+endif()
 
 project (retrofe)
 
@@ -21,6 +24,13 @@ list(APPEND CMAKE_MODULE_PATH "${RETROFE_DIR}/CMake")
 set(OPENHI2TXT_BUILD_CLI OFF CACHE BOOL "Build the OpenHi2txt command-line executable" FORCE)
 if(MSVC)
     set(CMAKE_MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+    # OpenHi2txt supplies static zlib. FindZLIB prefers configuration-specific
+    # cache entries over ZLIB_LIBRARY, so retire the old DLL import-library
+    # selection before the subproject creates its ZLIB::ZLIB target.
+    set(ZLIB_LIBRARY_RELEASE
+        "${RETROFE_THIRD_PARTY_DIR}/openhi2txt/thirdparty/zlib-static/lib/msvc-x64-md/zs.lib"
+        CACHE FILEPATH "Static zlib supplied by OpenHi2txt" FORCE)
+    unset(ZLIB_LIBRARY_DEBUG CACHE)
 endif()
 add_subdirectory(
     "${RETROFE_THIRD_PARTY_DIR}/openhi2txt"
@@ -30,6 +40,13 @@ if(MSVC)
     set_target_properties(openhi2txt PROPERTIES
         MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL"
     )
+    # Keep machine-wide vcpkg integration from injecting DLL-oriented zlib
+    # headers/libraries into libchdr's explicitly configured static dependency.
+    set_target_properties(chdr-static PROPERTIES
+        VS_GLOBAL_VcpkgEnabled false
+        VS_GLOBAL_VcpkgApplocalDeps false
+    )
+    target_compile_definitions(chdr-static PRIVATE ZLIB_STATIC)
 endif()
 
 ##############################################################
@@ -438,6 +455,18 @@ if(RETROFE_BUILD_TESTING)
     )
     add_test(NAME retrofe_mame_software_resolver_tests COMMAND retrofe_mame_software_resolver_tests)
 endif()
+
+# Keep tests (including the subproject's tests) out of the deployable runtime.
+foreach(test_target IN ITEMS retrofe_sdl3_smoke_tests retrofe_high_score_change_tests
+        retrofe_mame_software_resolver_tests openhi2txt_xml_parser_tests
+        openhi2txt_open_extension_tests openhi2txt_input_planner_tests
+        openhi2txt_live_protocol_tests openhi2txt_identity_resolution_tests)
+    if(TARGET ${test_target})
+        set_target_properties(${test_target} PROPERTIES
+            RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/$<CONFIG>"
+            PDB_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/tests/$<CONFIG>")
+    endif()
+endforeach()
 
 if(APPLE)
     target_link_libraries(retrofe_core PUBLIC

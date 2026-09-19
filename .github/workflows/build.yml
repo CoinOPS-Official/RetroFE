@@ -1,78 +1,27 @@
 name: RetroFE Continuous Integration
-
 on:
+  workflow_dispatch:
   push:
-    branches:
-      - master
-    paths:
-      - 'RetroFE/CMake/**'
-      - 'RetroFE/Source/**'
-      - 'RetroFE/ThirdParty/**'
+    branches: [master, sdl3-port]
+    paths: ['RetroFE/**', '.github/workflows/build.yml']
   pull_request:
-    branches:
-      - master
-    paths:
-      - 'RetroFE/CMake/**'
-      - 'RetroFE/Source/**'
-      - 'RetroFE/ThirdParty/**'
-      
+    branches: [master, sdl3-port]
+    paths: ['RetroFE/**', '.github/workflows/build.yml']
+
 jobs:
   build:
     runs-on: ubuntu-24.04
-
     steps:
-    # Checkout the repository
-    - name: Checkout code
-      uses: actions/checkout@v4
-      with:
-        submodules: recursive
-
-    - name: Cache apt packages
-      uses: awalsh128/cache-apt-pkgs-action@latest
-      with:
-        packages: |
-          cmake
-          zlib1g-dev
-          libsdl2-dev
-          libsdl2-mixer-dev
-          libsdl2-image-dev
-          libsdl2-ttf-dev
-          libgstreamer1.0-dev
-          libgstreamer-plugins-base1.0-dev
-          libgstreamer-plugins-good1.0-dev
-          gstreamer1.0-libav
-          libglib2.0-dev
-          libminizip-dev
-          libwebp-dev
-          libevdev-dev
-          libusb-1.0-0-dev
-        version: 1.0
-
-    # Install dependencies
-    - name: Install dependencies
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y \
-          cmake \
-          zlib1g-dev \
-          libsdl2-dev \
-          libsdl2-mixer-dev \
-          libsdl2-image-dev \
-          libsdl2-ttf-dev \
-          libgstreamer1.0-dev \
-          libgstreamer-plugins-base1.0-dev \
-          libgstreamer-plugins-good1.0-dev \
-          gstreamer1.0-libav \
-          libglib2.0-dev \
-          libminizip-dev \
-          libwebp-dev \
-          libevdev-dev \
-          libusb-1.0-0-dev
-
-    # Configure the build
-    - name: Configure CMake
-      run: cmake RetroFE/Source -BRetroFE/Build
-
-    # Build the project
-    - name: Build
-      run: cmake --build RetroFE/Build
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential git cmake ninja-build pkg-config zlib1g-dev libglib2.0-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gstreamer1.0-plugins-good gstreamer1.0-libav libusb-1.0-0-dev libevdev-dev libudev-dev libserialport-dev libcurl4-openssl-dev libegl1-mesa-dev libgles2-mesa-dev libx11-dev libxext-dev libxrandr-dev libxcursor-dev libxi-dev libxfixes-dev libxss-dev libxtst-dev libwayland-dev libxkbcommon-dev libasound2-dev libpulse-dev libdrm-dev libgbm-dev
+      - name: Configure
+        run: cmake -S RetroFE/Source -B RetroFE/Build -G Ninja -DCMAKE_BUILD_TYPE=Release -DRETROFE_BUILD_TESTING=ON -DBUILD_TESTING=ON
+      - name: Build
+        run: cmake --build RetroFE/Build --parallel 3
+      - name: Test
+        run: ctest --test-dir RetroFE/Build --output-on-failure

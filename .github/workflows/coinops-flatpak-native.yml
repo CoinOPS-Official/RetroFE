@@ -392,7 +392,7 @@ jobs:
             # ======================================================
             # SDL2_ttf
             #
-            # Required by MAME and RetroFE.
+            # Required by MAME and Hypseus.
             # ======================================================
             - name: SDL2_ttf
               buildsystem: cmake-ninja
@@ -690,6 +690,7 @@ jobs:
                     -G "Unix Makefiles" \
                     -DCMAKE_BUILD_TYPE=Release \
                     -DCMAKE_INSTALL_PREFIX=/app \
+                    -DRETROFE_FETCH_SDL3=OFF \
                     -DCMAKE_PREFIX_PATH=/app \
                     -DBUILD_SINGE=ON \
                     -DABSTRACT_SINGE=ON \
@@ -816,6 +817,59 @@ jobs:
             # Flatpak-builder copies the CONTENTS of the RetroFE
             # directory into the module build root.
             # ======================================================
+            - name: SDL3
+              buildsystem: cmake-ninja
+              builddir: true
+              config-opts:
+                - -DCMAKE_BUILD_TYPE=Release
+                - -DBUILD_SHARED_LIBS=ON
+                - -DSDL_SHARED=ON
+                - -DSDL_STATIC=OFF
+                - -DSDL_TESTS=OFF
+                - -DSDL_TEST_LIBRARY=OFF
+              sources:
+                - type: git
+                  url: https://github.com/libsdl-org/SDL.git
+                  commit: f87239e71e42da91ca317a12eefb82cfbf3393eb
+            - name: SDL3_image
+              buildsystem: cmake-ninja
+              builddir: true
+              config-opts:
+                - -DCMAKE_BUILD_TYPE=Release
+                - -DBUILD_SHARED_LIBS=ON
+                - -DSDLIMAGE_VENDORED=ON
+                - -DSDLIMAGE_AVIF=OFF
+                - -DSDLIMAGE_SAMPLES=OFF
+                - -DSDLIMAGE_TESTS=OFF
+              sources:
+                - type: git
+                  url: https://github.com/libsdl-org/SDL_image.git
+                  commit: 11154afb7855293159588b245b446a4ef09e574f
+            - name: SDL3_ttf
+              buildsystem: cmake-ninja
+              builddir: true
+              config-opts:
+                - -DCMAKE_BUILD_TYPE=Release
+                - -DBUILD_SHARED_LIBS=ON
+                - -DSDLTTF_VENDORED=ON
+                - -DSDLTTF_SAMPLES=OFF
+              sources:
+                - type: git
+                  url: https://github.com/libsdl-org/SDL_ttf.git
+                  commit: a1ce3670aec736ecbf0936c43f2f0cc53aa61e5b
+            - name: SDL3_mixer
+              buildsystem: cmake-ninja
+              builddir: true
+              config-opts:
+                - -DCMAKE_BUILD_TYPE=Release
+                - -DBUILD_SHARED_LIBS=ON
+                - -DSDLMIXER_VENDORED=ON
+                - -DSDLMIXER_SAMPLES=OFF
+                - -DSDLMIXER_TESTS=OFF
+              sources:
+                - type: git
+                  url: https://github.com/libsdl-org/SDL_mixer.git
+                  commit: 72a81869b45e249e8e67102db4e98dd2441f05a1
             - name: retrofe
               buildsystem: simple
               build-options:
@@ -838,10 +892,10 @@ jobs:
                   }
                   echo
                   echo "--- SDL ---"
-                  check_pkg sdl2
-                  check_pkg SDL2_image
-                  check_pkg SDL2_ttf
-                  check_pkg SDL2_mixer
+                  check_pkg sdl3
+                  check_pkg SDL3_image
+                  check_pkg SDL3_ttf
+                  check_pkg SDL3_mixer
                   echo
                   echo "--- GStreamer ---"
                   check_pkg gstreamer-1.0
@@ -875,6 +929,7 @@ jobs:
                     -S Source \
                     -B Build \
                     -DCMAKE_BUILD_TYPE=Release \
+                    -DRETROFE_FETCH_SDL3=OFF \
                     -DCMAKE_PREFIX_PATH=/app \
                     -DCMAKE_INSTALL_PREFIX=/app \
                     -DMINIZIP_INCLUDE_DIR=/app/include/minizip \
@@ -887,8 +942,8 @@ jobs:
                   cmake \
                     --build Build \
                     --parallel 10
-                - test -x Build/retrofe
-                - install -Dm755 Build/retrofe /app/bin/retrofe
+                - test -x Build/bin/retrofe
+                - install -Dm755 Build/bin/retrofe /app/bin/retrofe
               sources:
                 - type: dir
                   path: RetroFE

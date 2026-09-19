@@ -1,0 +1,154 @@
+--- a/RetroFE/Source/Graphics/Component/VideoComponent.h
++++ b/RetroFE/Source/Graphics/Component/VideoComponent.h
+@@ -112,6 +112,7 @@
+ 
+     // Orchestration Pipeline Helpers
+     bool checkVisibility() const;
++    // Hard per-monitor decoder-start/preroll admission gate.
+     bool canStartVideoStartup() const;
+     bool startupGateDeferred_ = false;
+     std::unique_ptr<Image> startupArtwork_;
+--- a/RetroFE/Source/Graphics/Component/VideoComponent.cpp
++++ b/RetroFE/Source/Graphics/Component/VideoComponent.cpp
+@@ -47,7 +47,10 @@
+ VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
+     : Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), listId_(listId), currentPage_(&p) {
+     isHighPriority_ = (listId_ == -1);
+-    if (listId_ != -1) listVideos.push_back(this);
++    // Track every VideoComponent on the main thread. Standalone/layout videos
++    // also consume decoder resources and therefore count against the same
++    // per-monitor startup budget as pooled list videos.
++    listVideos.push_back(this);
+     if (perspectiveCorners) {
+         std::copy(perspectiveCorners, perspectiveCorners + 8, perspectiveCorners_);
+         hasPerspective_ = true;
+@@ -152,46 +155,55 @@
+ }
+ 
+ bool VideoComponent::canStartVideoStartup() const {
+-    // Startup/preroll admission is deliberately stricter than instance-pool
+-    // admission. A coverflow may own several video instances/textures, but on
+-    // weaker GPUs we do not want several of those pipelines simultaneously
+-    // entering hardware-decoder preroll.
++    // Hard per-monitor admission limit for decoder startup/preroll.
+     //
+-    // Reserve one "lane" for the selected/incoming component. In addition,
+-    // permit at most one ordinary background preroll per monitor.
+-    if (listId_ == -1 || isHighPriority_) {
+-        return true;
+-    }
+-
+-    size_t backgroundPrerolls = 0;
++    // Owning several VideoComponent/GStreamerVideo instances is fine; the
++    // expensive part on weaker GPUs is allowing too many of those pipelines to
++    // enter Starting/preroll simultaneously. High priority controls who gets
++    // the NEXT free slot, but it must never bypass the hard cap.
++    constexpr size_t MAX_CONCURRENT_STARTUPS_PER_MONITOR = 2;
++
++    size_t activeStartups = 0;
++    bool selectedWaiting = false;
+ 
+     for (auto* other : listVideos) {
+         if (!other ||
+             other == this ||
+             other->monitor_ != monitor_ ||
+-            other->videoFile_.empty() ||
+-            !other->videoInst_ ||
++            other->videoFile_.empty())
++        {
++            continue;
++        }
++
++        // An instance whose open() has been accepted but whose pipeline is not
++        // ready yet consumes one startup slot.
++        if (other->videoInst_ && other->instanceReady_) {
++            const VideoSnapshot snap = other->videoInst_->getSnapshot();
++
++            if (!snap.hasError && !snap.pipelineReady) {
++                ++activeStartups;
++            }
++        }
++
++        // The pooled selected/destination component gets preference for the
++        // next free slot. Standalone/layout videos count against the hard cap,
++        // but do not reserve a slot merely because listId == -1 marks them
++        // high-priority by default.
++        if (!isHighPriority_ &&
++            other->listId_ != -1 &&
++            other->isHighPriority_ &&
+             !other->instanceReady_)
+         {
+-            continue;
+-        }
+-
+-        const VideoSnapshot snap = other->videoInst_->getSnapshot();
+-
+-        if (snap.hasError || snap.pipelineReady) {
+-            continue;
+-        }
+-
+-        // Never begin speculative/background preroll while the selected or
+-        // destination slot is still waiting for its first frame.
+-        if (other->isHighPriority_) {
+-            return false;
+-        }
+-
+-        ++backgroundPrerolls;
+-        if (backgroundPrerolls >= 1) {
+-            return false;
+-        }
++            selectedWaiting = true;
++        }
++    }
++
++    if (activeStartups >= MAX_CONCURRENT_STARTUPS_PER_MONITOR) {
++        return false;
++    }
++
++    if (!isHighPriority_ && selectedWaiting) {
++        return false;
+     }
+ 
+     return true;
+@@ -315,11 +327,10 @@
+ 
+     // 1. Decoder-start admission.
+     //
+-    // This applies to visible coverflow slots as well as hidden preload slots.
+-    // Previously only hidden components were throttled, so rapid scrolling
+-    // could let every visible slot begin a hardware-decoder preroll at once.
+-    if (listId_ != -1 &&
+-        !instanceReady_ &&
++    // This applies to pooled and standalone videos, visible or hidden. Rapid
++    // scrolling must not allow each newly promoted selection to bypass the
++    // decoder-start budget while older prerolls are still in flight.
++    if (!instanceReady_ &&
+         !canStartVideoStartup())
+     {
+         pendingVideoRetry_ = false;
+@@ -328,7 +339,7 @@
+             startupGateDeferred_ = true;
+             LOG_DEBUG(
+                 "VideoComponent",
+-                "Startup gate deferred: " + videoFile_);
++                "Startup gate deferred (hard cap=2): " + videoFile_);
+         }
+ 
+         return Component::update(dt);
+@@ -338,14 +349,14 @@
+         startupGateDeferred_ = false;
+         LOG_DEBUG(
+             "VideoComponent",
+-            "Startup gate admitted: " + videoFile_);
++            "Startup gate admitted (hard cap=2): " + videoFile_);
+     }
+ 
+     // 2. Fast-abort if hidden (Lazy Activation)
+     if (!visibleNow) {
+         pendingVideoRetry_ = false; // Drop retries if user scrolls past
+ 
+-        // Pooled list videos may still use the single background-preroll lane.
++        // Pooled list videos may still start when the hard per-monitor budget allows.
+         // Standalone hidden videos remain lazy until they already own an instance.
+         if (listId_ == -1 && !videoInst_)
+             return Component::update(dt);

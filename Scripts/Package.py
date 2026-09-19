@@ -32,9 +32,10 @@ def mkdir_p(path):
 #####################################################################
 parser = argparse.ArgumentParser(description='Bundle up some RetroFE common files.')
 parser.add_argument('--os', choices=['windows','linux','mac'], required=True, help='Operating System (windows or linux or mac)')
-parser.add_argument('--build', default='full', help='Define what contents to package (full, core, engine, layout, none')
+parser.add_argument('--build', choices=['full', 'core', 'engine', 'layout', 'none'], default='full', help='Define what contents to package (full, core, engine, layout, none')
 parser.add_argument('--clean', action='store_true', help='Clean the output directory')
-parser.add_argument('--compiler', help='Compiler to use (vs, mingw, gcc')
+parser.add_argument('--build-directory', default='RetroFE/Build', help='CMake build directory, relative to the repository or absolute')
+parser.add_argument('--configuration', default='Release', help='Multi-configuration build variant')
 
 args = parser.parse_args()
 
@@ -59,7 +60,7 @@ elif args.os == 'mac':
 #####################################################################
 output_path = os.path.join(base_path, 'Artifacts', args.os, 'RetroFE')
 
-if os.path.exists(output_path) and hasattr(args, 'clean'):
+if os.path.exists(output_path) and args.clean:
   shutil.rmtree(output_path)
 
 
@@ -69,7 +70,10 @@ if args.build != 'none' and not os.path.exists(output_path):
 if args.build == 'full':
   collection_path = os.path.join(output_path, 'collections')
   copytree(common_path, output_path)
-  copytree(os_path, output_path)
+  for name in os.listdir(os_path):
+    if args.os == 'windows' and name == 'retrofe':
+      continue
+    copytree(os.path.join(os_path, name), os.path.join(output_path, name))
   
   mkdir_p(os.path.join(output_path, 'meta', 'mamelist'))
   
@@ -106,37 +110,35 @@ elif args.build == 'layout':
 #####################################################################
 # Copy retrofe executable
 #####################################################################
-if args.os == 'windows':
-  if args.build == 'full' or args.build == 'core' or args.build == 'engine':
-    # copy retrofe.exe to core folder
-    if(hasattr(args, 'compiler') and args.compiler == 'mingw'):
-      src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe.exe')
-    else:
-      src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'Release', 'retrofe.exe')
-      
-    core_path = os.path.join(output_path, 'retrofe')
-    
-    # create the core folder
-    if not os.path.exists(core_path):
-      os.makedirs(core_path)
-      
-    # copy retrofe.exe
-    shutil.copy(src_exe, core_path)
-#    third_party_path = os.path.join(base_path, 'RetroFE', 'ThirdParty')
-        
-elif args.os == 'linux':
-  if args.build == 'full' or args.build == 'core' or args.build == 'engine':
-    src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe')
-    shutil.copy(src_exe, output_path)
-
-elif args.os == 'mac':
-  if args.build == 'full' or args.build == 'core' or args.build == 'engine':
-    src_exe = os.path.join(base_path, 'RetroFE', 'Build', 'retrofe')
-    shutil.copy(src_exe, output_path)
-    app_path = os.path.join(output_path, 'RetroFE.app')
-    if not os.path.exists(app_path):
-      copytree(os_path, output_path)
-    shutil.copy(src_exe, output_path + '/RetroFE.app/Contents/MacOS/')
-
-
-
+if args.build in ('full', 'core', 'engine'):
+  build_path = os.path.join(base_path, args.build_directory)
+  binary_name = 'retrofe.exe' if args.os == 'windows' else 'retrofe'
+  runtime_path = os.path.join(build_path, 'bin', args.configuration)
+  if not os.path.isfile(os.path.join(runtime_path, binary_name)):
+    runtime_path = os.path.join(build_path, 'bin')
+  src_exe = os.path.join(runtime_path, binary_name)
+  if not os.path.isfile(src_exe):
+    raise SystemExit('Build RetroFE first; missing executable: ' + src_exe)
+  core_path = os.path.join(output_path, 'retrofe') if args.os == 'windows' else output_path
+  mkdir_p(core_path)
+  if args.os == 'windows':
+    manifest = os.path.join(runtime_path, 'runtime-files.txt')
+    if not os.path.isfile(manifest):
+      raise SystemExit('Missing staged runtime manifest; run RetroFE/Source/Build.ps1 first')
+    with open(manifest, encoding='utf-8') as entries:
+      for entry in entries:
+        relative = entry.strip()
+        if not relative:
+          continue
+        # A manifest may name nested license files but never leave the runtime.
+        if os.path.isabs(relative) or '..' in relative.replace('\\', '/').split('/'):
+          raise SystemExit('Invalid runtime manifest path: ' + relative)
+        destination = os.path.join(core_path, relative)
+        os.makedirs(os.path.dirname(destination), exist_ok=True)
+        shutil.copy2(os.path.join(runtime_path, relative), destination)
+    shutil.copy2(manifest, core_path)
+    for legacy in ('SDL2.dll', 'SDL2_image.dll', 'SDL2_mixer.dll', 'SDL2_ttf.dll'):
+      legacy_path = os.path.join(core_path, legacy)
+      if os.path.isfile(legacy_path):
+        os.remove(legacy_path)
+  shutil.copy2(src_exe, core_path)

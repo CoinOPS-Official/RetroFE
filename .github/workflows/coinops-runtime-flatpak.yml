@@ -66,8 +66,8 @@ jobs:
         id: cache-retrofe
         uses: actions/cache@v4
         with:
-          path: RetroFE/Build/retrofe
-          key: retrofe-linux-x64-${{ steps.retrofe-rev.outputs.sha }}-v1
+          path: RetroFE/Build
+          key: retrofe-linux-x64-${{ steps.retrofe-rev.outputs.sha }}-sdl3-v2
 
       # ============================================================
       # Restore cached MAME binary
@@ -96,9 +96,12 @@ jobs:
             zlib1g-dev \
             libglib2.0-dev \
             libsdl2-dev \
-            libsdl2-mixer-dev \
-            libsdl2-image-dev \
             libsdl2-ttf-dev \
+            libegl1-mesa-dev \
+            libgles2-mesa-dev \
+            libwayland-dev \
+            libxkbcommon-dev \
+            libasound2-dev \
             libfontconfig-dev \
             libpulse-dev \
             libgstreamer1.0-0 \
@@ -142,7 +145,7 @@ jobs:
         run: |
           cmake --build RetroFE/Build --parallel
 
-          test -x RetroFE/Build/retrofe
+          test -x RetroFE/Build/bin/retrofe
 
       # ============================================================
       # Verify cached or newly built RetroFE
@@ -150,7 +153,7 @@ jobs:
 
       - name: Verify RetroFE
         run: |
-          test -x RetroFE/Build/retrofe
+          test -x RetroFE/Build/bin/retrofe
 
           echo "RetroFE cache hit:"
           echo "${{ steps.cache-retrofe.outputs.cache-hit }}"
@@ -161,12 +164,12 @@ jobs:
 
           echo
           echo "RetroFE version:"
-          RetroFE/Build/retrofe --version || true
+          RetroFE/Build/bin/retrofe --version || true
 
           echo
           echo "RetroFE binary size:"
-          ls -lh RetroFE/Build/retrofe
-          du -h RetroFE/Build/retrofe
+          ls -lh RetroFE/Build/bin/retrofe
+          du -h RetroFE/Build/bin/retrofe
 
       # ============================================================
       # Build custom MAME only on cache miss
@@ -227,7 +230,7 @@ jobs:
       - name: Locate binaries
         id: binaries
         run: |
-          RETROFE_BINARY="$PWD/RetroFE/Build/retrofe"
+          RETROFE_BINARY="$PWD/RetroFE/Build/bin/retrofe"
           MAME_BINARY="$PWD/MAME/mame"
 
           if [ ! -x "$RETROFE_BINARY" ]; then

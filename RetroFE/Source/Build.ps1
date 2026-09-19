@@ -26,14 +26,19 @@ $prefixes = foreach ($package in $packages) {
         throw "Unexpected checksum for $archive"
     }
     $prefix = "$BuildDirectory/deps/$($package.Name)-$($package.Version)"
-    if (!(Test-Path -LiteralPath "$prefix/cmake")) {
-        Expand-Archive -LiteralPath $archive -DestinationPath "$BuildDirectory/deps"
-    }
+    # Restore the verified upstream files even when a developer previously
+    # replaced headers or DLLs in this cache while testing an SDL patch.
+    Expand-Archive -LiteralPath $archive -DestinationPath "$BuildDirectory/deps" -Force
+    Write-Host "Using upstream $($package.Name) $($package.Version)"
     (Resolve-Path -LiteralPath $prefix).Path
+}
+$packageArguments = for ($index = 0; $index -lt $packages.Count; ++$index) {
+    # Override stale CMake package paths pointing at a local patched build.
+    "-D$($packages[$index].Name)_DIR=$($prefixes[$index])/cmake"
 }
 & cmake -S $PSScriptRoot -B $BuildDirectory -G 'Visual Studio 17 2022' -A x64 `
     "-DCMAKE_PREFIX_PATH=$($prefixes -join ';')" "-DGSTREAMER_ROOT=$GStreamerRoot" `
-    -DRETROFE_FETCH_SDL3=OFF -DRETROFE_BUILD_TESTING=ON -DBUILD_TESTING=ON
+    @packageArguments -DRETROFE_FETCH_SDL3=OFF -DRETROFE_BUILD_TESTING=ON -DBUILD_TESTING=ON
 if ($LASTEXITCODE -ne 0) { throw 'SDL3 configuration failed' }
 & cmake --build $BuildDirectory --config $Configuration --parallel 6
 if ($LASTEXITCODE -ne 0) { throw 'SDL3 build failed' }

@@ -18,16 +18,16 @@ jobs:
           choco install -y gstreamer --version 1.24.11
           choco install -y gstreamer-devel --version 1.24.11
 
-      - name: Build and test SDL3 RetroFE
+      - name: Build and test RetroFE
         shell: pwsh
         run: ./RetroFE/Source/Build.ps1 -GStreamerRoot 'D:/gstreamer/1.0/msvc_x86_64'
 
       # Runtime-only artifact; frontend settings, layouts and media are supplied
-      # by the installation. Do not mix the historical SDL2 dependency bundle in.
-      - name: Upload SDL3 runtime
+      # by the installation. DLLs and SDL notices come from the verified build.
+      - name: Upload runtime
         uses: actions/upload-artifact@v4
         with:
-          name: RetroFE-windows-SDL3-runtime
+          name: RetroFE-windows-runtime
           path: |
             RetroFE/Build/bin/Release/**
             !RetroFE/Build/bin/Release/*tests.exe

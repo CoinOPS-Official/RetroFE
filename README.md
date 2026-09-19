@@ -28,9 +28,9 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 ## What's so special about this fork?
 * Performance and optimisations
 	* 64-bit codebase
-    * C++17 as standard
+    * C++20 as standard
 	* Modern render engine; DX11 for Windows, Metal for MacOS
- 	* Hardware accelerated video support for Windows
+	* Hardware accelerated video support for Windows and Linux
 	* VSync and support for high refresh rate
 	* Metadata database build time reduced
 	* File caching to prevent drive lashing
@@ -57,174 +57,26 @@ It's licensed under the terms of the GNU General Public License, version 3 or la
 * Graphics
     * A reasonably modern graphics card (Direct3D 11+ / OpenGL 4+ / Metal on MacOS)
 
-# Building the SDL3 branch on Windows
+## Building
 
-This branch builds RetroFE against SDL3, SDL3_image, SDL3_ttf and SDL3_mixer.
-Requires Visual Studio 2022 with Desktop development with C++, Windows SDK,
-CMake 3.24+, Git, and the GStreamer MSVC x64 runtime and development packages.
+SDL3 is the standard build on all platforms. RetroFE uses unmodified upstream
+SDL3 libraries; no SDL patches are required.
 
-From the repository root:
+On Windows, install Visual Studio 2022 with C++/Windows SDK, CMake 3.24+, and
+GStreamer's MSVC x64 runtime and development packages, then run:
 
 ```powershell
 git submodule update --init --recursive
 ./RetroFE/Source/Build.ps1
 ```
 
-The script downloads checksum-verified SDL3 development packages into
-`RetroFE/Build/deps`, generates `RetroFE/Build/retrofe.sln`, builds Release,
-and runs RetroFE and OpenHi2txt tests. Open that solution in Visual Studio;
-`retrofe` is its startup project. No files from `Source/build-sdl3` or the
-standalone video prototype are needed. `Build-SDL3.ps1` is a compatibility alias.
+This downloads verified official SDL development archives, generates
+`RetroFE/Build/retrofe.sln`, builds and tests RetroFE, and stages the matching
+runtime in `RetroFE/Build/bin/Release`.
 
-Use `-GStreamerRoot 'C:/path/to/gstreamer'`, `-Configuration Debug`, or
-`-BuildDirectory 'C:/path/to/build'` to override the defaults.
-
-The executable and matching DLLs/plugins are in `RetroFE/Build/bin/Release`.
-Copy that directory's runtime contents into the `retrofe` directory of a test
-frontend installation. Keep its settings, layouts and media. Do not overlay the
-old SDL2 DLL bundle from `Package/Environment/Windows/retrofe` onto this output.
-The build directory alone is not a complete frontend installation.
-
-For Windows GPU video, set `HardwareVideoAccel=true`,
-`SDLRenderDriver=direct3d11`, and `log=INFO,WARNING,ERROR` in `settings.conf`.
-`GPU texture interop ACTIVE` in `log.txt` confirms successful GPU-frame transfer.
-
-See [SDL3 migration and validation notes](RetroFE/Source/SDL3-PORT.md).
-The Linux/macOS and packaging instructions below describe the historical SDL2
-build and are not validated for this SDL3 branch. Use the SDL3 CMake dependency
-instructions in those notes for development on other platforms.
-
-#   Building for Linux #
-
-### Install libraries
-
- #### Debian
-```bash
-sudo apt-get install git g++ cmake zlib1g-dev \
-libsdl2-2.0 libsdl2-mixer-2.0 libsdl2-image-2.0 libsdl2-ttf-2.0 \
-libsdl2-dev libsdl2-mixer-dev libsdl2-image-dev libsdl2-ttf-dev \
-libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev libgstreamer-plugins-good1.0-dev gstreamer1.0-libav \
-libglib2.0-0 libglib2.0-dev libminizip-dev libwebp-dev libusb-1.0-0-dev libevdev-dev
-```
-
-#### Fedora
-```bash
-sudo dnf install -y git gcc-c++ cmake zlib-devel \
-SDL2 SDL2_mixer SDL2_image SDL2_ttf \
-SDL2-devel SDL2_mixer-devel SDL2_image-devel SDL2_ttf-devel \
-gstreamer1 gstreamer1-plugins-base gstreamer1-plugins-good gstreamer1-libav \
-glib2 glib2-devel minizip-devel libwebp-devel libusb1-devel libevdev-devel \
-zlib libusb1 libevdev
-```
-
-#### Arch
-```bash
-sudo pacman -S git gcc cmake zlib \
-sdl2 sdl2_mixer sdl2_image sdl2_ttf \
-gstreamer gst-plugins-base gst-plugins-good gst-libav \
-glib2 minizip libwebp libusb libevdev
-```
-
-### Download and compile the source code
-Download the source code
-
-	git clone --recurse-submodules https://github.com/CoinOPS-Official/RetroFE.git
-
-Generate your gcc make files
-
-	cd RetroFE
-	cmake RetroFE/Source -BRetroFE/Build
-
-Compile RetroFE
-
-	cmake --build RetroFE/Build
-
-The executable is then found in `/RetroFE/Build`
-
-#   Building for MacOS #
-
-## Install Homebrew
-
-Both methods use Homebrew in some capacity (https://brew.sh)
-
-## Universal2 Binaries
-
-An Xcode project has been created to build universal binaries (x86_64 and arm64)
-
-### Download the source code
-
-	git clone --recurse-submodules https://github.com/CoinOPS-Official/RetroFE.git
-
-### Install libraries
-
-	curl -LO https://github.com/libsdl-org/SDL/releases/download/release-2.32.4/SDL2-2.32.4.dmg
-	curl -LO https://github.com/libsdl-org/SDL_image/releases/download/release-2.8.8/SDL2_image-2.8.8.dmg
-	curl -LO https://github.com/libsdl-org/SDL_mixer/releases/download/release-2.8.1/SDL2_mixer-2.8.1.dmg
-	curl -LO https://github.com/libsdl-org/SDL_ttf/releases/download/release-2.24.0/SDL2_ttf-2.24.0.dmg
-	curl -LO https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-1.22.12-universal.pkg
-	curl -LO https://gstreamer.freedesktop.org/data/pkg/osx/1.22.12/gstreamer-1.0-devel-1.22.12-universal.pkg
-	
-	sudo installer -pkg gstreamer-1.0-1.22.12-universal.pkg -target /
-	sudo installer -pkg gstreamer-1.0-devel-1.22.12-universal.pkg -target /
-	
-	hdiutil attach SDL2-2.32.4.dmg
-	cp -R /Volumes/SDL2/SDL2.framework RetroFE/RetroFE/ThirdPartyMac/
-	hdiutil detach /Volumes/SDL2
-	
-	hdiutil attach SDL2_image-2.8.8.dmg
-	cp -R /Volumes/SDL2_image/SDL2_image.framework RetroFE/RetroFE/ThirdPartyMac/
-	cp -R /Volumes/SDL2_image/optional/webp.framework RetroFE/RetroFE/ThirdPartyMac/
-	hdiutil detach /Volumes/SDL2_image
-	
-	hdiutil attach SDL2_mixer-2.8.1.dmg
-	cp -R /Volumes/SDL2_mixer/SDL2_mixer.framework RetroFE/RetroFE/ThirdPartyMac/
-	hdiutil detach /Volumes/SDL2_mixer
-	
-	hdiutil attach SDL2_ttf-2.24.0.dmg
-	cp -R /Volumes/SDL2_ttf/SDL2_ttf.framework RetroFE/RetroFE/ThirdPartyMac/
-	hdiutil detach /Volumes/SDL2_ttf
-	
-	cp -R /Library/Frameworks/GStreamer.framework RetroFE/RetroFE/ThirdPartyMac/
-	
-### Install headers
-
- ```bash
- brew install minizip libusb
- ```
-
-### Compile the source code
-Open the Xcodeproj in `RetroFE/xcode` and build target or
-
-	cd RetroFE/
-	xcodebuild -project RetroFE/xcode/retrofe.xcodeproj
-
-The executable is then found in `/RetroFE/Build`
-
-## Single Architecture Binaries
-### Install libraries
-
-```bash
-brew install git gcc cmake zlib \
-sdl2 sdl2_mixer sdl2_image sdl2_ttf \
-gstreamer \
-glib minizip webp libusb
-```
-
-### Download and compile the source code
-Download the source code
-
-	git clone --recurse-submodules https://github.com/CoinOPS-Official/RetroFE.git
-
-Generate your gcc make files
-
-	cd RetroFE
-	cmake RetroFE/Source -BRetroFE/Build
-
-Compile RetroFE
-
-	cmake --build RetroFE/Build
-
-The executable is then found in `/RetroFE/Build`
+Linux and macOS use CMake with installed SDL3 packages or pinned upstream
+source builds. See [build, dependency and packaging instructions](RetroFE/Source/BUILDING.md)
+for all platforms. The standalone interop prototypes are optional developer tools.
 
 #   Optional #
 
