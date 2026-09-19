@@ -479,8 +479,7 @@ void ReloadableScrollingText::draw() {
 	}
 
 	// --- Select the best MipLevel for the current render size ---
-	const int targetFontSize = static_cast<int>(baseViewInfo.FontSize);
-	const FontManager::MipLevel* mip = font->getMipLevelForSize(targetFontSize);
+	const FontManager::MipLevel* mip = font->getMipLevelForHeight(baseViewInfo.FontSize);
 	if (!mip || !mip->fillTexture) {
 		// If no suitable mip is found, we cannot draw.
 		return;

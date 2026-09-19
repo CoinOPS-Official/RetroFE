@@ -991,8 +991,20 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 	// Individual text instance color is now a rendering property tracked strictly by ViewInfo!
 	SDL_Color whiteBaseline{ 255, 255, 255, 255 };
 
-	fontCache_->loadFont(fontName, fontSize, whiteBaseline, fontGradient, fontOutline, monitor);
-	return fontCache_->getFont(fontName, fontSize, fontGradient, fontOutline, monitor);
+	if (!fontCache_->loadFont(fontName, fontSize, whiteBaseline, fontGradient, fontOutline, monitor)) return nullptr;
+	auto* font = fontCache_->getFont(fontName, fontSize, fontGradient, fontOutline, monitor);
+	const auto* displaySizeXml = findAttribute(component, "fontSize", defaults);
+	const float displaySize = getVerticalAlignment(displaySizeXml, -1);
+	if (font && displaySize > 0) {
+		const std::string tag = component->name();
+		const bool usesLineHeight = tag == "reloadableHiscores" ||
+			tag == "reloadableGlobalHiscores" || tag == "reloadableScrollingText";
+		const bool prepared = usesLineHeight ? font->prepareHeight(displaySize) : font->prepareSize(displaySize);
+		if (!prepared) {
+			LOG_WARNING("Font", "Unable to prepare layout font size: " + std::string(SDL_GetError()));
+		}
+	}
+	return font;
 }
 
 void PageBuilder::loadTweens(Component* c, xml_node<>* componentXml) {
