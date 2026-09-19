@@ -1,155 +1,443 @@
 #include "AudioBus.h"
 #include "MusicPlayer.h"
-#include <array>
-#if defined(__AVX2__)
-#include <immintrin.h>
-#elif defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
-#include <emmintrin.h>
-#elif defined(__ARM_NEON)
-#include <arm_neon.h>
-#endif
-#include <memory>
-#include <atomic>
-#include <algorithm>
-#include <cstring>
 
 #include "../Utility/Log.h"
 
+#include <algorithm>
+#include <array>
+#include <cstring>
+#include <limits>
+#include <memory>
+
 namespace {
-    // Helper to find the next power of two.
-    // e.g., next_power_of_2(257) -> 512
-    // This is essential for the SpscRing's bitmask logic to work correctly.
-    size_t next_power_of_2(size_t n) {
-        if (n == 0) return 1;
-        n--;
-        n |= n >> 1;
-        n |= n >> 2;
-        n |= n >> 4;
-        n |= n >> 8;
-        n |= n >> 16;
+
+    size_t nextPowerOfTwo(size_t value) {
+        if (value == 0)
+            return 1;
+
+        --value;
+
+        value |= value >> 1;
+        value |= value >> 2;
+        value |= value >> 4;
+        value |= value >> 8;
+        value |= value >> 16;
+
 #if defined(__LP64__) || defined(_WIN64)
-        n |= n >> 32; // Only on 64-bit systems
+        value |= value >> 32;
 #endif
-        n++;
-        return n;
-    }
-    static inline size_t align_up(size_t n, size_t a) { return a ? ((n + (a - 1)) / a) * a : n; }
 
-}
-
-static inline int bytes_per_sample(SDL_AudioFormat f) noexcept {
-    switch (f) {
-        case SDL_AUDIO_S8: case SDL_AUDIO_U8:                           return 1;
-        case SDL_AUDIO_S16LE: case SDL_AUDIO_S16BE:                   return 2;
-        case SDL_AUDIO_S32LE: case SDL_AUDIO_S32BE:                   return 4;
-        case SDL_AUDIO_F32LE: case SDL_AUDIO_F32BE:                   return 4;
-        default:                                                return 2;
-    }
-}
-
-
-AudioBus::SpscRing::SpscRing(size_t cap_req, size_t align)
-    : buf_(next_power_of_2(cap_req)),
-    mask_(buf_.size() - 1),
-    align_(align ? align : 1) {
-}
-
-int AudioBus::SpscRing::write(const uint8_t* data, int bytes) {
-    std::lock_guard<std::mutex> lock(ringMutex_);
-    if (!data || bytes <= 0) return 0;
-
-    const size_t cap = buf_.size();
-
-    // If incoming > capacity, keep only last aligned window
-    if ((size_t)bytes > cap) {
-        size_t keep = (align_ > 1) ? (cap / align_) * align_ : cap;
-        data += (bytes - (int)keep);
-        bytes = (int)keep;
+        return value + 1;
     }
 
-    size_t h = head_.load(std::memory_order_relaxed);
-    size_t t = tail_.load(std::memory_order_acquire);
-    size_t used = h - t;
-    size_t free = cap - used;
+    size_t alignUp(
+        size_t value,
+        size_t alignment) {
+        if (alignment <= 1)
+            return value;
 
-    if ((size_t)bytes > free) {
-        size_t need = (size_t)bytes - free;
-        need = align_up(need, align_);
-        if (need > used) need = used;
-        tail_.store(t + need, std::memory_order_release);
-        t += need;
+        return
+            ((value + alignment - 1) /
+                alignment) *
+            alignment;
     }
 
-    size_t idx = h & mask_;
-    size_t first = std::min((size_t)bytes, cap - idx);
-    std::memcpy(&buf_[idx], data, first);
-    if (first < (size_t)bytes) {
-        std::memcpy(&buf_[0], data + first, (size_t)bytes - first);
+    uint64_t packFadeState(
+        uint32_t totalFrames,
+        uint32_t consumedFrames) {
+        return
+            (static_cast<uint64_t>(totalFrames) << 32) |
+            static_cast<uint64_t>(consumedFrames);
     }
 
-    head_.store(h + (size_t)bytes, std::memory_order_release);
-    return bytes;
-}
-
-int AudioBus::SpscRing::read(uint8_t* out, int bytes) {
-    std::lock_guard<std::mutex> lock(ringMutex_);
-    if (!out || bytes <= 0) return 0;
-
-    const size_t cap = buf_.size();
-
-    size_t h = head_.load(std::memory_order_acquire);
-    size_t t = tail_.load(std::memory_order_relaxed);
-    size_t avail = h - t;
-
-    if ((size_t)bytes > avail) bytes = (int)avail;
-
-    size_t idx = t & mask_;
-    size_t first = std::min((size_t)bytes, cap - idx);
-    std::memcpy(out, &buf_[idx], first);
-    if (first < (size_t)bytes) {
-        std::memcpy(out + first, &buf_[0], (size_t)bytes - first);
+    uint32_t fadeTotalFrames(
+        uint64_t state) {
+        return static_cast<uint32_t>(
+            state >> 32);
     }
 
-    tail_.store(t + (size_t)bytes, std::memory_order_release);
-    return bytes;
+    uint32_t fadeConsumedFrames(
+        uint64_t state) {
+        return static_cast<uint32_t>(
+            state & 0xffffffffULL);
+    }
+
+    /*
+     * 4096 floats = 16 KiB.
+     *
+     * Large enough for normal callbacks but mixInto() also chunks larger
+     * callbacks, so the audio thread never needs to allocate.
+     */
+    constexpr int kMixScratchSamples = 4096;
+
+} // namespace
+
+// ============================================================================
+// SpscRing
+// ============================================================================
+
+AudioBus::SpscRing::SpscRing(
+    size_t requestedCapacity,
+    size_t alignment,
+    OverflowPolicy overflowPolicy)
+    : buffer_(
+        nextPowerOfTwo(
+            std::max<size_t>(
+                requestedCapacity,
+                1)))
+    , mask_(buffer_.size() - 1)
+    , alignment_(
+        std::max<size_t>(
+            alignment,
+            1))
+    , overflowPolicy_(overflowPolicy) {
 }
 
-void AudioBus::SpscRing::clear() {
-    std::lock_guard<std::mutex> lock(ringMutex_);
-    size_t h = head_.load(std::memory_order_relaxed);
-    tail_.store(h, std::memory_order_release);
+void AudioBus::SpscRing::publishDiscardBefore(
+    size_t position) noexcept {
+    /*
+     * Multiple control paths may request a clear. Never allow an older
+     * request to move the discard point backwards.
+     */
+    size_t current =
+        discardBefore_.load(
+            std::memory_order_relaxed);
+
+    while (current < position &&
+        !discardBefore_.compare_exchange_weak(
+            current,
+            position,
+            std::memory_order_release,
+            std::memory_order_relaxed))
+    {
+        // current is refreshed by compare_exchange_weak().
+    }
+
+    /*
+     * Publish after the boundary so the consumer that observes the serial
+     * change will also observe the new discardBefore_ value.
+     */
+    clearSerial_.fetch_add(
+        1,
+        std::memory_order_release);
 }
 
+int AudioBus::SpscRing::write(
+    const uint8_t* data,
+    int bytes) noexcept {
+    if (!data || bytes <= 0)
+        return 0;
 
+    /*
+     * A producer must never publish a partial audio frame.
+     */
+    size_t requested =
+        static_cast<size_t>(bytes);
 
-// ----- helpers -----
+    requested -=
+        requested %
+        alignment_;
 
-static inline float clip1(float v) {
-    if (v > 1.0f) return  1.0f;
-    if (v < -1.0f) return -1.0f;
-    return v;
+    if (requested == 0)
+        return 0;
+
+    const size_t capacity =
+        buffer_.size();
+
+    /*
+     * Never split a producer block merely to make it fit.
+     *
+     * Normal GStreamer buffers are dramatically smaller than our ring,
+     * so this also makes overflow behavior deterministic.
+     */
+    if (requested > capacity) {
+        overflowCount_.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        droppedBytes_.fetch_add(
+            requested,
+            std::memory_order_relaxed);
+
+        if (overflowPolicy_ ==
+            OverflowPolicy::FlushQueued)
+        {
+            const size_t head =
+                head_.load(
+                    std::memory_order_relaxed);
+
+            publishDiscardBefore(head);
+        }
+
+        return 0;
+    }
+
+    /*
+     * Producer owns head_.
+     *
+     * tail_ is acquired because the consumer publishes it after finishing
+     * its reads.
+     */
+    const size_t head =
+        head_.load(
+            std::memory_order_relaxed);
+
+    const size_t tail =
+        tail_.load(
+            std::memory_order_acquire);
+
+    const size_t used =
+        head - tail;
+
+    /*
+     * With monotonically increasing cursors, used should never exceed
+     * capacity unless the SPSC ownership contract has been violated.
+     */
+    if (used > capacity) {
+        overflowCount_.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        droppedBytes_.fetch_add(
+            requested,
+            std::memory_order_relaxed);
+
+        return 0;
+    }
+
+    const size_t free =
+        capacity - used;
+
+    if (requested > free) {
+        overflowCount_.fetch_add(
+            1,
+            std::memory_order_relaxed);
+
+        droppedBytes_.fetch_add(
+            requested,
+            std::memory_order_relaxed);
+
+        /*
+         * Important:
+         *
+         * DO NOT advance tail_ here.
+         *
+         * tail_ belongs exclusively to the consumer. Mutating it from the
+         * producer is exactly what prevented the old ring from being truly
+         * SPSC.
+         */
+        if (overflowPolicy_ ==
+            OverflowPolicy::FlushQueued)
+        {
+            /*
+             * Low-latency recovery:
+             *
+             * ask the consumer to throw away everything currently queued.
+             *
+             * We still reject this block because the consumer may currently
+             * be reading from that memory; reclaiming it immediately would
+             * introduce a data race.
+             */
+            publishDiscardBefore(head);
+        }
+
+        return 0;
+    }
+
+    const size_t index =
+        head & mask_;
+
+    const size_t first =
+        std::min(
+            requested,
+            capacity - index);
+
+    std::memcpy(
+        buffer_.data() + index,
+        data,
+        first);
+
+    if (first < requested) {
+        std::memcpy(
+            buffer_.data(),
+            data + first,
+            requested - first);
+    }
+
+    /*
+     * Publishing head_ makes all preceding buffer writes visible to the
+     * consumer that acquires head_.
+     */
+    head_.store(
+        head + requested,
+        std::memory_order_release);
+
+    return static_cast<int>(
+        requested);
 }
 
-static inline int16_t clip16(int v) {
-    if (v > 32767) return  32767;
-    if (v < -32768) return -32768;
-    return (int16_t)v;
+int AudioBus::SpscRing::read(
+    uint8_t* out,
+    int bytes) noexcept {
+    if (!out || bytes <= 0)
+        return 0;
+
+    size_t requested =
+        static_cast<size_t>(bytes);
+
+    requested -=
+        requested %
+        alignment_;
+
+    if (requested == 0)
+        return 0;
+
+    /*
+     * Snapshot the clear generation before examining cursors.
+     *
+     * If a clear happens while we're copying, we'll discard the copied
+     * block rather than passing stale timeline audio to the mixer.
+     */
+    const uint64_t clearBefore =
+        clearSerial_.load(
+            std::memory_order_acquire);
+
+    /*
+     * Consumer exclusively owns tail_.
+     */
+    size_t tail =
+        tail_.load(
+            std::memory_order_relaxed);
+
+    /*
+     * Honor any asynchronous clear request.
+     */
+    const size_t discard =
+        discardBefore_.load(
+            std::memory_order_acquire);
+
+    if (discard > tail) {
+        tail = discard;
+
+        tail_.store(
+            tail,
+            std::memory_order_release);
+    }
+
+    /*
+     * Acquire head_ so all producer memcpy writes preceding its release-store
+     * are visible before we read them.
+     */
+    const size_t head =
+        head_.load(
+            std::memory_order_acquire);
+
+    const size_t availableBytes =
+        head - tail;
+
+    if (availableBytes == 0)
+        return 0;
+
+    requested =
+        std::min(
+            requested,
+            availableBytes);
+
+    requested -=
+        requested %
+        alignment_;
+
+    if (requested == 0)
+        return 0;
+
+    const size_t capacity =
+        buffer_.size();
+
+    const size_t index =
+        tail & mask_;
+
+    const size_t first =
+        std::min(
+            requested,
+            capacity - index);
+
+    std::memcpy(
+        out,
+        buffer_.data() + index,
+        first);
+
+    if (first < requested) {
+        std::memcpy(
+            out + first,
+            buffer_.data(),
+            requested - first);
+    }
+
+    /*
+     * A producer/control thread may have requested a discontinuity flush
+     * while we were copying.
+     *
+     * Don't commit this read and don't return stale samples to AudioBus.
+     * The next read will apply the newly published discard boundary.
+     */
+    const uint64_t clearAfter =
+        clearSerial_.load(
+            std::memory_order_acquire);
+
+    if (clearAfter != clearBefore)
+        return 0;
+
+    /*
+     * Consumer commits the read.
+     */
+    tail_.store(
+        tail + requested,
+        std::memory_order_release);
+
+    return static_cast<int>(
+        requested);
 }
 
-static inline int32_t clip32(int64_t v) noexcept {
-    constexpr int64_t INT32_MAX_V = 2147483647LL;
-    constexpr int64_t INT32_MIN_V = -2147483647LL - 1LL;  // avoid unary minus warning
-    if (v > INT32_MAX_V) return static_cast<int32_t>(INT32_MAX_V);
-    if (v < INT32_MIN_V) return static_cast<int32_t>(INT32_MIN_V);
-    return static_cast<int32_t>(v);
+void AudioBus::SpscRing::clear() noexcept {
+    /*
+     * Snapshot everything that has been published by the producer.
+     *
+     * We intentionally do NOT change tail_. The consumer owns tail_.
+     */
+    const size_t head =
+        head_.load(
+            std::memory_order_acquire);
+
+    publishDiscardBefore(head);
 }
 
+size_t AudioBus::SpscRing::available() const noexcept {
+    const size_t head =
+        head_.load(
+            std::memory_order_acquire);
 
-// Fixed -6 dB headroom for the injected (GStreamer) stream
-// Rationale: keeps typical content out of saturation when summed with SDL_mixer output.
-constexpr int   kHeadroomShiftS16 = 1;     // >>1  (~0.5x)
-constexpr float kHeadroomF32 = 0.5f;  //  -6 dB
-constexpr int   kHeadroomShiftS32 = 1;     // >>1  (~0.5x)
+    const size_t tail =
+        tail_.load(
+            std::memory_order_acquire);
+
+    const size_t discard =
+        discardBefore_.load(
+            std::memory_order_acquire);
+
+    const size_t effectiveTail =
+        std::max(
+            tail,
+            discard);
+
+    if (head <= effectiveTail)
+        return 0;
+
+    return head - effectiveTail;
+}
+
+// ============================================================================
+// AudioBus lifecycle
+// ============================================================================
 
 AudioBus& AudioBus::instance() {
     static AudioBus bus;
@@ -158,487 +446,800 @@ AudioBus& AudioBus::instance() {
 
 AudioBus::~AudioBus() {
     shutdown();
-    std::lock_guard<std::mutex> lk(mtx_);
-    sources_.clear();  // shared_ptr destructors free streams safely
+
+    std::lock_guard<std::mutex>
+        lock(mtx_);
+
+    sources_.clear();
 }
 
-bool AudioBus::initialize(int sampleRate, int channels) {
-    if (mixer_) return true;
-    if (sampleRate <= 0 || channels <= 0 || channels > 8)
-        return SDL_SetError("Invalid audio rate or channel count");
-    if (!MIX_Init()) return false;
+bool AudioBus::initialize(
+    int sampleRate,
+    int channels) {
+    if (mixer_)
+        return true;
+
+    if (sampleRate <= 0 ||
+        channels <= 0 ||
+        channels > 8)
+    {
+        return SDL_SetError(
+            "Invalid audio rate or channel count");
+    }
+
+    if (!MIX_Init())
+        return false;
+
     mixerInitialized_ = true;
-    SDL_AudioSpec requested{ SDL_AUDIO_F32, channels, sampleRate };
-    mixer_ = MIX_CreateMixerDevice(SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK, &requested);
+
+    /*
+     * SDL3_mixer mixes internally in float. Request F32 explicitly so our
+     * intent is clear even though the postmix callback itself is F32.
+     */
+    SDL_AudioSpec requested{
+        SDL_AUDIO_F32,
+        channels,
+        sampleRate
+    };
+
+    mixer_ =
+        MIX_CreateMixerDevice(
+            SDL_AUDIO_DEVICE_DEFAULT_PLAYBACK,
+            &requested);
+
+    if (!mixer_) {
+        shutdown();
+        return false;
+    }
+
     SDL_AudioSpec actual{};
-    if (!mixer_ || !MIX_GetMixerFormat(mixer_, &actual)) {
+
+    if (!MIX_GetMixerFormat(
+        mixer_,
+        &actual))
+    {
         shutdown();
         return false;
     }
-    devFmt_ = SDL_AUDIO_S16; // Stable native-endian producer contract, independent of hardware format.
-    devRate_ = actual.freq;
-    devChans_ = actual.channels;
-    if (!MIX_SetPostMixCallback(mixer_, postMix, this)) {
+
+    /*
+     * AudioBus' producer-side format is always F32.
+     *
+     * Rate and channel count follow SDL3_mixer so GStreamer can negotiate
+     * exactly the same stream shape.
+     */
+    devRate_ =
+        actual.freq > 0
+        ? actual.freq
+        : sampleRate;
+
+    devChans_ =
+        actual.channels > 0
+        ? actual.channels
+        : channels;
+
+    if (!MIX_SetPostMixCallback(
+        mixer_,
+        postMix,
+        this))
+    {
         shutdown();
         return false;
     }
+
+    LOG_INFO(
+        "AudioBus",
+        "Initialized F32 audio bus: " +
+        std::to_string(devRate_) +
+        " Hz, " +
+        std::to_string(devChans_) +
+        " channels");
+
     return true;
 }
 
 void AudioBus::shutdown() {
-    if (mixer_) MIX_SetPostMixCallback(mixer_, nullptr, nullptr);
-    MusicPlayer* player;
+    /*
+     * Disconnect the real-time callback first. After this returns,
+     * AudioBus state can be torn down without the mixer observing it.
+     */
+    if (mixer_) {
+        MIX_SetPostMixCallback(
+            mixer_,
+            nullptr,
+            nullptr);
+    }
+
+    MusicPlayer* player = nullptr;
+
     {
-        std::lock_guard<std::mutex> lock(callbackMutex_);
+        std::lock_guard<std::mutex>
+            lock(callbackMutex_);
+
         player = musicPlayer_;
         musicPlayer_ = nullptr;
     }
-    if (player) player->releaseAudio();
-    if (mixer_) MIX_DestroyMixer(mixer_); // Also destroys outstanding SFX voices.
-    mixer_ = nullptr;
+
+    if (player)
+        player->releaseAudio();
+
+    if (mixer_) {
+        MIX_DestroyMixer(mixer_);
+        mixer_ = nullptr;
+    }
+
     ++generation_;
+
     {
-        std::lock_guard<std::mutex> lock(mtx_);
+        std::lock_guard<std::mutex>
+            lock(mtx_);
+
         for (auto& entry : sources_) {
-            entry.second->enabled.store(false, std::memory_order_release);
+            if (!entry.second)
+                continue;
+
+            entry.second->enabled.store(
+                false,
+                std::memory_order_release);
+
             entry.second->ring.clear();
         }
+
         sources_.clear();
+
         rebuildSnapshotLocked();
     }
-    if (mixerInitialized_) MIX_Quit();
+
+    if (mixerInitialized_)
+        MIX_Quit();
+
     mixerInitialized_ = false;
 }
 
 void AudioBus::configureFromMixer() {
-    if (!initialize()) LOG_ERROR("AudioBus", std::string("Audio initialization failed: ") + SDL_GetError());
+    if (!initialize()) {
+        LOG_ERROR(
+            "AudioBus",
+            std::string(
+                "Audio initialization failed: ") +
+            SDL_GetError());
+    }
 }
 
-void AudioBus::setMusicPlayer(MusicPlayer* player) {
-    std::lock_guard<std::mutex> lock(callbackMutex_);
+void AudioBus::setMusicPlayer(
+    MusicPlayer* player) {
+    std::lock_guard<std::mutex>
+        lock(callbackMutex_);
+
     musicPlayer_ = player;
 }
 
-void SDLCALL AudioBus::postMix(void* userdata, MIX_Mixer*, const SDL_AudioSpec* spec, float* pcm, int samples) {
-    auto& bus = *static_cast<AudioBus*>(userdata);
-    if (!pcm || samples <= 0 || spec->channels != bus.devChans_ || spec->freq != bus.devRate_) return;
-    // Visualizers consume the music track directly, before sound effects are mixed.
-    // Fixed scratch storage bounds callback allocations and handles arbitrary block sizes.
-    std::array<int16_t, 4096> injected{};
-    const int capacity = static_cast<int>(injected.size()) / spec->channels * spec->channels;
-    for (int offset = 0; offset < samples;) {
-        const int count = std::min(capacity, samples - offset);
-        std::fill_n(injected.data(), count, int16_t{0});
-        bus.mixInto(reinterpret_cast<Uint8*>(injected.data()), count * static_cast<int>(sizeof(int16_t)));
-        for (int i = 0; i < count; ++i)
-            pcm[offset + i] = std::clamp(pcm[offset + i] + injected[i] / 32768.0f, -1.0f, 1.0f);
-        offset += count;
-    }
-}
+// ============================================================================
+// SDL3_mixer postmix
+// ============================================================================
 
-AudioBus::SourceId AudioBus::addSource(const char* name, size_t ring_kb) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    const SourceId id = nextId_++;
-
-    const size_t bps = bytes_per_sample(devFmt_);
-    const size_t bpf = bps * (size_t)devChans_;                 // bytes per frame
-    const size_t cap = (size_t)ring_kb * 1024;
-
-    auto src = std::make_shared<Source>(cap, bpf);              // ? construct with align
-    src->name = name ? name : std::string();
-    src->enabled.store(true, std::memory_order_relaxed);
-
-    sources_[id] = std::move(src);
-    rebuildSnapshotLocked();
-    return id;
-}
-
-void AudioBus::triggerFadeIn(const std::shared_ptr<Handle>& h, int durationSamples) noexcept {
-    if (!h || !h->sp) return;
-
-    auto& fade = h->sp->fadeSamplesLeft;
-    int current = fade.load(std::memory_order_relaxed);
-    int desired = durationSamples;
-
-    while (current < desired &&
-        !fade.compare_exchange_weak(current, desired,
-            std::memory_order_release,
-            std::memory_order_relaxed)) {
-        // retry
-    }
-}
-
-void AudioBus::removeSource(SourceId id) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    sources_.erase(id);
-    rebuildSnapshotLocked();
-}
-
-void AudioBus::setEnabled(SourceId id, bool on) {
-    std::lock_guard<std::mutex> lock(mtx_);
-    auto it = sources_.find(id);
-    if (it != sources_.end() && it->second) {
-        it->second->enabled.store(on, std::memory_order_relaxed);
-        rebuildSnapshotLocked();
-    }
-}
-
-bool AudioBus::isEnabled(SourceId id) const {
-    std::lock_guard<std::mutex> lk(mtx_);
-    auto it = sources_.find(id);
-    return (it != sources_.end())
-        ? it->second->enabled.load(std::memory_order_acquire)
-        : false;
-}
-
-void AudioBus::push(const std::shared_ptr<Handle>& h, const void* data, int bytes) {
-    if (!h || !h->sp) return;
-    if (!data || bytes <= 0) return;
-
-    // enabled is atomic; safe lock-free
-    if (!h->sp->enabled.load(std::memory_order_acquire)) return;
-
-    pushImpl(*h->sp, data, bytes);
-}
-
-void AudioBus::push(SourceId id, const void* data, int bytes) {
-    if (!data || bytes <= 0) return;
-
-    std::shared_ptr<Source> sp;
+void SDLCALL AudioBus::postMix(
+    void* userdata,
+    MIX_Mixer*,
+    const SDL_AudioSpec* spec,
+    float* pcm,
+    int samples) {
+    if (!userdata ||
+        !spec ||
+        !pcm ||
+        samples <= 0)
     {
-        std::lock_guard<std::mutex> lk(mtx_);
-        auto it = sources_.find(id);
-        if (it == sources_.end() || !it->second) return;
-        sp = it->second;
-    }
-
-    if (!sp->enabled.load(std::memory_order_acquire)) return;
-    pushImpl(*sp, data, bytes);
-}
-
-void AudioBus::pushImpl(Source& src, const void* data, int bytes) {
-    // Always work on a copy to apply processing
-    static thread_local std::vector<uint8_t> temp_buffer;
-    static thread_local size_t tl_temp_hwm_cap = 0;
-    static thread_local size_t tl_temp_hwm_size = 0;
-
-    bytes -= bytes % (devChans_ * bytes_per_sample(devFmt_));
-    if (bytes <= 0) return;
-
-    if (temp_buffer.size() < static_cast<size_t>(bytes))
-        temp_buffer.resize(static_cast<size_t>(bytes));
-
-    if (temp_buffer.capacity() > tl_temp_hwm_cap || temp_buffer.size() > tl_temp_hwm_size) {
-        tl_temp_hwm_cap = std::max(tl_temp_hwm_cap, temp_buffer.capacity());
-        tl_temp_hwm_size = std::max(tl_temp_hwm_size, temp_buffer.size());
-
-        LOG_DEBUG("AudioBus",
-            "push(): temp_buffer HWM increased: bytes=" + std::to_string(bytes) +
-            " size=" + std::to_string(temp_buffer.size()) +
-            " cap=" + std::to_string(temp_buffer.capacity()));
-    }
-
-    std::memcpy(temp_buffer.data(), data, static_cast<size_t>(bytes));
-
-    // 1) fade
-    int fadeLeft = src.fadeSamplesLeft.load(std::memory_order_acquire);
-    if (fadeLeft > 0 && devFmt_ == SDL_AUDIO_S16) {
-        int16_t* samples = reinterpret_cast<int16_t*>(temp_buffer.data());
-        int total_samples = bytes / (int)sizeof(int16_t);
-        int samples_to_fade = std::min(fadeLeft, total_samples);
-
-        for (int i = 0; i < samples_to_fade; ++i) {
-            float fade_gain = 1.0f - (static_cast<float>(fadeLeft - i) / fadeLeft);
-            samples[i] = static_cast<int16_t>(samples[i] * fade_gain);
-        }
-
-        int newFade = fadeLeft - samples_to_fade;
-        src.fadeSamplesLeft.store(newFade > 0 ? newFade : 0, std::memory_order_release);
-    }
-
-    // 2) gain
-    float sourceGain = src.gain.load(std::memory_order_relaxed);
-
-    if (devFmt_ == SDL_AUDIO_S16) {
-        int16_t* samples = reinterpret_cast<int16_t*>(temp_buffer.data());
-        int num_samples = bytes / (int)sizeof(int16_t);
-        for (int i = 0; i < num_samples; ++i) samples[i] = static_cast<int16_t>(samples[i] * sourceGain);
-    }
-    else if (devFmt_ == SDL_AUDIO_F32LE || devFmt_ == SDL_AUDIO_F32BE) {
-        float* samples = reinterpret_cast<float*>(temp_buffer.data());
-        int num_samples = bytes / (int)sizeof(float);
-        for (int i = 0; i < num_samples; ++i) samples[i] *= sourceGain;
-    }
-    else if (devFmt_ == SDL_AUDIO_S32LE || devFmt_ == SDL_AUDIO_S32BE) {
-        int32_t* samples = reinterpret_cast<int32_t*>(temp_buffer.data());
-        int num_samples = bytes / (int)sizeof(int32_t);
-        for (int i = 0; i < num_samples; ++i)
-            samples[i] = static_cast<int32_t>(static_cast<int64_t>(samples[i]) * sourceGain);
-    }
-
-    // 3) limiter
-    if (devFmt_ == SDL_AUDIO_S16) {
-        int16_t* samples = reinterpret_cast<int16_t*>(temp_buffer.data());
-        int num_samples = bytes / (int)sizeof(int16_t);
-
-        constexpr int16_t soft_threshold = 28000;
-        constexpr float knee = 0.1f;
-
-        for (int i = 0; i < num_samples; ++i) {
-            int16_t s = samples[i];
-            if (std::abs(s) > soft_threshold) {
-                float normalized = s / 32768.0f;
-                float sign = (normalized >= 0) ? 1.0f : -1.0f;
-                float abs_norm = std::abs(normalized);
-
-                float compressed = sign * (soft_threshold / 32768.0f +
-                    (abs_norm - soft_threshold / 32768.0f) * knee);
-                samples[i] = static_cast<int16_t>(compressed * 32767.0f);
-            }
-        }
-    }
-
-    src.ring.write(temp_buffer.data(), bytes);
-}
-
-void AudioBus::setGain(const std::shared_ptr<Handle>& h, float gain) noexcept {
-    if (!h || !h->sp) return;
-    h->sp->gain.store(std::clamp(gain, 0.0f, 1.0f), std::memory_order_release);
-}
-
-void AudioBus::clear(const std::shared_ptr<Handle>& h) noexcept {
-    if (!h || !h->sp) return;
-    h->sp->ring.clear();
-}
-
-static inline void mix_s16_sat_scalar(int16_t* dst, const int16_t* src, int n) {
-    for (int i = 0; i < n; ++i) {
-        int v = (int)dst[i] + (int)src[i];
-        dst[i] = clip16(v);
-    }
-}
-
-static inline void mix_s16_sat(Uint8* dst_u8, const Uint8* src_u8, int bytes) {
-    // Cast pointers once at the beginning
-    auto* dst = reinterpret_cast<int16_t*>(dst_u8);
-    auto* src = reinterpret_cast<const int16_t*>(src_u8);
-    int num_samples = bytes / 2;
-
-    if (num_samples < 64) {
-        mix_s16_sat_scalar(dst, src, num_samples);
         return;
     }
 
-#if defined(__AVX2__)
-    // --- AVX2 Implementation (Processes 16 samples at a time) ---
-    int i = 0;
-    // Process the bulk of the data in 16-sample (32-byte) chunks
-    for (; i <= num_samples - 16; i += 16) {
-        // Load 16 samples from dst and src into 256-bit registers
-        __m256i d = _mm256_loadu_si256((__m256i*)(dst + i));
-        __m256i s = _mm256_loadu_si256((__m256i*)(src + i));
-        // Add with saturation. This single instruction is the magic.
-        d = _mm256_adds_epi16(d, s);
-        // Store the result back
-        _mm256_storeu_si256((__m256i*)(dst + i), d);
-    }
-    // Handle any remaining samples with the scalar fallback
-    if (i < num_samples) {
-        mix_s16_sat_scalar(dst + i, src + i, num_samples - i);
+    auto& bus =
+        *static_cast<AudioBus*>(
+            userdata);
+
+    /*
+     * GStreamer appsinks are created with the AudioBus rate/channel
+     * contract. If SDL3_mixer ever changes this contract underneath us,
+     * do not reinterpret queued audio incorrectly.
+     *
+     * Do not log from the real-time callback.
+     */
+    if (spec->channels !=
+        bus.devChans_ ||
+        spec->freq !=
+        bus.devRate_)
+    {
+        return;
     }
 
-#elif defined(__SSE2__) || (defined(_MSC_VER) && defined(_M_X64))
-    // --- SSE2 Implementation (Processes 8 samples at a time) ---
-    int i = 0;
-    // Process the bulk of the data in 8-sample (16-byte) chunks
-    for (; i <= num_samples - 8; i += 8) {
-        // Load 8 samples from dst and src into 128-bit registers
-        __m128i d = _mm_loadu_si128((__m128i*)(dst + i));
-        __m128i s = _mm_loadu_si128((__m128i*)(src + i));
-        // Add with saturation.
-        d = _mm_adds_epi16(d, s);
-        // Store the result back
-        _mm_storeu_si128((__m128i*)(dst + i), d);
-    }
-    // Handle any remaining samples with the scalar fallback
-    if (i < num_samples) {
-        mix_s16_sat_scalar(dst + i, src + i, num_samples - i);
-    }
-
-#elif defined(__ARM_NEON)
-    // --- ARM NEON Implementation (Processes 8 samples at a time) ---
-    int i = 0;
-    // Process the bulk of the data in 8-sample (16-byte) chunks
-    for (; i <= num_samples - 8; i += 8) {
-        int16x8_t d = vld1q_s16(dst + i);
-        int16x8_t s = vld1q_s16(src + i);
-        // Saturating add for signed 16-bit integers
-        d = vqaddq_s16(d, s);
-        vst1q_s16(dst + i, d);
-    }
-    // Handle any remaining samples with the scalar fallback
-    if (i < num_samples) {
-        mix_s16_sat_scalar(dst + i, src + i, num_samples - i);
-    }
-
-#else
-    // --- Fallback for any other architecture ---
-    mix_s16_sat_scalar(dst, src, num_samples);
-
-#endif
+    bus.mixInto(
+        pcm,
+        samples);
 }
 
-void AudioBus::mixInto(Uint8* dst, int lenBytes) {
-    if (!dst || lenBytes <= 0) return;
+// ============================================================================
+// Source control
+// ============================================================================
 
-    switch (devFmt_) {
-        // -------- float32 --------
-        case SDL_AUDIO_F32LE:
-        case SDL_AUDIO_F32BE:
-        mixInto_f32(dst, lenBytes);
-        break;
+AudioBus::SourceId AudioBus::addSource(
+    const char* name,
+    size_t ringBufferSizeKB,
+    OverflowPolicy overflowPolicy) {
+    std::lock_guard<std::mutex>
+        lock(mtx_);
 
-        // -------- signed 32-bit int --------
-        case SDL_AUDIO_S32LE:
-        case SDL_AUDIO_S32BE:
-        mixInto_s32(dst, lenBytes);
-        break;
+    const SourceId id =
+        nextId_++;
 
-        // -------- signed 16-bit int --------
-        case SDL_AUDIO_S16LE:
-        case SDL_AUDIO_S16BE:
-        mixInto_s16(dst, lenBytes);
-        break;
+    const size_t bytesPerFrame =
+        sizeof(float) *
+        static_cast<size_t>(
+            devChans_);
 
-        default:
-        // Unknown/unsupported device format: do nothing (avoid corruption).
-        break;
-    }
+    const size_t capacity =
+        std::max<size_t>(
+            ringBufferSizeKB * 1024,
+            bytesPerFrame);
+
+    auto source =
+        std::make_shared<Source>(
+            capacity,
+            bytesPerFrame,
+            overflowPolicy);
+
+    source->name =
+        name
+        ? name
+        : std::string();
+
+    source->enabled.store(
+        true,
+        std::memory_order_relaxed);
+
+    sources_[id] =
+        std::move(source);
+
+    rebuildSnapshotLocked();
+
+    return id;
 }
 
-void AudioBus::mixInto_s16(Uint8* dst, int lenBytes) {
-    if (!dst || lenBytes <= 0 || devChans_ <= 0) return;
+void AudioBus::removeSource(
+    SourceId id) {
+    std::lock_guard<std::mutex>
+        lock(mtx_);
 
-    const int bps = 2;
-    const int bpf = devChans_ * bps;
-    const int want = (lenBytes / bpf) * bpf;
+    sources_.erase(id);
 
-    auto snap = snapshot();
-    if (!snap || snap->empty() || want <= 0) return;
+    rebuildSnapshotLocked();
+}
 
-    static thread_local std::vector<Uint8> scratch;
-    static thread_local size_t tl_scratch_hwm_cap = 0;
-    static thread_local size_t tl_scratch_hwm_size = 0;
+void AudioBus::setEnabled(
+    SourceId id,
+    bool enabled) {
+    std::lock_guard<std::mutex>
+        lock(mtx_);
 
-    if ((int)scratch.size() < want) scratch.resize(want);
+    auto it =
+        sources_.find(id);
 
-    if (scratch.capacity() > tl_scratch_hwm_cap || scratch.size() > tl_scratch_hwm_size) {
-        tl_scratch_hwm_cap = std::max(tl_scratch_hwm_cap, scratch.capacity());
-        tl_scratch_hwm_size = std::max(tl_scratch_hwm_size, scratch.size());
-
-        LOG_DEBUG("AudioBus", "mixInto_s16(): scratch grew: want=" + std::to_string(want) +
-            " size=" + std::to_string(scratch.size()) +
-            " cap=" + std::to_string(scratch.capacity()));
+    if (it == sources_.end() ||
+        !it->second)
+    {
+        return;
     }
 
-    Uint8* tmp = scratch.data();
+    it->second->enabled.store(
+        enabled,
+        std::memory_order_release);
 
-    for (const auto& src : *snap) {
-        const int got = src->ring.read(tmp, want);
-        const int gotAligned = (got / bpf) * bpf;
+    rebuildSnapshotLocked();
+}
 
-        if (gotAligned <= 0) continue;
+bool AudioBus::isEnabled(
+    SourceId id) const {
+    std::lock_guard<std::mutex>
+        lock(mtx_);
 
-        // IMPORTANT: Check for underrun
-        if (gotAligned < want) {
-            // Fill remainder with silence to prevent garbage/crackling
-            std::memset(tmp + gotAligned, 0, want - gotAligned);
+    auto it =
+        sources_.find(id);
 
-            // Only log occasionally to avoid spam
-            static int underrunCount = 0;
-            if (++underrunCount % 100 == 0) {
-                LOG_WARNING("AudioBus", "Audio underrun on source '" + src->name +
-                    "': wanted " + std::to_string(want) + " got " + std::to_string(gotAligned));
+    if (it == sources_.end() ||
+        !it->second)
+    {
+        return false;
+    }
+
+    return
+        it->second->enabled.load(
+            std::memory_order_acquire);
+}
+
+std::shared_ptr<AudioBus::Handle>
+AudioBus::getHandle(
+    SourceId id) {
+    std::lock_guard<std::mutex>
+        lock(mtx_);
+
+    auto it =
+        sources_.find(id);
+
+    if (it == sources_.end() ||
+        !it->second)
+    {
+        return nullptr;
+    }
+
+    return std::shared_ptr<Handle>(
+        new Handle(it->second));
+}
+
+void AudioBus::setGain(
+    const std::shared_ptr<Handle>& handle,
+    float gain) noexcept {
+    if (!handle ||
+        !handle->sp)
+    {
+        return;
+    }
+
+    handle->sp->gain.store(
+        std::clamp(
+            gain,
+            0.0f,
+            1.0f),
+        std::memory_order_release);
+}
+
+void AudioBus::clear(
+    const std::shared_ptr<Handle>& handle)
+    noexcept {
+    if (!handle ||
+        !handle->sp)
+    {
+        return;
+    }
+
+    handle->sp->ring.clear();
+}
+
+void AudioBus::triggerFadeIn(
+    const std::shared_ptr<Handle>& handle,
+    int durationFrames) noexcept {
+    if (!handle ||
+        !handle->sp)
+    {
+        return;
+    }
+
+    if (durationFrames <= 0) {
+        handle->sp->fadeState.store(
+            0,
+            std::memory_order_release);
+
+        return;
+    }
+
+    const uint32_t frames =
+        static_cast<uint32_t>(
+            std::min<uint64_t>(
+                static_cast<uint64_t>(
+                    durationFrames),
+                static_cast<uint64_t>(
+                    std::numeric_limits<uint32_t>::
+                    max())));
+
+    /*
+     * New discontinuity = restart the fade from frame zero.
+     *
+     * One atomic contains both total and progress, so the mixer callback
+     * cannot accidentally overwrite a newer fade request.
+     */
+    handle->sp->fadeState.store(
+        packFadeState(
+            frames,
+            0),
+        std::memory_order_release);
+}
+
+// ============================================================================
+// Producer
+// ============================================================================
+
+void AudioBus::push(
+    const std::shared_ptr<Handle>& handle,
+    const void* data,
+    int bytes) {
+    if (!handle ||
+        !handle->sp ||
+        !data ||
+        bytes <= 0)
+    {
+        return;
+    }
+
+    if (!handle->sp->enabled.load(
+        std::memory_order_acquire))
+    {
+        return;
+    }
+
+    pushImpl(
+        *handle->sp,
+        data,
+        bytes);
+}
+
+void AudioBus::push(
+    SourceId id,
+    const void* data,
+    int bytes) {
+    if (!data ||
+        bytes <= 0)
+    {
+        return;
+    }
+
+    std::shared_ptr<Source> source;
+
+    {
+        std::lock_guard<std::mutex>
+            lock(mtx_);
+
+        auto it =
+            sources_.find(id);
+
+        if (it == sources_.end() ||
+            !it->second)
+        {
+            return;
+        }
+
+        source =
+            it->second;
+    }
+
+    if (!source->enabled.load(
+        std::memory_order_acquire))
+    {
+        return;
+    }
+
+    pushImpl(
+        *source,
+        data,
+        bytes);
+}
+
+void AudioBus::pushImpl(
+    Source& source,
+    const void* data,
+    int bytes) {
+    if (!data ||
+        bytes <= 0 ||
+        devChans_ <= 0)
+    {
+        return;
+    }
+
+    const int bytesPerFrame =
+        devChans_ *
+        static_cast<int>(
+            sizeof(float));
+
+    /*
+     * Never write a partial interleaved frame.
+     */
+    bytes -=
+        bytes %
+        bytesPerFrame;
+
+    if (bytes <= 0)
+        return;
+
+    /*
+     * No copy, conversion, gain, fade or limiter here.
+     *
+     * GStreamer already negotiated F32 in exactly our rate/channel layout.
+     * Gain and fade are playback-time properties, so they belong on the
+     * consumer side.
+     */
+    source.ring.write(
+        static_cast<const uint8_t*>(
+            data),
+        bytes);
+}
+
+// ============================================================================
+// Consumer
+// ============================================================================
+
+void AudioBus::mixInto(
+    float* dst,
+    int sampleCount) {
+    if (!dst ||
+        sampleCount <= 0 ||
+        devChans_ <= 0)
+    {
+        return;
+    }
+
+    /*
+     * Only process complete interleaved frames.
+     */
+    const int totalFrames =
+        sampleCount /
+        devChans_;
+
+    if (totalFrames <= 0)
+        return;
+
+    const int totalSamples =
+        totalFrames *
+        devChans_;
+
+    auto sources =
+        snapshot();
+
+    if (!sources ||
+        sources->empty())
+    {
+        return;
+    }
+
+    /*
+     * Fixed scratch storage:
+     *
+     * no resize(), no vector allocation and no logging from the
+     * real-time callback.
+     */
+    std::array<
+        float,
+        kMixScratchSamples>
+        scratch{};
+
+    int outputSampleOffset = 0;
+
+    while (outputSampleOffset <
+        totalSamples)
+    {
+        int chunkSamples =
+            std::min(
+                kMixScratchSamples,
+                totalSamples -
+                outputSampleOffset);
+
+        /*
+         * Keep the chunk aligned to complete frames.
+         */
+        chunkSamples -=
+            chunkSamples %
+            devChans_;
+
+        if (chunkSamples <= 0)
+            break;
+
+        const int chunkBytes =
+            chunkSamples *
+            static_cast<int>(
+                sizeof(float));
+
+        for (const auto& source :
+            *sources)
+        {
+            if (!source)
+                continue;
+
+            if (!source->enabled.load(
+                std::memory_order_acquire))
+            {
+                continue;
+            }
+
+            const int gotBytes =
+                source->ring.read(
+                    reinterpret_cast<uint8_t*>(
+                        scratch.data()),
+                    chunkBytes);
+
+            if (gotBytes <= 0)
+                continue;
+
+            int gotSamples =
+                gotBytes /
+                static_cast<int>(
+                    sizeof(float));
+
+            /*
+             * read() is frame-aligned, but retain this defensive rounding.
+             */
+            gotSamples -=
+                gotSamples %
+                devChans_;
+
+            if (gotSamples <= 0)
+                continue;
+
+            const int gotFrames =
+                gotSamples /
+                devChans_;
+
+            const float sourceGain =
+                source->gain.load(
+                    std::memory_order_relaxed);
+
+            /*
+             * Snapshot one coherent fade state.
+             *
+             * If another thread triggers a new fade while this chunk is
+             * being mixed, our final CAS fails instead of overwriting the
+             * newer request.
+             */
+            uint64_t fadeState =
+                source->fadeState.load(
+                    std::memory_order_acquire);
+
+            const uint32_t fadeTotal =
+                fadeTotalFrames(
+                    fadeState);
+
+            uint32_t fadeConsumed =
+                fadeConsumedFrames(
+                    fadeState);
+
+            for (int frame = 0;
+                frame < gotFrames;
+                ++frame)
+            {
+                float frameGain =
+                    sourceGain;
+
+                if (fadeTotal > 0 &&
+                    fadeConsumed <
+                    fadeTotal)
+                {
+                    float fadeGain;
+
+                    if (fadeTotal <= 1) {
+                        fadeGain = 1.0f;
+                    }
+                    else {
+                        /*
+                         * First frame = 0.0
+                         * Last fade frame = 1.0
+                         */
+                        fadeGain =
+                            static_cast<float>(
+                                fadeConsumed) /
+                            static_cast<float>(
+                                fadeTotal - 1);
+                    }
+
+                    frameGain *=
+                        fadeGain;
+
+                    ++fadeConsumed;
+                }
+
+                const int sourceBase =
+                    frame *
+                    devChans_;
+
+                const int destBase =
+                    outputSampleOffset +
+                    sourceBase;
+
+                for (int channel = 0;
+                    channel < devChans_;
+                    ++channel)
+                {
+                    dst[
+                        destBase +
+                            channel] +=
+                        scratch[
+                            sourceBase +
+                                channel] *
+                            frameGain;
+                }
+            }
+
+            if (fadeTotal > 0) {
+                uint64_t desiredFadeState;
+
+                if (fadeConsumed >=
+                    fadeTotal)
+                {
+                    desiredFadeState = 0;
+                }
+                else {
+                    desiredFadeState =
+                        packFadeState(
+                            fadeTotal,
+                            fadeConsumed);
+                }
+
+                /*
+                 * Only advance the fade we actually consumed.
+                 *
+                 * If triggerFadeIn() published a newer state during this
+                 * chunk, leave that newer state alone.
+                 */
+                source->fadeState.
+                    compare_exchange_strong(
+                        fadeState,
+                        desiredFadeState,
+                        std::memory_order_release,
+                        std::memory_order_relaxed);
             }
         }
 
-        mix_s16_sat(dst, tmp, want);
-    }
-}
-void AudioBus::mixInto_f32(Uint8* dst, int lenBytes) {
-    if (!dst || lenBytes <= 0 || devChans_ <= 0) return;
+        /*
+         * Final limiter.
+         *
+         * Do not pre-limit individual sources. Floating point mixing can
+         * safely exceed +/-1 internally; clamp only after all injected
+         * sources have been accumulated into SDL3_mixer's buffer.
+         */
+        for (int i = 0;
+            i < chunkSamples;
+            ++i)
+        {
+            const int index =
+                outputSampleOffset + i;
 
-    const int bps = 4, bpf = devChans_ * bps;
-    const int want = (lenBytes / bpf) * bpf;
-
-    auto snap = snapshot();
-    if (!snap || snap->empty() || want <= 0) return;
-
-    static thread_local std::vector<Uint8> scratch;
-    if ((int)scratch.size() < want) scratch.resize(want);
-    Uint8* tmp = scratch.data();
-
-    float* D = reinterpret_cast<float*>(dst);
-    for (const auto& src : *snap) {
-        const int got = src->ring.read(tmp, want);
-        const int gotAligned = (got / bpf) * bpf;
-        if (gotAligned <= 0) continue;
-
-        const float* S = reinterpret_cast<const float*>(tmp);
-        const int n = gotAligned / sizeof(float);
-        for (int i = 0; i < n; ++i) {
-            float v = D[i] + S[i];
-            D[i] = (v > 1.0f ? 1.0f : (v < -1.0f ? -1.0f : v));
+            dst[index] =
+                std::clamp(
+                    dst[index],
+                    -1.0f,
+                    1.0f);
         }
+
+        outputSampleOffset +=
+            chunkSamples;
     }
 }
 
-void AudioBus::mixInto_s32(Uint8* dst, int lenBytes) {
-    if (!dst || lenBytes <= 0 || devChans_ <= 0) return;
+// ============================================================================
+// Snapshot
+// ============================================================================
 
-    const int bps = 4, bpf = devChans_ * bps;
-    const int want = (lenBytes / bpf) * bpf;
-
-    auto snap = snapshot();
-    if (!snap || snap->empty() || want <= 0) return;
-
-    static thread_local std::vector<Uint8> scratch;
-    if ((int)scratch.size() < want) scratch.resize(want);
-    Uint8* tmp = scratch.data();
-    int32_t* D = reinterpret_cast<int32_t*>(dst);
-
-    for (const auto& src : *snap) {
-        const int got = src->ring.read(tmp, want);
-        const int gotAligned = (got / bpf) * bpf;
-        if (gotAligned <= 0) continue;
-
-        const int32_t* S = reinterpret_cast<const int32_t*>(tmp);
-        const int n = gotAligned / sizeof(int32_t);
-        for (int i = 0; i < n; ++i) {
-            int64_t d = (int64_t)D[i] + (int64_t)S[i];
-            D[i] = clip32(d);
-        }
-    }
-}
-
-std::shared_ptr<AudioBus::Handle> AudioBus::getHandle(SourceId id) {
-    std::lock_guard<std::mutex> lk(mtx_);
-    auto it = sources_.find(id);
-    if (it == sources_.end() || !it->second) return nullptr;
-    return std::shared_ptr<Handle>(new Handle(it->second));
+std::shared_ptr<
+    AudioBus::ConstSourceVec>
+    AudioBus::snapshot() const noexcept {
+    return std::atomic_load_explicit(
+        &snapshot_,
+        std::memory_order_acquire);
 }
 
 void AudioBus::rebuildSnapshotLocked() {
-    auto fresh = std::make_shared<SourceVec>();
-    fresh->reserve(sources_.size());
-    for (auto& kv : sources_) {
-        const auto& sp = kv.second;
-        if (sp && sp->enabled.load(std::memory_order_relaxed)) {
-            fresh->push_back(sp);
-        }
-    }
-    // Bind to const type so the atomic_store overload matches exactly
-    std::shared_ptr<ConstSourceVec> publish = fresh;
-    std::atomic_store_explicit(&snapshot_, publish, std::memory_order_release);
-}
+    auto fresh =
+        std::make_shared<SourceVec>();
 
+    fresh->reserve(
+        sources_.size());
+
+    for (auto& entry : sources_) {
+        const auto& source =
+            entry.second;
+
+        if (!source)
+            continue;
+
+        if (!source->enabled.load(
+            std::memory_order_relaxed))
+        {
+            continue;
+        }
+
+        fresh->push_back(
+            source);
+    }
+
+    std::shared_ptr<
+        ConstSourceVec>
+        publish = fresh;
+
+    std::atomic_store_explicit(
+        &snapshot_,
+        std::move(publish),
+        std::memory_order_release);
+}

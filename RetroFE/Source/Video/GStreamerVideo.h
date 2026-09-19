@@ -140,7 +140,15 @@ public:
     }
 
     IVideo::VideoState getActualState() const override {
-        return getTargetState();
+        GstState s = actualGstState_.load(std::memory_order_acquire);
+
+        if (s == GST_STATE_PLAYING)
+            return IVideo::VideoState::Playing;
+
+        if (s == GST_STATE_PAUSED)
+            return IVideo::VideoState::Paused;
+
+        return IVideo::VideoState::None;
     }
 
     bool isPipelineReady() const override {
@@ -170,13 +178,6 @@ private:
     std::atomic<PlaybackState> playbackState_{ PlaybackState::None };
     std::atomic<uint64_t> playbackEpoch_{ 0 };
     static std::atomic<uint64_t> nextUniquePlaybackEpoch_;
-
-    // Hide-time rewind coordination. resume() deliberately waits while the
-    // rewind job is still being issued so PLAYING cannot race ahead of it on
-    // another ThreadPool worker. requestId prevents stale jobs from clearing a
-    // newer request after a URI retarget.
-    std::atomic<bool> rewindPending_{ false };
-    std::atomic<uint64_t> rewindRequestId_{ 0 };
 
     // The "Contract": True from open() until the first ASYNC_DONE
     std::atomic<bool> awaitingInitialPreroll_{ false };
