@@ -176,6 +176,13 @@ void RetroFE::render() {
 		}
 
 
+		if (!SDL::beginVideoFrame(rr)) {
+			LOG_ERROR("SDL", "Native video submission failed; stopping renderer");
+			reboot_ = true;
+			setState(RETROFE_QUIT_REQUEST);
+			return;
+		}
+
 		if (!SDL_SetRenderTarget(rr, rt)) {
 			LOG_ERROR(
 				"SDL",

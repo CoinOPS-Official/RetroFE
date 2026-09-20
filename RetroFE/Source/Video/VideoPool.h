@@ -31,6 +31,10 @@ class IVideo;
 class VideoPool {
 public:
     static constexpr size_t POOL_BUFFER_INSTANCES = 2;
+    // Temporary burst headroom above the steady pool target. These extra
+    // instances do not increase the steady cache target and are discarded
+    // naturally as they return once the steady cache has refilled.
+    static constexpr size_t POOL_ELASTIC_INSTANCES = 4;
 
     // C++20: Switched to shared_ptr to support atomic callback safety 
     // and enable_shared_from_this in the GStreamer implementation.

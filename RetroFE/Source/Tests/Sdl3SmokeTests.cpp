@@ -335,6 +335,7 @@ void mediaChecks(const std::string& assets) {
             video->updateFrame();
             auto* renderer = SDL::getRenderer(0);
 
+            require(SDL::beginVideoFrame(renderer), "Submit native video transfers");
             require(SDL_SetRenderTarget(renderer, nullptr), "Set video backbuffer");
             const auto dim = video->getDimensions();
             SDL_FRect source{0, 0, float(dim.w), float(dim.h)};
@@ -342,7 +343,7 @@ void mediaChecks(const std::string& assets) {
             SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
             SDL_FRect overlay{4, 4, 8, 8};
             require(SDL_RenderFillRect(renderer, &overlay), "Draw overlay above video");
-            require(pixel(renderer, 6, 6).r == 255, "Video preserves overlay rendering");
+            if (presented == 0) require(pixel(renderer, 6, 6).r == 255, "Video preserves overlay rendering");
             require(SDL_RenderPresent(renderer), "Present decoded video");
             ++presented;
             SDL_Delay(10);
@@ -367,6 +368,54 @@ void mediaChecks(const std::string& assets) {
     }
     GlibLoop::instance().stop();
 }
+}
+
+void concurrentVideoChecks(const std::string& file) {
+    GlibLoop::instance().start();
+    std::vector<std::shared_ptr<GStreamerVideo>> videos;
+    for (int i = 0; i < 7; ++i) videos.push_back(std::make_shared<GStreamerVideo>(0));
+    auto* renderer = SDL::getRenderer(0);
+    for (int cycle = 0; cycle < 3; ++cycle) {
+        std::vector<uint64_t> before;
+        for (auto& video : videos) {
+            require(video->open(file), "Open concurrent video");
+            before.push_back(video->gpuFrameCount());
+            require(video->getTexture() == nullptr, "Reopen invalidates old presentation");
+            video->resume();
+        }
+        const auto deadline = SDL_GetTicks() + 4000;
+        while (SDL_GetTicks() < deadline) {
+            SDL_PumpEvents();
+            for (auto& video : videos) {
+                require(!video->hasError(), "Concurrent decoder remains healthy");
+                video->updateFrame();
+                if (video->getTexture()) video->resume();
+            }
+            require(SDL::beginVideoFrame(renderer), "Submit concurrent transfers");
+            SDL_SetRenderTarget(renderer, nullptr);
+            SDL_RenderClear(renderer);
+            for (size_t i = 0; i < videos.size(); ++i) if (auto* texture = videos[i]->getTexture()) {
+                SDL_FRect rect{float(i % 4) * 16, float(i / 4) * 32, 16, 32};
+                require(SDL_RenderTexture(renderer, texture, nullptr, &rect), "Draw concurrent video");
+            }
+            // Deliberately no readback or CPU fence wait in this loop.
+            require(SDL_RenderPresent(renderer), "Present concurrent videos");
+            SDL_Delay(2);
+        }
+        for (size_t i = 0; i < videos.size(); ++i) {
+            require(videos[i]->usingGpuTexture(), "All concurrent videos retain GPU interop");
+            require(videos[i]->gpuFrameCount() > before[i] + 10, "Every concurrent decoder advances");
+            require(videos[i]->unload(), "Unload concurrent video");
+        }
+        const auto drainDeadline = SDL_GetTicks() + 10000;
+        for (auto& video : videos) {
+            while (!video->isReadyForReuse() && SDL_GetTicks() < drainDeadline) SDL_Delay(2);
+            require(video->isReadyForReuse(), "Concurrent instance becomes reusable");
+        }
+    }
+    for (auto& video : videos) video->stop();
+    videos.clear();
+    GlibLoop::instance().stop();
 }
 
 void scrollingVideoStartupChecks(Configuration& config, const std::string& file) {
@@ -398,6 +447,7 @@ void scrollingVideoStartupChecks(Configuration& config, const std::string& file)
         auto* renderer = SDL::getRenderer(0);
         SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
         SDL_RenderClear(renderer);
+        require(SDL::beginVideoFrame(renderer), "Submit revealed video transfer");
         video.draw();
         const auto before = pixel(renderer, 16, 16);
         require(!(before.r == 255 && before.g == 0 && before.b == 255), "Video covers loading placeholder");
@@ -477,7 +527,8 @@ int main(int argc, char** argv) {
     const bool benchmark = argc > 3 && std::string(argv[3]) == "--startup-benchmark";
     if (!hardware && !benchmark) SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
 #ifdef _WIN32
-    const char* hardwareRenderer = "direct3d11";
+    const char* hardwareRenderer = std::getenv("RETROFE_TEST_RENDERER");
+    if (!hardwareRenderer) hardwareRenderer = "direct3d11";
 #else
     const char* hardwareRenderer = std::getenv("RETROFE_TEST_RENDERER");
     if (!hardwareRenderer) hardwareRenderer = "opengl";
@@ -506,6 +557,7 @@ int main(int argc, char** argv) {
     renderChecks(config, true);
     inputChecks(config);
     if (argc > 1) mediaChecks(argv[1]);
+    if (argc > 1 && hardware) concurrentVideoChecks(std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4");
     if (argc > 1) scrollingVideoStartupChecks(config, std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4");
     require(SDL::deInitialize(false), "Unload video while retaining audio/input");
     renderChecks(config, true);

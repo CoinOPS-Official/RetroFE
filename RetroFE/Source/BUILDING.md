@@ -119,7 +119,10 @@ The combined CoinOPS workflows handle their own runtime bundling.
 
 An executable alone is not a complete frontend installation: retain settings,
 collections, layouts, fonts and media. For hardware video set
-`HardwareVideoAccel=true`, `SDLRenderDriver=direct3d11` on Windows or
+`HardwareVideoAccel=true`, `SDLRenderDriver=direct3d12` on Windows with GStreamer
+1.28+ (or `direct3d11` for the existing fallback), or
 `SDLRenderDriver=opengles2` for Linux EGL, and `log=INFO,WARNING,ERROR`.
 Check the decoder selection and `GPU texture interop ACTIVE` messages for the
 actual playback path. Hardware support depends on the decoder, driver and media.
+See [D3D12 ownership and validation](Tests/WINDOWS-D3D12-INTEROP.md) for the
+renderer selection rules, supported formats and hardware test instructions.

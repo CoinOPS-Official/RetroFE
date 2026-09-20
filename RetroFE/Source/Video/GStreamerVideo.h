@@ -22,7 +22,10 @@
 #include "../Sound/AudioBus.h" 
 #include "IVideo.h"
 #include "D3D11VideoInterop.h"
-#ifdef RETROFE_HAVE_EGL_DMABUF
+#ifdef _WIN32
+#include "WindowsVideoInterop.h"
+using NativeVideoInterop = WindowsVideoInterop;
+#elif defined(RETROFE_HAVE_EGL_DMABUF)
 #include "EGLVideoInterop.h"
 using NativeVideoInterop = EGLVideoInterop;
 #elif defined(RETROFE_HAVE_GST_GL)
@@ -36,6 +39,8 @@ using NativeVideoInterop = D3D11VideoInterop;
 #include <vector>
 #include <memory>
 #include <mutex>
+#include <deque>
+#include <unordered_map>
 
 extern "C" {
 #if (__APPLE__)
@@ -186,6 +191,56 @@ private:
 
     void completeInitialPreroll(uint64_t epoch);
 
+    // === Coalesced URI retarget state ===
+    // Only one URI transition may be in flight per retained playbin3.
+    // New requests received while one is active replace desiredRetargetFile_
+    // and are started only after the current transition reaches its first frame.
+    void scheduleUriPump();
+    void runUriPumpOnGlib();
+    bool acceptRetargetVideoSample(uint64_t epoch);
+    bool shouldDiscardRetargetAudio(uint64_t epoch) const;
+    void resetRetargetState();
+
+    mutable std::mutex retargetMutex_;
+    std::string desiredRetargetFile_;
+    std::string switchingRetargetFile_;
+    uint64_t desiredRetargetRequestId_ = 0;
+    uint64_t switchingRetargetRequestId_ = 0;
+    uint64_t switchingRetargetEpoch_ = 0;
+    bool retargetTaskQueued_ = false;
+    bool retargetInFlight_ = false;
+
+    // === Global per-monitor GStreamer transition scheduler ===
+    //
+    // This gates actual URI/preroll work, not VideoComponent ownership.
+    // A permit is held while a URI switch is waiting for its first accepted
+    // frame. If the instance is released during that work, the same permit is
+    // retained as a drain permit until the retained pipeline really settles.
+    enum class TransitionPermitKind {
+        None,
+        Startup,
+        Drain
+    };
+
+    struct TransitionSchedulerState {
+        size_t activeTransitions = 0;
+        std::deque<std::weak_ptr<GStreamerVideo>> startupWaiters;
+    };
+
+    static constexpr size_t MAX_CONCURRENT_TRANSITIONS_PER_MONITOR = 2;
+    static std::mutex transitionSchedulerMutex_;
+    static std::unordered_map<int, TransitionSchedulerState> transitionSchedulers_;
+
+    bool acquireStartupPermitOrQueue();
+    void cancelStartupPermitWait();
+    void occupyDrainPermit();
+    void releaseTransitionPermit(const char* reason);
+
+    // Guarded by transitionSchedulerMutex_, except startupPermitQueued_ which
+    // is atomic so scheduleUriPump()/openMedia() can cheaply avoid requeueing.
+    TransitionPermitKind transitionPermitKind_ = TransitionPermitKind::None;
+    std::atomic<bool> startupPermitQueued_{ false };
+
     // === Tagged Sample Lock (Consumer/Producer Barrier) ===
     std::mutex sampleMutex_;
     TaggedSample stagedSample_;
@@ -207,6 +262,11 @@ private:
     int allocatedHeight_{ 0 };
     SDL_PixelFormat allocatedFormat_{ SDL_PIXELFORMAT_UNKNOWN };
     bool isTextureReady_{ false };
+    // Resource readiness and presentation validity are separate. A warm
+    // retarget keeps its texture allocation but invalidates its contents
+    // until a frame from the newly committed playback epoch is copied.
+    std::atomic<bool> textureValid_{ false };
+    std::atomic<uint64_t> presentationEpoch_{ 0 };
     int monitor_;
     bool softOverlay_{ false };
     std::unique_ptr<NativeVideoInterop> gpuInterop_;

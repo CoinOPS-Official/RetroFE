@@ -16,6 +16,9 @@
 
 
 #include "SDL.h"
+#ifdef RETROFE_HAVE_D3D12
+#include "Video/D3D12VideoInterop.h"
+#endif
 #include "Graphics/GeometryBatch.h"
 #include "Database/Configuration.h"
 #include "Database/GlobalOpts.h"
@@ -223,6 +226,10 @@ bool SDL::initialize(Configuration& config) {
 #ifdef WIN32
     if (SDLRenderDriver == "direct3d")
         SDLRenderDriver = "direct3d11";
+#endif
+
+#ifdef RETROFE_HAVE_D3D12
+    if (SDLRenderDriver.empty()) SDLRenderDriver = "direct3d12,direct3d11";
 #endif
 
     if (SDLRenderDriver.empty()) {
@@ -2639,4 +2646,13 @@ bool SDL::renderCopyFImpl(GeometryBatch* batch, SDL_Texture* texture, float alph
         vertexCount,
         indices.data(),
         indexCount);
+}
+
+bool SDL::beginVideoFrame(SDL_Renderer* renderer) {
+#ifdef RETROFE_HAVE_D3D12
+    return D3D12VideoInterop::beginFrame(renderer);
+#else
+    (void)renderer;
+    return true;
+#endif
 }

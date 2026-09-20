@@ -74,29 +74,71 @@ VideoPool::VideoPtr VideoPool::acquireVideo(int monitor, int listId, bool softOv
         return vid;
     }
 
-    const size_t totalCached = pool.ready.size() + pool.draining.size();
+    const size_t totalCached =
+        pool.ready.size() + pool.draining.size();
 
-    if (!pool.initialCountLatched ||
-        (pool.currentActive + totalCached < pool.requiredInstanceCount))
+    const size_t totalOwned =
+        pool.currentActive + totalCached;
+
+    auto createTracked =
+        [&](const char* reason, bool observeSteadyDemand) -> VideoPtr
     {
         auto vid = createNewVideo(monitor, softOverlay);
         if (!vid) {
-            LOG_DEBUG("VideoPool", "Acquire (New create FAIL) " + poolStateStr(monitor, listId, pool));
+            LOG_DEBUG(
+                "VideoPool",
+                "Acquire (New create FAIL) " +
+                poolStateStr(monitor, listId, pool));
             return nullptr;
         }
 
         pool.currentActive++;
         pool.activeVideos.insert(vid.get());
 
-        if (!pool.initialCountLatched) {
-            pool.observedMaxActive = std::max(pool.observedMaxActive, pool.currentActive);
+        // Only the original pre-latch discovery phase teaches us the steady
+        // layout demand. Elastic burst allocations must never permanently grow
+        // the steady cache target.
+        if (observeSteadyDemand && !pool.initialCountLatched) {
+            pool.observedMaxActive =
+                std::max(pool.observedMaxActive, pool.currentActive);
         }
 
-        LOG_DEBUG("VideoPool", "Acquire (New instance created) " + poolStateStr(monitor, listId, pool));
+        LOG_DEBUG(
+            "VideoPool",
+            std::string(reason) + " " +
+            poolStateStr(monitor, listId, pool));
+
         return vid;
+    };
+
+    // Preserve the original discovery behavior until the first release latches
+    // the steady target. After latching, fill only up to requiredInstanceCount
+    // as ordinary capacity.
+    if (!pool.initialCountLatched ||
+        totalOwned < pool.requiredInstanceCount)
+    {
+        return createTracked(
+            "Acquire (New instance created)",
+            true);
     }
 
-    LOG_DEBUG("VideoPool", "Acquire (FAIL FAST - Pool saturated) " + poolStateStr(monitor, listId, pool));
+    // Once steady capacity is exhausted, allow a small bounded burst above it.
+    // GStreamerVideo independently limits expensive URI/decode transitions, so
+    // these extra objects mostly absorb scheduler waiters and draining overlap.
+    const size_t elasticLimit =
+        pool.requiredInstanceCount + POOL_ELASTIC_INSTANCES;
+
+    if (totalOwned < elasticLimit) {
+        return createTracked(
+            "Acquire (ELASTIC instance created)",
+            false);
+    }
+
+    LOG_DEBUG(
+        "VideoPool",
+        "Acquire (FAIL FAST - Elastic limit saturated) " +
+        poolStateStr(monitor, listId, pool));
+
     return nullptr;
 }
 
@@ -170,7 +212,7 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
         const size_t totalCached = pool.ready.size() + pool.draining.size();
         if (totalCached >= pool.requiredInstanceCount) {
             LOG_DEBUG("VideoPool",
-                "Release (Evicting excess video) " +
+                "Release (Evicting excess/elastic video) " +
                 poolStateStr(monitor, listId, pool));
             return;
         }
@@ -188,13 +230,22 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
     pool.draining.push_back(std::move(vid));
 
     if (!pool.initialCountLatched) {
-        pool.requiredInstanceCount =
+        const size_t observedTarget =
             pool.observedMaxActive + POOL_BUFFER_INSTANCES;
+
+        // reserveCapacity() may have supplied a larger minimum before the first
+        // release. Never overwrite that explicit steady-capacity hint.
+        pool.requiredInstanceCount =
+            std::max(pool.requiredInstanceCount, observedTarget);
+
         pool.initialCountLatched = true;
 
         LOG_DEBUG("VideoPool",
-            "Release (LATCHED cap=" +
-            std::to_string(pool.requiredInstanceCount) + ") " +
+            "Release (LATCHED steady=" +
+            std::to_string(pool.requiredInstanceCount) +
+            " elasticMax=" +
+            std::to_string(pool.requiredInstanceCount + POOL_ELASTIC_INSTANCES) +
+            ") " +
             poolStateStr(monitor, listId, pool));
     }
     else {
@@ -267,13 +318,30 @@ std::string VideoPool::poolStateStr(int monitor, int listId, const PoolInfo& p) 
         " Draining=" + std::to_string(p.draining.size()) +
         " Retire=" + std::to_string(p.retireOnRelease.size()) +
         " Req=" + std::to_string(p.requiredInstanceCount) +
+        " ElasticMax=" +
+        std::to_string(
+            p.initialCountLatched
+            ? p.requiredInstanceCount + POOL_ELASTIC_INSTANCES
+            : 0) +
         (p.initialCountLatched ? " LATCHED" : " PRELATCH");
 }
 
 void VideoPool::reserveCapacity(int monitor, int listId, size_t desiredTotal) {
     if (shuttingDown_) return;
+
     PoolInfo& pool = pools_[monitor][listId];
-    pool.requiredInstanceCount = std::max(pool.requiredInstanceCount, desiredTotal);
+
+    const size_t oldRequired = pool.requiredInstanceCount;
+    pool.requiredInstanceCount =
+        std::max(pool.requiredInstanceCount, desiredTotal);
+
+    if (pool.requiredInstanceCount != oldRequired) {
+        LOG_DEBUG(
+            "VideoPool",
+            "Reserve raised steady capacity to " +
+            std::to_string(pool.requiredInstanceCount) + " " +
+            poolStateStr(monitor, listId, pool));
+    }
 }
 
 void VideoPool::reset(int monitor, int listId) {

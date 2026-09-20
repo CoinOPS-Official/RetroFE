@@ -54,6 +54,9 @@ bool GStreamerVideo::pluginsInitialized_ = false;
 
 // Initialize the static Epoch ID generator
 std::atomic<uint64_t> GStreamerVideo::nextUniquePlaybackEpoch_{ 1 };
+std::mutex GStreamerVideo::transitionSchedulerMutex_;
+std::unordered_map<int, GStreamerVideo::TransitionSchedulerState>
+    GStreamerVideo::transitionSchedulers_{};
 
 typedef enum {
 	GST_PLAY_FLAG_VIDEO = (1 << 0),
@@ -250,6 +253,9 @@ gboolean GStreamerVideo::busCallback(
 						"GStreamerVideo",
 						std::string("Retained pipeline settled asynchronously in ") +
 						(newState == GST_STATE_PAUSED ? "PAUSED." : "READY."));
+
+					video->releaseTransitionPermit(
+						"retained pipeline settled");
 				}
 			}
 
@@ -294,6 +300,12 @@ gboolean GStreamerVideo::busCallback(
 				video->lifecycle_.store(
 					PipelineLifecycle::Ready,
 					std::memory_order_release);
+
+				// A pipeline-wide ASYNC_DONE can complete a cold/audio-only
+				// startup without a video sample callback. Do not strand a
+				// scheduler permit in that case.
+				video->releaseTransitionPermit(
+					"initial ASYNC_DONE");
 			}
 
 			break;
@@ -394,6 +406,11 @@ gboolean GStreamerVideo::busCallback(
 				if (dbg)
 					g_free(dbg);
 
+				// Preserve the existing draining/error policy, but never let a
+				// failed drain permanently consume the global transition budget.
+				video->releaseTransitionPermit(
+					"pipeline error while draining");
+
 				break;
 			}
 
@@ -442,13 +459,16 @@ gboolean GStreamerVideo::busCallback(
 			if (retryGL) {
 				LOG_WARNING(
 					"GStreamerVideo",
-					"GL pipeline failed; retrying this instance "
+					"GPU pipeline failed; retrying this instance "
 					"with CPU texture upload");
 
 				video->pendingCpuFallback_.store(
 					true,
 					std::memory_order_release);
 			}
+
+			video->releaseTransitionPermit(
+				"pipeline error");
 
 			break;
 		}
@@ -466,8 +486,6 @@ void GStreamerVideo::initializePlugins() {
 		pluginsInitialized_ = true;
 
 #if defined(WIN32)
-		enablePlugin("directsoundsink");
-		disablePlugin("mfdeviceprovider");
 
 		// Keep NVIDIA-specific decoders out of playbin autoplugging.
 		disablePlugin("nvh264dec");
@@ -499,9 +517,9 @@ void GStreamerVideo::initializePlugins() {
 					"GStreamerVideo",
 					"D3D11 hardware decoding requested; awaiting frame verification");
 			}
-			else
+			else if (rendererBackend == "direct3d12")
 			{
-				// Non-D3D11 Windows renderer fallback.
+				// Match native decoder memory to the actual SDL renderer.
 				enablePlugin("d3d12h264dec");
 				enablePlugin("d3d12h265dec");
 
@@ -573,7 +591,12 @@ void GStreamerVideo::setNumLoops(int n) {
 }
 
 SDL_Texture* GStreamerVideo::getTexture() const {
-	if (!isTextureReady_) return nullptr;
+	if (!isTextureReady_ ||
+		!textureValid_.load(std::memory_order_acquire))
+	{
+		return nullptr;
+	}
+
 	return texture_;
 }
 
@@ -686,6 +709,7 @@ void GStreamerVideo::destroyTextures() {
 		texture_ = nullptr;
 	}
 	isTextureReady_ = false;
+	textureValid_.store(false, std::memory_order_release);
 	allocatedWidth_ = 0;
 	allocatedHeight_ = 0;
 	allocatedFormat_ = SDL_PIXELFORMAT_UNKNOWN;
@@ -699,6 +723,8 @@ bool GStreamerVideo::stop()
 
 	glPipelineActive_.store(false, std::memory_order_release);
 	pendingCpuFallback_.store(false, std::memory_order_release);
+	cancelStartupPermitWait();
+	resetRetargetState();
 
 	// Invalidate every queued control command / callback belonging to the
 	// previous playback generation before touching the pipeline.
@@ -849,6 +875,12 @@ bool GStreamerVideo::stop()
 		std::memory_order_release);
 
 	isTextureReady_ = false;
+	textureValid_.store(false, std::memory_order_release);
+	presentationEpoch_.store(0, std::memory_order_release);
+
+	// GST_STATE_NULL is a hard synchronization boundary for this instance.
+	// Any startup/drain work represented by a scheduler permit is finished.
+	releaseTransitionPermit("stop completed");
 
 	return true;
 }
@@ -863,13 +895,589 @@ bool GStreamerVideo::isReadyForReuse() const {
 		PipelineLifecycle::Idle;
 }
 
-bool GStreamerVideo::prepareForRetarget() {
-    // This path is for an instance that is still owned by a VideoComponent.
-    // It must NOT enter VideoPool::draining; we only need to quiesce the old
-    // URI strongly enough that no old appsink frame can be mistaken for the
-    // next URI.
+bool GStreamerVideo::acquireStartupPermitOrQueue() {
+    size_t activeTransitions = 0;
+    bool acquired = false;
+    bool newlyQueued = false;
 
+    {
+        std::lock_guard<std::mutex> lock(transitionSchedulerMutex_);
+
+        auto& scheduler = transitionSchedulers_[monitor_];
+
+        if (transitionPermitKind_ == TransitionPermitKind::Startup) {
+            return true;
+        }
+
+        // A draining instance must not begin a new URI transition.
+        if (transitionPermitKind_ == TransitionPermitKind::Drain) {
+            return false;
+        }
+
+        if (scheduler.activeTransitions <
+            MAX_CONCURRENT_TRANSITIONS_PER_MONITOR)
+        {
+            transitionPermitKind_ = TransitionPermitKind::Startup;
+            ++scheduler.activeTransitions;
+            activeTransitions = scheduler.activeTransitions;
+            acquired = true;
+        }
+        else if (!startupPermitQueued_.exchange(
+            true,
+            std::memory_order_acq_rel))
+        {
+            scheduler.startupWaiters.push_back(weak_from_this());
+            activeTransitions = scheduler.activeTransitions;
+            newlyQueued = true;
+        }
+        else {
+            activeTransitions = scheduler.activeTransitions;
+        }
+    }
+
+    if (acquired) {
+        LOG_DEBUG(
+            "GStreamerVideo",
+            "Transition permit acquired for startup: monitor=" +
+            std::to_string(monitor_) +
+            " active=" + std::to_string(activeTransitions) +
+            "/" + std::to_string(MAX_CONCURRENT_TRANSITIONS_PER_MONITOR));
+    }
+    else if (newlyQueued) {
+        LOG_DEBUG(
+            "GStreamerVideo",
+            "Transition permit deferred: monitor=" +
+            std::to_string(monitor_) +
+            " active=" + std::to_string(activeTransitions) +
+            "/" + std::to_string(MAX_CONCURRENT_TRANSITIONS_PER_MONITOR));
+    }
+
+    return acquired;
+}
+
+void GStreamerVideo::cancelStartupPermitWait() {
+    // Waiters are removed lazily from the scheduler deque. Clearing this flag
+    // is enough to make a stale weak_ptr in that deque ineligible for grant.
+    startupPermitQueued_.store(false, std::memory_order_release);
+}
+
+void GStreamerVideo::occupyDrainPermit() {
+    cancelStartupPermitWait();
+
+    size_t activeTransitions = 0;
+    bool retainedStartupPermit = false;
+    bool addedDrainPermit = false;
+
+    {
+        std::lock_guard<std::mutex> lock(transitionSchedulerMutex_);
+
+        auto& scheduler = transitionSchedulers_[monitor_];
+
+        if (transitionPermitKind_ == TransitionPermitKind::Startup) {
+            // The URI switch was released/recycled before its first frame.
+            // Keep the exact same slot occupied until PAUSED/READY settles.
+            transitionPermitKind_ = TransitionPermitKind::Drain;
+            retainedStartupPermit = true;
+        }
+        else if (transitionPermitKind_ == TransitionPermitKind::None) {
+            // A Ready pipeline may be recycled after its startup permit has
+            // already been released. Draining still consumes real GStreamer /
+            // decoder work, so account for it even if this temporarily pushes
+            // activeTransitions above the startup limit. New startups remain
+            // blocked until enough drains settle.
+            transitionPermitKind_ = TransitionPermitKind::Drain;
+            ++scheduler.activeTransitions;
+            addedDrainPermit = true;
+        }
+
+        activeTransitions = scheduler.activeTransitions;
+    }
+
+    if (retainedStartupPermit || addedDrainPermit) {
+        LOG_DEBUG(
+            "GStreamerVideo",
+            std::string(retainedStartupPermit
+                ? "Transition permit retained for drain: "
+                : "Drain added to transition budget: ") +
+            "monitor=" + std::to_string(monitor_) +
+            " active=" + std::to_string(activeTransitions) +
+            "/" + std::to_string(MAX_CONCURRENT_TRANSITIONS_PER_MONITOR));
+    }
+}
+
+void GStreamerVideo::releaseTransitionPermit(const char* reason) {
+    std::vector<std::shared_ptr<GStreamerVideo>> wake;
+    size_t activeAfterRelease = 0;
+    bool released = false;
+
+    {
+        std::lock_guard<std::mutex> lock(transitionSchedulerMutex_);
+
+        auto it = transitionSchedulers_.find(monitor_);
+        if (it == transitionSchedulers_.end()) {
+            transitionPermitKind_ = TransitionPermitKind::None;
+            startupPermitQueued_.store(false, std::memory_order_release);
+            return;
+        }
+
+        auto& scheduler = it->second;
+
+        if (transitionPermitKind_ != TransitionPermitKind::None) {
+            transitionPermitKind_ = TransitionPermitKind::None;
+            if (scheduler.activeTransitions > 0)
+                --scheduler.activeTransitions;
+            released = true;
+        }
+
+        // Fill all newly-available startup slots. Queue entries are weak and
+        // self-invalidating, so cancelled/destroyed instances are simply skipped.
+        while (scheduler.activeTransitions <
+            MAX_CONCURRENT_TRANSITIONS_PER_MONITOR &&
+            !scheduler.startupWaiters.empty())
+        {
+            auto weak = std::move(scheduler.startupWaiters.front());
+            scheduler.startupWaiters.pop_front();
+
+            auto next = weak.lock();
+            if (!next)
+                continue;
+
+            if (!next->startupPermitQueued_.exchange(
+                false,
+                std::memory_order_acq_rel))
+            {
+                continue;
+            }
+
+            const PipelineLifecycle life =
+                next->lifecycle_.load(std::memory_order_acquire);
+
+            if (!next->pipeline_ ||
+                life == PipelineLifecycle::Draining ||
+                life == PipelineLifecycle::Failed)
+            {
+                continue;
+            }
+
+            next->transitionPermitKind_ = TransitionPermitKind::Startup;
+            ++scheduler.activeTransitions;
+            wake.push_back(std::move(next));
+        }
+
+        activeAfterRelease = scheduler.activeTransitions;
+
+        if (scheduler.activeTransitions == 0 &&
+            scheduler.startupWaiters.empty())
+        {
+            transitionSchedulers_.erase(it);
+        }
+    }
+
+    if (released) {
+        LOG_DEBUG(
+            "GStreamerVideo",
+            std::string("Transition permit released (") +
+            (reason ? reason : "unspecified") +
+            "): monitor=" + std::to_string(monitor_) +
+            " active=" + std::to_string(activeAfterRelease) +
+            "/" + std::to_string(MAX_CONCURRENT_TRANSITIONS_PER_MONITOR));
+    }
+
+    for (auto& next : wake) {
+        LOG_DEBUG(
+            "GStreamerVideo",
+            "Transition permit granted from queue: monitor=" +
+            std::to_string(next->monitor_));
+
+        // The request may have been coalesced many times while waiting. The
+        // URI pump re-reads desiredRetargetFile_ and therefore starts only the
+        // latest target for this instance.
+        next->scheduleUriPump();
+    }
+}
+
+void GStreamerVideo::resetRetargetState() {
+    std::lock_guard<std::mutex> lock(retargetMutex_);
+
+    desiredRetargetFile_.clear();
+    switchingRetargetFile_.clear();
+    ++desiredRetargetRequestId_;
+    switchingRetargetRequestId_ = 0;
+    switchingRetargetEpoch_ = 0;
+    retargetTaskQueued_ = false;
+    retargetInFlight_ = false;
+}
+
+void GStreamerVideo::scheduleUriPump() {
+    bool queueTask = false;
+
+    {
+        std::lock_guard<std::mutex> lock(retargetMutex_);
+
+        if (!retargetInFlight_ &&
+            !retargetTaskQueued_ &&
+            !startupPermitQueued_.load(std::memory_order_acquire) &&
+            !desiredRetargetFile_.empty())
+        {
+            retargetTaskQueued_ = true;
+            queueTask = true;
+        }
+    }
+
+    if (!queueTask)
+        return;
+
+    std::weak_ptr<GStreamerVideo> weak = weak_from_this();
+
+    invokeOnGlib([weak]() {
+        auto self = weak.lock();
+        if (self)
+            self->runUriPumpOnGlib();
+    });
+}
+
+void GStreamerVideo::runUriPumpOnGlib() {
+    std::string targetFile;
+    uint64_t requestId = 0;
+
+    {
+        std::lock_guard<std::mutex> lock(retargetMutex_);
+
+        // This queued pump has now been consumed.
+        retargetTaskQueued_ = false;
+
+        if (retargetInFlight_ ||
+            desiredRetargetFile_.empty() ||
+            !pipeline_ ||
+            lifecycle_.load(std::memory_order_acquire) ==
+                PipelineLifecycle::Draining)
+        {
+            return;
+        }
+
+        // Snapshot only for diagnostics while waiting for a permit. If the UI
+        // changes selection before a permit becomes available, the second
+        // lock below deliberately re-reads the newest desired target.
+        targetFile = desiredRetargetFile_;
+    }
+
+    if (!acquireStartupPermitOrQueue()) {
+        LOG_DEBUG(
+            "GStreamerVideo",
+            "URI switch waiting for transition permit: " + targetFile);
+        return;
+    }
+
+    bool staleAfterPermit = false;
+
+    {
+        std::lock_guard<std::mutex> lock(retargetMutex_);
+
+        if (retargetInFlight_ ||
+            desiredRetargetFile_.empty() ||
+            !pipeline_ ||
+            lifecycle_.load(std::memory_order_acquire) ==
+                PipelineLifecycle::Draining)
+        {
+            staleAfterPermit = true;
+        }
+        else {
+            // IMPORTANT: re-read the desired target after permit acquisition.
+            // Rapid-scroll requests may have coalesced while this instance was
+            // waiting in the global scheduler.
+            targetFile = desiredRetargetFile_;
+            requestId = desiredRetargetRequestId_;
+
+            switchingRetargetFile_ = targetFile;
+            switchingRetargetRequestId_ = requestId;
+            switchingRetargetEpoch_ = 0;
+            retargetInFlight_ = true;
+        }
+    }
+
+    if (staleAfterPermit) {
+        releaseTransitionPermit("URI pump became stale before start");
+        return;
+    }
+
+    gchar* uri = gst_filename_to_uri(targetFile.c_str(), nullptr);
+    if (!uri) {
+        {
+            std::lock_guard<std::mutex> lock(retargetMutex_);
+            retargetInFlight_ = false;
+            switchingRetargetFile_.clear();
+            switchingRetargetRequestId_ = 0;
+            switchingRetargetEpoch_ = 0;
+        }
+
+        lifecycle_.store(PipelineLifecycle::Failed, std::memory_order_release);
+        LOG_ERROR(
+            "GStreamerVideo",
+            "Could not convert video path to URI: " + targetFile);
+        releaseTransitionPermit("URI conversion failed");
+        return;
+    }
+
+    const std::string uriText(uri);
+    g_free(uri);
+
+    const GstState actualState =
+        actualGstState_.load(std::memory_order_acquire);
+
+    const PipelineLifecycle lifeBeforeSwitch =
+        lifecycle_.load(std::memory_order_acquire);
+
+    const bool preserveReady =
+        lifeBeforeSwitch == PipelineLifecycle::Ready;
+
+    const bool canInstantSwitch =
+        instantUriEnabled_ &&
+        (actualState == GST_STATE_PAUSED ||
+         actualState == GST_STATE_PLAYING);
+
+    const bool needsPrerollState =
+        actualState == GST_STATE_NULL ||
+        actualState == GST_STATE_READY;
+
+    /*
+     * Close the sample/callback gate BEFORE touching uri.
+     *
+     * cbCtx_->epoch deliberately remains on the old generation while
+     * playbackEpoch_ advances. Any old callback already in flight, and any
+     * callback that arrives during g_object_set("uri"), therefore fails the
+     * normal epoch comparison instead of being mislabeled as the new media.
+     */
+    const uint64_t newEpoch = nextUniquePlaybackEpoch_++;
+    playbackEpoch_.store(newEpoch, std::memory_order_release);
+
+    startupWorkerNs_.store(SDL_GetTicksNS(), std::memory_order_release);
+
+    if (canInstantSwitch) {
+        g_object_set(
+            pipeline_,
+            "instant-uri", TRUE,
+            nullptr);
+    }
+
+    g_object_set(
+        pipeline_,
+        "uri", uriText.c_str(),
+        nullptr);
+
+    if (canInstantSwitch) {
+        g_object_set(
+            pipeline_,
+            "instant-uri", FALSE,
+            nullptr);
+    }
+
+    /*
+     * Anything staged before the URI write belongs to the previous stream.
+     * A callback that crossed the boundary concurrently still carries the old
+     * callback epoch and updateFrame() will reject it against newEpoch.
+     */
+    {
+        std::lock_guard<std::mutex> lock(sampleMutex_);
+
+        if (stagedSample_.sample) {
+            gst_sample_unref(stagedSample_.sample);
+            stagedSample_.sample = nullptr;
+        }
+
+        stagedSample_.epoch = 0;
+    }
+
+    {
+        std::lock_guard<std::mutex> lock(retargetMutex_);
+
+        // stop()/unload() may have invalidated the request while g_object_set()
+        // was executing. Do not reopen the callback gate in that case.
+        if (!retargetInFlight_ ||
+            switchingRetargetRequestId_ != requestId ||
+            switchingRetargetFile_ != targetFile ||
+            !pipeline_ ||
+            lifecycle_.load(std::memory_order_acquire) ==
+                PipelineLifecycle::Draining)
+        {
+            return;
+        }
+
+        switchingRetargetEpoch_ = newEpoch;
+    }
+
+    // From this point on, only a successfully copied sample tagged with this
+    // committed URI epoch may become presentation-valid.
+    presentationEpoch_.store(newEpoch, std::memory_order_release);
+
+    if (!preserveReady) {
+        awaitingInitialPreroll_.store(true, std::memory_order_release);
+        lifecycle_.store(PipelineLifecycle::Starting, std::memory_order_release);
+        playbackState_.store(PlaybackState::Paused, std::memory_order_release);
+
+        // A pooled/cold instance has no presentation frame worth retaining.
+        isTextureReady_ = false;
+        dimensions_.store({ -1, -1 }, std::memory_order_release);
+    }
+    else {
+        // Keep the warm allocation/pipeline, but never present pixels from the
+        // previous URI while the new URI is waiting for its first copied frame.
+        awaitingInitialPreroll_.store(false, std::memory_order_release);
+    }
+
+    /*
+     * Open the callback gate LAST. From this point onward a sample can only be
+     * tagged with newEpoch after the URI write/flush has completed.
+     */
+    if (cbCtx_) {
+        cbCtx_->epoch.store(newEpoch, std::memory_order_release);
+    }
+
+    LOG_DEBUG(
+        "GStreamerVideo",
+        std::string(canInstantSwitch
+            ? "URI switch started (instant): "
+            : "URI switch started (cold/warm-preroll): ") +
+        targetFile);
+
+    if (!needsPrerollState)
+        return;
+
+    const GstStateChangeReturn ret =
+        gst_element_set_state(
+            pipeline_,
+            GST_STATE_PAUSED);
+
+    if (ret != GST_STATE_CHANGE_FAILURE)
+        return;
+
+    LOG_ERROR(
+        "GStreamerVideo",
+        "Failed to preroll URI: " + targetFile);
+
+    {
+        std::lock_guard<std::mutex> lock(retargetMutex_);
+        if (switchingRetargetRequestId_ == requestId) {
+            retargetInFlight_ = false;
+            switchingRetargetFile_.clear();
+            switchingRetargetRequestId_ = 0;
+            switchingRetargetEpoch_ = 0;
+        }
+    }
+
+    awaitingInitialPreroll_.store(false, std::memory_order_release);
+
+    const bool retryGL = glPipelineActive_.exchange(false);
+    lifecycle_.store(
+        retryGL ? PipelineLifecycle::Starting : PipelineLifecycle::Failed,
+        std::memory_order_release);
+
+    releaseTransitionPermit("preroll state change failed");
+
+    if (retryGL)
+        pendingCpuFallback_.store(true, std::memory_order_release);
+}
+
+bool GStreamerVideo::acceptRetargetVideoSample(uint64_t epoch) {
+    bool superseded = false;
+    bool queueNext = false;
+    std::string completedFile;
+    std::string desiredFile;
+
+    {
+        std::lock_guard<std::mutex> lock(retargetMutex_);
+
+        // Ordinary steady-state frame, or a frame from a generation that was
+        // not started by the URI pump.
+        if (!retargetInFlight_ ||
+            switchingRetargetEpoch_ != epoch)
+        {
+            return true;
+        }
+
+        completedFile = switchingRetargetFile_;
+        desiredFile = desiredRetargetFile_;
+
+        superseded =
+            desiredRetargetRequestId_ != switchingRetargetRequestId_ ||
+            desiredRetargetFile_ != switchingRetargetFile_;
+
+        retargetInFlight_ = false;
+        switchingRetargetFile_.clear();
+        switchingRetargetRequestId_ = 0;
+        switchingRetargetEpoch_ = 0;
+
+        if (superseded &&
+            !retargetTaskQueued_ &&
+            !desiredRetargetFile_.empty())
+        {
+            retargetTaskQueued_ = true;
+            queueNext = true;
+        }
+    }
+
+    // The first valid video sample marks the end of this URI startup. Release
+    // the real GStreamer transition slot before a superseded target queues its
+    // next attempt, allowing another waiting instance to make progress fairly.
+    releaseTransitionPermit("first accepted video sample");
+
+    if (superseded) {
+        /*
+         * Close the gate again immediately. The just-completed URI is already
+         * obsolete, so do not allow subsequent frames from it to overwrite the
+         * presentation frame while the latest URI request is waiting on GLib.
+         */
+        const uint64_t gateEpoch = nextUniquePlaybackEpoch_++;
+        playbackEpoch_.store(gateEpoch, std::memory_order_release);
+
+        LOG_DEBUG(
+            "GStreamerVideo",
+            "URI switch first frame superseded: " + completedFile +
+            " -> " + desiredFile);
+
+        if (queueNext) {
+            std::weak_ptr<GStreamerVideo> weak = weak_from_this();
+            invokeOnGlib([weak]() {
+                auto self = weak.lock();
+                if (self)
+                    self->runUriPumpOnGlib();
+            });
+        }
+
+        return false;
+    }
+
+    LOG_DEBUG(
+        "GStreamerVideo",
+        "URI switch accepted first frame: " + completedFile);
+
+    return true;
+}
+
+bool GStreamerVideo::shouldDiscardRetargetAudio(uint64_t epoch) const {
+    std::lock_guard<std::mutex> lock(retargetMutex_);
+
+    return retargetInFlight_ &&
+        switchingRetargetEpoch_ == epoch;
+}
+
+bool GStreamerVideo::prepareForRetarget() {
+    /*
+     * An in-place same-list recycle no longer drives playbin3 through PAUSED
+     * or waits in gst_element_get_state(). playbin3 instant-uri performs its
+     * own old-pad flush/block and source activation. The actual URI write is
+     * serialized/coalesced by the URI pump in openMedia().
+     *
+     * Keep the warm texture allocation and playbin graph, but invalidate the
+     * old pixels immediately. They must not be presented as belonging to the
+     * next URI; updateFrame() revalidates only after copying a frame from the
+     * newly committed playback epoch.
+     */
     pendingCpuFallback_.store(false, std::memory_order_release);
+    textureValid_.store(false, std::memory_order_release);
+    presentationEpoch_.store(0, std::memory_order_release);
+#ifdef _WIN32
+    if (gpuInterop_) gpuInterop_->invalidateFrame();
+#endif
 
     if (!initialized_)
         return false;
@@ -877,112 +1485,6 @@ bool GStreamerVideo::prepareForRetarget() {
     if (!pipeline_)
         return true;
 
-    if (gpuInterop_) {
-        gpuInterop_->discardFrames();
-    }
-
-    // First stop the old stream from producing more frames. Do this while the
-    // old epoch is still authoritative; once PAUSED settles, the appsink queue
-    // becomes finite and can be drained deterministically.
-    // Serialize the state request behind any previously queued GLib control
-    // operations, but keep the potentially blocking get_state() wait on the
-    // caller thread so one retarget cannot stall control for other instances.
-    const GstStateChangeReturn setRet =
-        setStateOnGlibSync(pipeline_, GST_STATE_PAUSED);
-
-    if (setRet == GST_STATE_CHANGE_FAILURE) {
-        LOG_WARNING(
-            "GStreamerVideo",
-            "prepareForRetarget(): failed to request PAUSED.");
-        return false;
-    }
-
-    const Uint64 waitStartNs = SDL_GetTicksNS();
-
-    const GstStateChangeReturn waitRet =
-        gst_element_get_state(
-            pipeline_,
-            nullptr,
-            nullptr,
-            static_cast<GstClockTime>(500 * GST_MSECOND));
-
-    const double waitMs =
-        static_cast<double>(SDL_GetTicksNS() - waitStartNs) / 1000000.0;
-
-    if (waitMs >= 2.0) {
-        std::ostringstream ss;
-        ss << std::fixed
-           << std::setprecision(3)
-           << "prepareForRetarget get_state_ms="
-           << waitMs
-           << " result="
-           << static_cast<int>(waitRet);
-
-        LOG_DEBUG("GStreamerPerf", ss.str());
-    }
-
-    if (waitRet == GST_STATE_CHANGE_FAILURE ||
-        waitRet == GST_STATE_CHANGE_ASYNC)
-    {
-        LOG_WARNING(
-            "GStreamerVideo",
-            "prepareForRetarget(): pipeline did not settle in PAUSED.");
-        return false;
-    }
-
-    // Invalidate every callback that already belongs to the old URI.
-    // Importantly, this happens only AFTER the old stream is quiescent.
-    const uint64_t deadEpoch =
-        playbackEpoch_.fetch_add(1, std::memory_order_acq_rel) + 1;
-
-    if (cbCtx_) {
-        cbCtx_->epoch.store(deadEpoch, std::memory_order_release);
-    }
-
-    awaitingInitialPreroll_.store(false, std::memory_order_release);
-    playbackState_.store(
-        PlaybackState::Paused,
-        std::memory_order_release);
-
-    actualGstState_.store(
-        GST_STATE_PAUSED,
-        std::memory_order_release);
-
-    isTextureReady_ = false;
-
-    dimensions_.store(
-        { -1, -1 },
-        std::memory_order_release);
-
-    loopsFinished_.store(
-        false,
-        std::memory_order_release);
-
-    // Drain samples that were queued by the old URI. We deliberately do NOT
-    // detach callbacks or remove the pad probe; this is an in-place retarget,
-    // not teardown.
-    auto drainSink = [](GstElement* sink) {
-        if (!sink || !GST_IS_APP_SINK(sink))
-            return;
-
-        while (GstSample* s =
-            gst_app_sink_try_pull_sample(GST_APP_SINK(sink), 0))
-        {
-            gst_sample_unref(s);
-        }
-
-        while (GstSample* s =
-            gst_app_sink_try_pull_preroll(GST_APP_SINK(sink), 0))
-        {
-            gst_sample_unref(s);
-        }
-    };
-
-    drainSink(videoSink_);
-    drainSink(audioSink_);
-
-    // A callback may already have crossed the appsink boundary before PAUSED
-    // settled. Drop that staged frame as well.
     {
         std::lock_guard<std::mutex> lock(sampleMutex_);
 
@@ -1001,7 +1503,8 @@ bool GStreamerVideo::prepareForRetarget() {
 
     LOG_DEBUG(
         "GStreamerVideo",
-        "Prepared active pipeline for clean instant-uri retarget.");
+        "Prepared active pipeline for coalesced instant-uri retarget "
+        "(no PAUSED state transition).");
 
     return true;
 }
@@ -1013,8 +1516,13 @@ bool GStreamerVideo::unload() {
 		gpuInterop_->discardFrames();
 	}
 
-	if (!initialized_)
+	cancelStartupPermitWait();
+	resetRetargetState();
+
+	if (!initialized_) {
+		releaseTransitionPermit("unload while uninitialized");
 		return false;
+	}
 
 	const PipelineLifecycle life =
 		lifecycle_.load(std::memory_order_acquire);
@@ -1045,6 +1553,8 @@ bool GStreamerVideo::unload() {
 		std::memory_order_release);
 
 	isTextureReady_ = false;
+	textureValid_.store(false, std::memory_order_release);
+	presentationEpoch_.store(0, std::memory_order_release);
 
 	dimensions_.store(
 		{ -1, -1 },
@@ -1088,8 +1598,15 @@ bool GStreamerVideo::unload() {
 			PipelineLifecycle::Idle,
 			std::memory_order_release);
 
+		releaseTransitionPermit("unload without pipeline");
 		return true;
 	}
+
+	// From this point until PAUSED/READY actually settles, the retained pipeline
+	// represents real GStreamer transition work. If a startup permit was already
+	// held it is converted to Drain; otherwise the drain is added to the global
+	// per-monitor budget even if that temporarily exceeds the startup limit.
+	occupyDrainPermit();
 
 	// Serialize the retained-pipeline state request on the same GLib context as
 	// the bus watch and ordinary playback control. The dead epoch above
@@ -1128,6 +1645,9 @@ bool GStreamerVideo::unload() {
 				LOG_ERROR(
 					"GStreamerVideo",
 					"unload(): READY fallback request also failed.");
+
+				self->releaseTransitionPermit(
+					"unload READY fallback failed");
 				return;
 			}
 
@@ -1140,6 +1660,9 @@ bool GStreamerVideo::unload() {
 				self->lifecycle_.store(
 					PipelineLifecycle::Idle,
 					std::memory_order_release);
+
+				self->releaseTransitionPermit(
+					"unload settled synchronously in READY");
 			}
 			return;
 		}
@@ -1153,6 +1676,9 @@ bool GStreamerVideo::unload() {
 			self->lifecycle_.store(
 				PipelineLifecycle::Idle,
 				std::memory_order_release);
+
+			self->releaseTransitionPermit(
+				"unload settled synchronously in PAUSED");
 		}
 
 		// GST_STATE_CHANGE_ASYNC intentionally leaves lifecycle_ == Draining.
@@ -1243,21 +1769,14 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		return false;
 	}
 
-	// instant-uri is a persistent playbin3 mode, not a one-shot trigger.
-	// Enable it once for the lifetime of this retained pipeline. Cold opens are
-	// unaffected because there is no current URI to replace; warm PAUSED opens
-	// can then retarget by changing only the uri property.
+	// Detect instant-uri support once, but do not leave it permanently enabled.
+	// Each warm retarget enables it only for the URI property write itself.
+	// This follows playbin3/uridecodebin3's intended immediate-switch contract
+	// and prevents unrelated URI writes from implicitly becoming instant switches.
 	instantUriEnabled_ =
 		g_object_class_find_property(
 			G_OBJECT_GET_CLASS(pipeline_),
 			"instant-uri") != nullptr;
-
-	if (instantUriEnabled_) {
-		g_object_set(
-			pipeline_,
-			"instant-uri", TRUE,
-			nullptr);
-	}
 
 	audioSink_ = gst_element_factory_make("appsink", "audio_sink");
 	if (!audioSink_) {
@@ -1361,7 +1880,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		gpuInterop_ = std::make_unique<NativeVideoInterop>(SDL::getRenderer(monitor_));
 		if (gpuInterop_->available()) {
 			gpuInterop_->configure(pipeline_);
-#ifdef RETROFE_HAVE_GST_GL
+#if defined(RETROFE_HAVE_GST_GL) || defined(RETROFE_HAVE_D3D12)
 			glPipelineActive_.store(true);
 #endif
 		}
@@ -1380,9 +1899,9 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		if (Configuration::HardwareVideoAccel) {
 			videoCaps = gst_caps_from_string(
 				gpuInterop_ && gpuInterop_->available()
-				? NativeVideoInterop::caps()
+				? gpuInterop_->caps()
 				: "video/x-raw,format=(string)NV12");
-			sdlFormat_ = gpuInterop_ && gpuInterop_->available() ? NativeVideoInterop::pixelFormat() : SDL_PIXELFORMAT_NV12;
+			sdlFormat_ = gpuInterop_ && gpuInterop_->available() ? gpuInterop_->pixelFormat() : SDL_PIXELFORMAT_NV12;
 			LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_NV12 (HW accel: true)");
 		}
 		else {
@@ -1518,142 +2037,104 @@ bool GStreamerVideo::open(const std::string& file) {
 }
 
 bool GStreamerVideo::openMedia(const std::string& file, bool cpuFallback) {
-	if (!initialized_)
-		return false;
+    if (!initialized_)
+        return false;
 
-	if (lifecycle_.load(std::memory_order_acquire) == PipelineLifecycle::Draining) {
-		LOG_DEBUG(
-			"GStreamerVideo",
-			"open(): rejected while pipeline is draining: " + file);
-		return false;
-	}
+    if (lifecycle_.load(std::memory_order_acquire) ==
+        PipelineLifecycle::Draining)
+    {
+        LOG_DEBUG(
+            "GStreamerVideo",
+            "open(): rejected while pipeline is draining: " + file);
+        return false;
+    }
 
-	// Only an internal recovery open preserves CPU fallback. A new media
-	// request retries GPU negotiation by rebuilding a retained fallback graph.
-	if (!cpuFallback && disableInterop_) {
-		stop();
-		disableInterop_ = false;
-	}
+    /*
+     * A real fallback rebuild still starts from a clean pipeline. Ordinary
+     * media changes, however, stay on the retained playbin3 and are routed
+     * through the coalescing URI pump below.
+     */
+    if (!cpuFallback && disableInterop_) {
+        stop();
+        disableInterop_ = false;
+    }
 
-	const bool hadPipeline = pipeline_ != nullptr;
+    const bool hadPipeline = pipeline_ != nullptr;
 
-	// lifecycle_ == Idle is published only after the retained pipeline has
-	// settled, so actualGstState_ is sufficient here. Avoid even a zero-time
-	// gst_element_get_state() query on the caller/render thread.
-	const GstState stateBeforeOpen =
-		actualGstState_.load(std::memory_order_acquire);
+    currentFile_ = file;
 
-	const uint64_t newEpoch = nextUniquePlaybackEpoch_++;
-	playbackEpoch_.store(newEpoch, std::memory_order_release);
+    // A logical media change immediately invalidates the previously displayed
+    // pixels. The underlying texture allocation may remain warm/reusable, but
+    // no frame may be exposed again until runUriPumpOnGlib() commits a new
+    // playback epoch and updateFrame() copies a sample from that epoch.
+    textureValid_.store(false, std::memory_order_release);
+    presentationEpoch_.store(0, std::memory_order_release);
+#ifdef _WIN32
+    if (gpuInterop_) gpuInterop_->invalidateFrame();
+#endif
 
-	if (cbCtx_) {
-		cbCtx_->epoch.store(newEpoch, std::memory_order_release);
-	}
+    startupOpenedNs_ = SDL_GetTicksNS();
+    startupWorkerNs_.store(0, std::memory_order_release);
+    startupSampleNs_.store(0, std::memory_order_release);
+    startupLogged_ = false;
 
-	currentFile_ = file;
-	startupOpenedNs_ = SDL_GetTicksNS();
-	startupWorkerNs_.store(0);
-	startupSampleNs_.store(0);
-	startupLogged_ = false;
-	startupInstantSwitch_ = false;
+    loggedGpu_ = false;
+    loggedUpload_ = false;
+    loopsFinished_.store(false, std::memory_order_release);
 
-	loggedGpu_ = false;
-	loggedUpload_ = false;
-	isTextureReady_ = false;
+    if (!createPipelineIfNeeded())
+        return false;
 
-	dimensions_.store({ -1, -1 }, std::memory_order_release);
-	loopsFinished_.store(false, std::memory_order_release);
+    /*
+     * First/cold opens have no previous texture resource. Warm in-place
+     * retargets keep isTextureReady_/dimensions_ untouched so their allocation
+     * can be reused, while textureValid_ above prevents stale pixels from being
+     * presented during the handoff.
+     */
+    if (!hadPipeline) {
+        isTextureReady_ = false;
+        dimensions_.store({ -1, -1 }, std::memory_order_release);
+        hasVideoStream_.store(false, std::memory_order_release);
+        playbackState_.store(PlaybackState::Paused, std::memory_order_release);
+    }
 
-	if (!createPipelineIfNeeded())
-		return false;
+    startupInstantSwitch_ =
+        hadPipeline &&
+        instantUriEnabled_ &&
+        (actualGstState_.load(std::memory_order_acquire) == GST_STATE_PAUSED ||
+         actualGstState_.load(std::memory_order_acquire) == GST_STATE_PLAYING);
 
-	// If this is a reused pooled instance that unload() successfully kept in
-	// PAUSED, playbin3 can switch the URI without dropping decodebin3 to READY.
-	// GStreamer can then reuse compatible decoders such as d3d11h264dec.
-	const bool canInstantSwitch =
-		hadPipeline &&
-		instantUriEnabled_ &&
-		stateBeforeOpen == GST_STATE_PAUSED;
+    bool coalesced = false;
 
-	startupInstantSwitch_ = canInstantSwitch;
+    {
+        std::lock_guard<std::mutex> lock(retargetMutex_);
 
-	awaitingInitialPreroll_.store(true, std::memory_order_release);
-	lifecycle_.store(PipelineLifecycle::Starting, std::memory_order_release);
-	playbackState_.store(PlaybackState::Paused, std::memory_order_release);
+        desiredRetargetFile_ = file;
+        ++desiredRetargetRequestId_;
 
-	gchar* uri = gst_filename_to_uri(file.c_str(), nullptr);
-	if (!uri) {
-		awaitingInitialPreroll_.store(false, std::memory_order_release);
-		lifecycle_.store(PipelineLifecycle::Failed, std::memory_order_release);
-		return false;
-	}
+        coalesced =
+            retargetInFlight_ ||
+            retargetTaskQueued_ ||
+            startupPermitQueued_.load(std::memory_order_acquire);
+    }
 
-	const std::string uriText(uri);
-	g_free(uri);
+    if (coalesced) {
+        LOG_DEBUG(
+            "GStreamerVideo",
+            "Coalesced URI request; latest target is now: " + file);
+    }
 
-	std::weak_ptr<GStreamerVideo> weak = weak_from_this();
-	invokeOnGlib(
-		[weak, uriText, file, openEpoch = newEpoch, canInstantSwitch]() {
-			auto self = weak.lock();
-			if (!self ||
-				self->playbackEpoch_.load(std::memory_order_acquire) != openEpoch ||
-				self->lifecycle_.load(std::memory_order_acquire) != PipelineLifecycle::Starting ||
-				!self->pipeline_)
-			{
-				return;
-			}
+    scheduleUriPump();
 
-			self->startupWorkerNs_.store(SDL_GetTicksNS(), std::memory_order_release);
+    if (videoSourceId_ == 0) {
+        videoSourceId_ =
+            AudioBus::instance().addSource("video-preview");
+        audioHandle_ =
+            AudioBus::instance().getHandle(videoSourceId_);
+    }
 
-			g_object_set(
-				self->pipeline_,
-				"uri", uriText.c_str(),
-				nullptr);
-
-			if (canInstantSwitch) {
-				LOG_DEBUG(
-					"GStreamerVideo",
-					"playbin3 instant URI switch: " + file);
-				return;
-			}
-
-			const GstStateChangeReturn ret =
-				gst_element_set_state(
-					self->pipeline_,
-					GST_STATE_PAUSED);
-
-			if (ret != GST_STATE_CHANGE_FAILURE)
-				return;
-
-			LOG_ERROR(
-				"GStreamerVideo",
-				"Async pause failed for " + file);
-
-			if (self->playbackEpoch_.load(std::memory_order_acquire) != openEpoch ||
-				self->lifecycle_.load(std::memory_order_acquire) == PipelineLifecycle::Draining)
-			{
-				return;
-			}
-
-			const bool retryGL = self->glPipelineActive_.exchange(false);
-
-			self->lifecycle_.store(
-				retryGL ? PipelineLifecycle::Starting : PipelineLifecycle::Failed,
-				std::memory_order_release);
-
-			self->awaitingInitialPreroll_.store(false, std::memory_order_release);
-
-			if (retryGL)
-				self->pendingCpuFallback_.store(true, std::memory_order_release);
-		});
-
-	if (videoSourceId_ == 0) {
-		videoSourceId_ = AudioBus::instance().addSource("video-preview");
-		audioHandle_ = AudioBus::instance().getHandle(videoSourceId_);
-	}
-
-	AudioBus::instance().setGain(audioHandle_, 0.0f);
-	return true;
+    AudioBus::instance().setGain(audioHandle_, 0.0f);
+    return true;
 }
 
 GstPadProbeReturn GStreamerVideo::padProbeCallback(
@@ -1887,6 +2368,12 @@ GstFlowReturn GStreamerVideo::on_new_preroll(GstAppSink* sink, gpointer user_dat
 
 	GstSample* s = gst_app_sink_pull_preroll(sink);
 	if (!s) return GST_FLOW_OK;
+
+	if (!video->acceptRetargetVideoSample(callbackEpoch)) {
+		gst_sample_unref(s);
+		return GST_FLOW_OK;
+	}
+
 	video->hasVideoStream_.store(true, std::memory_order_release);
 	Uint64 unset = 0;
 	video->startupSampleNs_.compare_exchange_strong(unset, SDL_GetTicksNS());
@@ -1931,6 +2418,12 @@ GstFlowReturn GStreamerVideo::on_new_sample(GstAppSink* sink, gpointer user_data
 
 	GstSample* s = gst_app_sink_pull_sample(sink);
 	if (!s) return GST_FLOW_OK;
+
+	if (!video->acceptRetargetVideoSample(callbackEpoch)) {
+		gst_sample_unref(s);
+		return GST_FLOW_OK;
+	}
+
 	video->hasVideoStream_.store(true, std::memory_order_release);
 	Uint64 unset = 0;
 	video->startupSampleNs_.compare_exchange_strong(unset, SDL_GetTicksNS());
@@ -1994,6 +2487,14 @@ GstFlowReturn GStreamerVideo::on_audio_new_sample(
 
 	if (!sample)
 		return GST_FLOW_OK;
+
+	// Do not let audio from a URI transition get ahead of the first accepted
+	// video frame. If that URI has already been superseded, the next URI pump
+	// will close the epoch gate before any of its audio becomes presentation-current.
+	if (video->shouldDiscardRetargetAudio(callbackEpoch)) {
+		gst_sample_unref(sample);
+		return GST_FLOW_OK;
+	}
 
 	/*
 	 * Audio produced during startup/draining is pulled and discarded so the
@@ -2130,6 +2631,7 @@ void GStreamerVideo::createSdlTexture() {
 	allocatedHeight_ = h;
 	allocatedFormat_ = sdlFormat_;
 	isTextureReady_ = false;
+	textureValid_.store(false, std::memory_order_release);
 }
 
 void GStreamerVideo::updateFrame() {
@@ -2141,17 +2643,31 @@ void GStreamerVideo::updateFrame() {
 		return;
 	}
 	GstSample* sampleToProcess = nullptr;
+	uint64_t sampleEpoch = 0;
 
 	{
 		std::lock_guard<std::mutex> lock(sampleMutex_);
 		if (stagedSample_.sample && stagedSample_.epoch == playbackEpoch_.load(std::memory_order_acquire)) {
 			sampleToProcess = stagedSample_.sample;
+			sampleEpoch = stagedSample_.epoch;
 			stagedSample_.sample = nullptr; // Consume!
+			stagedSample_.epoch = 0;
 			// No state mutation here whatsoever. The rendering system only consumes frames.
 		}
 	}
 
 	if (!sampleToProcess) return;
+
+	// A new media request may have invalidated presentation before the GLib URI
+	// pump commits its next epoch. Never let an already-staged old frame make the
+	// texture valid again during that gap.
+	if (sampleEpoch == 0 ||
+		sampleEpoch != presentationEpoch_.load(std::memory_order_acquire) ||
+		sampleEpoch != playbackEpoch_.load(std::memory_order_acquire))
+	{
+		gst_sample_unref(sampleToProcess);
+		return;
+	}
 
 	GstBuffer* buf = gst_sample_get_buffer(sampleToProcess);
 	const GstCaps* caps = gst_sample_get_caps(sampleToProcess);
@@ -2180,6 +2696,7 @@ void GStreamerVideo::updateFrame() {
 			++gpuFrameCount_;
 			SDL_SetTextureBlendMode(texture_, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
 			isTextureReady_ = true;
+			textureValid_.store(true, std::memory_order_release);
 			logStartupTiming();
 			if (!loggedGpu_) {
 				LOG_INFO("GStreamerVideo", std::string("GPU texture interop ACTIVE: ") + gpuInterop_->description() + "; monitor " + std::to_string(monitor_) + "; " + currentFile_);
@@ -2188,11 +2705,16 @@ void GStreamerVideo::updateFrame() {
 			gst_sample_unref(sampleToProcess);
 			return;
 		}
+#ifdef _WIN32
+		if (gpuInterop_->deferred()) { gst_sample_unref(sampleToProcess); return; }
+#endif
 		if (!loggedUpload_) LOG_INFO("GStreamerVideo", std::string("GPU texture interop fallback: ") + gpuInterop_->reason() + "; " + currentFile_);
 #ifdef RETROFE_HAVE_EGL_DMABUF
 		// Never CPU-map a tiled DMA_DRM frame as ordinary NV12/RGBA. Reopen
 		// with system-memory negotiation through the existing recovery path.
 		isTextureReady_ = false;
+		textureValid_.store(false, std::memory_order_release);
+		presentationEpoch_.store(0, std::memory_order_release);
 		pendingCpuFallback_.store(true, std::memory_order_release);
 		gst_sample_unref(sampleToProcess);
 		return;
@@ -2226,6 +2748,7 @@ void GStreamerVideo::updateFrame() {
 
 	if (ok) {
 		isTextureReady_ = true;
+		textureValid_.store(true, std::memory_order_release);
 		logStartupTiming();
 	}
 }
