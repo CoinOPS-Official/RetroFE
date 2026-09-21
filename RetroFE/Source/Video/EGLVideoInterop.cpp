@@ -39,9 +39,36 @@ GLuint compile(GLenum type, const char* source) {
 // of the caps. Plane starts may refer to the same FD or different memory objects.
 struct Frame {
     GstVideoInfoDmaDrm drm{};
+    int width = 0, height = 0;
     SDL_Rect crop{};
     std::string colorDefaults;
     std::vector<EGLint> attrs;
+    explicit Frame(const EGLDmaBufFrame& f) {
+        ensure(f.owner && f.width > 0 && f.height > 0 && f.planeCount > 0 && f.planeCount <= 4,
+               "invalid native DMA-BUF frame");
+        width = f.width; height = f.height; crop = f.crop;
+        ensure(crop.x >= 0 && crop.y >= 0 && crop.w > 0 && crop.h > 0 &&
+            int64_t(crop.x)+crop.w <= width && int64_t(crop.y)+crop.h <= height, "invalid native crop");
+        drm.drm_fourcc = f.fourcc; drm.drm_modifier = f.planes[0].modifier;
+        attrs = {EGL_WIDTH,width,EGL_HEIGHT,height,EGL_LINUX_DRM_FOURCC_EXT,static_cast<EGLint>(f.fourcc)};
+        const EGLint fd[] = {EGL_DMA_BUF_PLANE0_FD_EXT,EGL_DMA_BUF_PLANE1_FD_EXT,EGL_DMA_BUF_PLANE2_FD_EXT,EGL_DMA_BUF_PLANE3_FD_EXT};
+        const EGLint off[] = {EGL_DMA_BUF_PLANE0_OFFSET_EXT,EGL_DMA_BUF_PLANE1_OFFSET_EXT,EGL_DMA_BUF_PLANE2_OFFSET_EXT,EGL_DMA_BUF_PLANE3_OFFSET_EXT};
+        const EGLint pitch[] = {EGL_DMA_BUF_PLANE0_PITCH_EXT,EGL_DMA_BUF_PLANE1_PITCH_EXT,EGL_DMA_BUF_PLANE2_PITCH_EXT,EGL_DMA_BUF_PLANE3_PITCH_EXT};
+        const EGLint low[] = {EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT,EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT,EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT};
+        const EGLint high[] = {EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT,EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT,EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT};
+        for (int i=0;i<f.planeCount;++i) {
+            const auto& p=f.planes[i];
+            ensure(p.fd>=0 && p.offset>=0 && p.pitch>0 && p.modifier==drm.drm_modifier,
+                   "invalid or mixed-modifier DMA-BUF planes");
+            attrs.insert(attrs.end(),{fd[i],p.fd,off[i],p.offset,pitch[i],p.pitch,
+                low[i],static_cast<EGLint>(p.modifier),high[i],static_cast<EGLint>(p.modifier>>32)});
+        }
+        attrs.insert(attrs.end(),{EGL_YUV_COLOR_SPACE_HINT_EXT,f.bt709?EGL_ITU_REC709_EXT:EGL_ITU_REC601_EXT,
+            EGL_SAMPLE_RANGE_HINT_EXT,f.fullRange?EGL_YUV_FULL_RANGE_EXT:EGL_YUV_NARROW_RANGE_EXT});
+        if(f.chromaX>=0) attrs.insert(attrs.end(),{EGL_YUV_CHROMA_HORIZONTAL_SITING_HINT_EXT,f.chromaX?EGL_YUV_CHROMA_SITING_0_5_EXT:EGL_YUV_CHROMA_SITING_0_EXT});
+        if(f.chromaY>=0) attrs.insert(attrs.end(),{EGL_YUV_CHROMA_VERTICAL_SITING_HINT_EXT,f.chromaY?EGL_YUV_CHROMA_SITING_0_5_EXT:EGL_YUV_CHROMA_SITING_0_EXT});
+        attrs.push_back(EGL_NONE);
+    }
     explicit Frame(GstSample* sample) {
         gst_video_info_dma_drm_init(&drm);
         ensure(gst_video_info_dma_drm_from_caps(&drm, gst_sample_get_caps(sample)), "invalid DMA_DRM caps");
@@ -50,6 +77,7 @@ struct Frame {
         ensure(meta && meta->width && meta->height && meta->width <= INT_MAX && meta->height <= INT_MAX,
                "missing/invalid DMA-BUF allocation metadata");
         ensure(meta->n_planes > 0 && meta->n_planes <= 4, "EGL import supports at most four storage planes");
+        width = meta->width; height = meta->height;
         crop = {0, 0, drm.vinfo.width, drm.vinfo.height};
         if (auto* c = gst_buffer_get_video_crop_meta(buffer)) {
             ensure(c->x <= INT_MAX && c->y <= INT_MAX && c->width <= INT_MAX && c->height <= INT_MAX, "crop overflow");
@@ -318,7 +346,7 @@ struct EGLVideoInterop::Impl {
     int height = 0;
 
     struct Pending {
-        GstSample* sample = nullptr;
+        std::shared_ptr<void> sample;
         EGLImageKHR image = EGL_NO_IMAGE_KHR;
         GLuint texture = 0;
         EGLSyncKHR fence = EGL_NO_SYNC_KHR;
@@ -343,8 +371,7 @@ struct EGLVideoInterop::Impl {
     {
         if (frame.image != EGL_NO_IMAGE_KHR)
             destroyImage(display, frame.image);
-        if (frame.sample)
-            gst_sample_unref(frame.sample);
+        frame.sample.reset();
 
         if (frame.wrapper && idle.size() < kIdleLimit) {
             idle.push_back({nullptr, EGL_NO_IMAGE_KHR, frame.texture,
@@ -606,11 +633,14 @@ void EGLVideoInterop::discardFrames() {
     p.drainPending();
     // Keep output, wrapper, FBO and shader for compatible future media.
 }
-SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
+SDL_Texture* EGLVideoInterop::copy(GstSample* sample) { return copyFrame(sample, nullptr); }
+SDL_Texture* EGLVideoInterop::copy(const EGLDmaBufFrame& frame) { return copyFrame(nullptr, &frame); }
+SDL_Texture* EGLVideoInterop::copyFrame(GstSample* sample, const EGLDmaBufFrame* native) {
     auto& p=*impl_; if (!p.ready) return nullptr;
     EGLImageKHR image=EGL_NO_IMAGE_KHR; GLuint input=0; SDL_Texture* reusableWrapper=nullptr;
     try {
-        Frame frame(sample);
+        Frame frame = native ? Frame(*native) : Frame(sample);
+        auto owner = native ? native->owner : std::shared_ptr<void>(gst_sample_ref(sample), [](void* p) { gst_sample_unref(static_cast<GstSample*>(p)); });
         if (frame.colorDefaults != p.lastColorDefaults) {
             if (!frame.colorDefaults.empty()) LOG_INFO("GStreamerVideo", frame.colorDefaults);
             p.lastColorDefaults = frame.colorDefaults;
@@ -634,12 +664,11 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
 
         image=p.createImage(p.display,EGL_NO_CONTEXT,EGL_LINUX_DMA_BUF_EXT,nullptr,frame.attrs.data());
         ensure(image!=EGL_NO_IMAGE_KHR,"EGL DMA-BUF image import failed");
-        auto* allocation = gst_buffer_get_video_meta(gst_sample_get_buffer(sample));
         // A direct wrapper exposes the whole image. Use conversion for crop or
         // padded visible dimensions until the render API carries a source rect.
         const bool wholeImage = frame.crop.x == 0 && frame.crop.y == 0 &&
-            frame.crop.w == static_cast<int>(allocation->width) &&
-            frame.crop.h == static_cast<int>(allocation->height);
+            frame.crop.w == frame.width &&
+            frame.crop.h == frame.height;
         const bool tryDirect = p.preferDirect && wholeImage && frame.drm.drm_fourcc == 0x3231564e;
         if (tryDirect && !p.idle.empty()) {
             size_t selected = p.idle.size()-1;
@@ -676,7 +705,7 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
                 if (wrapper) LOG_DEBUG("GStreamerVideo", "Created reusable EGL direct texture slot " + std::to_string(frame.crop.w) + "x" + std::to_string(frame.crop.h));
             }
             if (wrapper) {
-                p.direct = {gst_sample_ref(sample), image, input, EGL_NO_SYNC_KHR, wrapper, frame.crop.w, frame.crop.h};
+                p.direct = {owner, image, input, EGL_NO_SYNC_KHR, wrapper, frame.crop.w, frame.crop.h};
                 image = EGL_NO_IMAGE_KHR; input = 0;
                 p.visibleWidth = frame.crop.w; p.visibleHeight = frame.crop.h;
                 return wrapper;
@@ -694,20 +723,19 @@ SDL_Texture* EGLVideoInterop::copy(GstSample* sample) {
         glViewport(0,0,p.width,p.height); glDisable(GL_SCISSOR_TEST); glDisable(GL_BLEND);
         glDisable(GL_DEPTH_TEST); glDisable(GL_STENCIL_TEST); glDisable(GL_CULL_FACE); glColorMask(GL_TRUE,GL_TRUE,GL_TRUE,GL_TRUE);
         glUseProgram(p.program);
-        auto* meta=gst_buffer_get_video_meta(gst_sample_get_buffer(sample));
-        glUniform4f(p.cropUniform,float(frame.crop.x)/meta->width,float(frame.crop.y)/meta->height,
-                    float(frame.crop.w)/meta->width,float(frame.crop.h)/meta->height);
+        glUniform4f(p.cropUniform,float(frame.crop.x)/frame.width,float(frame.crop.y)/frame.height,
+                    float(frame.crop.w)/frame.width,float(frame.crop.h)/frame.height);
         glBindBuffer(GL_ARRAY_BUFFER,p.vbo); glEnableVertexAttribArray(0); glVertexAttribPointer(0,2,GL_FLOAT,GL_FALSE,0,nullptr);
         glDrawArrays(GL_TRIANGLE_STRIP,0,4); ensure(glGetError()==GL_NO_ERROR,"EGL external conversion GL error");
         auto fence=p.createSync(p.display,EGL_SYNC_FENCE_KHR,nullptr);
         ensure(fence!=EGL_NO_SYNC_KHR,"EGL conversion fence creation failed");
-        p.pending.push_back({gst_sample_ref(sample),image,input,fence}); image=EGL_NO_IMAGE_KHR; input=0;
+        p.pending.push_back({owner,image,input,fence}); image=EGL_NO_IMAGE_KHR; input=0;
         glFlush(); return p.texture;
     } catch (const std::exception& e) {
         p.error=e.what();
         // Preserve the exact negotiated metadata: an unknown matrix and an
         // explicitly unsupported matrix must be distinguishable in reports.
-        if (auto* caps = gst_sample_get_caps(sample)) {
+        if (auto* caps = sample ? gst_sample_get_caps(sample) : nullptr) {
             gchar* text = gst_caps_to_string(caps);
             p.error += std::string("; negotiated caps: ") + (text ? text : "unavailable");
             g_free(text);

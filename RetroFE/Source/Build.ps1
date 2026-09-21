@@ -1,6 +1,8 @@
 param(
     [string]$BuildDirectory = "$PSScriptRoot/../Build",
     [string]$GStreamerRoot = "C:/gstreamer/1.0/msvc_x86_64",
+    [switch]$EnableFFmpeg,
+    [string]$FFmpegRoot = "C:/ffmpeg",
     [ValidateSet('Release', 'Debug', 'RelWithDebInfo')]
     [string]$Configuration = 'Release'
 )
@@ -36,9 +38,13 @@ $packageArguments = for ($index = 0; $index -lt $packages.Count; ++$index) {
     # Override stale CMake package paths pointing at a local patched build.
     "-D$($packages[$index].Name)_DIR=$($prefixes[$index])/cmake"
 }
+$backendArguments = @()
+if ($EnableFFmpeg) {
+    $backendArguments = @('-DRETROFE_ENABLE_FFMPEG=ON', "-DFFMPEG_ROOT=$FFmpegRoot")
+}
 & cmake -S $PSScriptRoot -B $BuildDirectory -G 'Visual Studio 17 2022' -A x64 `
     "-DCMAKE_PREFIX_PATH=$($prefixes -join ';')" "-DGSTREAMER_ROOT=$GStreamerRoot" `
-    @packageArguments -DRETROFE_FETCH_SDL3=OFF -DRETROFE_BUILD_TESTING=ON -DBUILD_TESTING=ON
+    @packageArguments @backendArguments -DRETROFE_FETCH_SDL3=OFF -DRETROFE_BUILD_TESTING=ON -DBUILD_TESTING=ON
 if ($LASTEXITCODE -ne 0) { throw 'SDL3 configuration failed' }
 & cmake --build $BuildDirectory --config $Configuration --parallel 6
 if ($LASTEXITCODE -ne 0) { throw 'SDL3 build failed' }

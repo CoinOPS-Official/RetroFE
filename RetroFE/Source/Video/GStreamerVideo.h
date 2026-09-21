@@ -99,16 +99,16 @@ public:
     bool unload() override;
     // Quiesce the current URI for an in-place same-list retarget while
     // preserving the playbin/decoder graph for instant-uri reuse.
-    bool prepareForRetarget();
+    bool prepareForRetarget() override;
     bool createPipelineIfNeeded();
     bool open(const std::string& file) override; // Renamed from play
     bool stop() override;
-    bool isReadyForReuse() const;
+    bool isReadyForReuse() const override;
     SDL_Texture* getTexture() const override;
-    bool usingGpuTexture() const { return texture_ && texture_ == gpuTexture_; }
-    uint64_t gpuFrameCount() const { return gpuFrameCount_; }
+    bool usingGpuTexture() const override { return texture_ && texture_ == gpuTexture_; }
+    uint64_t gpuFrameCount() const override { return gpuFrameCount_; }
     void updateFrame() override; // Renamed from draw
-    void setNumLoops(int n);
+    void setNumLoops(int n) override;
     bool isPlaying() override;
     void setVolume(float volume) override;
     VideoDim getDimensions() override;
@@ -121,13 +121,13 @@ public:
     void restart() override;
     // Rewind a retained video as it leaves the visible area and leave the
     // pipeline paused at the start, ready for a later resume().
-    void rewindAndPause();
+    void rewindAndPause() override;
     void loop() override;
     unsigned long long getCurrent() override;
     unsigned long long getDuration() override;
     bool isPaused() override;
     void setSoftOverlay(bool value) override;
-    void setPerspectiveCorners(const int* corners);
+    void setPerspectiveCorners(const int* corners) override;
     bool hasVideoStream() const override { return hasVideoStream_; }
     bool hasFinishedLoops() const override;
 

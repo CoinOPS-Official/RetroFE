@@ -16,6 +16,7 @@
 
 
 #include "SDL.h"
+#include "Video/VideoFactory.h"
 #ifdef RETROFE_HAVE_D3D12
 #include "Video/D3D12VideoInterop.h"
 #endif
@@ -318,6 +319,9 @@ bool SDL::initialize(Configuration& config) {
     );
 
     Configuration::HardwareVideoAccel = HardwareVideoAccel;
+    std::string videoBackend = "gstreamer";
+    config.getProperty("VideoBackend", videoBackend);
+    if (!VideoFactory::setBackend(videoBackend)) return false;
 
     // Hardware video shares the D3D11 device with
     // GStreamer streaming threads.

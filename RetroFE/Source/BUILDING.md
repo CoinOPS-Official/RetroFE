@@ -104,6 +104,10 @@ use a separate build directory; those overrides are developer-owned inputs.
 
 ## Packaging and playback
 
+An optional FFmpeg video backend can be built with `RETROFE_ENABLE_FFMPEG=ON`
+and selected with `VideoBackend=ffmpeg`. See [FFmpeg setup and limitations](Tests/FFMPEG-BACKEND.md).
+GStreamer remains the default.
+
 From the repository root, after a Windows build:
 
 ```sh

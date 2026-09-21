@@ -28,7 +28,6 @@
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
 #include "../../Video/IVideo.h"
-#include "../../Video/GStreamerVideo.h"
 #include "../../Video/VideoFactory.h"
 #include "../../Video/VideoPool.h"
 #include "../Page.h"
@@ -68,19 +67,19 @@ bool VideoComponent::recycleAsVideo(const std::string& path, const std::string&)
     bool preserveInstance = preserveInstanceOnNextRecycle_;
     preserveInstanceOnNextRecycle_ = false;
 
+    if (videoFile_ == path && videoInst_ && !videoInst_->hasError()) {
+        return true;
+    }
+
     // An active pipeline may still contain queued samples from the previous
     // URI. Quiesce and drain it before keeping it attached for this retarget.
     // If that cannot be done safely, fall back to the normal release/reacquire
     // path rather than risk displaying stale media.
     if (preserveInstance && videoInst_) {
-        auto* gstVideo = dynamic_cast<GStreamerVideo*>(videoInst_.get());
+        auto* gstVideo = videoInst_.get();
         if (!gstVideo || !gstVideo->prepareForRetarget()) {
             preserveInstance = false;
         }
-    }
-
-    if (videoFile_ == path && videoInst_ && !videoInst_->hasError()) {
-        return true;
     }
 
     startupArtwork_.reset();
@@ -114,7 +113,7 @@ bool VideoComponent::recycleAsVideo(const std::string& path, const std::string&)
 
     // ScrollingList calls allocateGraphicsMemory() after rebinding the slot.
     // With preserveInstance=true, videoInst_ remains attached and the next
-    // update retargets the same warm GStreamerVideo to videoFile_.
+    // update retargets the same warm video instance to videoFile_.
     return true;
 }
 
@@ -126,7 +125,7 @@ bool VideoComponent::prepareRetainedVideoForRetarget() {
     if (!videoInst_)
         return false;
 
-    auto* gstVideo = dynamic_cast<GStreamerVideo*>(videoInst_.get());
+    auto* gstVideo = videoInst_.get();
     if (!gstVideo)
         return false;
 
@@ -267,7 +266,7 @@ void VideoComponent::syncPlaybackIntent(const VideoSnapshot& snap) {
     // Dispatch the intended transient command. Hide-time rewind/pause is one
     // backend operation; do not immediately follow it with a second pause job.
     if (pendingCommand_ == PlaybackCommand::RewindAndPause) {
-        if (auto* gstVideo = dynamic_cast<GStreamerVideo*>(videoInst_.get())) {
+        if (auto* gstVideo = videoInst_.get()) {
             gstVideo->rewindAndPause();
         }
         else {

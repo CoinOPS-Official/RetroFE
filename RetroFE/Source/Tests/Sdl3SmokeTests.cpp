@@ -1,3 +1,14 @@
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#ifdef RETROFE_HAVE_D3D12
+#include "../Video/D3D12VideoInterop.h"
+#include <d3d12.h>
+#include <wrl/client.h>
+#endif
+#ifdef RETROFE_HAVE_FFMPEG
+#include "../Video/FFmpegDmaBuf.h"
+#endif
 #include "../SDL.h"
 #include "../Database/Configuration.h"
 #include "../Control/UserInput.h"
@@ -10,6 +21,7 @@
 #include "../Video/GStreamerVideo.h"
 #include "../Video/GlibLoop.h"
 #include "../Video/VideoPool.h"
+#include "../Video/VideoFactory.h"
 #include "../Graphics/Component/VideoComponent.h"
 #include "../Graphics/Page.h"
 #include <SDL3/SDL_main.h>
@@ -318,11 +330,12 @@ void mediaChecks(const std::string& assets) {
     }
     GlibLoop::instance().start();
     {
-        auto video = std::make_shared<GStreamerVideo>(0);
+        auto video = VideoFactory::createVideo(0, 0, false, -1, nullptr);
         require(video->open(assets + "/layouts/Arcades/video/splash.mp4"), "Open packaged video");
         const Uint64 deadline = SDL_GetTicks() + 10000;
         while (!video->getTexture() && !video->hasError() && SDL_GetTicks() < deadline) {
             video->updateFrame();
+            require(SDL::beginVideoFrame(SDL::getRenderer(0)), "Submit preroll transfers");
             SDL_Delay(10);
         }
         require(video->getTexture() != nullptr, "Decode video into an SDL3 texture");
@@ -360,6 +373,7 @@ void mediaChecks(const std::string& assets) {
         const Uint64 reopenDeadline = SDL_GetTicks() + 10000;
         while (!video->getTexture() && !video->hasError() && SDL_GetTicks() < reopenDeadline) {
             video->updateFrame();
+            require(SDL::beginVideoFrame(SDL::getRenderer(0)), "Submit preroll transfers");
             SDL_Delay(10);
         }
         require(video->getTexture() != nullptr, "Decode after instance reuse");
@@ -370,10 +384,176 @@ void mediaChecks(const std::string& assets) {
 }
 }
 
+#ifdef RETROFE_HAVE_FFMPEG
+void dmaBufMetadataChecks() {
+    auto make = [] { return std::shared_ptr<AVFrame>(av_frame_alloc(), [](AVFrame* p) { av_frame_free(&p); }); };
+    auto source=make(), mapped=make();
+    source->hw_frames_ctx=av_buffer_allocz(sizeof(AVHWFramesContext));
+    require(source->hw_frames_ctx != nullptr, "Allocate DMA-BUF test context");
+    auto* hw=reinterpret_cast<AVHWFramesContext*>(source->hw_frames_ctx->data);
+    hw->width=1920; hw->height=1088; hw->sw_format=AV_PIX_FMT_NV12;
+    source->width=1920; source->height=1080; source->colorspace=AVCOL_SPC_BT709;
+    source->chroma_location=AVCHROMA_LOC_LEFT;
+    AVDRMFrameDescriptor descriptor{};
+    mapped->data[0]=reinterpret_cast<uint8_t*>(&descriptor);
+    descriptor.nb_objects=2; descriptor.nb_layers=2;
+    descriptor.objects[0]={10,4194304,0}; descriptor.objects[1]={11,2097152,0};
+    descriptor.layers[0].format=0x20203852; descriptor.layers[1].format=0x38385247;
+    descriptor.layers[0].nb_planes=descriptor.layers[1].nb_planes=1;
+    descriptor.layers[0].planes[0]={0,128,2048}; descriptor.layers[1].planes[0]={1,256,2048};
+    auto imported=ffmpegDmaBufFrame(source,mapped);
+    require(imported.planeCount==2 && imported.planes[1].fd==11 && imported.planes[1].offset==256 &&
+        imported.height==1088 && imported.crop.h==1080 && imported.chromaX==0 && imported.chromaY==1,
+        "DMA-BUF adapter preserves multi-FD planes, padding, crop and chroma");
+    require(imported.owner.get()==mapped.get(), "DMA-BUF adapter retains mapped-frame ownership");
+    descriptor.layers[1].planes[0].object_index=2;
+    bool rejected=false;
+    try { ffmpegDmaBufFrame(source,mapped); } catch (const std::exception&) { rejected=true; }
+    require(rejected, "Invalid DMA-BUF object index is rejected");
+    descriptor.layers[1].planes[0].object_index=1;
+    hw->sw_format=AV_PIX_FMT_P010LE;
+    descriptor.layers[0].format=0x20363152; descriptor.layers[1].format=0x32335247;
+    require(ffmpegDmaBufFrame(source,mapped).fourcc==0x30313050, "P010 separate layers preserve storage format");
+    source->color_trc=AVCOL_TRC_SMPTE2084;
+    rejected=false;
+    try { ffmpegDmaBufFrame(source,mapped); } catch (const std::exception&) { rejected=true; }
+    require(rejected, "HDR cannot silently use SDR EGL conversion");
+}
+#endif
+
+#ifdef RETROFE_HAVE_D3D12
+void deferredNativeChecks() {
+    auto* renderer=SDL::getRenderer(0);
+    auto* device=static_cast<ID3D12Device*>(SDL_GetPointerProperty(SDL_GetRendererProperties(renderer),
+        SDL_PROP_RENDERER_D3D12_DEVICE_POINTER,nullptr));
+    if(!device) return;
+    D3D12VideoInterop interop(renderer);
+    require(interop.available(), "Create deferred native test interop");
+    Microsoft::WRL::ComPtr<ID3D12Resource> resource;
+    Microsoft::WRL::ComPtr<ID3D12Fence> fence;
+    D3D12_HEAP_PROPERTIES heap{}; heap.Type=D3D12_HEAP_TYPE_DEFAULT;
+    D3D12_RESOURCE_DESC desc{};
+    desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
+    desc.Width=64; desc.Height=64; desc.DepthOrArraySize=1; desc.MipLevels=1;
+    desc.Format=DXGI_FORMAT_NV12; desc.SampleDesc.Count=1;
+    require(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,
+        D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&resource))), "Create native test surface");
+    require(SUCCEEDED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))), "Create delayed producer fence");
+    auto owner=std::make_shared<int>(0);
+    for(uint64_t value=1;value<=2;++value) {
+        interop.invalidateFrame();
+        require(!interop.currentTexture(), "Invalidation hides previous presentation");
+        require(!interop.copyNative(resource.Get(),fence.Get(),value,0,1,64,64,
+            SDL_COLORSPACE_BT709_LIMITED,owner) && interop.deferred(), "Pending first frame is not drawable");
+        require(SDL::beginVideoFrame(renderer) && !interop.currentTexture(), "Unsignaled frame stays hidden after beginFrame");
+        require(SUCCEEDED(fence->Signal(value)), "Release delayed producer");
+        require(SDL::beginVideoFrame(renderer) && interop.currentTexture(), "Submission exposes frame without another decoder update");
+        interop.discardFrames();
+    }
+}
+#endif
+
+void ffmpegContractChecks() {
+    const char* first = std::getenv("RETROFE_TEST_MEDIA_A");
+    const char* second = std::getenv("RETROFE_TEST_MEDIA_B");
+    if (VideoFactory::backend() != "ffmpeg" || !first || !second) return;
+    auto video = VideoFactory::createVideo(0, 2, false, -1, nullptr);
+    auto tick = [&] {
+        video->updateFrame();
+        auto* renderer = SDL::getRenderer(0);
+        require(SDL::beginVideoFrame(renderer), "Submit contract-test video");
+        SDL_SetRenderTarget(renderer, nullptr);
+        SDL_RenderClear(renderer);
+        if (auto* texture = video->getTexture()) require(SDL_RenderTexture(renderer, texture, nullptr, nullptr), "Render contract-test video");
+        require(SDL_RenderPresent(renderer), "Present contract-test video");
+        SDL_Delay(5);
+    };
+    auto waitFrame = [&] {
+        const auto deadline = SDL_GetTicks() + 5000;
+        while (!video->getTexture() && !video->hasError() && SDL_GetTicks() < deadline) tick();
+        require(video->getTexture() && !video->hasError(), "New media prerolls");
+    };
+    require(video->open(first), "Open contract fixture");
+    waitFrame();
+    auto* retained = video->getTexture();
+    video->resume();
+    for (int i = 0; i < 30; ++i) tick();
+    video->pause();
+    const auto pausedAt = video->getCurrent();
+    SDL_Delay(50);
+    require(video->getCurrent() == pausedAt, "Pause freezes presentation clock");
+    video->skipForwardp();
+    require(!video->getTexture(), "Seek invalidates old pixels");
+    waitFrame();
+    require(video->getCurrent() >= pausedAt, "Percentage seek advances position");
+    video->rewindAndPause();
+    waitFrame();
+    require(video->isPaused() && video->getCurrent() == 0, "Rewind remains paused at zero");
+    require(video->unload(), "Unload retains resources");
+    const auto drain = SDL_GetTicks() + 5000;
+    while (!video->isReadyForReuse() && SDL_GetTicks() < drain) SDL_Delay(2);
+    require(video->isReadyForReuse(), "Unload completes");
+    video->open(first);
+    waitFrame();
+    require(video->getTexture() == retained, "Same-format reopen reuses texture allocation");
+    video->prepareForRetarget();
+    video->open(second);
+    require(!video->getTexture(), "Retarget suppresses stale video");
+    waitFrame();
+    auto dim = video->getDimensions();
+    require(dim.w == 128 && dim.h == 72, "Retarget accepts different dimensions");
+    auto* renderer = SDL::getRenderer(0);
+    SDL_RenderTexture(renderer, video->getTexture(), nullptr, nullptr);
+    const auto blue = pixel(renderer, 32, 32);
+    require(blue.b > blue.r + 80 && blue.b > blue.g + 80, "Decoded blue fixture has correct pixel colors");
+    SDL_RenderPresent(renderer);
+    if (const char* compatible = std::getenv("RETROFE_TEST_MEDIA_C")) {
+        for (int cycle = 0; cycle < 12; ++cycle) {
+            video->prepareForRetarget();
+            video->open(cycle % 2 ? second : compatible);
+            require(!video->getTexture(), "Compatible retarget hides old pixels");
+            waitFrame();
+            SDL_RenderTexture(renderer, video->getTexture(), nullptr, nullptr);
+            const auto color = pixel(renderer, 32, 32);
+            require(cycle % 2 ? color.b > color.r + 80 : color.r > color.b + 80,
+                "Reused decoder presents the new file's color");
+            SDL_RenderPresent(renderer);
+        }
+    }
+    video->resume();
+    const auto loopDeadline = SDL_GetTicks() + 7000;
+    while (!video->hasFinishedLoops() && !video->hasError() && SDL_GetTicks() < loopDeadline) {
+        tick();
+        require(video->getTexture() != nullptr, "Automatic loop never blanks the presentation");
+    }
+    require(video->hasFinishedLoops() && video->isPaused(), "Finite loop count finishes and pauses");
+    const int corners[]{32, 18, 96, 18, 32, 54, 96, 54};
+    video->setPerspectiveCorners(corners);
+    video->open(second);
+    waitFrame();
+    SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
+    SDL_RenderClear(renderer);
+    const SDL_FRect fixtureRect{0, 0, 64, 64};
+    SDL_RenderTexture(renderer, video->getTexture(), nullptr, &fixtureRect);
+    const auto outside = pixel(renderer, 1, 1);
+    const auto inside = pixel(renderer, 32, 32);
+    require(outside.r == 255 && outside.b == 255 && inside.b > inside.r + 80,
+        "Perspective preserves transparent exterior and transformed video");
+    SDL_RenderPresent(renderer);
+    video->setPerspectiveCorners(nullptr);
+    video->open(std::string(second) + ".missing");
+    const auto errorDeadline = SDL_GetTicks() + 3000;
+    while (!video->hasError() && SDL_GetTicks() < errorDeadline) SDL_Delay(5);
+    require(video->hasError() && !video->getTexture(), "Missing media reports failure without stale pixels");
+    video->open(first);
+    waitFrame();
+    video->stop();
+}
+
 void concurrentVideoChecks(const std::string& file) {
     GlibLoop::instance().start();
-    std::vector<std::shared_ptr<GStreamerVideo>> videos;
-    for (int i = 0; i < 7; ++i) videos.push_back(std::make_shared<GStreamerVideo>(0));
+    std::vector<std::shared_ptr<IVideo>> videos;
+    for (int i = 0; i < 7; ++i) videos.push_back(VideoFactory::createVideo(0, 0, false, -1, nullptr));
     auto* renderer = SDL::getRenderer(0);
     for (int cycle = 0; cycle < 3; ++cycle) {
         std::vector<uint64_t> before;
@@ -451,6 +631,15 @@ void scrollingVideoStartupChecks(Configuration& config, const std::string& file)
         video.draw();
         const auto before = pixel(renderer, 16, 16);
         require(!(before.r == 255 && before.g == 0 && before.b == 255), "Video covers loading placeholder");
+        video.preserveInstanceOnNextRecycle();
+        require(video.recycleAsVideo(file, ""), "Same-file recycle retains playback");
+        video.update(0.001f);
+        require(video.isPlaying(), "Same-file recycle does not unload the active video");
+        SDL_RenderClear(renderer);
+        video.draw();
+        const auto retained = pixel(renderer, 16, 16);
+        require(!(retained.r == 255 && retained.g == 0 && retained.b == 255),
+            "Same-file recycle retains a visible frame");
         require(video.recycleAsVideo(file + ".next", ""), "Recycle video for another game");
         SDL_RenderClear(renderer);
         video.draw();
@@ -475,8 +664,8 @@ void startupBenchmark(const std::string& file, const std::string& alternate) {
     gst_init(nullptr, nullptr);
     GlibLoop::instance().start();
     for (int count : {1, 7}) {
-        std::vector<std::shared_ptr<GStreamerVideo>> videos;
-        for (int i = 0; i < count; ++i) videos.push_back(std::make_shared<GStreamerVideo>(0));
+        std::vector<std::shared_ptr<IVideo>> videos;
+        for (int i = 0; i < count; ++i) videos.push_back(VideoFactory::createVideo(0, 0, false, -1, nullptr));
         for (int trial = 0; trial < 3; ++trial) {
             std::vector<Uint64> starts(count), ready(count);
             const auto batchStart = SDL_GetTicksNS();
@@ -490,6 +679,7 @@ void startupBenchmark(const std::string& file, const std::string& alternate) {
                 for (int i = 0; i < count; ++i) {
                     if (ready[i]) continue;
                     videos[i]->updateFrame();
+                    require(SDL::beginVideoFrame(SDL::getRenderer(0)), "Submit benchmark transfers");
                     require(!videos[i]->hasError(), "Benchmark decode succeeds");
                     if (videos[i]->getTexture()) {
                         ready[i] = SDL_GetTicksNS();
@@ -539,6 +729,7 @@ int main(int argc, char** argv) {
     require(Logger::initialize(hardware ? "sdl3-hardware-runtime.log" : "sdl3-software-runtime.log", &config), "Initialize runtime log");
     config.setProperty("SDLRenderDriver", std::string(hardware || benchmark ? hardwareRenderer : "software"));
     config.setProperty("HardwareVideoAccel", hardware);
+    if (const auto* backend = std::getenv("RETROFE_TEST_VIDEO_BACKEND")) config.setProperty("VideoBackend", std::string(backend));
     config.setProperty("screenOrder", std::string("0"));
     config.setProperty("horizontal0", 64);
     config.setProperty("vertical0", 64);
@@ -557,6 +748,13 @@ int main(int argc, char** argv) {
     renderChecks(config, true);
     inputChecks(config);
     if (argc > 1) mediaChecks(argv[1]);
+    ffmpegContractChecks();
+#ifdef RETROFE_HAVE_D3D12
+    deferredNativeChecks();
+#endif
+#ifdef RETROFE_HAVE_FFMPEG
+    dmaBufMetadataChecks();
+#endif
     if (argc > 1 && hardware) concurrentVideoChecks(std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4");
     if (argc > 1) scrollingVideoStartupChecks(config, std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4");
     require(SDL::deInitialize(false), "Unload video while retaining audio/input");

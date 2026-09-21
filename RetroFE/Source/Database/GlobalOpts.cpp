@@ -63,6 +63,7 @@ const global_options::options_entry global_options::s_option_entries[] =
 
     { nullptr,                         nullptr,    global_options::option_type::HEADER,   "RENDERER OPTIONS" },
     { OPTION_VSYNC,                    "false",    global_options::option_type::BOOLEAN,  "Vertical synchronization" },
+    { "VideoBackend",                 "gstreamer", global_options::option_type::STRING,   "Video backend: gstreamer or ffmpeg (requires optional FFmpeg build)" },
     { OPTION_HARDWAREVIDEOACCEL,       "false",    global_options::option_type::BOOLEAN,  "Hardware decoding" },
     { OPTION_AVDECMAXTHREADS,          "2",        global_options::option_type::INTEGER,  "Number of threads for avdec software decoding" },
     { OPTION_MUTEVIDEO,                "false",    global_options::option_type::BOOLEAN,  "Video playback is muted" },

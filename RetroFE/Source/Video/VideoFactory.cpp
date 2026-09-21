@@ -15,9 +15,9 @@
 */
 
 #include "VideoFactory.h"
+#include "IVideo.h"
 
 #include "../Utility/Log.h"
-#include "GStreamerVideo.h"
 #include "VideoPool.h"
 #include <memory>
 
@@ -43,15 +43,9 @@ std::shared_ptr<IVideo> VideoFactory::createVideo(int monitor, int numLoops, boo
         return nullptr;
     }
 
-    // Cast to GStreamerVideo to access specific methods
-    if (auto* gstreamerVid = dynamic_cast<GStreamerVideo*>(instance.get())) {
-        int loopsToSet = (numLoops > 0) ? numLoops : numLoops_;
-        gstreamerVid->setNumLoops(loopsToSet);
-        gstreamerVid->setSoftOverlay(softOverlay);
-        if (perspectiveCorners) {  // Only set if not null
-            gstreamerVid->setPerspectiveCorners(perspectiveCorners);
-            }
-        }
+    instance->setNumLoops((numLoops > 0) ? numLoops : numLoops_);
+    instance->setSoftOverlay(softOverlay);
+    instance->setPerspectiveCorners(perspectiveCorners);
 
     // Return the unique_ptr - ownership is transferred to caller
     return instance;
@@ -65,4 +59,15 @@ void VideoFactory::setEnabled(bool enabled)
 void VideoFactory::setNumLoops(int numLoops)
 {
     numLoops_ = numLoops;
+}
+
+namespace { std::string selectedBackend = "gstreamer"; }
+const std::string& VideoFactory::backend() { return selectedBackend; }
+bool VideoFactory::setBackend(const std::string& name) {
+    if (name == "gstreamer") { selectedBackend = name; return true; }
+#ifdef RETROFE_HAVE_FFMPEG
+    if (name == "ffmpeg") { selectedBackend = name; return true; }
+#endif
+    LOG_ERROR("VideoFactory", "Unavailable video backend: " + name);
+    return false;
 }

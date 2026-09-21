@@ -16,6 +16,7 @@
 #pragma once
 
 #include <memory>
+#include <string>
 
 class IVideo;
 
@@ -23,6 +24,8 @@ class VideoFactory
 {
 public:
     static std::shared_ptr<IVideo> createVideo(int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners);
+    static bool setBackend(const std::string& name);
+    static const std::string& backend();
     static void    setEnabled(bool enabled);
     static void    setNumLoops(int numLoops);
 

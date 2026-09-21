@@ -5,6 +5,7 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <array>
+#include <exception>
 #include <limits>
 #include <sstream>
 #include <stdexcept>
@@ -58,8 +59,10 @@ struct D3D12VideoInterop::Impl {
         UINT64 producerValue = 0;
         UINT64 flight = 0;
         Sample sample;
+        std::shared_ptr<void> nativeOwner;
         std::array<UINT, 2> planes{};
         bool pending = false;
+        bool native = false; // FFmpeg-native frame; never stall SDL's queue waiting for it.
     };
     SDL_Renderer* renderer;
     ComPtr<ID3D12Device> device;
@@ -110,12 +113,22 @@ struct D3D12VideoInterop::Impl {
     }
     void retire() {
         const UINT64 completed = fence ? fence->GetCompletedValue() : 0;
+        if (completed == UINT64_MAX) {
+            failedSubmission = true;
+            current = nullptr;
+            error = "D3D12 copy fence reports device removal";
+            return;
+        }
         for (auto& slot : slots) {
             if (slot.flight && completed >= slot.flight) {
                 slot.flight = 0;
                 slot.sample.reset();
+                slot.nativeOwner.reset();
                 slot.source.Reset();
                 slot.producerFence.Reset();
+                slot.producerValue = 0;
+                slot.planes = {};
+                slot.native = false;
             }
         }
     }
@@ -123,8 +136,12 @@ struct D3D12VideoInterop::Impl {
         for (auto& slot : slots) if (slot.pending) {
             slot.pending = false;
             slot.sample.reset();
+            slot.nativeOwner.reset();
             slot.source.Reset();
             slot.producerFence.Reset();
+            slot.producerValue = 0;
+            slot.planes = {};
+            slot.native = false;
         }
         current = nullptr;
     }
@@ -164,7 +181,9 @@ struct D3D12VideoInterop::Impl {
         std::vector<Uint8> chroma(static_cast<size_t>(pitch) * (rows / 2), 128);
         for (auto& slot : slots) {
             const auto props = SDL_CreateProperties();
+            checkSDL(props != 0, "Create SDL texture properties");
             SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, SDL_PIXELFORMAT_NV12);
+            SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STATIC);
             SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
             SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
             SDL_SetNumberProperty(props, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, c);
@@ -174,6 +193,17 @@ struct D3D12VideoInterop::Impl {
             slot.destination = static_cast<ID3D12Resource*>(SDL_GetPointerProperty(
                 SDL_GetTextureProperties(slot.texture), SDL_PROP_TEXTURE_D3D12_TEXTURE_POINTER, nullptr));
             if (!slot.destination) throw std::runtime_error("SDL NV12 texture has no D3D12 resource");
+
+            const auto destinationDesc = slot.destination->GetDesc();
+            if (destinationDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+                destinationDesc.Format != DXGI_FORMAT_NV12 ||
+                destinationDesc.Width != static_cast<UINT64>(w) ||
+                destinationDesc.Height != static_cast<UINT>(h) ||
+                destinationDesc.DepthOrArraySize != 1 ||
+                destinationDesc.MipLevels != 1 ||
+                destinationDesc.SampleDesc.Count != 1)
+                throw std::runtime_error("SDL NV12 texture has unexpected D3D12 resource layout");
+
             // Establish SDL's internal state as PIXEL_SHADER_RESOURCE through
             // a public API. This upload happens once per allocation, not per frame.
             checkSDL(SDL_UpdateNVTexture(slot.texture, nullptr, black.data(), pitch, chroma.data(), pitch),
@@ -274,6 +304,8 @@ struct D3D12VideoInterop::Impl {
         selected->producerValue = value;
         selected->source = source;
         selected->sample.reset(gst_sample_ref(sample));
+        selected->nativeOwner.reset();
+        selected->native = false;
         selected->pending = true;
         current = selected->texture;
         return current;
@@ -283,11 +315,27 @@ struct D3D12VideoInterop::Impl {
         if (failedSubmission) return false;
         try {
             for (auto& slot : slots) if (slot.pending) {
+                // FFmpeg-native frames use a CPU-side fence poll here instead of
+                // queue->Wait(). A late decode therefore leaves this slot pending
+                // for a later UI frame rather than stalling SDL's entire D3D12
+                // graphics queue. The previously copied pixels remain drawable.
+                if (slot.native && slot.producerFence) {
+                    const UINT64 completed = slot.producerFence->GetCompletedValue();
+                    if (completed == UINT64_MAX)
+                        throw std::runtime_error("D3D12 producer fence reports device removal");
+                    if (completed < slot.producerValue)
+                        continue;
+                }
+
                 check(slot.allocator->Reset(), "Reset copy allocator");
                 check(slot.commands->Reset(slot.allocator.Get(), nullptr), "Reset copy list");
                 auto before = transition(slot.destination, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
                     D3D12_RESOURCE_STATE_COPY_DEST);
                 slot.commands->ResourceBarrier(1, &before);
+                // Producer synchronization guarantees the source is back in
+                // COMMON before this command list executes. COPY_SOURCE is a
+                // read-only state, so D3D12 can implicitly promote from COMMON
+                // and decay back to COMMON after ExecuteCommandLists.
                 for (UINT plane = 0; plane < 2; ++plane) {
                     D3D12_TEXTURE_COPY_LOCATION src{}, dst{};
                     src.pResource = slot.source.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
@@ -303,8 +351,12 @@ struct D3D12VideoInterop::Impl {
                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
                 slot.commands->ResourceBarrier(1, &after);
                 check(slot.commands->Close(), "Close copy list");
-                if (slot.producerFence)
+
+                // Keep the existing GStreamer contract unchanged. Native FFmpeg
+                // frames have already passed the nonblocking completion poll.
+                if (!slot.native && slot.producerFence)
                     check(queue->Wait(slot.producerFence.Get(), slot.producerValue), "Queue producer fence wait");
+
                 ID3D12CommandList* lists[]{slot.commands.Get()};
                 queue->ExecuteCommandLists(1, lists);
                 const HRESULT signal = queue->Signal(fence.Get(), ++sequence);
@@ -317,11 +369,13 @@ struct D3D12VideoInterop::Impl {
                 slot.flight = sequence;
                 slot.pending = false;
                 check(signal, "Signal copy completion");
+                current = slot.texture;
             }
             return true;
         } catch (const std::exception& e) {
             error = e.what();
             failedSubmission = true;
+            current = nullptr;
             LOG_ERROR("D3D12VideoInterop", error);
             return false;
         }
@@ -335,6 +389,7 @@ const char* D3D12VideoInterop::reason() const { return impl_->error.c_str(); }
 void D3D12VideoInterop::discardFrames() { impl_->discard(); }
 void D3D12VideoInterop::invalidateFrame() { impl_->invalidate(); }
 bool D3D12VideoInterop::deferred() const { return impl_->deferred; }
+SDL_Texture* D3D12VideoInterop::currentTexture() const { return available() ? impl_->current : nullptr; }
 SDL_Texture* D3D12VideoInterop::copy(GstSample* sample) {
     try { return impl_->prepare(sample); }
     catch (const std::exception& e) { impl_->error = e.what(); return nullptr; }
@@ -344,6 +399,112 @@ bool D3D12VideoInterop::beginFrame(SDL_Renderer* renderer) {
     for (auto* instance : Impl::instances())
         if (instance->renderer == renderer) ok = instance->submit() && ok;
     return ok;
+}
+SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence* producer,
+    uint64_t value, unsigned yPlane, unsigned uvPlane, int width, int height,
+    SDL_Colorspace color, std::shared_ptr<void> owner) {
+    auto& p = *impl_;
+    p.deferred = false;
+    if (!available()) return nullptr;
+
+    try {
+        p.retire();
+        if (!available()) return nullptr;
+
+        if (!resource || !owner)
+            throw std::runtime_error("Missing native frame ownership");
+        if (!producer)
+            throw std::runtime_error("Native D3D12 frame has no producer fence");
+
+        ComPtr<ID3D12Device> resourceDevice;
+        check(resource->GetDevice(IID_PPV_ARGS(&resourceDevice)), "Get native frame device");
+        if (resourceDevice.Get() != p.device.Get())
+            throw std::runtime_error("Native D3D12 frame belongs to a different device");
+
+        ComPtr<ID3D12Device> fenceDevice;
+        check(producer->GetDevice(IID_PPV_ARGS(&fenceDevice)), "Get native producer fence device");
+        if (fenceDevice.Get() != p.device.Get())
+            throw std::runtime_error("Native D3D12 producer fence belongs to a different device");
+
+        const auto desc = resource->GetDesc();
+        // FFmpeg native frames do not need ALLOW_SIMULTANEOUS_ACCESS here.
+        // The producer fence is the handoff: once reached, FFmpeg has returned
+        // the decode output to COMMON and this queue may read it as COPY_SOURCE.
+        if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
+            desc.Format != DXGI_FORMAT_NV12 ||
+            desc.SampleDesc.Count != 1 ||
+            (desc.Flags & D3D12_RESOURCE_FLAG_VIDEO_DECODE_REFERENCE_ONLY) ||
+            width <= 0 || height <= 0 ||
+            UINT64((width + 1) & ~1) > desc.Width ||
+            UINT((height + 1) & ~1) > desc.Height)
+            throw std::runtime_error("Incompatible native NV12 resource");
+
+        const UINT planeStride = UINT(desc.MipLevels) * desc.DepthOrArraySize;
+        if (!desc.MipLevels || !desc.DepthOrArraySize ||
+            yPlane >= planeStride ||
+            (yPlane % UINT(desc.MipLevels)) != 0 ||
+            uvPlane != yPlane + planeStride)
+            throw std::runtime_error("Invalid native NV12 subresource indices");
+
+        p.allocate(width, height, color);
+
+        // Do not replace a native frame that missed the previous frame boundary.
+        // Keeping the older pending frame guarantees progress: on the next UI
+        // frame it is much more likely to have completed, while the newly popped
+        // FFmpeg frame can simply be dropped.
+        for (auto& slot : p.slots) {
+            if (slot.pending) {
+                p.deferred = true;
+                return nullptr;
+            }
+        }
+
+        Impl::Slot* selected = nullptr;
+
+        // Once a display slot has been established, keep using that same SDL
+        // texture. If its previous copy command has not retired yet, drop/defer
+        // this decoded frame instead of switching the UI to another ring slot
+        // whose old pixels could be stale or black. Same-queue ordering makes
+        // reuse safe as soon as our copy command allocator/fence has retired.
+        if (p.current) {
+            for (auto& slot : p.slots) {
+                if (slot.texture == p.current) {
+                    if (!slot.flight)
+                        selected = &slot;
+                    break;
+                }
+            }
+        } else {
+            for (auto& slot : p.slots) {
+                if (!slot.flight) {
+                    selected = &slot;
+                    break;
+                }
+            }
+        }
+
+        if (!selected) {
+            p.deferred = true;
+            return nullptr;
+        }
+
+        selected->sample.reset();
+        selected->nativeOwner = std::move(owner);
+        selected->source = resource;
+        selected->producerFence = producer;
+        selected->producerValue = value;
+        selected->planes = {yPlane, uvPlane};
+        selected->native = true;
+        selected->pending = true;
+
+        // No presentation exists until beginFrame submits the first copy.
+        // Returning null here is deferred work, not an import failure.
+        p.deferred = !p.current;
+        return p.current;
+    } catch (const std::exception& e) {
+        p.error = e.what();
+        return nullptr;
+    }
 }
 void D3D12VideoInterop::configure(GstElement* pipeline) {
     if (!available()) return;

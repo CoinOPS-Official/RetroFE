@@ -54,6 +54,17 @@ foreach(path IN LISTS gst_candidates)
         file(REMOVE "${output_real}/${name}")
     endif()
 endforeach()
+# SDK upgrades can change FFmpeg DLL majors. Remove only recognized FFmpeg
+# library names absent from the resolved dependency set (GStreamer may need older ones).
+file(GLOB ffmpeg_candidates "${output_real}/avcodec-*.dll" "${output_real}/avformat-*.dll"
+    "${output_real}/avutil-*.dll" "${output_real}/swresample-*.dll" "${output_real}/swscale-*.dll")
+foreach(path IN LISTS ffmpeg_candidates)
+    get_filename_component(name "${path}" NAME)
+    string(TOLOWER "${name}" name)
+    if(name MATCHES "^(avcodec|avformat|avutil|swresample|swscale)-[0-9]+[.]dll$" AND NOT name IN_LIST keep)
+        file(REMOVE "${path}")
+    endif()
+endforeach()
 # These obsolete application libraries must not survive an incremental build.
 if(REMOVE_LEGACY_TESTS)
     foreach(test retrofe_sdl3_smoke_tests retrofe_high_score_change_tests retrofe_mame_software_resolver_tests)

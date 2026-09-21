@@ -18,6 +18,10 @@
 #include "../Utility/Log.h"
 #include "GStreamerVideo.h"
 #include "IVideo.h"
+#ifdef RETROFE_HAVE_FFMPEG
+#include "FFmpegVideo.h"
+#endif
+#include "VideoFactory.h"
 
 #include <algorithm>
 #include <chrono>
@@ -27,7 +31,12 @@ bool VideoPool::shuttingDown_ = false;
 
 
 VideoPool::VideoPtr VideoPool::createNewVideo(int monitor, bool softOverlay) {
-    auto vid = std::make_shared<GStreamerVideo>(monitor);
+    VideoPtr vid;
+#ifdef RETROFE_HAVE_FFMPEG
+    if (VideoFactory::backend() == "ffmpeg") vid = std::make_shared<FFmpegVideo>(monitor);
+    else
+#endif
+        vid = std::make_shared<GStreamerVideo>(monitor);
     if (!vid || vid->hasError()) return nullptr;
 
     vid->setSoftOverlay(softOverlay);
@@ -36,7 +45,7 @@ VideoPool::VideoPtr VideoPool::createNewVideo(int monitor, bool softOverlay) {
 
 void VideoPool::pumpDrainingToReady(PoolInfo& pool) {
     for (size_t i = 0; i < pool.draining.size(); ) {
-        if (auto* gsv = static_cast<GStreamerVideo*>(pool.draining[i].get())) {
+        if (auto* gsv = pool.draining[i].get()) {
             if (gsv->isReadyForReuse()) {
                 pool.ready.push_back(std::move(pool.draining[i]));
                 // Fast O(1) removal: swap with the back and pop
@@ -223,7 +232,7 @@ void VideoPool::releaseVideo(VideoPtr vid, int monitor, int listId) {
         return;
     }
 
-    if (auto* gsv = static_cast<GStreamerVideo*>(vid.get())) {
+    if (auto* gsv = vid.get()) {
         gsv->unload();
     }
 

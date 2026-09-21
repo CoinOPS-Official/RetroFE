@@ -58,6 +58,11 @@ public:
     virtual bool open(const std::string& file) = 0;
     virtual bool unload() = 0;
     virtual bool stop() = 0;
+    virtual bool isReadyForReuse() const = 0;
+    virtual bool prepareForRetarget() = 0;
+    virtual void rewindAndPause() = 0;
+    virtual void setNumLoops(int n) = 0;
+    virtual void setPerspectiveCorners(const int* corners) = 0;
 
     // --- Snapshot & State ---
     virtual VideoSnapshot getSnapshot() const = 0;
@@ -70,6 +75,8 @@ public:
 
     // --- Rendering & Media ---
     virtual SDL_Texture* getTexture() const = 0;
+    virtual bool usingGpuTexture() const = 0;
+    virtual uint64_t gpuFrameCount() const = 0;
     virtual void updateFrame() = 0; // Renamed from draw()
     virtual VideoDim getDimensions() = 0;
     virtual void setSoftOverlay(bool value) = 0;
