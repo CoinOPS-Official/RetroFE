@@ -3,6 +3,9 @@
 #include "../../SDL.h"
 #include "../../Utility/Log.h"
 #include <mutex>
+#include <thread>
+#include <atomic>
+#include <SDL3/SDL_asyncio.h>
 
 // -------------------- Static Storage --------------------
 Image::PathCache Image::pathCache_;
@@ -11,6 +14,161 @@ std::unordered_map<std::string, std::weak_ptr<Image::AsyncLoadTask>> Image::load
 
 static std::mutex g_ImageTextureCacheMutex;
 static std::mutex g_ImageLoadTaskMutex;
+
+using AsyncIOContext = Image::AsyncIOContext;
+
+static SDL_AsyncIOQueue* s_asyncIOQueue = nullptr;
+static std::thread s_asyncIOThread;
+static std::atomic<bool> s_asyncIORunning{false};
+static std::mutex s_asyncIOMutex;
+static std::atomic<uint64_t> s_nextTaskId{0};
+static std::unordered_map<uint64_t, std::shared_ptr<AsyncIOContext>> s_activeTasks;
+
+Image::AsyncLoadResult Image::decompressImageMemory(void* buffer, Uint64 bytes) {
+	AsyncLoadResult res;
+	if (!buffer || bytes == 0) return res;
+
+	try {
+		SDL_IOStream* rw = SDL_IOFromConstMem(buffer, static_cast<size_t>(bytes));
+		if (rw) {
+			if (IMG_isGIF(rw) || IMG_isWEBP(rw)) {
+				IMG_Animation* anim = IMG_LoadAnimation_IO(rw, 1);
+				if (anim) {
+					res.w = anim->w;
+					res.h = anim->h;
+					for (int i = 0; i < anim->count; ++i) {
+						SDL_Surface* conv = SDL_ConvertSurface(
+							anim->frames[i], SDL_PIXELFORMAT_RGBA32);
+						if (conv) {
+							res.animatedSurfaces.emplace_back(conv, SurfaceDeleter());
+							res.frameDelays.push_back(
+								(anim->delays && anim->delays[i] > 0)
+								? anim->delays[i] : 100);
+						}
+					}
+					IMG_FreeAnimation(anim);
+					res.success = !res.animatedSurfaces.empty();
+				}
+			}
+			else {
+				SDL_Surface* s = IMG_Load_IO(rw, 1);
+				if (s) {
+					res.staticSurface = SharedSurface(s, SurfaceDeleter());
+					res.w = s->w;
+					res.h = s->h;
+					res.success = true;
+				}
+			}
+		}
+	}
+	catch (...) {
+		res = {};
+	}
+	return res;
+}
+
+void Image::asyncIOWorker() {
+	while (s_asyncIORunning.load(std::memory_order_relaxed)) {
+		SDL_AsyncIOOutcome outcome{};
+		if (SDL_WaitAsyncIOResult(s_asyncIOQueue, &outcome, 100)) {
+			if (!s_asyncIORunning.load(std::memory_order_relaxed)) {
+				if (outcome.buffer) {
+					SDL_free(outcome.buffer);
+				}
+				break;
+			}
+
+			uint64_t taskId = reinterpret_cast<uint64_t>(outcome.userdata);
+			std::shared_ptr<AsyncIOContext> ctx;
+			{
+				std::lock_guard<std::mutex> lock(s_asyncIOMutex);
+				auto it = s_activeTasks.find(taskId);
+				if (it != s_activeTasks.end()) {
+					ctx = std::move(it->second);
+					s_activeTasks.erase(it);
+				}
+			}
+
+			if (!ctx) {
+				if (outcome.buffer) {
+					SDL_free(outcome.buffer);
+				}
+				continue;
+			}
+
+			if (outcome.result == SDL_ASYNCIO_COMPLETE && outcome.buffer && outcome.bytes_transferred > 0) {
+				void* buf = outcome.buffer;
+				Uint64 bytes = outcome.bytes_transferred;
+
+				try {
+					(void)ThreadPool::getInstance().enqueue([ctx, buf, bytes]() mutable {
+						Image::AsyncLoadResult res = Image::decompressImageMemory(buf, bytes);
+						SDL_free(buf);
+
+						ctx->promise->set_value(std::move(res));
+						ctx->task.reset();
+						Image::pruneExpiredLoadTask(ctx->path);
+					});
+				}
+				catch (...) {
+					SDL_free(buf);
+					Image::AsyncLoadResult res{};
+					res.success = false;
+					ctx->promise->set_value(std::move(res));
+					ctx->task.reset();
+					Image::pruneExpiredLoadTask(ctx->path);
+				}
+			}
+			else {
+				if (outcome.buffer) {
+					SDL_free(outcome.buffer);
+				}
+				Image::AsyncLoadResult res{};
+				res.success = false;
+				ctx->promise->set_value(std::move(res));
+				ctx->task.reset();
+				Image::pruneExpiredLoadTask(ctx->path);
+			}
+		}
+	}
+}
+
+void Image::ensureAsyncIO() {
+	std::lock_guard<std::mutex> lock(s_asyncIOMutex);
+	if (!s_asyncIOQueue && !s_asyncIORunning.load(std::memory_order_relaxed)) {
+		s_asyncIOQueue = SDL_CreateAsyncIOQueue();
+		if (s_asyncIOQueue) {
+			s_asyncIORunning.store(true, std::memory_order_relaxed);
+			s_asyncIOThread = std::thread(asyncIOWorker);
+		}
+	}
+}
+
+void Image::shutdownAsyncIO() {
+	if (s_asyncIORunning.exchange(false)) {
+		if (s_asyncIOQueue) {
+			SDL_SignalAsyncIOQueue(s_asyncIOQueue);
+		}
+		if (s_asyncIOThread.joinable()) {
+			s_asyncIOThread.join();
+		}
+		if (s_asyncIOQueue) {
+			SDL_DestroyAsyncIOQueue(s_asyncIOQueue);
+			s_asyncIOQueue = nullptr;
+		}
+
+		std::lock_guard<std::mutex> lock(s_asyncIOMutex);
+		for (auto& [id, ctx] : s_activeTasks) {
+			try {
+				AsyncLoadResult res{};
+				res.success = false;
+				ctx->promise->set_value(std::move(res));
+			}
+			catch (...) {}
+		}
+		s_activeTasks.clear();
+	}
+}
 
 Image::PathCache::CacheKey Image::PathCache::getKey(const std::string& filePath, int monitor) {
 	// Callers protect path interning with g_ImageTextureCacheMutex.
@@ -30,6 +188,7 @@ void Image::ensureCacheReserved() {
 			loadingTasks_.reserve(512);
 		}
 	});
+	ensureAsyncIO();
 }
 
 // -------------------- Lifecycle --------------------
@@ -108,6 +267,35 @@ bool Image::startAsyncLoad(const std::string& path) {
 	status_ = LoadStatus::Loading;
 	loadTask_ = task;
 	loadingTasks_[path] = task;
+
+	ensureAsyncIO();
+
+	if (s_asyncIOQueue) {
+		uint64_t taskId = ++s_nextTaskId;
+		auto ctx = std::make_shared<AsyncIOContext>();
+		ctx->id = taskId;
+		ctx->path = path;
+		ctx->promise = promise;
+		ctx->task = task;
+
+		{
+			std::lock_guard<std::mutex> lock(s_asyncIOMutex);
+			s_activeTasks[taskId] = ctx;
+		}
+
+		if (!SDL_LoadFileAsync(path.c_str(), s_asyncIOQueue, reinterpret_cast<void*>(taskId))) {
+			{
+				std::lock_guard<std::mutex> lock(s_asyncIOMutex);
+				s_activeTasks.erase(taskId);
+			}
+			loadingTasks_.erase(path);
+			loadTask_.reset();
+			currentLoadingPath_.clear();
+			status_ = LoadStatus::Error;
+			return false;
+		}
+		return true;
+	}
 
 	try {
 		(void)ThreadPool::getInstance().enqueue([path, promise, task]() mutable {

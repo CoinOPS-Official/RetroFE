@@ -1233,6 +1233,7 @@ bool RetroFE::deInitialize() {
 
 	initialized = false;
 	Image::cleanupTextureCache();
+	Image::shutdownAsyncIO();
 	Component::clearSharedTextures();
 	VideoPool::shutdown();
 	ThreadPool::getInstance().wait();

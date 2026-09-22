@@ -23,6 +23,7 @@
 #include "../Video/VideoPool.h"
 #include "../Video/VideoFactory.h"
 #include "../Graphics/Component/VideoComponent.h"
+#include "../Graphics/Component/Image.h"
 #include "../Graphics/Page.h"
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
@@ -658,6 +659,53 @@ void scrollingVideoStartupChecks(Configuration& config, const std::string& file)
     GlibLoop::instance().stop();
 }
 
+void imageAsyncIOChecks(Configuration& config, const std::string& commonPath) {
+    Page page(config, 64, 64);
+    const std::string img1 = commonPath + "/RetroFE.png";
+    const std::string img2 = commonPath + "/collections/Arcades/medium_artwork/logo/1941.png";
+
+    // 1. Asynchronous load of static PNG via SDL_AsyncIO
+    Image image(img1, "", page, 0, false, true);
+    image.allocateGraphicsMemory();
+    Uint64 start = SDL_GetTicks();
+    while (!image.isGraphicsReadyForFirstRender() && SDL_GetTicks() - start < 3000) {
+        image.pumpGraphicsPreparation();
+        SDL_Delay(5);
+    }
+    require(image.isGraphicsReadyForFirstRender(), "Image loaded via SDL_AsyncIO within 3 seconds");
+
+    // 2. Draw verification
+    SDL_RenderClear(SDL::getRenderer(0));
+    image.draw();
+    SDL_RenderPresent(SDL::getRenderer(0));
+
+    // 3. Recycle transition
+    require(image.recycleAsImage(img2, ""), "Recycle image to new file");
+    start = SDL_GetTicks();
+    while (!image.isGraphicsReadyForFirstRender() && SDL_GetTicks() - start < 3000) {
+        image.pumpGraphicsPreparation();
+        SDL_Delay(5);
+    }
+    require(image.isGraphicsReadyForFirstRender(), "Recycled image loaded via SDL_AsyncIO");
+
+    // 4. Cache hit on identical path
+    Image image2(img2, "", page, 0, false, true);
+    image2.allocateGraphicsMemory();
+    require(image2.isGraphicsReadyForFirstRender(), "Subsequent load hits textureCache immediately");
+
+    // 5. Fallback on nonexistent file
+    Image imageFallback("nonexistent_artwork_12345.png", img1, page, 0, false, true);
+    imageFallback.allocateGraphicsMemory();
+    start = SDL_GetTicks();
+    while (!imageFallback.isGraphicsReadyForFirstRender() && SDL_GetTicks() - start < 3000) {
+        imageFallback.pumpGraphicsPreparation();
+        SDL_Delay(5);
+    }
+    require(imageFallback.isGraphicsReadyForFirstRender(), "Missing file correctly falls back to alternate file");
+
+    Image::cleanupTextureCache();
+}
+
 // Optional measurement mode: keep the renderer identical for CPU/GPU decode.
 // Report observations rather than asserting machine-dependent timing limits.
 void startupBenchmark(const std::string& file, const std::string& alternate) {
@@ -751,6 +799,7 @@ int main(int argc, char** argv) {
     renderChecks(config, true);
     inputChecks(config);
     if (argc > 1) mediaChecks(argv[1]);
+    if (argc > 1) imageAsyncIOChecks(config, argv[1]);
     ffmpegContractChecks();
 #ifdef RETROFE_HAVE_D3D12
     deferredNativeChecks();
@@ -760,13 +809,16 @@ int main(int argc, char** argv) {
 #endif
     if (argc > 1 && hardware) concurrentVideoChecks(std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4");
     if (argc > 1) scrollingVideoStartupChecks(config, std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4");
+    Image::shutdownAsyncIO();
     require(SDL::deInitialize(false), "Unload video while retaining audio/input");
     renderChecks(config, true);
+    Image::shutdownAsyncIO();
     require(SDL::deInitialize(true), "Full SDL shutdown");
     config.setProperty("mirror0", true);
     config.setProperty("rotation0", 1);
     config.setProperty("layoutScaleMode", std::string("fit"));
     renderChecks(config, false);
+    Image::shutdownAsyncIO();
     require(SDL::deInitialize(true), "Shutdown mirrored rotated output");
     std::cout << "SDL3 rendering and lifecycle smoke tests passed\n";
     Logger::deInitialize();

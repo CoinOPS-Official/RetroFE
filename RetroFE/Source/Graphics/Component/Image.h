@@ -31,6 +31,7 @@ public:
     std::string_view filePath();
 
     static void cleanupTextureCache();
+    static void shutdownAsyncIO();
 
     bool recycleAsImage(const std::string& newFilePath, const std::string& newAltPath = "") override;
 
@@ -89,10 +90,20 @@ private:
     void releaseLoadTask();
     static void pruneExpiredLoadTask(const std::string& path);
 
+    struct AsyncIOContext {
+        uint64_t id = 0;
+        std::string path;
+        std::shared_ptr<std::promise<AsyncLoadResult>> promise;
+        std::shared_ptr<AsyncLoadTask> task;
+    };
+
     void resetAnimationState();
     bool createAnimatedStreamingTexture(int width, int height);
     void primeAnimatedTextureIfNeeded();
     static void ensureCacheReserved();
+    static void ensureAsyncIO();
+    static void asyncIOWorker();
+    static AsyncLoadResult decompressImageMemory(void* buffer, Uint64 bytes);
 
     std::string file_;
     std::string altFile_;
