@@ -498,15 +498,21 @@ void GStreamerVideo::initializePlugins() {
 
 			if (rendererBackend == "direct3d11")
 			{
+				// Enable both D3D12 and D3D11 decoders.
+				// GStreamer's D3D12 decoders (rank primary + 2) offer superior stability
+				// and driver correctness across Intel/AMD/NVIDIA and can output D3D11Memory
+				// directly to our D3D11 interop, while D3D11 decoders (rank primary + 1)
+				// serve as fallback.
 				for (const char* codec :
-					{ "h264", "h265", "vp8", "vp9", "mpeg2", "av1" })
+					{ "h264", "h265", "vp9", "mpeg2", "av1" })
 				{
 					enablePlugin(
-						std::string("d3d11") + codec + "dec");
-
-					disablePlugin(
 						std::string("d3d12") + codec + "dec");
+					enablePlugin(
+						std::string("d3d11") + codec + "dec");
 				}
+
+				enablePlugin("d3d11vp8dec");
 
 				// Do not let Intel QSV win autoplugging when our renderer and
 				// zero-copy interop path are explicitly D3D11.
@@ -515,16 +521,22 @@ void GStreamerVideo::initializePlugins() {
 
 				LOG_INFO(
 					"GStreamerVideo",
-					"D3D11 hardware decoding requested; awaiting frame verification");
+					"D3D11 hardware decoding requested (preferring D3D12 decoders with D3D11Memory output); awaiting frame verification");
 			}
 			else if (rendererBackend == "direct3d12")
 			{
 				// Match native decoder memory to the actual SDL renderer.
-				enablePlugin("d3d12h264dec");
-				enablePlugin("d3d12h265dec");
+				for (const char* codec :
+					{ "h264", "h265", "vp9", "mpeg2", "av1" })
+				{
+					enablePlugin(
+						std::string("d3d12") + codec + "dec");
 
-				disablePlugin("d3d11h264dec");
-				disablePlugin("d3d11h265dec");
+					disablePlugin(
+						std::string("d3d11") + codec + "dec");
+				}
+
+				disablePlugin("d3d11vp8dec");
 
 				disablePlugin("qsvh264dec");
 				disablePlugin("qsvh265dec");
@@ -1880,9 +1892,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		gpuInterop_ = std::make_unique<NativeVideoInterop>(SDL::getRenderer(monitor_));
 		if (gpuInterop_->available()) {
 			gpuInterop_->configure(pipeline_);
-#if defined(RETROFE_HAVE_GST_GL) || defined(RETROFE_HAVE_D3D12)
 			glPipelineActive_.store(true);
-#endif
 		}
 		else LOG_INFO("GStreamerVideo", std::string("GPU texture interop unavailable: ") + gpuInterop_->reason());
 	}
@@ -2281,7 +2291,9 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(
 
 void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 	GstElement* element,
-	[[maybe_unused]] gpointer data) {
+	gpointer data) {
+	const auto* self = static_cast<GStreamerVideo*>(data);
+	const bool isHw = Configuration::HardwareVideoAccel && (!self || !self->disableInterop_);
 	const gchar* name = GST_OBJECT_NAME(element);
 
 	auto has_prop = [](GstElement* e, const char* p) {
@@ -2311,7 +2323,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 	}
 
 
-	if (Configuration::HardwareVideoAccel && GST_IS_VIDEO_DECODER(element)) {
+	if (isHw && GST_IS_VIDEO_DECODER(element)) {
 		if (auto* factory = gst_element_get_factory(element)) {
 			LOG_INFO(
 				"GStreamerVideo",
@@ -2321,7 +2333,7 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 		}
 	}
 
-	if (!Configuration::HardwareVideoAccel &&
+	if (!isHw &&
 		GST_IS_VIDEO_DECODER(element))
 	{
 		if (has_prop(element, "thread-type") && has_prop(element, "max-threads")) {

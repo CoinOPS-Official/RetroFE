@@ -67,6 +67,9 @@
 
 #include <SDL3/SDL_thread.h>
 #include <Windows.h>
+#ifdef RETROFE_HAVE_D3D12
+#include <d3d12.h>
+#endif
 #endif
 
 std::atomic<bool> RetroFE::reloadRequested_{false};
@@ -177,10 +180,26 @@ void RetroFE::render() {
 
 
 		if (!SDL::beginVideoFrame(rr)) {
-			LOG_ERROR("SDL", "Native video submission failed; stopping renderer");
-			reboot_ = true;
-			setState(RETROFE_QUIT_REQUEST);
-			return;
+			bool deviceLost = false;
+#ifdef RETROFE_HAVE_D3D12
+			auto* d3d12Device = static_cast<ID3D12Device*>(
+				SDL_GetPointerProperty(SDL_GetRendererProperties(rr),
+									   SDL_PROP_RENDERER_D3D12_DEVICE_POINTER, nullptr));
+			if (d3d12Device && FAILED(d3d12Device->GetDeviceRemovedReason())) {
+				deviceLost = true;
+			}
+#endif
+			if (deviceLost) {
+				LOG_ERROR("SDL", "D3D12 device removed; stopping renderer");
+				reboot_ = true;
+				setState(RETROFE_QUIT_REQUEST);
+				return;
+			}
+			static bool s_videoSubmitWarned = false;
+			if (!s_videoSubmitWarned) {
+				LOG_WARNING("SDL", "Native video frame submission failed; degrading to software presentation");
+				s_videoSubmitWarned = true;
+			}
 		}
 
 		if (!SDL_SetRenderTarget(rr, rt)) {

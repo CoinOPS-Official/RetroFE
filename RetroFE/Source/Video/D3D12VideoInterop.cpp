@@ -32,11 +32,12 @@ SDL_Colorspace colorspace(const GstVideoInfo& info) {
     return full ? SDL_COLORSPACE_BT709_FULL : SDL_COLORSPACE_BT709_LIMITED;
 }
 D3D12_RESOURCE_BARRIER transition(ID3D12Resource* texture,
-    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after) {
+    D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after,
+    UINT subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES) {
     D3D12_RESOURCE_BARRIER barrier{};
     barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
     barrier.Transition.pResource = texture;
-    barrier.Transition.Subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES;
+    barrier.Transition.Subresource = subresource;
     barrier.Transition.StateBefore = before;
     barrier.Transition.StateAfter = after;
     return barrier;
@@ -61,6 +62,7 @@ struct D3D12VideoInterop::Impl {
         Sample sample;
         std::shared_ptr<void> nativeOwner;
         std::array<UINT, 2> planes{};
+        int cropX = 0, cropY = 0, cropW = 0, cropH = 0;
         bool pending = false;
         bool native = false; // FFmpeg-native frame; never stall SDL's queue waiting for it.
     };
@@ -114,9 +116,17 @@ struct D3D12VideoInterop::Impl {
     void retire() {
         const UINT64 completed = fence ? fence->GetCompletedValue() : 0;
         if (completed == UINT64_MAX) {
+            if (!failedSubmission) {
+                const HRESULT reason = device ? device->GetDeviceRemovedReason() : E_FAIL;
+                std::ostringstream msg;
+                msg << "D3D12 copy fence reports device removal (0x"
+                    << std::hex << static_cast<unsigned long>(reason) << ")";
+                error = msg.str();
+                LOG_ERROR("D3D12VideoInterop", error);
+            }
             failedSubmission = true;
             current = nullptr;
-            error = "D3D12 copy fence reports device removal";
+            invalidate();
             return;
         }
         for (auto& slot : slots) {
@@ -128,6 +138,7 @@ struct D3D12VideoInterop::Impl {
                 slot.producerFence.Reset();
                 slot.producerValue = 0;
                 slot.planes = {};
+                slot.cropX = slot.cropY = slot.cropW = slot.cropH = 0;
                 slot.native = false;
             }
         }
@@ -141,6 +152,7 @@ struct D3D12VideoInterop::Impl {
             slot.producerFence.Reset();
             slot.producerValue = 0;
             slot.planes = {};
+            slot.cropX = slot.cropY = slot.cropW = slot.cropH = 0;
             slot.native = false;
         }
         current = nullptr;
@@ -195,10 +207,12 @@ struct D3D12VideoInterop::Impl {
             if (!slot.destination) throw std::runtime_error("SDL NV12 texture has no D3D12 resource");
 
             const auto destinationDesc = slot.destination->GetDesc();
+            const UINT64 expectedW = static_cast<UINT64>((w + 1) & ~1);
+            const UINT expectedH = static_cast<UINT>((h + 1) & ~1);
             if (destinationDesc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
                 destinationDesc.Format != DXGI_FORMAT_NV12 ||
-                destinationDesc.Width != static_cast<UINT64>(w) ||
-                destinationDesc.Height != static_cast<UINT>(h) ||
+                (destinationDesc.Width != static_cast<UINT64>(w) && destinationDesc.Width != expectedW) ||
+                (destinationDesc.Height != static_cast<UINT>(h) && destinationDesc.Height != expectedH) ||
                 destinationDesc.DepthOrArraySize != 1 ||
                 destinationDesc.MipLevels != 1 ||
                 destinationDesc.SampleDesc.Count != 1)
@@ -272,8 +286,13 @@ struct D3D12VideoInterop::Impl {
             throw std::runtime_error("Expected single-resource D3D12 NV12 output");
         auto* memory = gst_buffer_peek_memory(buffer, 0);
         if (!gst_is_d3d12_memory(memory)) throw std::runtime_error("Decoder output is system memory");
-        if (gst_buffer_get_video_crop_meta(buffer))
-            throw std::runtime_error("Unexpected crop metadata; negotiate decoder-cropped output");
+        int cropX = 0, cropY = 0, cropW = 0, cropH = 0;
+        if (auto* c = gst_buffer_get_video_crop_meta(buffer)) {
+            cropX = static_cast<int>(c->x);
+            cropY = static_cast<int>(c->y);
+            cropW = static_cast<int>(c->width);
+            cropH = static_cast<int>(c->height);
+        }
         auto* dmem = GST_D3D12_MEMORY_CAST(memory);
         auto source = importResource(dmem);
         const auto desc = source->GetDesc();
@@ -284,8 +303,9 @@ struct D3D12VideoInterop::Impl {
             !(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS) ||
             (desc.Flags & D3D12_RESOURCE_FLAG_VIDEO_DECODE_REFERENCE_ONLY))
             throw std::runtime_error("Unsupported decoder output resource flags/format");
-        const int w = GST_VIDEO_INFO_WIDTH(&info), h = GST_VIDEO_INFO_HEIGHT(&info);
-        if (w <= 0 || h <= 0 || UINT64((w + 1) & ~1) > desc.Width || UINT((h + 1) & ~1) > desc.Height)
+        const int w = cropW > 0 ? cropW : GST_VIDEO_INFO_WIDTH(&info);
+        const int h = cropH > 0 ? cropH : GST_VIDEO_INFO_HEIGHT(&info);
+        if (w <= 0 || h <= 0 || UINT64((cropX + w + 1) & ~1) > desc.Width || UINT((cropY + h + 1) & ~1) > desc.Height)
             throw std::runtime_error("NV12 dimensions exceed decoder allocation");
         allocate(w, h, colorspace(info));
         Slot* selected = nullptr;
@@ -305,6 +325,10 @@ struct D3D12VideoInterop::Impl {
         selected->source = source;
         selected->sample.reset(gst_sample_ref(sample));
         selected->nativeOwner.reset();
+        selected->cropX = cropX;
+        selected->cropY = cropY;
+        selected->cropW = cropW;
+        selected->cropH = cropH;
         selected->native = false;
         selected->pending = true;
         current = selected->texture;
@@ -312,30 +336,48 @@ struct D3D12VideoInterop::Impl {
     }
     bool submit() {
         retire();
-        if (failedSubmission) return false;
+        if (failedSubmission) return true; // Inactive/degraded interop does not fail current frame
         try {
             for (auto& slot : slots) if (slot.pending) {
-                // FFmpeg-native frames use a CPU-side fence poll here instead of
-                // queue->Wait(). A late decode therefore leaves this slot pending
-                // for a later UI frame rather than stalling SDL's entire D3D12
-                // graphics queue. The previously copied pixels remain drawable.
-                if (slot.native && slot.producerFence) {
+                if (slot.producerFence) {
                     const UINT64 completed = slot.producerFence->GetCompletedValue();
-                    if (completed == UINT64_MAX)
-                        throw std::runtime_error("D3D12 producer fence reports device removal");
+                    if (completed == UINT64_MAX) {
+                        const HRESULT reason = device ? device->GetDeviceRemovedReason() : E_FAIL;
+                        std::ostringstream msg;
+                        msg << "D3D12 producer fence reports device removal (0x"
+                            << std::hex << static_cast<unsigned long>(reason) << ")";
+                        throw std::runtime_error(msg.str());
+                    }
                     if (completed < slot.producerValue)
                         continue;
                 }
 
                 check(slot.allocator->Reset(), "Reset copy allocator");
                 check(slot.commands->Reset(slot.allocator.Get(), nullptr), "Reset copy list");
-                auto before = transition(slot.destination, D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_COPY_DEST);
-                slot.commands->ResourceBarrier(1, &before);
-                // Producer synchronization guarantees the source is back in
-                // COMMON before this command list executes. COPY_SOURCE is a
-                // read-only state, so D3D12 can implicitly promote from COMMON
-                // and decay back to COMMON after ExecuteCommandLists.
+
+                // Source resource barrier:
+                // Textures with ALLOW_SIMULTANEOUS_ACCESS promote/decay implicitly.
+                // Non-simultaneous textures (e.g. FFmpeg decoder output) require explicit transitions
+                // from COMMON to COPY_SOURCE and back to COMMON.
+                const auto srcDesc = slot.source->GetDesc();
+                const bool needSourceTransition =
+                    !(srcDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
+
+                std::vector<D3D12_RESOURCE_BARRIER> beforeBarriers;
+                beforeBarriers.push_back(transition(slot.destination,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
+                    D3D12_RESOURCE_STATE_COPY_DEST));
+                if (needSourceTransition) {
+                    for (UINT plane = 0; plane < 2; ++plane) {
+                        beforeBarriers.push_back(transition(slot.source.Get(),
+                            D3D12_RESOURCE_STATE_COMMON,
+                            D3D12_RESOURCE_STATE_COPY_SOURCE,
+                            slot.planes[plane]));
+                    }
+                }
+                slot.commands->ResourceBarrier(static_cast<UINT>(beforeBarriers.size()), beforeBarriers.data());
+
+                const auto dstDesc = slot.destination->GetDesc();
                 for (UINT plane = 0; plane < 2; ++plane) {
                     D3D12_TEXTURE_COPY_LOCATION src{}, dst{};
                     src.pResource = slot.source.Get(); src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
@@ -343,26 +385,50 @@ struct D3D12VideoInterop::Impl {
                     dst.pResource = slot.destination; dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
                     dst.SubresourceIndex = plane;
                     const UINT divisor = plane ? 2 : 1;
-                    const D3D12_BOX box{0, 0, 0, UINT((width + 1) & ~1) / divisor,
-                        UINT((height + 1) & ~1) / divisor, 1};
-                    slot.commands->CopyTextureRegion(&dst, 0, 0, 0, &src, &box);
+                    const UINT srcX = (slot.cropW > 0 ? UINT(slot.cropX) : 0) / divisor;
+                    const UINT srcY = (slot.cropH > 0 ? UINT(slot.cropY) : 0) / divisor;
+                    const UINT maxSrcW = UINT(srcDesc.Width) / divisor;
+                    const UINT maxSrcH = UINT(srcDesc.Height) / divisor;
+                    const UINT maxDstW = UINT(dstDesc.Width) / divisor;
+                    const UINT maxDstH = UINT(dstDesc.Height) / divisor;
+
+                    UINT boxW = UINT((width + 1) & ~1) / divisor;
+                    UINT boxH = UINT((height + 1) & ~1) / divisor;
+                    if (srcX + boxW > maxSrcW) boxW = (maxSrcW > srcX) ? (maxSrcW - srcX) : 0;
+                    if (srcY + boxH > maxSrcH) boxH = (maxSrcH > srcY) ? (maxSrcH - srcY) : 0;
+                    if (boxW > maxDstW) boxW = maxDstW;
+                    if (boxH > maxDstH) boxH = maxDstH;
+
+                    const D3D12_BOX box{srcX, srcY, 0, srcX + boxW, srcY + boxH, 1};
+                    const bool hasCropping = (slot.cropW > 0 || slot.cropH > 0);
+                    const bool sameDimensions = (srcDesc.Width == dstDesc.Width && srcDesc.Height == dstDesc.Height);
+                    const D3D12_BOX* pBox = (!hasCropping && sameDimensions) ? nullptr : &box;
+                    slot.commands->CopyTextureRegion(&dst, 0, 0, 0, &src, pBox);
                 }
-                auto after = transition(slot.destination, D3D12_RESOURCE_STATE_COPY_DEST,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
-                slot.commands->ResourceBarrier(1, &after);
+
+                std::vector<D3D12_RESOURCE_BARRIER> afterBarriers;
+                afterBarriers.push_back(transition(slot.destination,
+                    D3D12_RESOURCE_STATE_COPY_DEST,
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
+                if (needSourceTransition) {
+                    for (UINT plane = 0; plane < 2; ++plane) {
+                        afterBarriers.push_back(transition(slot.source.Get(),
+                            D3D12_RESOURCE_STATE_COPY_SOURCE,
+                            D3D12_RESOURCE_STATE_COMMON,
+                            slot.planes[plane]));
+                    }
+                }
+                slot.commands->ResourceBarrier(static_cast<UINT>(afterBarriers.size()), afterBarriers.data());
                 check(slot.commands->Close(), "Close copy list");
 
-                // Keep the existing GStreamer contract unchanged. Native FFmpeg
-                // frames have already passed the nonblocking completion poll.
-                if (!slot.native && slot.producerFence)
+                // Cross-queue synchronization: ensure the direct queue waits on the producer fence
+                if (slot.producerFence)
                     check(queue->Wait(slot.producerFence.Get(), slot.producerValue), "Queue producer fence wait");
 
                 ID3D12CommandList* lists[]{slot.commands.Get()};
                 queue->ExecuteCommandLists(1, lists);
                 const HRESULT signal = queue->Signal(fence.Get(), ++sequence);
                 if (FAILED(signal) && SUCCEEDED(device->GetDeviceRemovedReason())) {
-                    // Work may be executing without a completion marker. Never
-                    // return these decoder surfaces to their pool in this state.
                     LOG_ERROR("D3D12VideoInterop", "Copy fence signal failed on a live device; terminating to preserve GPU ownership");
                     std::terminate();
                 }
@@ -376,8 +442,15 @@ struct D3D12VideoInterop::Impl {
             error = e.what();
             failedSubmission = true;
             current = nullptr;
+            invalidate();
+            const HRESULT reason = device ? device->GetDeviceRemovedReason() : S_OK;
+            if (FAILED(reason)) {
+                std::ostringstream msg;
+                msg << error << " (device removed reason: 0x" << std::hex << static_cast<unsigned long>(reason) << ")";
+                error = msg.str();
+            }
             LOG_ERROR("D3D12VideoInterop", error);
-            return false;
+            return FAILED(reason) ? false : true;
         }
     }
 };
@@ -402,7 +475,8 @@ bool D3D12VideoInterop::beginFrame(SDL_Renderer* renderer) {
 }
 SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence* producer,
     uint64_t value, unsigned yPlane, unsigned uvPlane, int width, int height,
-    SDL_Colorspace color, std::shared_ptr<void> owner) {
+    SDL_Colorspace color, std::shared_ptr<void> owner,
+    int cropX, int cropY, int cropW, int cropH) {
     auto& p = *impl_;
     p.deferred = false;
     if (!available()) return nullptr;
@@ -430,13 +504,18 @@ SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence
         // FFmpeg native frames do not need ALLOW_SIMULTANEOUS_ACCESS here.
         // The producer fence is the handoff: once reached, FFmpeg has returned
         // the decode output to COMMON and this queue may read it as COPY_SOURCE.
+        const int w = cropW > 0 ? cropW : width;
+        const int h = cropH > 0 ? cropH : height;
+        const int effectiveCropX = cropW > 0 ? cropX : 0;
+        const int effectiveCropY = cropH > 0 ? cropY : 0;
+
         if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
             desc.Format != DXGI_FORMAT_NV12 ||
             desc.SampleDesc.Count != 1 ||
             (desc.Flags & D3D12_RESOURCE_FLAG_VIDEO_DECODE_REFERENCE_ONLY) ||
-            width <= 0 || height <= 0 ||
-            UINT64((width + 1) & ~1) > desc.Width ||
-            UINT((height + 1) & ~1) > desc.Height)
+            w <= 0 || h <= 0 || effectiveCropX < 0 || effectiveCropY < 0 ||
+            UINT64(effectiveCropX + w) > desc.Width ||
+            UINT(effectiveCropY + h) > desc.Height)
             throw std::runtime_error("Incompatible native NV12 resource");
 
         const UINT planeStride = UINT(desc.MipLevels) * desc.DepthOrArraySize;
@@ -446,46 +525,23 @@ SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence
             uvPlane != yPlane + planeStride)
             throw std::runtime_error("Invalid native NV12 subresource indices");
 
-        p.allocate(width, height, color);
+        p.allocate(w, h, color);
 
-        // Do not replace a native frame that missed the previous frame boundary.
-        // Keeping the older pending frame guarantees progress: on the next UI
-        // frame it is much more likely to have completed, while the newly popped
-        // FFmpeg frame can simply be dropped.
-        for (auto& slot : p.slots) {
-            if (slot.pending) {
-                p.deferred = true;
-                return nullptr;
-            }
-        }
-
+        // Multi-slot ring selection:
+        // Look for an idle slot that is neither in-flight nor pending.
         Impl::Slot* selected = nullptr;
-
-        // Once a display slot has been established, keep using that same SDL
-        // texture. If its previous copy command has not retired yet, drop/defer
-        // this decoded frame instead of switching the UI to another ring slot
-        // whose old pixels could be stale or black. Same-queue ordering makes
-        // reuse safe as soon as our copy command allocator/fence has retired.
-        if (p.current) {
-            for (auto& slot : p.slots) {
-                if (slot.texture == p.current) {
-                    if (!slot.flight)
-                        selected = &slot;
-                    break;
-                }
-            }
-        } else {
-            for (auto& slot : p.slots) {
-                if (!slot.flight) {
-                    selected = &slot;
-                    break;
-                }
+        for (auto& slot : p.slots) {
+            if (!slot.flight && !slot.pending) {
+                selected = &slot;
+                break;
             }
         }
 
         if (!selected) {
+            // All slots are active or pending. Defer rather than overwriting
+            // an unsubmitted frame and dropping reference frame ownership.
             p.deferred = true;
-            return nullptr;
+            return p.current;
         }
 
         selected->sample.reset();
@@ -494,6 +550,10 @@ SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence
         selected->producerFence = producer;
         selected->producerValue = value;
         selected->planes = {yPlane, uvPlane};
+        selected->cropX = effectiveCropX;
+        selected->cropY = effectiveCropY;
+        selected->cropW = cropW > 0 ? cropW : 0;
+        selected->cropH = cropH > 0 ? cropH : 0;
         selected->native = true;
         selected->pending = true;
 

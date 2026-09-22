@@ -3,6 +3,11 @@
 #include <gst/gst.h>
 #include <memory>
 
+#ifdef _WIN32
+struct ID3D11Resource;
+struct D3D11_TEXTURE2D_DESC;
+#endif
+
 class D3D11VideoInterop {
 public:
     static bool initializeGlobal(SDL_Renderer* renderer);
@@ -13,6 +18,10 @@ public:
     bool available() const;
     void configure(GstElement* pipeline);
     SDL_Texture* copy(GstSample* sample);
+#ifdef _WIN32
+    SDL_Texture* copyNative(ID3D11Resource* source, unsigned int sourceSubresource,
+        const D3D11_TEXTURE2D_DESC& sourceDesc, SDL_Colorspace color);
+#endif
     void discardFrames();
     const char* reason() const;
     GstElement* wrapSink(GstElement* sink);

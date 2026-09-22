@@ -24,7 +24,8 @@ public:
     // through owner until the copy fence retires it.
     SDL_Texture* copyNative(ID3D12Resource* resource, ID3D12Fence* producer,
         uint64_t value, unsigned yPlane, unsigned uvPlane, int width, int height,
-        SDL_Colorspace color, std::shared_ptr<void> owner);
+        SDL_Colorspace color, std::shared_ptr<void> owner,
+        int cropX = 0, int cropY = 0, int cropW = 0, int cropH = 0);
     void discardFrames();
     void invalidateFrame();
     bool deferred() const;

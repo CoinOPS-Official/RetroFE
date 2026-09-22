@@ -10,6 +10,7 @@
 
 #ifdef _WIN32
 #include <d3d11.h>
+#include <wrl/client.h>
 #include <gst/d3d11/gstd3d11.h>
 #include <gst/video/video.h>
 
@@ -96,22 +97,19 @@ bool D3D11VideoInterop::initializeGlobal(SDL_Renderer* renderer)
     }
 
     g_gstDevice = gst_d3d11_device_new_wrapped(g_device);
-    if (!g_gstDevice) {
-        LOG_ERROR(
+    if (g_gstDevice) {
+        g_context = gst_d3d11_context_new(g_gstDevice);
+        if (!g_context) {
+            gst_object_unref(g_gstDevice);
+            g_gstDevice = nullptr;
+            LOG_WARNING(
+                "D3D11VideoInterop",
+                "Could not create GStreamer D3D11 context; GStreamer D3D11 interop disabled.");
+        }
+    } else {
+        LOG_WARNING(
             "D3D11VideoInterop",
-            "Could not wrap SDL D3D11 device for GStreamer.");
-        return false;
-    }
-
-    g_context = gst_d3d11_context_new(g_gstDevice);
-    if (!g_context) {
-        gst_object_unref(g_gstDevice);
-        g_gstDevice = nullptr;
-
-        LOG_ERROR(
-            "D3D11VideoInterop",
-            "Could not create GStreamer D3D11 context.");
-        return false;
+            "Could not wrap SDL D3D11 device for GStreamer; GStreamer D3D11 interop disabled.");
     }
 
     LOG_INFO(
@@ -137,6 +135,9 @@ struct D3D11VideoInterop::Impl
                 SDL_GetRendererProperties(renderer),
                 SDL_PROP_RENDERER_D3D11_DEVICE_POINTER,
                 nullptr));
+        if (rendererDevice) {
+            rendererDevice->GetImmediateContext(rendererContext.GetAddressOf());
+        }
 #endif
     }
 
@@ -161,6 +162,7 @@ struct D3D11VideoInterop::Impl
     };
 
     ID3D11Device* rendererDevice = nullptr;
+    Microsoft::WRL::ComPtr<ID3D11DeviceContext> rendererContext;
     std::array<Slot, RING_SIZE> slots{};
     size_t nextSlot = 0;
 
@@ -172,6 +174,8 @@ struct D3D11VideoInterop::Impl
 
     ID3D11DeviceContext* context() const
     {
+        if (rendererContext)
+            return rendererContext.Get();
         return g_gstDevice
             ? gst_d3d11_device_get_device_context_handle(g_gstDevice)
             : nullptr;
@@ -390,10 +394,19 @@ struct D3D11VideoInterop::Impl
         // UI frames ago. Make SDL emit those commands before we enqueue the
         // overwrite. Because both operations use the same D3D11 immediate
         // context, command ordering guarantees the old reads precede this copy.
+        // In multi-instance playback, coalesce flushes occurring within 2 ms
+        // on the same renderer to avoid repeated UI stalls.
         const Uint64 sdlFlushStartNs = SDL_GetTicksNS();
-        if (!SDL_FlushRenderer(renderer)) {
-            error = SDL_GetError();
-            return nullptr;
+        static thread_local Uint64 s_lastFlushNs = 0;
+        static thread_local SDL_Renderer* s_lastFlushedRenderer = nullptr;
+
+        if (s_lastFlushedRenderer != renderer || (sdlFlushStartNs - s_lastFlushNs) > 2000000ULL) {
+            if (!SDL_FlushRenderer(renderer)) {
+                error = SDL_GetError();
+                return nullptr;
+            }
+            s_lastFlushNs = SDL_GetTicksNS();
+            s_lastFlushedRenderer = renderer;
         }
         const Uint64 sdlFlushEndNs = SDL_GetTicksNS();
 
@@ -448,13 +461,13 @@ D3D11VideoInterop::D3D11VideoInterop(SDL_Renderer* renderer)
     : impl_(std::make_unique<Impl>(renderer))
 {
 #ifdef _WIN32
-    if (!g_context) {
-        impl_->error = "Global D3D11 context not initialized";
+    if (!g_device) {
+        impl_->error = "Global D3D11 device not initialized";
     } else if (!impl_->rendererDevice) {
         impl_->error = "Renderer does not expose a D3D11 device";
     } else if (impl_->rendererDevice != g_device) {
         impl_->error =
-            "Renderer D3D11 device does not match global GStreamer D3D11 device";
+            "Renderer D3D11 device does not match global D3D11 device";
     }
 #endif
 }
@@ -467,13 +480,25 @@ bool D3D11VideoInterop::available() const
     return
         impl_ &&
         g_device != nullptr &&
-        g_gstDevice != nullptr &&
-        g_context != nullptr &&
         impl_->rendererDevice == g_device;
 #else
     return false;
 #endif
 }
+
+#ifdef _WIN32
+SDL_Texture* D3D11VideoInterop::copyNative(
+    ID3D11Resource* source,
+    UINT sourceSubresource,
+    const D3D11_TEXTURE2D_DESC& sourceDesc,
+    SDL_Colorspace color)
+{
+    if (!source || !available() || !impl_)
+        return nullptr;
+
+    return impl_->copyFromDecoder(source, sourceSubresource, sourceDesc, color);
+}
+#endif
 
 const char* D3D11VideoInterop::reason() const
 {
@@ -546,6 +571,11 @@ SDL_Texture* D3D11VideoInterop::copy(GstSample* sample)
 #ifdef _WIN32
     if (!sample || !available() || !impl_)
         return nullptr;
+
+    if (!g_gstDevice || !g_context) {
+        impl_->error = "GStreamer D3D11 device/context not initialized";
+        return nullptr;
+    }
 
     auto& p = *impl_;
 

@@ -35,6 +35,13 @@ extern "C" {
 #include <libavutil/hwcontext_d3d12va.h>
 }
 #endif
+#ifdef _WIN32
+#include <d3d11.h>
+#include "D3D11VideoInterop.h"
+extern "C" {
+#include <libavutil/hwcontext_d3d11va.h>
+}
+#endif
 #ifdef RETROFE_HAVE_EGL_DMABUF
 #include "FFmpegDmaBuf.h"
 extern "C" {
@@ -52,6 +59,7 @@ extern "C" {
 #include <cstring>
 #include <cstdlib>
 #include <cstdarg>
+#include <map>
 #include <mutex>
 #include <stdexcept>
 #include <sstream>
@@ -182,12 +190,116 @@ struct Audio {
     std::vector<float> data;
     int64_t pts;
 };
+
+struct SharedHwEntry {
+    AVBufferRef* deviceCtx = nullptr;
+    AVPixelFormat format = AV_PIX_FMT_NONE;
+    int refCount = 0;
+};
+static std::mutex s_sharedHwMutex;
+static std::map<SDL_Renderer*, SharedHwEntry> s_sharedHwEntries;
+
+static SharedHwEntry acquireSharedHardware(SDL_Renderer* renderer) {
+    if (!renderer) return {};
+    std::lock_guard<std::mutex> lock(s_sharedHwMutex);
+    auto it = s_sharedHwEntries.find(renderer);
+    if (it != s_sharedHwEntries.end() && it->second.deviceCtx) {
+        ++it->second.refCount;
+        return { av_buffer_ref(it->second.deviceCtx), it->second.format, it->second.refCount };
+    }
+
+    AVBufferRef* hw = nullptr;
+    AVPixelFormat fmt = AV_PIX_FMT_NONE;
+
+#ifdef RETROFE_HAVE_D3D12
+    if (Configuration::HardwareVideoAccel) {
+        auto* device = static_cast<ID3D12Device*>(
+            SDL_GetPointerProperty(SDL_GetRendererProperties(renderer),
+                                   SDL_PROP_RENDERER_D3D12_DEVICE_POINTER, nullptr));
+        if (device) {
+            hw = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D12VA);
+            if (hw) {
+                auto* d = static_cast<AVD3D12VADeviceContext*>(
+                    reinterpret_cast<AVHWDeviceContext*>(hw->data)->hwctx);
+                d->device = device;
+                d->resource_flags = D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+                device->AddRef();
+                if (av_hwdevice_ctx_init(hw) < 0) {
+                    av_buffer_unref(&hw);
+                } else {
+                    fmt = AV_PIX_FMT_D3D12;
+                }
+            }
+        }
+    }
+#endif
+#ifdef _WIN32
+    if (Configuration::HardwareVideoAccel && !hw) {
+        auto* d3d11Device = static_cast<ID3D11Device*>(
+            SDL_GetPointerProperty(SDL_GetRendererProperties(renderer),
+                                   SDL_PROP_RENDERER_D3D11_DEVICE_POINTER, nullptr));
+        if (d3d11Device) {
+            hw = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D11VA);
+            if (hw) {
+                auto* d = static_cast<AVD3D11VADeviceContext*>(
+                    reinterpret_cast<AVHWDeviceContext*>(hw->data)->hwctx);
+                d->device = d3d11Device;
+                d3d11Device->AddRef();
+                if (av_hwdevice_ctx_init(hw) < 0) {
+                    av_buffer_unref(&hw);
+                } else {
+                    fmt = AV_PIX_FMT_D3D11;
+                }
+            }
+        }
+    }
+#endif
+    if (Configuration::HardwareVideoAccel && !hw) {
+#ifdef _WIN32
+        const auto type = AV_HWDEVICE_TYPE_D3D11VA;
+        const auto defFmt = AV_PIX_FMT_D3D11;
+#elif defined(__linux__)
+        const auto type = AV_HWDEVICE_TYPE_VAAPI;
+        const auto defFmt = AV_PIX_FMT_VAAPI;
+#elif defined(__APPLE__)
+        const auto type = AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
+        const auto defFmt = AV_PIX_FMT_VIDEOTOOLBOX;
+#else
+        const auto type = AV_HWDEVICE_TYPE_NONE;
+        const auto defFmt = AV_PIX_FMT_NONE;
+#endif
+        if (type != AV_HWDEVICE_TYPE_NONE &&
+            av_hwdevice_ctx_create(&hw, type, nullptr, nullptr, 0) >= 0) {
+            fmt = defFmt;
+        }
+    }
+
+    if (hw) {
+        s_sharedHwEntries[renderer] = { av_buffer_ref(hw), fmt, 1 };
+    }
+    return { hw, fmt, 1 };
+}
+
+static void releaseSharedHardware(SDL_Renderer* renderer) {
+    if (!renderer) return;
+    std::lock_guard<std::mutex> lock(s_sharedHwMutex);
+    auto it = s_sharedHwEntries.find(renderer);
+    if (it != s_sharedHwEntries.end()) {
+        if (--it->second.refCount <= 0) {
+            if (it->second.deviceCtx) {
+                av_buffer_unref(&it->second.deviceCtx);
+            }
+            s_sharedHwEntries.erase(it);
+        }
+    }
+}
 } // namespace
 struct FFmpegVideo::Impl {
     int monitor;
     mutable std::mutex mutex;
     std::condition_variable wake;
     std::atomic<bool> quit{false};
+    std::atomic<bool> fallbackRequested{false};
     std::atomic<uint64_t> revision{0};
     uint64_t accepted = 0, workerRevision = 0;
     std::string requested, loaded;
@@ -222,6 +334,9 @@ struct FFmpegVideo::Impl {
     AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;
 #ifdef RETROFE_HAVE_D3D12
     std::unique_ptr<D3D12VideoInterop> interop;
+#endif
+#ifdef _WIN32
+    std::unique_ptr<D3D11VideoInterop> interop11;
 #endif
 #ifdef RETROFE_HAVE_EGL_DMABUF
     std::unique_ptr<EGLVideoInterop> egl;
@@ -260,57 +375,41 @@ struct FFmpegVideo::Impl {
         installFFmpegLog();
         source = AudioBus::instance().addSource("FFmpeg video");
         audio = AudioBus::instance().getHandle(source);
-#ifdef RETROFE_HAVE_D3D12
         if (Configuration::HardwareVideoAccel) {
-            auto *device = static_cast<ID3D12Device *>(
-                SDL_GetPointerProperty(SDL_GetRendererProperties(SDL::getRenderer(m)),
-                                       SDL_PROP_RENDERER_D3D12_DEVICE_POINTER, nullptr));
-            if (device) {
-                hardware = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D12VA);
-                if (hardware) {
-                    auto* d = static_cast<AVD3D12VADeviceContext*>(
-                        reinterpret_cast<AVHWDeviceContext*>(hardware->data)->hwctx);
+            SDL_Renderer *r = SDL::getRenderer(m);
+            auto shared = acquireSharedHardware(r);
+            hardware = shared.deviceCtx;
+            hardwareFormat = shared.format;
 
-                    d->device = device;
-                    device->AddRef();
-
-                    if (av_hwdevice_ctx_init(hardware) < 0)
-                        av_buffer_unref(&hardware);
-                    else {
-                        interop = std::make_unique<D3D12VideoInterop>(SDL::getRenderer(m));
-                        hardwareFormat = AV_PIX_FMT_D3D12;
-                    }
+#ifdef RETROFE_HAVE_D3D12
+            if (hardware && hardwareFormat == AV_PIX_FMT_D3D12) {
+                interop = std::make_unique<D3D12VideoInterop>(r);
+                if (!interop->available()) {
+                    interop.reset();
                 }
             }
-        }
 #endif
-        if (Configuration::HardwareVideoAccel && !hardware) {
 #ifdef _WIN32
-            const auto type = AV_HWDEVICE_TYPE_D3D11VA;
-            hardwareFormat = AV_PIX_FMT_D3D11;
-#elif defined(__linux__)
-            const auto type = AV_HWDEVICE_TYPE_VAAPI;
-            hardwareFormat = AV_PIX_FMT_VAAPI;
-#elif defined(__APPLE__)
-            const auto type = AV_HWDEVICE_TYPE_VIDEOTOOLBOX;
-            hardwareFormat = AV_PIX_FMT_VIDEOTOOLBOX;
-#else
-            const auto type = AV_HWDEVICE_TYPE_NONE;
+            if (hardware && hardwareFormat == AV_PIX_FMT_D3D11) {
+                D3D11VideoInterop::initializeGlobal(r);
+                interop11 = std::make_unique<D3D11VideoInterop>(r);
+                if (!interop11->available()) {
+                    interop11.reset();
+                }
+            }
 #endif
-            if (type == AV_HWDEVICE_TYPE_NONE ||
-                av_hwdevice_ctx_create(&hardware, type, nullptr, nullptr, 0) < 0) {
-                hardwareFormat = AV_PIX_FMT_NONE;
+#ifdef RETROFE_HAVE_EGL_DMABUF
+            if (hardware && hardwareFormat == AV_PIX_FMT_VAAPI) {
+                egl = std::make_unique<EGLVideoInterop>(r);
+                exportDmaBuf = egl->available();
+                if (!exportDmaBuf)
+                    LOG_WARNING("FFmpegVideo", std::string("EGL unavailable; CPU transfer fallback: ") + egl->reason());
+            }
+#endif
+            if (!hardware) {
                 LOG_WARNING("FFmpegVideo", "Hardware device unavailable; using software decoding");
             }
         }
-#ifdef RETROFE_HAVE_EGL_DMABUF
-        if (hardware && hardwareFormat == AV_PIX_FMT_VAAPI) {
-            egl = std::make_unique<EGLVideoInterop>(SDL::getRenderer(m));
-            exportDmaBuf = egl->available();
-            if (!exportDmaBuf)
-                LOG_WARNING("FFmpegVideo", std::string("EGL unavailable; CPU transfer fallback: ") + egl->reason());
-        }
-#endif
         worker = std::thread([this] { run(); });
     }
     ~Impl() {
@@ -324,9 +423,13 @@ struct FFmpegVideo::Impl {
 #ifdef RETROFE_HAVE_D3D12
         interop.reset();
 #endif
+#ifdef _WIN32
+        interop11.reset();
+#endif
         if (texture && texture != gpuTexture)
             SDL_DestroyTexture(texture);
         av_buffer_unref(&hardware);
+        releaseSharedHardware(SDL::getRenderer(monitor));
         sws_freeContext(workerScaler);
         sws_freeContext(fallbackScaler);
         AudioBus::instance().removeSource(source);
@@ -445,6 +548,7 @@ struct FFmpegVideo::Impl {
                     if (config->pix_fmt == hardwareFormat &&
                         (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) {
                         c->hw_device_ctx = av_buffer_ref(hardware);
+                        c->thread_count = 1;
                         c->opaque = this;
                         c->get_format = [](AVCodecContext *c, const AVPixelFormat *formats) {
                             auto desired = static_cast<Impl *>(c->opaque)->hardwareFormat;
@@ -460,12 +564,44 @@ struct FFmpegVideo::Impl {
                     }
                 }
             }
-            check(avcodec_open2(c, codec, nullptr), "Open decoder");
+            int openRc = avcodec_open2(c, codec, nullptr);
+            if (openRc < 0 && c->hw_device_ctx) {
+                LOG_WARNING("FFmpegVideo", "Hardware decoder initialization failed (" + std::to_string(openRc) + "); retrying with software decoding");
+                av_buffer_unref(&c->hw_device_ctx);
+                c->get_format = nullptr;
+                c->opaque = nullptr;
+                c->thread_count = std::max(0, Configuration::AvdecMaxThreads);
+                c->thread_type = Configuration::AvdecThreadType;
+                openRc = avcodec_open2(c, codec, nullptr);
+            }
+            check(openRc, "Open decoder");
         } catch (...) {
             avcodec_free_context(&c);
             throw;
         }
         return c;
+    }
+    void fallbackToSoftwareVideo() {
+        if (hardware) {
+            av_buffer_unref(&hardware);
+        }
+        hardwareFormat = AV_PIX_FMT_NONE;
+        fallbackRequested = false;
+        avcodec_free_context(&vc);
+        avcodec_parameters_free(&videoParameters);
+        clearPendingVideoReconfiguration();
+        try {
+            vc = decoder(vi);
+            if (format && vi >= 0) {
+                int64_t currentPts = nextVideo;
+                if (currentPts > 0 && format->streams[vi]->time_base.den > 0) {
+                    int64_t targetTs = av_rescale_q(currentPts, AVRational{1, 1000000000}, format->streams[vi]->time_base);
+                    av_seek_frame(format, vi, targetTs, AVSEEK_FLAG_BACKWARD);
+                }
+            }
+        } catch (const std::exception& e) {
+            LOG_ERROR("FFmpegVideo", std::string("Software video fallback failed: ") + e.what());
+        }
     }
     Frame acquireConversionFrame(AVPixelFormat format, int width, int height) {
         for (auto &candidate : conversionPool) {
@@ -1268,6 +1404,11 @@ struct FFmpegVideo::Impl {
             int rc = avcodec_receive_frame(c, f.get());
             if (rc == AVERROR(EAGAIN) || rc == AVERROR_EOF)
                 return true;
+            if (rc < 0 && video && c->hw_device_ctx) {
+                LOG_WARNING("FFmpegVideo", "Hardware decode error receiving frame (" + std::to_string(rc) + "); falling back to software decoding");
+                fallbackToSoftwareVideo();
+                return false;
+            }
             check(rc, "Decode frame");
             if (!publish(std::move(f), video, rev))
                 return false;
@@ -1293,7 +1434,7 @@ struct FFmpegVideo::Impl {
                 std::unique_lock lock(mutex);
 
                 auto canWork = [&] {
-                    return quit || revision != accepted ||
+                    return quit || fallbackRequested.load(std::memory_order_acquire) || revision != accepted ||
                            (!unloaded && !error && !eof && ready &&
                             (target == VideoState::Playing ||
                              (vi >= 0 ? videos.empty() && needsFrame : audios.empty())) &&
@@ -1331,6 +1472,10 @@ struct FFmpegVideo::Impl {
             workerRevision = rev;
             ffmpegMedia = path;
             try {
+                if (fallbackRequested.exchange(false, std::memory_order_acq_rel)) {
+                    LOG_INFO("FFmpegVideo", "Performing software video fallback on worker thread");
+                    fallbackToSoftwareVideo();
+                }
                 if (rev != accepted) {
                     if (path.empty())
                         closeMedia();
@@ -1423,6 +1568,11 @@ struct FFmpegVideo::Impl {
                             continue;
                         rc = avcodec_send_packet(c, packet);
                     }
+                    if (rc < 0 && c == vc && vc->hw_device_ctx) {
+                        LOG_WARNING("FFmpegVideo", "Hardware decode error during packet submission (" + std::to_string(rc) + "); falling back to software decoding");
+                        fallbackToSoftwareVideo();
+                        continue;
+                    }
                     check(rc, "Submit packet");
 
                     // The decoder has now accepted the packet carrying the new
@@ -1432,7 +1582,8 @@ struct FFmpegVideo::Impl {
                     if (committingVideoReconfiguration)
                         commitPendingVideoReconfiguration(path);
 
-                    receive(c, c == vc, rev);
+                    if (!receive(c, c == vc, rev))
+                        continue;
                 }
             } catch (const std::exception &e) {
                 // If a retarget was superseded while open/probe was in flight,
@@ -1500,12 +1651,20 @@ bool FFmpegVideo::hasFinishedLoops() const { return getSnapshot().hasFinishedLoo
 bool FFmpegVideo::hasVideoStream() const { return getSnapshot().hasVideoStream; }
 SDL_Texture *FFmpegVideo::getTexture() const {
 #ifdef RETROFE_HAVE_D3D12
+    if (impl_->interop && impl_->texture == impl_->gpuTexture) {
+        if (!impl_->interop->available()) return nullptr;
+        if (auto* current = impl_->interop->currentTexture())
+            return current;
+    }
     if (impl_->nativePending && impl_->interop) {
         auto* texture = impl_->interop->currentTexture();
         if (texture) SDL_SetTextureBlendMode(texture, impl_->soft ? softBlend : SDL_BLENDMODE_BLEND);
         return texture;
     }
     if (impl_->interop && impl_->texture == impl_->gpuTexture && !impl_->interop->available()) return nullptr;
+#endif
+#ifdef _WIN32
+    if (impl_->interop11 && impl_->texture == impl_->gpuTexture && !impl_->interop11->available()) return nullptr;
 #endif
     return impl_->valid ? impl_->texture : nullptr;
 }
@@ -1606,6 +1765,8 @@ void FFmpegVideo::updateFrame() {
             p.valid = true;
             p.needsFrame = false;
             p.nativePending = false;
+        } else {
+            return;
         }
     }
 #endif
@@ -1655,8 +1816,14 @@ void FFmpegVideo::updateFrame() {
             color = f->color_range == AVCOL_RANGE_JPEG ? SDL_COLORSPACE_BT2020_FULL
                                                        : SDL_COLORSPACE_BT2020_LIMITED;
 #ifdef RETROFE_HAVE_D3D12
-        if (f->format == AV_PIX_FMT_D3D12 && p.interop && !framePerspective && !f->crop_left && !f->crop_top &&
-            !f->crop_right && !f->crop_bottom) {
+        if (f->format == AV_PIX_FMT_D3D12 && p.interop && !framePerspective) {
+            if (!p.interop->available()) {
+                if (!p.fallbackRequested.exchange(true)) {
+                    LOG_WARNING("FFmpegVideo", "D3D12 interop unavailable (" + std::string(p.interop->reason()) + "); requesting software decoding fallback");
+                    p.wake.notify_all();
+                }
+                return;
+            }
             auto *d = reinterpret_cast<AVD3D12VAFrame *>(f->data[0]);
             if (!d || !d->texture || !d->sync_ctx.fence || d->subresource_index < 0) {
                 Logger::write(Logger::ZONE_ERROR,"FFmpegVideo","Invalid D3D12 frame descriptor: "+p.requested);
@@ -1680,14 +1847,27 @@ void FFmpegVideo::updateFrame() {
                 p.nativeDescriptionLogged = true;
             }
             unsigned y = unsigned(d->subresource_index) * desc.MipLevels;
+            const int cropLeft = static_cast<int>(f->crop_left) & ~1;
+            const int cropTop = static_cast<int>(f->crop_top) & ~1;
+            const int cropRight = static_cast<int>(f->crop_right) & ~1;
+            const int cropBottom = static_cast<int>(f->crop_bottom) & ~1;
+            const bool hasCrop = (cropLeft > 0 || cropTop > 0 || cropRight > 0 || cropBottom > 0);
+            const int visibleW = ((hasCrop ? (f->width - cropLeft - cropRight) : f->width) + 1) & ~1;
+            const int visibleH = ((hasCrop ? (f->height - cropTop - cropBottom) : f->height) + 1) & ~1;
+            const int cropX = hasCrop ? cropLeft : 0;
+            const int cropY = hasCrop ? cropTop : 0;
+            const int cropW = hasCrop ? visibleW : 0;
+            const int cropH = hasCrop ? visibleH : 0;
+
             if (auto *texture = p.interop->copyNative(d->texture, d->sync_ctx.fence, d->sync_ctx.fence_value,
                                                       y, y + unsigned(desc.MipLevels) * desc.DepthOrArraySize,
-                                                      f->width, f->height, color, f)) {
+                                                      f->width, f->height, color, f,
+                                                      cropX, cropY, cropW, cropH)) {
                 if (p.texture && p.texture != p.gpuTexture)
                     SDL_DestroyTexture(p.texture);
                 p.texture = p.gpuTexture = texture;
                 ++p.gpuFrames;
-                p.dim = {f->width, f->height};
+                p.dim = {visibleW, visibleH};
                 SDL_SetTextureBlendMode(texture, p.soft ? softBlend : SDL_BLENDMODE_BLEND);
                 {
                     std::lock_guard lock(p.mutex);
@@ -1705,13 +1885,62 @@ void FFmpegVideo::updateFrame() {
             if (p.interop->deferred()) {
                 if (!p.interop->currentTexture()) {
                     p.nativePending = true;
-                    p.dim = {f->width, f->height};
+                    p.dim = {visibleW, visibleH};
+                    std::lock_guard lock(p.mutex);
+                    p.needsFrame = false;
                 }
                 if (repeat) p.request(p.requested, 0, false, VideoState::Playing, true);
                 return;
             }
+            if (!p.interop->available()) {
+                if (!p.fallbackRequested.exchange(true)) {
+                    LOG_WARNING("FFmpegVideo", "D3D12 native copy unavailable (" + std::string(p.interop->reason()) + "); requesting software decoding fallback");
+                    p.wake.notify_all();
+                }
+                return;
+            }
             if (!p.logged)
                 LOG_WARNING("FFmpegVideo", std::string("Native copy unavailable: ") + p.interop->reason());
+        }
+#endif
+#ifdef _WIN32
+        if (f->format == AV_PIX_FMT_D3D11 && p.interop11 && !framePerspective) {
+            auto *tex = reinterpret_cast<ID3D11Texture2D *>(f->data[0]);
+            if (!tex) {
+                Logger::write(Logger::ZONE_ERROR, "FFmpegVideo", "Invalid D3D11 frame descriptor: " + p.requested);
+                std::lock_guard lock(p.mutex);
+                p.error = true;
+                p.valid = false;
+                return;
+            }
+            D3D11_TEXTURE2D_DESC desc{};
+            tex->GetDesc(&desc);
+            unsigned int subresource = static_cast<unsigned int>(reinterpret_cast<intptr_t>(f->data[1]));
+            if (auto *texture = p.interop11->copyNative(tex, subresource, desc, color)) {
+                if (p.texture && p.texture != p.gpuTexture)
+                    SDL_DestroyTexture(p.texture);
+                p.texture = p.gpuTexture = texture;
+                ++p.gpuFrames;
+                const int cropW = f->width - static_cast<int>(f->crop_left) - static_cast<int>(f->crop_right);
+                const int cropH = f->height - static_cast<int>(f->crop_top) - static_cast<int>(f->crop_bottom);
+                p.dim = {(cropW > 0 ? cropW : f->width), (cropH > 0 ? cropH : f->height)};
+                SDL_SetTextureBlendMode(texture, p.soft ? softBlend : SDL_BLENDMODE_BLEND);
+                {
+                    std::lock_guard lock(p.mutex);
+                    p.valid = true;
+                    p.needsFrame = false;
+                }
+                if (!p.logged) {
+                    LOG_INFO("FFmpegVideo",
+                             "Playback ACTIVE: D3D11 hardware decode / NV12 GPU copy, no CPU pixel transfer");
+                    p.logged = true;
+                }
+                if (repeat)
+                    p.request(p.requested, 0, false, VideoState::Playing, true);
+                return;
+            }
+            if (!p.logged)
+                LOG_WARNING("FFmpegVideo", std::string("D3D11 native copy unavailable: ") + p.interop11->reason());
         }
 #endif
 #ifdef RETROFE_HAVE_EGL_DMABUF

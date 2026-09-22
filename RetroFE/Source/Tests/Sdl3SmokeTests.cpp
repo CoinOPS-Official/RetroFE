@@ -729,7 +729,10 @@ int main(int argc, char** argv) {
     require(Logger::initialize(hardware ? "sdl3-hardware-runtime.log" : "sdl3-software-runtime.log", &config), "Initialize runtime log");
     config.setProperty("SDLRenderDriver", std::string(hardware || benchmark ? hardwareRenderer : "software"));
     config.setProperty("HardwareVideoAccel", hardware);
-    if (const auto* backend = std::getenv("RETROFE_TEST_VIDEO_BACKEND")) config.setProperty("VideoBackend", std::string(backend));
+    if (const auto* backend = std::getenv("RETROFE_TEST_VIDEO_BACKEND")) {
+        config.setProperty("VideoBackend", std::string(backend));
+        VideoFactory::setBackend(backend);
+    }
     config.setProperty("screenOrder", std::string("0"));
     config.setProperty("horizontal0", 64);
     config.setProperty("vertical0", 64);
