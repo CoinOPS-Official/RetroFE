@@ -368,6 +368,7 @@ int main(int argc, char** argv)
         LOG_ERROR("EXCEPTION", e.what());
     }
 
+    GStreamerVideo::waitForControlTasks();
     ThreadPool::getInstance().shutdown();
     GlibLoop::instance().stop();
     gst_deinit();

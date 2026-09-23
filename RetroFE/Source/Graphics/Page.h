@@ -116,6 +116,7 @@ public:
     void update(float dt);
     void updateReloadables(float dt);
     void cleanup();
+    void prepareVideoFrames(int monitor);
     void draw(int monitor);
     void freeGraphicsMemory();
     void allocateGraphicsMemory();

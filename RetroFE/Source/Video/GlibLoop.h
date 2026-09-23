@@ -54,7 +54,7 @@ public:
         int priority = G_PRIORITY_DEFAULT);
 
     // Convenience: attach a GstBus watch to THIS loop, from any thread.
-    // Returns the source ID (0 on failure). This call blocks until attached.
+    // Returns the source ID (0 on failure). Attaches without waiting for dispatch.
     guint addBusWatch(GstBus* bus,
         GstBusFunc func,
         gpointer user_data,

@@ -42,6 +42,7 @@ public:
     ~VideoComponent() override;
 
     bool update(float dt) override;
+    void prepareVideoFrame() override;
     void draw() override;
     void allocateGraphicsMemory() override;
     void freeGraphicsMemory() override;
@@ -78,7 +79,6 @@ private:
     std::shared_ptr<IVideo> videoInst_;
     Page* currentPage_;
 
-    VideoSnapshot currentSnapshot_;
 
     int monitor_;
     int listId_;

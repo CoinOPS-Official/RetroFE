@@ -1,5 +1,6 @@
 #include "D3D11VideoInterop.h"
 #include "../Utility/Log.h"
+#include "../SDL.h"
 
 #include <array>
 #include <cstdint>
@@ -49,6 +50,16 @@ namespace {
 
         return color;
     }
+
+    struct GstD3D11DeviceLocker {
+        GstD3D11Device* device = nullptr;
+        explicit GstD3D11DeviceLocker(GstD3D11Device* d) : device(d) {
+            if (device) gst_d3d11_device_lock(device);
+        }
+        ~GstD3D11DeviceLocker() {
+            if (device) gst_d3d11_device_unlock(device);
+        }
+    };
 }
 #endif
 
@@ -195,12 +206,27 @@ struct D3D11VideoInterop::Impl
     void clearSlots()
     {
         if (!SDL_IsMainThread()) {
-            SDL_RunOnMainThread(
-                [](void* data) {
-                    static_cast<Impl*>(data)->clearSlots();
-                },
-                this,
-                true);
+            std::vector<SDL_Texture*> texturesToDestroy;
+            for (auto& slot : slots) {
+                slot.nativeTexture = nullptr;
+                if (slot.texture) {
+                    texturesToDestroy.push_back(slot.texture);
+                    slot.texture = nullptr;
+                }
+            }
+            width = 0;
+            height = 0;
+            colorspace = SDL_COLORSPACE_UNKNOWN;
+            nextSlot = 0;
+
+            for (auto* tex : texturesToDestroy) {
+                SDL_RunOnMainThread(
+                    [](void* data) {
+                        SDL_DestroyTexture(static_cast<SDL_Texture*>(data));
+                    },
+                    tex,
+                    false);
+            }
             return;
         }
 
@@ -353,20 +379,27 @@ struct D3D11VideoInterop::Impl
         ID3D11Resource* source,
         UINT sourceSubresource,
         const D3D11_TEXTURE2D_DESC& sourceDesc,
-        SDL_Colorspace color)
+        SDL_Colorspace color,
+        int cropX = 0,
+        int cropY = 0,
+        int cropW = 0,
+        int cropH = 0)
     {
         if (!SDL_IsMainThread()) {
             error = "D3D11 ring copy must run on the SDL main thread";
             return nullptr;
         }
 
-        if (width != sourceDesc.Width ||
-            height != sourceDesc.Height ||
+        const UINT targetW = (cropW > 0) ? static_cast<UINT>(cropW) : sourceDesc.Width;
+        const UINT targetH = (cropH > 0) ? static_cast<UINT>(cropH) : sourceDesc.Height;
+
+        if (width != targetW ||
+            height != targetH ||
             colorspace != color)
         {
             if (!allocateSlots(
-                    sourceDesc.Width,
-                    sourceDesc.Height,
+                    targetW,
+                    targetH,
                     color))
             {
                 return nullptr;
@@ -394,24 +427,27 @@ struct D3D11VideoInterop::Impl
         // UI frames ago. Make SDL emit those commands before we enqueue the
         // overwrite. Because both operations use the same D3D11 immediate
         // context, command ordering guarantees the old reads precede this copy.
-        // In multi-instance playback, coalesce flushes occurring within 2 ms
-        // on the same renderer to avoid repeated UI stalls.
+        // Renderer flushes are coalesced so multiple concurrent videos flush at most once per frame.
         const Uint64 sdlFlushStartNs = SDL_GetTicksNS();
-        static thread_local Uint64 s_lastFlushNs = 0;
-        static thread_local SDL_Renderer* s_lastFlushedRenderer = nullptr;
-
-        if (s_lastFlushedRenderer != renderer || (sdlFlushStartNs - s_lastFlushNs) > 2000000ULL) {
-            if (!SDL_FlushRenderer(renderer)) {
-                error = SDL_GetError();
-                return nullptr;
-            }
-            s_lastFlushNs = SDL_GetTicksNS();
-            s_lastFlushedRenderer = renderer;
+        if (!SDL::flushVideoRenderer(renderer)) {
+            error = SDL_GetError();
+            return nullptr;
         }
         const Uint64 sdlFlushEndNs = SDL_GetTicksNS();
 
-
         const Uint64 copyStartNs = SDL_GetTicksNS();
+
+        const bool hasCropping = (cropW > 0 && cropH > 0 &&
+            (cropX > 0 || cropY > 0 || static_cast<UINT>(cropW) < sourceDesc.Width || static_cast<UINT>(cropH) < sourceDesc.Height));
+        D3D11_BOX srcBox{};
+        if (hasCropping) {
+            srcBox.left = static_cast<UINT>(cropX);
+            srcBox.top = static_cast<UINT>(cropY);
+            srcBox.front = 0;
+            srcBox.right = static_cast<UINT>(cropX + cropW);
+            srcBox.bottom = static_cast<UINT>(cropY + cropH);
+            srcBox.back = 1;
+        }
 
         ctx->CopySubresourceRegion(
             slot.nativeTexture,
@@ -421,7 +457,7 @@ struct D3D11VideoInterop::Impl
             0,
             source,
             sourceSubresource,
-            nullptr);
+            hasCropping ? &srcBox : nullptr);
 
         const Uint64 copyEndNs = SDL_GetTicksNS();
 
@@ -496,6 +532,7 @@ SDL_Texture* D3D11VideoInterop::copyNative(
     if (!source || !available() || !impl_)
         return nullptr;
 
+    GstD3D11DeviceLocker lock(g_gstDevice);
     return impl_->copyFromDecoder(source, sourceSubresource, sourceDesc, color);
 }
 #endif
@@ -655,15 +692,34 @@ SDL_Texture* D3D11VideoInterop::copy(GstSample* sample)
         return nullptr;
     }
 
+    int cropX = 0, cropY = 0, cropW = 0, cropH = 0;
+    if (auto* c = gst_buffer_get_video_crop_meta(buffer)) {
+        cropX = static_cast<int>(c->x);
+        cropY = static_cast<int>(c->y);
+        cropW = static_cast<int>(c->width);
+        cropH = static_cast<int>(c->height);
+    } else {
+        cropW = GST_VIDEO_INFO_WIDTH(&info);
+        cropH = GST_VIDEO_INFO_HEIGHT(&info);
+    }
+
     const SDL_Colorspace color =
         chooseColorspace(info);
 
-    SDL_Texture* texture =
-        p.copyFromDecoder(
-            source,
-            sourceSubresource,
-            sourceDesc,
-            color);
+    SDL_Texture* texture = nullptr;
+    {
+        GstD3D11DeviceLocker lock(d3dMemory->device);
+        texture =
+            p.copyFromDecoder(
+                source,
+                sourceSubresource,
+                sourceDesc,
+                color,
+                cropX,
+                cropY,
+                cropW,
+                cropH);
+    }
 
     if (!texture)
         return nullptr;

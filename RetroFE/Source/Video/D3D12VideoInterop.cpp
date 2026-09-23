@@ -5,10 +5,13 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <exception>
 #include <limits>
+#include <mutex>
 #include <sstream>
 #include <stdexcept>
+#include <unordered_map>
 #include <vector>
 
 using Microsoft::WRL::ComPtr;
@@ -49,6 +52,7 @@ using Sample = std::unique_ptr<GstSample, SampleDelete>;
 struct D3D12VideoInterop::Impl {
     // Registry and slots are render-thread-only. Context callbacks own their
     // own GstContext reference and never access this object.
+    static std::mutex& instancesMutex() { static std::mutex mtx; return mtx; }
     static std::vector<Impl*>& instances() { static std::vector<Impl*> list; return list; }
     struct Slot {
         SDL_Texture* texture = nullptr;
@@ -75,6 +79,11 @@ struct D3D12VideoInterop::Impl {
     HANDLE event = nullptr;
     UINT64 sequence = 0;
     std::array<Slot, 3> slots;
+    struct CachedFence {
+        ComPtr<ID3D12Fence> source;
+        ComPtr<ID3D12Fence> imported;
+    };
+    std::unordered_map<ID3D12Fence*, CachedFence> fenceCache;
     int width = 0, height = 0;
     SDL_Colorspace color = SDL_COLORSPACE_UNKNOWN;
     SDL_Texture* current = nullptr;
@@ -85,7 +94,10 @@ struct D3D12VideoInterop::Impl {
     const gint64 resourceToken = gst_d3d12_create_user_token();
 
     explicit Impl(SDL_Renderer* r) : renderer(r) {
-        instances().push_back(this);
+        {
+            std::lock_guard<std::mutex> lock(instancesMutex());
+            instances().push_back(this);
+        }
         try {
             const auto props = SDL_GetRendererProperties(r);
             device = static_cast<ID3D12Device*>(SDL_GetPointerProperty(props,
@@ -106,8 +118,11 @@ struct D3D12VideoInterop::Impl {
         } catch (const std::exception& e) { error = e.what(); }
     }
     ~Impl() {
-        auto& list = instances();
-        list.erase(std::remove(list.begin(), list.end(), this), list.end());
+        {
+            std::lock_guard<std::mutex> lock(instancesMutex());
+            auto& list = instances();
+            list.erase(std::remove(list.begin(), list.end(), this), list.end());
+        }
         clearTextures();
         if (context) gst_context_unref(context);
         if (gstDevice) gst_object_unref(gstDevice);
@@ -162,15 +177,26 @@ struct D3D12VideoInterop::Impl {
         invalidate();
         for (auto& slot : slots) if (slot.flight && fence->GetCompletedValue() < slot.flight) {
             const HRESULT hr = fence->SetEventOnCompletion(slot.flight, event);
+            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
             if (SUCCEEDED(hr)) {
                 while (fence->GetCompletedValue() < slot.flight) {
-                    WaitForSingleObject(event, 100);
+                    WaitForSingleObject(event, 50);
                     if (FAILED(device->GetDeviceRemovedReason())) break;
+                    if (std::chrono::steady_clock::now() >= deadline) {
+                        LOG_WARNING("D3D12VideoInterop", "discard() timed out waiting for copy fence completion; breaking wait");
+                        break;
+                    }
                 }
             } else {
                 // Event allocation failure does not imply GPU completion.
                 while (fence->GetCompletedValue() < slot.flight &&
-                    SUCCEEDED(device->GetDeviceRemovedReason())) Sleep(1);
+                    SUCCEEDED(device->GetDeviceRemovedReason())) {
+                    Sleep(1);
+                    if (std::chrono::steady_clock::now() >= deadline) {
+                        LOG_WARNING("D3D12VideoInterop", "discard() timed out waiting for copy fence completion; breaking wait");
+                        break;
+                    }
+                }
             }
         }
         retire();
@@ -178,6 +204,7 @@ struct D3D12VideoInterop::Impl {
     }
     void clearTextures() {
         discard();
+        fenceCache.clear();
         for (auto& slot : slots) {
             if (slot.texture) SDL_DestroyTexture(slot.texture);
             slot = Slot{};
@@ -267,12 +294,16 @@ struct D3D12VideoInterop::Impl {
         ComPtr<ID3D12Device> owner;
         check(producer->GetDevice(IID_PPV_ARGS(&owner)), "Get producer fence device");
         if (owner.Get() == device.Get()) return producer;
+        auto it = fenceCache.find(producer);
+        if (it != fenceCache.end()) return it->second.imported;
         HANDLE handle = nullptr;
         check(owner->CreateSharedHandle(producer, nullptr, GENERIC_ALL, nullptr, &handle), "Share producer fence");
         ComPtr<ID3D12Fence> imported;
         const HRESULT hr = device->OpenSharedHandle(handle, IID_PPV_ARGS(&imported));
         CloseHandle(handle);
         check(hr, "Import producer fence");
+        if (fenceCache.size() >= 32) fenceCache.clear();
+        fenceCache[producer] = CachedFence{producer, imported};
         return imported;
     }
     SDL_Texture* prepare(GstSample* sample) {
@@ -459,24 +490,39 @@ D3D12VideoInterop::D3D12VideoInterop(SDL_Renderer* renderer) : impl_(std::make_u
 D3D12VideoInterop::~D3D12VideoInterop() = default;
 bool D3D12VideoInterop::available() const { return impl_->ready && !impl_->failedSubmission; }
 const char* D3D12VideoInterop::reason() const { return impl_->error.c_str(); }
-void D3D12VideoInterop::discardFrames() { impl_->discard(); }
-void D3D12VideoInterop::invalidateFrame() { impl_->invalidate(); }
+void D3D12VideoInterop::discardFrames() {
+    SDL_assert(SDL_IsMainThread());
+    impl_->discard();
+}
+void D3D12VideoInterop::invalidateFrame() {
+    SDL_assert(SDL_IsMainThread());
+    impl_->invalidate();
+}
 bool D3D12VideoInterop::deferred() const { return impl_->deferred; }
 SDL_Texture* D3D12VideoInterop::currentTexture() const { return available() ? impl_->current : nullptr; }
 SDL_Texture* D3D12VideoInterop::copy(GstSample* sample) {
+    SDL_assert(SDL_IsMainThread());
     try { return impl_->prepare(sample); }
     catch (const std::exception& e) { impl_->error = e.what(); return nullptr; }
 }
 bool D3D12VideoInterop::beginFrame(SDL_Renderer* renderer) {
+    SDL_assert(SDL_IsMainThread());
     bool ok = true;
-    for (auto* instance : Impl::instances())
-        if (instance->renderer == renderer) ok = instance->submit() && ok;
+    std::vector<Impl*> toSubmit;
+    {
+        std::lock_guard<std::mutex> lock(Impl::instancesMutex());
+        for (auto* instance : Impl::instances())
+            if (instance->renderer == renderer) toSubmit.push_back(instance);
+    }
+    for (auto* instance : toSubmit)
+        ok = instance->submit() && ok;
     return ok;
 }
 SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence* producer,
     uint64_t value, unsigned yPlane, unsigned uvPlane, int width, int height,
     SDL_Colorspace color, std::shared_ptr<void> owner,
     int cropX, int cropY, int cropW, int cropH) {
+    SDL_assert(SDL_IsMainThread());
     auto& p = *impl_;
     p.deferred = false;
     if (!available()) return nullptr;

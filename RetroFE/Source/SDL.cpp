@@ -2652,11 +2652,48 @@ bool SDL::renderCopyFImpl(GeometryBatch* batch, SDL_Texture* texture, float alph
         indexCount);
 }
 
-bool SDL::beginVideoFrame(SDL_Renderer* renderer) {
+namespace {
+const char* const PROP_VIDEO_FLUSHED = "retrofe.video.flushed_for_frame";
+}
+
+bool SDL::flushVideoRenderer(SDL_Renderer* renderer) {
+    if (!renderer) return false;
+    const SDL_PropertiesID props = SDL_GetRendererProperties(renderer);
+    if (props && SDL_GetBooleanProperty(props, PROP_VIDEO_FLUSHED, false)) {
+        return true;
+    }
+    if (!SDL_FlushRenderer(renderer)) {
+        return false;
+    }
+    if (props) {
+        SDL_SetBooleanProperty(props, PROP_VIDEO_FLUSHED, true);
+    }
+    return true;
+}
+
+void SDL::invalidateVideoRendererFlush(SDL_Renderer* renderer) {
+    if (!renderer) return;
+    const SDL_PropertiesID props = SDL_GetRendererProperties(renderer);
+    if (props) {
+        SDL_SetBooleanProperty(props, PROP_VIDEO_FLUSHED, false);
+    }
+}
+
+bool SDL::startVideoFrame(SDL_Renderer* renderer) {
+    if (!renderer) return false;
+    invalidateVideoRendererFlush(renderer);
+    return true;
+}
+
+bool SDL::submitVideoFrame(SDL_Renderer* renderer) {
+    if (!renderer) return false;
 #ifdef RETROFE_HAVE_D3D12
     return D3D12VideoInterop::beginFrame(renderer);
 #else
-    (void)renderer;
     return true;
 #endif
+}
+
+bool SDL::beginVideoFrame(SDL_Renderer* renderer) {
+    return startVideoFrame(renderer) && submitVideoFrame(renderer);
 }

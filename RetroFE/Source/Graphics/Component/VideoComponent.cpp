@@ -350,11 +350,8 @@ bool VideoComponent::update(float dt) {
         }
     }
 
-    if (instanceReady_) videoInst_->updateFrame();
-
     // --- ATOMIC SNAPSHOT PULL ---
     const auto snap = videoInst_->getSnapshot();
-	currentSnapshot_ = snap; // Store it for draw() and future logic
 
     // Wait for the pipeline to spin up
     if (!instanceReady_ || !snap.pipelineReady || snap.hasError) {
@@ -448,6 +445,24 @@ void VideoComponent::freeGraphicsMemory() {
     }
 
     videoInst_.reset();
+}
+
+void VideoComponent::prepareVideoFrame() {
+    if (!videoInst_ || !currentPage_ || !instanceReady_) {
+        return;
+    }
+
+    if (videoInst_->isPipelineReady()) {
+        videoInst_->updateFrame();
+        if (!dimensionsUpdated_) {
+            const auto dimensions = videoInst_->getDimensions();
+            if (dimensions.w > 0 && dimensions.h > 0) {
+                baseViewInfo.ImageWidth = static_cast<float>(dimensions.w);
+                baseViewInfo.ImageHeight = static_cast<float>(dimensions.h);
+                dimensionsUpdated_ = true;
+            }
+        }
+    }
 }
 
 void VideoComponent::draw() {

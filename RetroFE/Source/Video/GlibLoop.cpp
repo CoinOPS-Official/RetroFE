@@ -231,18 +231,18 @@ guint GlibLoop::addBusWatch(GstBus* bus, GstBusFunc func, gpointer user_data, GD
         return 0;
     }
 
-    auto pr = std::make_shared<std::promise<guint>>();
-    auto fut = pr->get_future();
-
-    gst_object_ref(bus); // <--- Keep it alive for the jump
-
-    invoke([bus, func, user_data, notify, pr, priority]() mutable {
-        guint id = gst_bus_add_watch_full(bus, priority, func, user_data, notify);
-        pr->set_value(id);
-        gst_object_unref(bus); // <--- Done with it
-        }, priority);
-
-    return fut.get();
+    // Attach directly to our context. Dispatch still happens on the GLib
+    // thread, while pipeline creation never waits for a busy bus loop.
+    GSource* source = gst_bus_create_watch(bus);
+    if (!source) {
+        if (notify && user_data) notify(user_data);
+        return 0;
+    }
+    g_source_set_priority(source, priority);
+    g_source_set_callback(source, reinterpret_cast<GSourceFunc>(func), user_data, notify);
+    const guint id = g_source_attach(source, context());
+    g_source_unref(source);
+    return id;
 }
 
 void GlibLoop::removeSource(guint sourceId) {

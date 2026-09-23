@@ -1589,6 +1589,26 @@ void Page::cleanup() {
 }
 
 
+void Page::prepareVideoFrames(int monitor) {
+	for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
+		for (Component* c : LayerComponents_[i]) {
+			if (c && c->baseViewInfo.Monitor == monitor) {
+				c->prepareVideoFrame();
+			}
+		}
+		for (const auto& menuList : menus_) {
+			for (ScrollingList const* const menu : menuList) {
+				if (!menu) continue;
+				for (Component* c : menu->getComponents()) {
+					if (c && c->baseViewInfo.Layer == i && c->baseViewInfo.Monitor == monitor) {
+						c->prepareVideoFrame();
+					}
+				}
+			}
+		}
+	}
+}
+
 void Page::draw(int monitor) {
 	for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
 		// Draw all components in this layer for the given monitor

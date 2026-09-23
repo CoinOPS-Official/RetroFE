@@ -36,10 +36,9 @@ std::shared_ptr<IVideo> VideoFactory::createVideo(int monitor, int numLoops, boo
         return nullptr;
     }
 
-    // Since instance is now a shared_ptr, use -> instead of .
     if (!instance->initialize()) {
         LOG_ERROR("VideoFactory", "Failed to initialize video from VideoPool");
-        // No need to delete - shared_ptr will handle cleanup
+        VideoPool::releaseVideo(instance, monitor, listId);
         return nullptr;
     }
 

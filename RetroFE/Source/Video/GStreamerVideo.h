@@ -41,6 +41,7 @@ using NativeVideoInterop = D3D11VideoInterop;
 #include <mutex>
 #include <deque>
 #include <unordered_map>
+#include <functional>
 
 extern "C" {
 #if (__APPLE__)
@@ -69,6 +70,7 @@ enum class PipelineLifecycle {
     Starting,  // URI set, waiting for initial preroll
     Ready,     // Preroll complete, active playback pipeline
     Draining,  // Asynchronously settling the retained pipeline to PAUSED/READY
+    Stopping,  // NULL teardown is running on the control pool
     Failed     // Hard failure
 };
 
@@ -164,6 +166,8 @@ public:
 
     static void enablePlugin(const std::string& pluginName);
     static void disablePlugin(const std::string& pluginName);
+    static void waitForControlTasks();
+    static void dispose(GStreamerVideo* video);
 
 private:
     bool openMedia(const std::string& file, bool cpuFallback);
@@ -196,8 +200,21 @@ private:
     // New requests received while one is active replace desiredRetargetFile_
     // and are started only after the current transition reaches its first frame.
     void scheduleUriPump();
-    void runUriPumpOnGlib();
+    void runUriPumpOnControl();
+    void enqueueControl(std::function<void()> task);
+    void drainControlQueue();
+    bool beginStop(bool preservePendingOpen);
+    void stopOnControl();
+    void finishStopOnMain();
+    bool publishLifecycleUnlessStopping(PipelineLifecycle state);
+    std::mutex controlMutex_;
+    std::deque<std::function<void()>> controlTasks_;
+    bool controlQueueRunning_ = false;
+    bool disposing_ = false; // Main thread only.
+    std::string pendingOpenAfterStop_; // Main thread only.
+    bool pendingOpenCpuFallback_ = false;
     bool acceptRetargetVideoSample(uint64_t epoch);
+    bool acceptRetargetAudioOnly(uint64_t epoch);
     bool shouldDiscardRetargetAudio(uint64_t epoch) const;
     void resetRetargetState();
 
@@ -315,6 +332,7 @@ private:
     static GstFlowReturn on_new_preroll(GstAppSink* sink, gpointer user_data);
     static GstFlowReturn on_new_sample(GstAppSink* sink, gpointer user_data);
     static GstFlowReturn on_audio_new_sample(GstAppSink* sink, gpointer user_data);
+    static gboolean on_propose_allocation(GstAppSink* sink, GstQuery* query, gpointer user_data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
 

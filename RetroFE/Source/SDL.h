@@ -34,8 +34,15 @@ public:
     static bool deInitialize(bool fullShutdown = false );
     static SDL_Renderer *getRenderer( int index );
     static std::string getRendererBackend(int index);
-    // Submit queued native video transfers before recording any frame draws.
+    // Reset the per-frame renderer flush token before preparing video frames.
+    static bool startVideoFrame(SDL_Renderer* renderer);
+    // Submit all queued native video transfers before recording any frame draws.
+    static bool submitVideoFrame(SDL_Renderer* renderer);
+    // Convenience entry point for callers that have already prepared video frames.
     static bool beginVideoFrame(SDL_Renderer* renderer);
+    // Coalesced renderer flush for interop video updates (flushes at most once per update phase).
+    static bool flushVideoRenderer(SDL_Renderer* renderer);
+    static void invalidateVideoRendererFlush(SDL_Renderer* renderer);
     static SDL_Window *getWindow( int index );
     static SDL_Texture* getRenderTarget(int index);
     static void drawFitBars(int monitor, int layoutWidth, int layoutHeight);

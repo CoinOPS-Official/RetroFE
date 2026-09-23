@@ -23,8 +23,31 @@
 #endif
 #include "VideoFactory.h"
 
+#include <SDL3/SDL.h>
 #include <algorithm>
 #include <chrono>
+
+namespace {
+struct SafeVideoDeleter {
+    void operator()(IVideo* v) const {
+        if (!v) return;
+        if (auto* gst = dynamic_cast<GStreamerVideo*>(v)) {
+            if (SDL_IsMainThread()) GStreamerVideo::dispose(gst);
+            else SDL_RunOnMainThread([](void* data) {
+                GStreamerVideo::dispose(static_cast<GStreamerVideo*>(data));
+            }, gst, false);
+            return;
+        }
+        if (SDL_IsMainThread()) {
+            delete v;
+        } else {
+            SDL_RunOnMainThread([](void* data) {
+                delete static_cast<IVideo*>(data);
+            }, v, false);
+        }
+    }
+};
+}
 
 VideoPool::PoolMap VideoPool::pools_{};
 bool VideoPool::shuttingDown_ = false;
@@ -33,10 +56,11 @@ bool VideoPool::shuttingDown_ = false;
 VideoPool::VideoPtr VideoPool::createNewVideo(int monitor, bool softOverlay) {
     VideoPtr vid;
 #ifdef RETROFE_HAVE_FFMPEG
-    if (VideoFactory::backend() == "ffmpeg") vid = std::make_shared<FFmpegVideo>(monitor);
+    if (VideoFactory::backend() == "ffmpeg")
+        vid = std::shared_ptr<FFmpegVideo>(new FFmpegVideo(monitor), SafeVideoDeleter{});
     else
 #endif
-        vid = std::make_shared<GStreamerVideo>(monitor);
+        vid = std::shared_ptr<GStreamerVideo>(new GStreamerVideo(monitor), SafeVideoDeleter{});
     if (!vid || vid->hasError()) return nullptr;
 
     vid->setSoftOverlay(softOverlay);
@@ -387,4 +411,3 @@ void VideoPool::reset(int monitor, int listId) {
         " active instance(s): " +
         poolStateStr(monitor, listId, pool));
 }
-

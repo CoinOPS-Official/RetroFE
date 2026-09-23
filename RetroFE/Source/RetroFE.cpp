@@ -39,6 +39,7 @@
 #include "Utility/ThreadPool.h"
 #include "Utility/Utils.h"
 #include "Video/VideoFactory.h"
+#include "Video/GStreamerVideo.h"
 #include "Video/VideoPool.h"
 #include <algorithm>
 #include <array>
@@ -179,7 +180,12 @@ void RetroFE::render() {
 		}
 
 
-		if (!SDL::beginVideoFrame(rr)) {
+		SDL::startVideoFrame(rr);
+		if (currentPage_) {
+			currentPage_->prepareVideoFrames(i);
+		}
+
+		if (!SDL::submitVideoFrame(rr)) {
 			bool deviceLost = false;
 #ifdef RETROFE_HAVE_D3D12
 			auto* d3d12Device = static_cast<ID3D12Device*>(
@@ -202,6 +208,7 @@ void RetroFE::render() {
 			}
 		}
 
+		// Native copies are submitted before queuing SDL drawing for this renderer.
 		if (!SDL_SetRenderTarget(rr, rt)) {
 			LOG_ERROR(
 				"SDL",
@@ -1165,6 +1172,7 @@ void RetroFE::freeGraphicsMemory() {
 		}
 
 		Component::clearSharedTextures();
+		GStreamerVideo::waitForControlTasks();
 		SDL::deInitialize();
 		input_.clearJoysticks();
 	}
@@ -1236,6 +1244,7 @@ bool RetroFE::deInitialize() {
 	Image::shutdownAsyncIO();
 	Component::clearSharedTextures();
 	VideoPool::shutdown();
+	GStreamerVideo::waitForControlTasks();
 	ThreadPool::getInstance().wait();
 	GlobalHiScores::getInstance().saveGlobalCacheToDisk();
 
@@ -1249,7 +1258,8 @@ bool RetroFE::deInitialize() {
 }
 
 void RetroFE::waitForAsyncAssets() {
-	// 1. Halt the main thread until all background image decodes are finished
+	// Include SDL reads that have not yet reached the decode pool.
+	Image::waitForAsyncLoads();
 	ThreadPool::getInstance().wait();
 
 	// 2. THE DELTA TIME CURE

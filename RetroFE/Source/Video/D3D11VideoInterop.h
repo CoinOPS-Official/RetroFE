@@ -25,6 +25,7 @@ public:
     void discardFrames();
     const char* reason() const;
     GstElement* wrapSink(GstElement* sink);
+    bool proposeAllocation(GstQuery*) { return false; }
 
     static const char* caps() {
         return "video/x-raw(memory:D3D11Memory),format=NV12;"

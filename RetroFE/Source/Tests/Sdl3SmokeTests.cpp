@@ -33,6 +33,7 @@
 #include <vector>
 #include <cstring>
 #include <cmath>
+#include <filesystem>
 
 std::vector<std::string> settingsFromCLI;
 
@@ -171,6 +172,13 @@ void renderChecks(Configuration& config, bool checkPixels) {
         require(layoutPixel(12, 16).r == 0, "Container clips left side");
         require(layoutPixel(20, 16).r >= 195, "Container preserves visible side");
     }
+    // Verify coalesced renderer flush contract
+    require(SDL::beginVideoFrame(renderer), "beginVideoFrame resets flush state");
+    require(SDL::flushVideoRenderer(renderer), "First video flush succeeds");
+    require(SDL::flushVideoRenderer(renderer), "Subsequent video flush in same update phase coalesces");
+    require(SDL::beginVideoFrame(renderer), "beginVideoFrame resets flush token for next frame");
+    require(SDL::flushVideoRenderer(renderer), "Subsequent frame video flush succeeds");
+
     batchChecks(renderer, texture);
     SDL_DestroyTexture(texture);
     require(SDL_SetRenderTarget(renderer, nullptr), "Restore backbuffer");
@@ -380,7 +388,45 @@ void mediaChecks(const std::string& assets) {
         require(video->getTexture() != nullptr, "Decode after instance reuse");
         if (Configuration::HardwareVideoAccel) require(video->usingGpuTexture(), "GPU interop survives instance reuse");
         video->stop();
+        if (dynamic_cast<GStreamerVideo*>(video.get())) {
+            require(!video->isReadyForReuse(), "NULL teardown remains pending until main-thread completion");
+            GStreamerVideo::waitForControlTasks();
+            require(video->isReadyForReuse(), "NULL teardown completes on control worker");
+        }
     }
+    // Start more instances than the per-monitor transition budget allows.
+    // Alternate playback intent so queued starts and active playback coexist.
+    if (VideoFactory::backend() == "gstreamer") {
+        std::vector<std::shared_ptr<IVideo>> videos;
+        const std::string file = assets + "/layouts/Arcades/video/splash.mp4";
+        for (int i = 0; i < 6; ++i) {
+            auto video = VideoFactory::createVideo(0, 0, false, -1, nullptr);
+            require(video && video->open(file), "Open mixed-state concurrent video");
+            videos.push_back(std::move(video));
+        }
+        const Uint64 deadline = SDL_GetTicks() + 10000;
+        while (SDL_GetTicks() < deadline) {
+            bool allReady = true;
+            for (size_t i = 0; i < videos.size(); ++i) {
+                auto& video = videos[i];
+                require(!video->hasError(), "Mixed-state decoder remains healthy");
+                video->updateFrame();
+                if (i % 2 == 0 && video->isPipelineReady()) video->resume();
+                allReady &= video->getTexture() != nullptr;
+            }
+            require(SDL::beginVideoFrame(SDL::getRenderer(0)), "Submit mixed-state video transfers");
+            if (allReady) break;
+            SDL_Delay(5);
+        }
+        for (size_t i = 0; i < videos.size(); ++i) {
+            require(videos[i]->getTexture() != nullptr, "Every mixed-state instance prerolls");
+            require(i % 2 == 0 ? videos[i]->isPlaying() : !videos[i]->isPlaying(),
+                "Mixed-state playback intent is preserved");
+            videos[i]->stop();
+        }
+        GStreamerVideo::waitForControlTasks();
+    }
+    GStreamerVideo::waitForControlTasks();
     GlibLoop::instance().stop();
 }
 }
@@ -596,6 +642,7 @@ void concurrentVideoChecks(const std::string& file) {
     }
     for (auto& video : videos) video->stop();
     videos.clear();
+    GStreamerVideo::waitForControlTasks();
     GlibLoop::instance().stop();
 }
 
@@ -622,13 +669,18 @@ void scrollingVideoStartupChecks(Configuration& config, const std::string& file)
         const auto deadline = SDL_GetTicks() + 10000;
         while (!video.isPlaying() && SDL_GetTicks() < deadline) {
             video.update(0.001f);
+            require(SDL::startVideoFrame(SDL::getRenderer(0)), "Start revealed startup frame");
+            video.prepareVideoFrame();
+            require(SDL::submitVideoFrame(SDL::getRenderer(0)), "Submit revealed startup frame");
             SDL_Delay(1);
         }
         require(video.isPlaying(), "List video starts when revealed");
         auto* renderer = SDL::getRenderer(0);
+        require(SDL::startVideoFrame(renderer), "Start revealed video frame");
+        video.prepareVideoFrame();
+        require(SDL::submitVideoFrame(renderer), "Submit revealed video frame");
         SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255);
         SDL_RenderClear(renderer);
-        require(SDL::beginVideoFrame(renderer), "Submit revealed video transfer");
         video.draw();
         const auto before = pixel(renderer, 16, 16);
         require(!(before.r == 255 && before.g == 0 && before.b == 255), "Video covers loading placeholder");
@@ -636,6 +688,9 @@ void scrollingVideoStartupChecks(Configuration& config, const std::string& file)
         require(video.recycleAsVideo(file, ""), "Same-file recycle retains playback");
         video.update(0.001f);
         require(video.isPlaying(), "Same-file recycle does not unload the active video");
+        require(SDL::startVideoFrame(renderer), "Start retained video frame");
+        video.prepareVideoFrame();
+        require(SDL::submitVideoFrame(renderer), "Submit retained video frame");
         SDL_RenderClear(renderer);
         video.draw();
         const auto retained = pixel(renderer, 16, 16);
@@ -656,58 +711,110 @@ void scrollingVideoStartupChecks(Configuration& config, const std::string& file)
     }
     VideoPool::cleanup(0, 9001);
     VideoPool::cleanup(0, 9002);
+    GStreamerVideo::waitForControlTasks();
     GlibLoop::instance().stop();
 }
 
-void imageAsyncIOChecks(Configuration& config, const std::string& commonPath) {
+void imageAsyncIOChecks(Configuration& config) {
     Page page(config, 64, 64);
-    const std::string img1 = commonPath + "/RetroFE.png";
-    const std::string img2 = commonPath + "/collections/Arcades/medium_artwork/logo/1941.png";
+    const auto directory = std::filesystem::temp_directory_path() /
+        ("retrofe-image-tests-" + std::to_string(SDL_GetPerformanceCounter()));
+    require(std::filesystem::create_directory(directory), "Create temporary image fixtures");
+    const auto redPath = (directory / "red.png").string();
+    const auto greenPath = (directory / "green.png").string();
+    const auto corruptPath = (directory / "corrupt.png").string();
+    const auto missingPath = (directory / "missing.png").string();
+    auto saveImage = [&](const std::string& path, Uint8 red, Uint8 green) {
+        auto* surface = SDL_CreateSurface(8, 8, SDL_PIXELFORMAT_RGBA32);
+        require(surface != nullptr, "Create async image fixture");
+        require(SDL_FillSurfaceRect(surface, nullptr, SDL_MapSurfaceRGBA(surface, red, green, 0, 255)), "Fill async image fixture");
+        require(IMG_SavePNG(surface, path.c_str()), "Save async image fixture");
+        SDL_DestroySurface(surface);
+    };
+    saveImage(redPath, 255, 0);
+    saveImage(greenPath, 0, 255);
+    require(SDL_SaveFile(corruptPath.c_str(), "not an image", 12), "Save corrupt fixture");
+    auto settle = [&](Image& image) {
+        // Each pass must cover I/O and decoding; another pass allows alt-file submission.
+        for (int pass = 0; pass < 3 && !image.isGraphicsReadyForFirstRender(); ++pass) {
+            Image::waitForAsyncLoads();
+            image.pumpGraphicsPreparation();
+        }
+        require(image.isGraphicsReadyForFirstRender(), "Async image reached a terminal state");
+    };
+    auto checkColor = [&](Image& image, bool red) {
+        require(image.hasLoadedImage(), "Image successfully decoded and uploaded");
+        require(image.baseViewInfo.ImageWidth == 8 && image.baseViewInfo.ImageHeight == 8, "Image dimensions match fixture");
+        image.baseViewInfo.X = image.baseViewInfo.Y = 0;
+        image.baseViewInfo.Width = image.baseViewInfo.Height = 64;
+        image.baseViewInfo.Alpha = 1;
+        auto* renderer = SDL::getRenderer(0);
+        auto* target = SDL::getRenderTarget(0);
+        require(SDL_SetRenderTarget(renderer, target), "Select image-test target");
+        require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) && SDL_RenderClear(renderer), "Clear image-test target");
+        image.draw();
+        const auto color = pixel(renderer, target->w / 2, target->h / 2);
+        require(red ? color.r > 245 && color.g < 10 : color.g > 245 && color.r < 10,
+            "Async image renders expected fixture pixels");
+        require(SDL_SetRenderTarget(renderer, nullptr), "Restore image-test target");
+    };
+    {
+        Image image(redPath, "", page);
+        Image shared(redPath, "", page);
+        image.allocateGraphicsMemory();
+        shared.allocateGraphicsMemory();
+        settle(image);
+        settle(shared);
+        checkColor(image, true);
+        checkColor(shared, true);
+        require(image.recycleAsImage(greenPath), "Recycle image");
+        settle(image);
+        checkColor(image, false);
+        Image cached(greenPath, "", page);
+        cached.allocateGraphicsMemory();
+        require(cached.hasLoadedImage(), "Cached image is immediately available");
 
-    // 1. Asynchronous load of static PNG via SDL_AsyncIO
-    Image image(img1, "", page, 0, false, true);
-    image.allocateGraphicsMemory();
-    Uint64 start = SDL_GetTicks();
-    while (!image.isGraphicsReadyForFirstRender() && SDL_GetTicks() - start < 3000) {
-        image.pumpGraphicsPreparation();
-        SDL_Delay(5);
+        for (const auto& badPath : {missingPath, corruptPath}) {
+            Image fallback(badPath, redPath, page, 0, false, false);
+            fallback.allocateGraphicsMemory();
+            settle(fallback);
+            checkColor(fallback, true);
+            Image failed(badPath, "", page);
+            failed.allocateGraphicsMemory();
+            settle(failed);
+            require(!failed.hasLoadedImage(), "Failed image is not reported as successfully loaded");
+        }
+
+        // Drop/recycle consumers before completion; obsolete work must not replace new artwork.
+        Image recycled(redPath, "", page, 0, false, false);
+        recycled.allocateGraphicsMemory();
+        for (int i = 0; i < 30; ++i) {
+            Image abandoned(i % 2 ? redPath : greenPath, "", page, 0, false, false);
+            abandoned.allocateGraphicsMemory();
+            recycled.recycleAsImage(i % 2 ? redPath : greenPath);
+        }
+        recycled.recycleAsImage(greenPath);
+        settle(recycled);
+        checkColor(recycled, false);
+
+        // Shutdown with live requests, then restart without waiting on broken promises.
+        Image pending(corruptPath, "", page, 0, false, false);
+        pending.allocateGraphicsMemory();
+        Image::shutdownAsyncIO();
+        settle(pending);
+        Image restarted(redPath, "", page, 0, false, false);
+        restarted.allocateGraphicsMemory();
+        settle(restarted);
+        checkColor(restarted, true);
     }
-    require(image.isGraphicsReadyForFirstRender(), "Image loaded via SDL_AsyncIO within 3 seconds");
-
-    // 2. Draw verification
-    SDL_RenderClear(SDL::getRenderer(0));
-    image.draw();
-    SDL_RenderPresent(SDL::getRenderer(0));
-
-    // 3. Recycle transition
-    require(image.recycleAsImage(img2, ""), "Recycle image to new file");
-    start = SDL_GetTicks();
-    while (!image.isGraphicsReadyForFirstRender() && SDL_GetTicks() - start < 3000) {
-        image.pumpGraphicsPreparation();
-        SDL_Delay(5);
-    }
-    require(image.isGraphicsReadyForFirstRender(), "Recycled image loaded via SDL_AsyncIO");
-
-    // 4. Cache hit on identical path
-    Image image2(img2, "", page, 0, false, true);
-    image2.allocateGraphicsMemory();
-    require(image2.isGraphicsReadyForFirstRender(), "Subsequent load hits textureCache immediately");
-
-    // 5. Fallback on nonexistent file
-    Image imageFallback("nonexistent_artwork_12345.png", img1, page, 0, false, true);
-    imageFallback.allocateGraphicsMemory();
-    start = SDL_GetTicks();
-    while (!imageFallback.isGraphicsReadyForFirstRender() && SDL_GetTicks() - start < 3000) {
-        imageFallback.pumpGraphicsPreparation();
-        SDL_Delay(5);
-    }
-    require(imageFallback.isGraphicsReadyForFirstRender(), "Missing file correctly falls back to alternate file");
-
+    Image::shutdownAsyncIO();
     Image::cleanupTextureCache();
+    for (const auto& path : {redPath, greenPath, corruptPath}) std::filesystem::remove(path);
+    std::filesystem::remove(directory);
 }
 
 // Optional measurement mode: keep the renderer identical for CPU/GPU decode.
-// Report observations rather than asserting machine-dependent timing limits.
+// Measure through SDL_RenderPresent and report observations without timing limits.
 void startupBenchmark(const std::string& file, const std::string& alternate) {
     gst_init(nullptr, nullptr);
     GlibLoop::instance().start();
@@ -724,19 +831,34 @@ void startupBenchmark(const std::string& file, const std::string& alternate) {
             int remaining = count;
             while (remaining && SDL_GetTicksNS() - batchStart < 15000000000ULL) {
                 SDL_PumpEvents();
+                SDL_Renderer* renderer = SDL::getRenderer(0);
+                require(SDL::startVideoFrame(renderer), "Start benchmark video frame");
                 for (int i = 0; i < count; ++i) {
                     if (ready[i]) continue;
                     videos[i]->updateFrame();
-                    require(SDL::beginVideoFrame(SDL::getRenderer(0)), "Submit benchmark transfers");
                     require(!videos[i]->hasError(), "Benchmark decode succeeds");
-                    if (videos[i]->getTexture()) {
-                        ready[i] = SDL_GetTicksNS();
-                        --remaining;
-                        require(videos[i]->usingGpuTexture() == Configuration::HardwareVideoAccel,
-                            "Benchmark uses requested decode path");
-                        std::cout << "STARTUP count=" << count << " trial=" << trial
-                            << " video=" << i << " ms=" << double(ready[i] - starts[i]) / 1e6 << '\n';
-                    }
+                }
+                require(SDL::submitVideoFrame(renderer), "Submit benchmark transfers");
+                require(SDL_SetRenderTarget(renderer, nullptr), "Select benchmark window");
+                require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) && SDL_RenderClear(renderer),
+                    "Clear benchmark frame");
+                std::vector<bool> presented(count, false);
+                for (int i = 0; i < count; ++i) {
+                    auto* texture = videos[i]->getTexture();
+                    if (!texture) continue;
+                    require(videos[i]->usingGpuTexture() == Configuration::HardwareVideoAccel,
+                        "Benchmark uses requested decode path");
+                    SDL_FRect destination{float((i % 4) * 48), float((i / 4) * 48), 48.f, 48.f};
+                    require(SDL_RenderTexture(renderer, texture, nullptr, &destination), "Render benchmark video");
+                    presented[i] = !ready[i];
+                }
+                require(SDL_RenderPresent(renderer), "Present benchmark video frame");
+                const Uint64 presentedAt = SDL_GetTicksNS();
+                for (int i = 0; i < count; ++i) if (presented[i]) {
+                    ready[i] = presentedAt;
+                    --remaining;
+                    std::cout << "STARTUP count=" << count << " trial=" << trial
+                        << " video=" << i << " ms=" << double(ready[i] - starts[i]) / 1e6 << '\n';
                 }
                 if (remaining) SDL_Delay(1);
             }
@@ -757,6 +879,7 @@ void startupBenchmark(const std::string& file, const std::string& alternate) {
         }
         for (auto& video : videos) video->stop();
     }
+    GStreamerVideo::waitForControlTasks();
     GlibLoop::instance().stop();
 }
 
@@ -799,7 +922,7 @@ int main(int argc, char** argv) {
     renderChecks(config, true);
     inputChecks(config);
     if (argc > 1) mediaChecks(argv[1]);
-    if (argc > 1) imageAsyncIOChecks(config, argv[1]);
+    imageAsyncIOChecks(config);
     ffmpegContractChecks();
 #ifdef RETROFE_HAVE_D3D12
     deferredNativeChecks();

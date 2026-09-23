@@ -11,6 +11,7 @@ public:
     bool available() const;
     void configure(GstElement* pipeline);
     GstElement* wrapSink(GstElement* sink);
+    bool proposeAllocation(GstQuery*) { return false; }
     void discardFrames();
     SDL_Texture* copy(GstSample* sample);
     const char* reason() const;

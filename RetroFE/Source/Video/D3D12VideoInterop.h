@@ -18,6 +18,7 @@ public:
     const char* reason() const;
     void configure(GstElement* pipeline);
     GstElement* wrapSink(GstElement* sink) { return sink; }
+    bool proposeAllocation(GstQuery*) { return false; }
     SDL_Texture* copy(GstSample* sample);
     // Decoder-neutral entry point. Resource must belong to SDL's device, be
     // NV12, be in COMMON once producer/value is reached, and remain alive

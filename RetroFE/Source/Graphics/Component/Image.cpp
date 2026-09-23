@@ -4,7 +4,8 @@
 #include "../../Utility/Log.h"
 #include <mutex>
 #include <thread>
-#include <atomic>
+#include <condition_variable>
+#include <deque>
 #include <SDL3/SDL_asyncio.h>
 
 // -------------------- Static Storage --------------------
@@ -15,159 +16,196 @@ std::unordered_map<std::string, std::weak_ptr<Image::AsyncLoadTask>> Image::load
 static std::mutex g_ImageTextureCacheMutex;
 static std::mutex g_ImageLoadTaskMutex;
 
-using AsyncIOContext = Image::AsyncIOContext;
+// Own the complete read/decode pipeline. Pending requests retain only metadata;
+// at most three files can be reading or decoding at once. All Image/renderer
+// operations, including startup and shutdown, remain on the main thread.
+struct Image::AsyncIOState {
+    struct Request {
+        std::string path;
+        std::shared_ptr<std::promise<AsyncLoadResult>> promise;
+        std::weak_ptr<AsyncLoadTask> consumer;
+    };
 
-static SDL_AsyncIOQueue* s_asyncIOQueue = nullptr;
-static std::thread s_asyncIOThread;
-static std::atomic<bool> s_asyncIORunning{false};
-static std::mutex s_asyncIOMutex;
-static std::atomic<uint64_t> s_nextTaskId{0};
-static std::unordered_map<uint64_t, std::shared_ptr<AsyncIOContext>> s_activeTasks;
+    SDL_AsyncIOQueue* queue = nullptr;
+    std::thread worker;
+    std::mutex mutex;
+    std::condition_variable changed;
+    std::deque<std::shared_ptr<Request>> pending;
+    std::unordered_map<void*, std::shared_ptr<Request>> reading;
+    size_t inFlight = 0;
+    bool stopping = false;
+    static constexpr size_t maxInFlight = 3;
 
-Image::AsyncLoadResult Image::decompressImageMemory(void* buffer, Uint64 bytes) {
-	AsyncLoadResult res;
-	if (!buffer || bytes == 0) return res;
+    void finish(const std::shared_ptr<Request>& request, AsyncLoadResult result = {}) {
+        request->promise->set_value(std::move(result));
+        std::lock_guard<std::mutex> lock(mutex);
+        --inFlight;
+        changed.notify_all();
+        if (queue) SDL_SignalAsyncIOQueue(queue);
+    }
 
-	try {
-		SDL_IOStream* rw = SDL_IOFromConstMem(buffer, static_cast<size_t>(bytes));
-		if (rw) {
-			if (IMG_isGIF(rw) || IMG_isWEBP(rw)) {
-				IMG_Animation* anim = IMG_LoadAnimation_IO(rw, 1);
-				if (anim) {
-					res.w = anim->w;
-					res.h = anim->h;
-					for (int i = 0; i < anim->count; ++i) {
-						SDL_Surface* conv = SDL_ConvertSurface(
-							anim->frames[i], SDL_PIXELFORMAT_RGBA32);
-						if (conv) {
-							res.animatedSurfaces.emplace_back(conv, SurfaceDeleter());
-							res.frameDelays.push_back(
-								(anim->delays && anim->delays[i] > 0)
-								? anim->delays[i] : 100);
-						}
-					}
-					IMG_FreeAnimation(anim);
-					res.success = !res.animatedSurfaces.empty();
-				}
-			}
-			else {
-				SDL_Surface* s = IMG_Load_IO(rw, 1);
-				if (s) {
-					res.staticSurface = SharedSurface(s, SurfaceDeleter());
-					res.w = s->w;
-					res.h = s->h;
-					res.success = true;
-				}
-			}
-		}
-	}
-	catch (...) {
-		res = {};
-	}
-	return res;
+    void decode(const std::shared_ptr<Request>& request, void* buffer = nullptr, Uint64 bytes = 0) {
+        // Retain file memory with the job, including enqueue failure paths.
+        auto data = std::shared_ptr<void>(buffer, SDL_free);
+        try {
+            (void)ThreadPool::getInstance().enqueue([this, request, data, bytes] {
+                AsyncLoadResult result;
+                bool abandoned;
+                {
+                    std::lock_guard<std::mutex> lock(mutex);
+                    abandoned = stopping || request->consumer.expired();
+                }
+                if (!abandoned) {
+                    SDL_IOStream* stream = data
+                        ? SDL_IOFromConstMem(data.get(), static_cast<size_t>(bytes))
+                        : SDL_IOFromFile(request->path.c_str(), "rb");
+                    result = Image::decodeImage(stream);
+                }
+                finish(request, std::move(result));
+            });
+        } catch (...) {
+            finish(request);
+        }
+    }
+
+    void run() {
+        for (;;) {
+            std::shared_ptr<Request> next;
+            {
+                std::unique_lock<std::mutex> lock(mutex);
+                if (stopping) {
+                    for (auto& request : pending) request->promise->set_value({});
+                    pending.clear();
+                }
+                if (pending.empty() && inFlight == 0) {
+                    changed.notify_all();
+                    if (stopping) return;
+                    changed.wait(lock, [this] { return stopping || !pending.empty(); });
+                    continue;
+                }
+                if (!pending.empty() && inFlight < maxInFlight) {
+                    next = std::move(pending.front());
+                    pending.pop_front();
+                    ++inFlight;
+                }
+            }
+            if (next) {
+                if (next->consumer.expired()) {
+                    finish(next);
+                } else if (!queue) {
+                    decode(next); // Portable fallback if queue creation failed.
+                } else {
+                    reading.emplace(next.get(), next);
+                    if (!SDL_LoadFileAsync(next->path.c_str(), queue, next.get())) {
+                        reading.erase(next.get());
+                        decode(next); // Submission failure need not discard valid artwork.
+                    }
+                }
+                continue;
+            }
+            if (queue) {
+                SDL_AsyncIOOutcome outcome{};
+                if (SDL_WaitAsyncIOResult(queue, &outcome, 50)) {
+                    auto it = reading.find(outcome.userdata);
+                    if (it != reading.end()) {
+                        auto request = std::move(it->second);
+                        reading.erase(it);
+                        if (outcome.result == SDL_ASYNCIO_COMPLETE &&
+                            outcome.buffer && outcome.bytes_transferred > 0) {
+                            decode(request, outcome.buffer, outcome.bytes_transferred);
+                        } else {
+                            SDL_free(outcome.buffer);
+                            finish(request);
+                        }
+                    } else {
+                        SDL_free(outcome.buffer);
+                    }
+                }
+            } else {
+                std::unique_lock<std::mutex> lock(mutex);
+                changed.wait(lock, [this] { return inFlight == 0 || (!pending.empty() && inFlight < maxInFlight); });
+            }
+        }
+    }
+
+    void stop() {
+        {
+            std::lock_guard<std::mutex> lock(mutex);
+            stopping = true;
+            changed.notify_all();
+            if (queue) SDL_SignalAsyncIOQueue(queue);
+        }
+        // The worker exits only after reads AND dispatched decodes finish.
+        if (worker.joinable()) worker.join();
+        if (queue) SDL_DestroyAsyncIOQueue(queue);
+        queue = nullptr;
+    }
+    ~AsyncIOState() { stop(); }
+};
+
+Image::AsyncIOState& Image::asyncIOState() {
+    // Ensure the pool outlives this service during static destruction.
+    (void)ThreadPool::getInstance();
+    static AsyncIOState state;
+    return state;
 }
 
-void Image::asyncIOWorker() {
-	while (s_asyncIORunning.load(std::memory_order_relaxed)) {
-		SDL_AsyncIOOutcome outcome{};
-		if (SDL_WaitAsyncIOResult(s_asyncIOQueue, &outcome, 100)) {
-			if (!s_asyncIORunning.load(std::memory_order_relaxed)) {
-				if (outcome.buffer) {
-					SDL_free(outcome.buffer);
-				}
-				break;
-			}
-
-			uint64_t taskId = reinterpret_cast<uint64_t>(outcome.userdata);
-			std::shared_ptr<AsyncIOContext> ctx;
-			{
-				std::lock_guard<std::mutex> lock(s_asyncIOMutex);
-				auto it = s_activeTasks.find(taskId);
-				if (it != s_activeTasks.end()) {
-					ctx = std::move(it->second);
-					s_activeTasks.erase(it);
-				}
-			}
-
-			if (!ctx) {
-				if (outcome.buffer) {
-					SDL_free(outcome.buffer);
-				}
-				continue;
-			}
-
-			if (outcome.result == SDL_ASYNCIO_COMPLETE && outcome.buffer && outcome.bytes_transferred > 0) {
-				void* buf = outcome.buffer;
-				Uint64 bytes = outcome.bytes_transferred;
-
-				try {
-					(void)ThreadPool::getInstance().enqueue([ctx, buf, bytes]() mutable {
-						Image::AsyncLoadResult res = Image::decompressImageMemory(buf, bytes);
-						SDL_free(buf);
-
-						ctx->promise->set_value(std::move(res));
-						ctx->task.reset();
-						Image::pruneExpiredLoadTask(ctx->path);
-					});
-				}
-				catch (...) {
-					SDL_free(buf);
-					Image::AsyncLoadResult res{};
-					res.success = false;
-					ctx->promise->set_value(std::move(res));
-					ctx->task.reset();
-					Image::pruneExpiredLoadTask(ctx->path);
-				}
-			}
-			else {
-				if (outcome.buffer) {
-					SDL_free(outcome.buffer);
-				}
-				Image::AsyncLoadResult res{};
-				res.success = false;
-				ctx->promise->set_value(std::move(res));
-				ctx->task.reset();
-				Image::pruneExpiredLoadTask(ctx->path);
-			}
-		}
-	}
+Image::AsyncLoadResult Image::decodeImage(SDL_IOStream* stream) {
+    AsyncLoadResult result;
+    if (!stream) return result;
+    std::unique_ptr<SDL_IOStream, decltype(&SDL_CloseIO)> input(stream, SDL_CloseIO);
+    try {
+        if (IMG_isGIF(stream) || IMG_isWEBP(stream)) {
+            std::unique_ptr<IMG_Animation, decltype(&IMG_FreeAnimation)> animation(
+                IMG_LoadAnimation_IO(stream, false), IMG_FreeAnimation);
+            if (!animation) return result;
+            result.w = animation->w;
+            result.h = animation->h;
+            for (int i = 0; i < animation->count; ++i) {
+                SharedSurface frame(SDL_ConvertSurface(animation->frames[i], SDL_PIXELFORMAT_RGBA32), SurfaceDeleter());
+                if (!frame) return {}; // Never silently drop animation frames.
+                result.animatedSurfaces.push_back(std::move(frame));
+                result.frameDelays.push_back(animation->delays && animation->delays[i] > 0
+                    ? animation->delays[i] : 100);
+            }
+            result.success = !result.animatedSurfaces.empty();
+        } else {
+            result.staticSurface = SharedSurface(IMG_Load_IO(stream, false), SurfaceDeleter());
+            if (result.staticSurface) {
+                result.w = result.staticSurface->w;
+                result.h = result.staticSurface->h;
+                result.success = true;
+            }
+        }
+    } catch (...) {
+        return {};
+    }
+    return result;
 }
 
 void Image::ensureAsyncIO() {
-	std::lock_guard<std::mutex> lock(s_asyncIOMutex);
-	if (!s_asyncIOQueue && !s_asyncIORunning.load(std::memory_order_relaxed)) {
-		s_asyncIOQueue = SDL_CreateAsyncIOQueue();
-		if (s_asyncIOQueue) {
-			s_asyncIORunning.store(true, std::memory_order_relaxed);
-			s_asyncIOThread = std::thread(asyncIOWorker);
-		}
-	}
+    auto& state = asyncIOState();
+    if (!state.worker.joinable()) {
+        state.stopping = false;
+        state.queue = SDL_CreateAsyncIOQueue();
+        try {
+            state.worker = std::thread([&state] { state.run(); });
+        } catch (...) {
+            if (state.queue) SDL_DestroyAsyncIOQueue(state.queue);
+            state.queue = nullptr;
+            throw;
+        }
+    }
+}
+
+void Image::waitForAsyncLoads() {
+    auto& state = asyncIOState();
+    std::unique_lock<std::mutex> lock(state.mutex);
+    state.changed.wait(lock, [&state] { return state.pending.empty() && state.inFlight == 0; });
 }
 
 void Image::shutdownAsyncIO() {
-	if (s_asyncIORunning.exchange(false)) {
-		if (s_asyncIOQueue) {
-			SDL_SignalAsyncIOQueue(s_asyncIOQueue);
-		}
-		if (s_asyncIOThread.joinable()) {
-			s_asyncIOThread.join();
-		}
-		if (s_asyncIOQueue) {
-			SDL_DestroyAsyncIOQueue(s_asyncIOQueue);
-			s_asyncIOQueue = nullptr;
-		}
-
-		std::lock_guard<std::mutex> lock(s_asyncIOMutex);
-		for (auto& [id, ctx] : s_activeTasks) {
-			try {
-				AsyncLoadResult res{};
-				res.success = false;
-				ctx->promise->set_value(std::move(res));
-			}
-			catch (...) {}
-		}
-		s_activeTasks.clear();
-	}
+    asyncIOState().stop();
 }
 
 Image::PathCache::CacheKey Image::PathCache::getKey(const std::string& filePath, int monitor) {
@@ -188,7 +226,6 @@ void Image::ensureCacheReserved() {
 			loadingTasks_.reserve(512);
 		}
 	});
-	ensureAsyncIO();
 }
 
 // -------------------- Lifecycle --------------------
@@ -268,88 +305,24 @@ bool Image::startAsyncLoad(const std::string& path) {
 	loadTask_ = task;
 	loadingTasks_[path] = task;
 
-	ensureAsyncIO();
-
-	if (s_asyncIOQueue) {
-		uint64_t taskId = ++s_nextTaskId;
-		auto ctx = std::make_shared<AsyncIOContext>();
-		ctx->id = taskId;
-		ctx->path = path;
-		ctx->promise = promise;
-		ctx->task = task;
-
-		{
-			std::lock_guard<std::mutex> lock(s_asyncIOMutex);
-			s_activeTasks[taskId] = ctx;
-		}
-
-		if (!SDL_LoadFileAsync(path.c_str(), s_asyncIOQueue, reinterpret_cast<void*>(taskId))) {
-			{
-				std::lock_guard<std::mutex> lock(s_asyncIOMutex);
-				s_activeTasks.erase(taskId);
-			}
-			loadingTasks_.erase(path);
-			loadTask_.reset();
-			currentLoadingPath_.clear();
-			status_ = LoadStatus::Error;
-			return false;
-		}
-		return true;
-	}
-
-	try {
-		(void)ThreadPool::getInstance().enqueue([path, promise, task]() mutable {
-			AsyncLoadResult res;
-
-			try {
-				SDL_IOStream* rw = SDL_IOFromFile(path.c_str(), "rb");
-				if (rw) {
-					if (IMG_isGIF(rw) || IMG_isWEBP(rw)) {
-						IMG_Animation* anim = IMG_LoadAnimation_IO(rw, 1);
-						if (anim) {
-							res.w = anim->w;
-							res.h = anim->h;
-							for (int i = 0; i < anim->count; ++i) {
-								SDL_Surface* conv = SDL_ConvertSurface(
-									anim->frames[i], SDL_PIXELFORMAT_RGBA32);
-								if (conv) {
-									res.animatedSurfaces.emplace_back(conv, SurfaceDeleter());
-									res.frameDelays.push_back(
-										(anim->delays && anim->delays[i] > 0)
-										? anim->delays[i] : 100);
-								}
-							}
-							IMG_FreeAnimation(anim);
-							res.success = !res.animatedSurfaces.empty();
-						}
-					}
-					else {
-						SDL_Surface* s = IMG_Load_IO(rw, 1);
-						if (s) {
-							res.staticSurface = SharedSurface(s, SurfaceDeleter());
-							res.w = s->w;
-							res.h = s->h;
-							res.success = true;
-						}
-					}
-				}
-			}
-			catch (...) {
-				res = {};
-			}
-
-			promise->set_value(std::move(res));
-			task.reset();
-			pruneExpiredLoadTask(path);
-		});
-	}
-	catch (...) {
-		loadingTasks_.erase(path);
-		loadTask_.reset();
-		currentLoadingPath_.clear();
-		status_ = LoadStatus::Error;
-		return false;
-	}
+    try {
+        ensureAsyncIO();
+        auto request = std::make_shared<AsyncIOState::Request>();
+        request->path = path;
+        request->promise = promise;
+        request->consumer = task;
+        auto& state = asyncIOState();
+        std::lock_guard<std::mutex> lock(state.mutex);
+        state.pending.push_back(std::move(request));
+        state.changed.notify_all();
+        if (state.queue) SDL_SignalAsyncIOQueue(state.queue);
+    } catch (...) {
+        loadingTasks_.erase(path);
+        loadTask_.reset();
+        currentLoadingPath_.clear();
+        status_ = LoadStatus::Error;
+        return false;
+    }
 
 	return true;
 }

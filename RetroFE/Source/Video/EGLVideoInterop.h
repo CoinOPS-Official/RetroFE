@@ -25,9 +25,10 @@ public:
     bool available() const;
     void configure(GstElement*) {}
     GstElement* wrapSink(GstElement*);
+    bool proposeAllocation(GstQuery* query);
     SDL_Texture* copy(GstSample*);
     SDL_Texture* copy(const EGLDmaBufFrame&);
-    void discardFrames();
+    void discardFrames() noexcept;
     const char* reason() const;
     static const char* caps() { return "video/x-raw(memory:DMABuf),format=DMA_DRM"; }
     static SDL_PixelFormat pixelFormat() { return SDL_PIXELFORMAT_ABGR8888; }

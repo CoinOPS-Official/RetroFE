@@ -54,6 +54,7 @@ public:
 
 	virtual std::string_view filePath();
 	virtual bool update(float dt);
+	virtual void prepareVideoFrame() {}
 	virtual void draw();
 	void setTweens(const std::shared_ptr<AnimationEvents>& set);
 	virtual bool isPlaying();

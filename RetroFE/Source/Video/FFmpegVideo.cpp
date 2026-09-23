@@ -309,6 +309,7 @@ struct FFmpegVideo::Impl {
     bool valid = false, soft = false, logged = false;
     bool nativeDescriptionLogged = false;
     bool nativePending = false;
+    Uint64 nativePendingSinceNs = 0;
     bool needsFrame = true; // independent of the last frame retained across a loop
     bool perspective = false;
     std::array<Point2D, 4> corners{};
@@ -465,7 +466,7 @@ struct FFmpegVideo::Impl {
         error = false;
         eof = false;
         finished = false;
-        if (!keepFrame) { valid = false; nativePending = false; }
+        if (!keepFrame) { valid = false; nativePending = false; nativePendingSinceNs = 0; }
         needsFrame = true;
         videos.clear();
         audios.clear();
@@ -1651,17 +1652,13 @@ bool FFmpegVideo::hasFinishedLoops() const { return getSnapshot().hasFinishedLoo
 bool FFmpegVideo::hasVideoStream() const { return getSnapshot().hasVideoStream; }
 SDL_Texture *FFmpegVideo::getTexture() const {
 #ifdef RETROFE_HAVE_D3D12
-    if (impl_->interop && impl_->texture == impl_->gpuTexture) {
-        if (!impl_->interop->available()) return nullptr;
-        if (auto* current = impl_->interop->currentTexture())
-            return current;
-    }
     if (impl_->nativePending && impl_->interop) {
         auto* texture = impl_->interop->currentTexture();
         if (texture) SDL_SetTextureBlendMode(texture, impl_->soft ? softBlend : SDL_BLENDMODE_BLEND);
         return texture;
     }
-    if (impl_->interop && impl_->texture == impl_->gpuTexture && !impl_->interop->available()) return nullptr;
+    if (impl_->interop && impl_->valid && impl_->gpuTexture && impl_->texture == impl_->gpuTexture)
+        return impl_->interop->currentTexture();
 #endif
 #ifdef _WIN32
     if (impl_->interop11 && impl_->texture == impl_->gpuTexture && !impl_->interop11->available()) return nullptr;
@@ -1765,7 +1762,18 @@ void FFmpegVideo::updateFrame() {
             p.valid = true;
             p.needsFrame = false;
             p.nativePending = false;
+            p.nativePendingSinceNs = 0;
         } else {
+            constexpr Uint64 pendingTimeoutNs = 250000000ULL;
+            if (p.nativePendingSinceNs && SDL_GetTicksNS() - p.nativePendingSinceNs >= pendingTimeoutNs) {
+                LOG_WARNING("FFmpegVideo", "D3D12 native frame submission timed out after 250 ms; requesting a new frame");
+                p.interop->invalidateFrame();
+                p.nativePending = false;
+                p.nativePendingSinceNs = 0;
+                std::lock_guard lock(p.mutex);
+                p.needsFrame = true;
+                p.wake.notify_all();
+            }
             return;
         }
     }
@@ -1885,6 +1893,7 @@ void FFmpegVideo::updateFrame() {
             if (p.interop->deferred()) {
                 if (!p.interop->currentTexture()) {
                     p.nativePending = true;
+                    p.nativePendingSinceNs = SDL_GetTicksNS();
                     p.dim = {visibleW, visibleH};
                     std::lock_guard lock(p.mutex);
                     p.needsFrame = false;

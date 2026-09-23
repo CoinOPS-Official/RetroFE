@@ -1,5 +1,6 @@
 #include "EGLVideoInterop.h"
 #include "../Utility/Log.h"
+#include "../SDL.h"
 #include <EGL/egl.h>
 #include <EGL/eglext.h>
 #include <GLES2/gl2.h>
@@ -430,11 +431,14 @@ struct EGLVideoInterop::Impl {
             return;
 
         auto& frame = pending.front();
+        constexpr EGLuint64KHR timeoutNs = 500000000ULL; // 500ms bounded timeout
         const EGLint result = waitSync(display, frame.fence,
                                        EGL_SYNC_FLUSH_COMMANDS_BIT_KHR,
-                                       EGL_FOREVER_KHR);
-        if (result != EGL_CONDITION_SATISFIED_KHR)
+                                       timeoutNs);
+        if (result != EGL_CONDITION_SATISFIED_KHR) {
+            LOG_WARNING("EGLVideoInterop", "waitOldest() timed out or failed waiting for EGL sync fence; falling back to glFinish()");
             glFinish(); // failed wait recovery only
+        }
 
         destroySync(display, frame.fence);
         frame.fence = EGL_NO_SYNC_KHR;
@@ -613,24 +617,29 @@ const char* EGLVideoInterop::reason() const { return impl_->error.c_str(); }
 int EGLVideoInterop::width() const { return impl_->visibleWidth; }
 int EGLVideoInterop::height() const { return impl_->visibleHeight; }
 GstElement* EGLVideoInterop::wrapSink(GstElement* sink) {
-    auto* pad=gst_element_get_static_pad(sink,"sink");
-    // A query probe handles allocation independently of appsink callback ABI.
-    gst_pad_add_probe(pad,GST_PAD_PROBE_TYPE_QUERY_DOWNSTREAM,[](GstPad*,GstPadProbeInfo* info,gpointer) {
-        auto* query=GST_PAD_PROBE_INFO_QUERY(info);
-        if (GST_QUERY_TYPE(query)!=GST_QUERY_ALLOCATION) return GST_PAD_PROBE_OK;
-        if (!gst_query_find_allocation_meta(query,GST_VIDEO_META_API_TYPE,nullptr))
-            gst_query_add_allocation_meta(query,GST_VIDEO_META_API_TYPE,nullptr);
-        return GST_PAD_PROBE_HANDLED;
-    },nullptr,nullptr);
-    gst_object_unref(pad); return sink;
+    return sink;
 }
-void EGLVideoInterop::discardFrames() {
-    auto& p=*impl_; if (!p.ready) return;
+bool EGLVideoInterop::proposeAllocation(GstQuery* query) {
+    if (!gst_query_find_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr))
+        gst_query_add_allocation_meta(query, GST_VIDEO_META_API_TYPE, nullptr);
+    if (!gst_query_find_allocation_meta(query, GST_VIDEO_CROP_META_API_TYPE, nullptr))
+        gst_query_add_allocation_meta(query, GST_VIDEO_CROP_META_API_TYPE, nullptr);
+    return true;
+}
+void EGLVideoInterop::discardFrames() noexcept {
+    auto& p = *impl_;
+    if (!p.ready) return;
     p.lastColorDefaults.clear();
-    Context current(p.renderer,p.native);
-    SDL_FlushRenderer(p.renderer);
-    p.releaseDirectAfterFlush();
-    p.drainPending();
+    try {
+        if (!SDL_FlushRenderer(p.renderer)) {
+            LOG_WARNING("EGLVideoInterop", "SDL_FlushRenderer failed during discardFrames: " + std::string(SDL_GetError()));
+        }
+        Context current(p.renderer, p.native);
+        p.releaseDirectAfterFlush();
+        p.drainPending();
+    } catch (const std::exception& e) {
+        LOG_WARNING("EGLVideoInterop", "discardFrames exception: " + std::string(e.what()));
+    }
     // Keep output, wrapper, FBO and shader for compatible future media.
 }
 SDL_Texture* EGLVideoInterop::copy(GstSample* sample) { return copyFrame(sample, nullptr); }
@@ -649,8 +658,8 @@ SDL_Texture* EGLVideoInterop::copyFrame(GstSample* sample, const EGLDmaBufFrame*
         ensure(p.supports(frame),"EGL does not advertise this DRM format/modifier");
 
         // SDL3 always batches renderer work. Flush exactly once before touching
-        // the underlying GLES context directly.
-        SDL_FlushRenderer(p.renderer);
+        // the underlying GLES context directly. Coalesced per frame across videos.
+        ensure(SDL::flushVideoRenderer(p.renderer), "SDL_FlushRenderer failed");
 
         // Everything below this point is raw EGL/GL work. Snapshot SDL's GL
         // state immediately after flushing its batch so the whole interop

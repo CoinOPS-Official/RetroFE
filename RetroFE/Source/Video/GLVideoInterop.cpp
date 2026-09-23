@@ -1,5 +1,6 @@
 #include "GLVideoInterop.h"
 #include "../Utility/Log.h"
+#include "../SDL.h"
 #include <gst/gl/gl.h>
 #include <gst/gl/gstglfuncs.h>
 #ifdef RETROFE_GST_GL_EGL
@@ -101,7 +102,9 @@ struct GLVideoInterop::Impl {
         }
     }
     void clear() {
-        SDL_FlushRenderer(renderer);
+        if (!SDL_FlushRenderer(renderer)) {
+            LOG_WARNING("GLVideoInterop", "SDL_FlushRenderer failed during clear: " + std::string(SDL_GetError()));
+        }
         releaseDirect();
         retire(true);
         for (auto& slot : slots) {
@@ -207,7 +210,9 @@ void GLVideoInterop::discardFrames() {
     auto& p = *impl_;
     CurrentContext current(p.renderer, p.native);
     if (current.valid && gst_gl_context_activate(p.wrapped, TRUE)) {
-        SDL_FlushRenderer(p.renderer);
+        if (!SDL_FlushRenderer(p.renderer)) {
+            LOG_WARNING("GLVideoInterop", "SDL_FlushRenderer failed during discardFrames: " + std::string(SDL_GetError()));
+        }
         p.releaseDirect();
         p.retire(true);
         gst_gl_context_activate(p.wrapped, FALSE);
@@ -313,7 +318,10 @@ SDL_Texture* GLVideoInterop::copy(GstSample* sample) {
     CurrentContext current(p.renderer, p.native);
     if (!current.valid || !gst_gl_context_activate(p.wrapped, TRUE)) return nullptr;
     struct Deactivate { GstGLContext* context; ~Deactivate() { gst_gl_context_activate(context, FALSE); } } deactivate{p.wrapped};
-    SDL_FlushRenderer(p.renderer);
+    if (!SDL::flushVideoRenderer(p.renderer)) {
+        p.error = std::string("SDL_FlushRenderer failed: ") + SDL_GetError();
+        return nullptr;
+    }
     auto* gl = p.wrapped->gl_vtable;
     p.retire(p.pending.size() >= 4);
 

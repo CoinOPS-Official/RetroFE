@@ -61,6 +61,12 @@ public:
         return false;
     }
     GstElement* wrapSink(GstElement* sink) { return sink; }
+    bool proposeAllocation(GstQuery* query) {
+#ifdef RETROFE_HAVE_D3D12
+        if (d12_) return d12_->proposeAllocation(query);
+#endif
+        return d11_ ? d11_->proposeAllocation(query) : false;
+    }
     const char* caps() const {
 #ifdef RETROFE_HAVE_D3D12
         if (d12_) return D3D12VideoInterop::caps();
