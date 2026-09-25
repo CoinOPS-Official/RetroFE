@@ -144,6 +144,10 @@ bool SDL::initialize(Configuration& config) {
     int audioChannels = 2;
     bool hideMouse = false;
 
+#ifdef RETROFE_HAVE_D3D12
+    D3D12VideoInterop::configureDiagnostics();
+#endif
+
     SDL_SetHint(SDL_HINT_JOYSTICK_HIDAPI, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_ALLOW_BACKGROUND_EVENTS, "1");
     SDL_SetHint(SDL_HINT_JOYSTICK_THREAD, "1");
@@ -230,7 +234,9 @@ bool SDL::initialize(Configuration& config) {
 #endif
 
 #ifdef RETROFE_HAVE_D3D12
-    if (SDLRenderDriver.empty()) SDLRenderDriver = "direct3d12,direct3d11";
+    // Prefer the established Windows video interop path. D3D12 remains an
+    // explicit choice and a fallback on systems where D3D11 is unavailable.
+    if (SDLRenderDriver.empty()) SDLRenderDriver = "direct3d11,direct3d12";
 #endif
 
     if (SDLRenderDriver.empty()) {

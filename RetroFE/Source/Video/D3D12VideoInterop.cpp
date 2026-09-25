@@ -5,7 +5,9 @@
 #include <wrl/client.h>
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <exception>
 #include <limits>
 #include <mutex>
@@ -138,6 +140,7 @@ struct D3D12VideoInterop::Impl {
                     << std::hex << static_cast<unsigned long>(reason) << ")";
                 error = msg.str();
                 LOG_ERROR("D3D12VideoInterop", error);
+                D3D12VideoInterop::logDeviceRemoval(device.Get());
             }
             failedSubmission = true;
             current = nullptr;
@@ -253,6 +256,7 @@ struct D3D12VideoInterop::Impl {
                 IID_PPV_ARGS(&slot.allocator)), "Create copy allocator");
             check(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
                 slot.allocator.Get(), nullptr, IID_PPV_ARGS(&slot.commands)), "Create copy list");
+            slot.commands->SetName(L"RetroFE NV12 video copy");
             check(slot.commands->Close(), "Close initial copy list");
         }
         // SDL 3.4.12 FlushRenderer only records its D3D12 list. This one-pixel
@@ -310,6 +314,7 @@ struct D3D12VideoInterop::Impl {
         deferred = false;
         if (!ready || failedSubmission) return nullptr;
         retire();
+        if (failedSubmission) return nullptr;
         auto* buffer = gst_sample_get_buffer(sample);
         GstVideoInfo info{};
         if (!buffer || !gst_video_info_from_caps(&info, gst_sample_get_caps(sample)) ||
@@ -367,7 +372,11 @@ struct D3D12VideoInterop::Impl {
     }
     bool submit() {
         retire();
-        if (failedSubmission) return true; // Inactive/degraded interop does not fail current frame
+        if (failedSubmission) {
+            // A removed device must reach the caller before it records more SDL
+            // D3D12 commands. Other interop failures can still use CPU fallback.
+            return !device || SUCCEEDED(device->GetDeviceRemovedReason());
+        }
         try {
             for (auto& slot : slots) if (slot.pending) {
                 if (slot.producerFence) {
@@ -481,6 +490,7 @@ struct D3D12VideoInterop::Impl {
                 error = msg.str();
             }
             LOG_ERROR("D3D12VideoInterop", error);
+            if (FAILED(reason)) D3D12VideoInterop::logDeviceRemoval(device.Get());
             return FAILED(reason) ? false : true;
         }
     }
@@ -517,6 +527,60 @@ bool D3D12VideoInterop::beginFrame(SDL_Renderer* renderer) {
     for (auto* instance : toSubmit)
         ok = instance->submit() && ok;
     return ok;
+}
+void D3D12VideoInterop::configureDiagnostics() {
+    const char* enabled = std::getenv("RETROFE_D3D12_DRED");
+    if (!enabled || enabled[0] != '1' || enabled[1] != '\0') return;
+    ComPtr<ID3D12DeviceRemovedExtendedDataSettings> settings;
+    const HRESULT hr = D3D12GetDebugInterface(IID_PPV_ARGS(&settings));
+    if (FAILED(hr)) {
+        std::ostringstream message;
+        message << "DRED unavailable (0x" << std::hex << static_cast<unsigned long>(hr) << ")";
+        LOG_WARNING("D3D12VideoInterop", message.str());
+        return;
+    }
+    settings->SetAutoBreadcrumbsEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    settings->SetPageFaultEnablement(D3D12_DRED_ENABLEMENT_FORCED_ON);
+    LOG_INFO("D3D12VideoInterop", "DRED breadcrumbs and page-fault reporting enabled for new D3D12 devices");
+}
+void D3D12VideoInterop::logDeviceRemoval(ID3D12Device* device) {
+    if (!device) return;
+    const HRESULT reason = device->GetDeviceRemovedReason();
+    if (SUCCEEDED(reason)) return;
+    static std::atomic_flag logged = ATOMIC_FLAG_INIT;
+    if (logged.test_and_set()) return;
+    {
+        std::ostringstream message;
+        message << "D3D12 device removed (0x" << std::hex << static_cast<unsigned long>(reason) << ")";
+        LOG_ERROR("D3D12VideoInterop", message.str());
+    }
+    ComPtr<ID3D12DeviceRemovedExtendedData1> dred;
+    if (FAILED(device->QueryInterface(IID_PPV_ARGS(&dred)))) {
+        LOG_WARNING("D3D12VideoInterop", "DRED 1.1 unavailable on this device");
+        return;
+    }
+    D3D12_DRED_AUTO_BREADCRUMBS_OUTPUT1 breadcrumbs{};
+    if (SUCCEEDED(dred->GetAutoBreadcrumbsOutput1(&breadcrumbs))) {
+        unsigned reported = 0;
+        for (auto* node = breadcrumbs.pHeadAutoBreadcrumbNode; node && reported < 32;
+             node = node->pNext, ++reported) {
+            std::ostringstream message;
+            message << "DRED queue=" << (node->pCommandQueueDebugNameA ? node->pCommandQueueDebugNameA : "unnamed")
+                << " list=" << (node->pCommandListDebugNameA ? node->pCommandListDebugNameA : "unnamed")
+                << " completed=" << (node->pLastBreadcrumbValue ? *node->pLastBreadcrumbValue : 0)
+                << '/' << node->BreadcrumbCount;
+            LOG_ERROR("D3D12VideoInterop", message.str());
+        }
+    }
+    D3D12_DRED_PAGE_FAULT_OUTPUT1 pageFault{};
+    if (SUCCEEDED(dred->GetPageFaultAllocationOutput1(&pageFault)) && pageFault.PageFaultVA) {
+        std::ostringstream message;
+        message << "DRED page fault VA=0x" << std::hex << pageFault.PageFaultVA;
+        if (auto* freed = pageFault.pHeadRecentFreedAllocationNode)
+            message << " recent-freed=" << (freed->ObjectNameA ? freed->ObjectNameA : "unnamed")
+                << " type=" << std::dec << freed->AllocationType;
+        LOG_ERROR("D3D12VideoInterop", message.str());
+    }
 }
 SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence* producer,
     uint64_t value, unsigned yPlane, unsigned uvPlane, int width, int height,

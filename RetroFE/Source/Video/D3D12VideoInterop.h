@@ -5,6 +5,7 @@
 #include <memory>
 struct ID3D12Resource;
 struct ID3D12Fence;
+struct ID3D12Device;
 
 // All methods except the GStreamer context callback run on the render thread.
 // copy()/copyNative() prepare a frame; beginFrame() submits transfers before SDL draws.
@@ -32,6 +33,9 @@ public:
     bool deferred() const;
     SDL_Texture* currentTexture() const; // only a successfully submitted presentation
     static bool beginFrame(SDL_Renderer* renderer);
+    // Opt-in GPU fault breadcrumbs; call before SDL creates its D3D12 device.
+    static void configureDiagnostics();
+    static void logDeviceRemoval(ID3D12Device* device);
     static const char* caps() {
         return "video/x-raw(memory:D3D12Memory),format=NV12;video/x-raw,format=NV12";
     }

@@ -70,6 +70,7 @@
 #include <Windows.h>
 #ifdef RETROFE_HAVE_D3D12
 #include <d3d12.h>
+#include "Video/D3D12VideoInterop.h"
 #endif
 #endif
 
@@ -193,6 +194,7 @@ void RetroFE::render() {
 									   SDL_PROP_RENDERER_D3D12_DEVICE_POINTER, nullptr));
 			if (d3d12Device && FAILED(d3d12Device->GetDeviceRemovedReason())) {
 				deviceLost = true;
+				D3D12VideoInterop::logDeviceRemoval(d3d12Device);
 			}
 #endif
 			if (deviceLost) {
@@ -369,12 +371,13 @@ void RetroFE::render() {
 			}
 		}
 
+		bool presented = false;
 		if (showFps_)
 		{
 			const uint64_t presentStartTicks =
 				SDL_GetPerformanceCounter();
 
-			SDL_RenderPresent(rr);
+			presented = SDL_RenderPresent(rr);
 
 			const uint64_t presentEndTicks =
 				SDL_GetPerformanceCounter();
@@ -388,7 +391,20 @@ void RetroFE::render() {
 		}
 		else
 		{
-			SDL_RenderPresent(rr);
+			presented = SDL_RenderPresent(rr);
+		}
+		if (!presented) {
+			LOG_ERROR("SDL", "RenderPresent failed: " + std::string(SDL_GetError()));
+#ifdef RETROFE_HAVE_D3D12
+			auto* d3d12Device = static_cast<ID3D12Device*>(
+				SDL_GetPointerProperty(SDL_GetRendererProperties(rr),
+					SDL_PROP_RENDERER_D3D12_DEVICE_POINTER, nullptr));
+			if (d3d12Device && FAILED(d3d12Device->GetDeviceRemovedReason()))
+				D3D12VideoInterop::logDeviceRemoval(d3d12Device);
+#endif
+			reboot_ = true;
+			setState(RETROFE_QUIT_REQUEST);
+			return;
 		}
 	}
 
