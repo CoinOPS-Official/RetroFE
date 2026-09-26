@@ -29,6 +29,7 @@
 #include "../Graphics/PageBuilder.h"
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
+#include <cmath>
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -146,8 +147,10 @@ void renderChecks(Configuration& config, bool checkPixels) {
     require(SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND), "Set alpha blend");
     // Borderless output can be larger than the requested 64x64 layout.
     auto layoutPixel = [&](int x, int y) {
-        auto* target = SDL_GetRenderTarget(renderer);
-        return pixel(renderer, x * target->w / 64, y * target->h / 64);
+        int outputW = 0, outputH = 0;
+        require(SDL_GetCurrentRenderOutputSize(renderer, &outputW, &outputH),
+            "Query current render output size");
+        return pixel(renderer, x * outputW / 64, y * outputH / 64);
     };
     ViewInfo view;
     SDL_FRect dest{8, 8, 16, 16};
@@ -217,7 +220,8 @@ void renderChecks(Configuration& config, bool checkPixels) {
     batchChecks(renderer, texture);
     SDL_DestroyTexture(texture);
     require(SDL_SetRenderTarget(renderer, nullptr), "Restore backbuffer");
-    require(SDL_RenderTexture(renderer, SDL::getRenderTarget(0), nullptr, nullptr), "Present target");
+    if (!SDL::usesDirectBackbuffer())
+        require(SDL_RenderTexture(renderer, SDL::getRenderTarget(0), nullptr, nullptr), "Present target");
     require(SDL_RenderPresent(renderer), "Present frame");
 }
 
@@ -323,6 +327,71 @@ void mediaChecks(const std::string& assets) {
         SDL_Renderer* renderer = SDL::getRenderer(0);
         require(renderer && SDL_SetRenderTarget(renderer, SDL::getRenderTarget(0)),
             "Select text test render target");
+        TTF_Font* gapOutline = TTF_CopyFont(mip->font);
+        require(gapOutline && TTF_SetFontOutline(gapOutline, 6),
+            "Prepare outlined font for letter offset check");
+        {
+            TextEngineAtlas gapAtlas(renderer, mip->font, gapOutline, 6,
+                {0, 0, 0, 255}, false);
+            float normalWidth = 0.f, adjustedWidth = 0.f, fullSizeWidth = 0.f;
+            require(gapAtlas.measure("YU", 0.5f, normalWidth) &&
+                gapAtlas.measure("YU", 0.5f, adjustedWidth, true) &&
+                adjustedWidth >= normalWidth,
+                "Minimum ink gap does not tighten downscaled outlined letters");
+            require(gapAtlas.measure("YU", 1.f, fullSizeWidth, true) &&
+                gapAtlas.measure("YU", 1.f, normalWidth) &&
+                fullSizeWidth == normalWidth,
+                "Letter offset leaves full-size shaping unchanged");
+            require(gapAtlas.draw("YU", 10, 10, 0.5f,
+                {255, 255, 255, 255}, true),
+                "Draw downscaled text with letter offset");
+        }
+        TTF_CloseFont(gapOutline);
+        FontManager arcadeFont(assets + "/layouts/Arcades/fonts/font.ttf", 65,
+            {255, 255, 255, 255}, true, 2, 0);
+        require(arcadeFont.initialize(), "Open active Arcades hiscore font");
+        auto* arcadeAtlas = arcadeFont.getTextEngineAtlas(
+            arcadeFont.getMipLevelForSize(65));
+        float arcadeNatural = 0.f, arcadeGuarded = 0.f;
+        require(arcadeAtlas && arcadeAtlas->measure("YURI", 0.75f, arcadeNatural) &&
+            arcadeAtlas->measure("YURI", 0.75f, arcadeGuarded, true) &&
+            arcadeGuarded == arcadeNatural,
+            "Arcades outline overlap does not widen separated letter fills");
+        FontManager robotoFont(assets + "/layouts/Arcades/fonts/RobotoCondensed-Bold.ttf", 65,
+            {255, 255, 255, 255}, true, 2, 0);
+        require(robotoFont.initialize(), "Open comparison Roboto Condensed font");
+        auto* robotoAtlas = robotoFont.getTextEngineAtlas(robotoFont.getMipLevelForSize(65));
+        float robotoNatural = 0.f, robotoGuarded = 0.f;
+        require(robotoAtlas && robotoAtlas->measure("UR", 0.75f, robotoNatural) &&
+            robotoAtlas->measure("UR", 0.75f, robotoGuarded, true) &&
+            robotoGuarded == robotoNatural,
+            "A pair with sufficient fill clearance keeps SDL_ttf spacing");
+        require(robotoAtlas->measure("YU", 0.75f, robotoNatural) &&
+            robotoAtlas->measure("YU", 0.75f, robotoGuarded, true) &&
+            robotoGuarded > robotoNatural,
+            "Only a pair with touching fill pixels gains spacing");
+        auto rightEdge = [&](TextEngineAtlas* atlas, const char* text, bool guard) {
+            require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0) && SDL_RenderClear(renderer) &&
+                atlas->draw(text, 1, 1, 0.5f, {255, 255, 255, 255}, guard),
+                "Draw active hiscore font for spacing comparison");
+            SDL_Surface* surface = SDL_RenderReadPixels(renderer, nullptr);
+            require(surface != nullptr, "Read active hiscore font pixels");
+            int right = -1;
+            for (int y = 0; y < surface->h; ++y) {
+                for (int x = 0; x < surface->w; ++x) {
+                    Uint8 r = 0, g = 0, b = 0, a = 0;
+                    require(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a),
+                        "Read active hiscore glyph pixel");
+                    if (r > 20 || g > 20 || b > 20) right = std::max(right, x);
+                }
+            }
+            SDL_DestroySurface(surface);
+            return right;
+        };
+        require(rightEdge(arcadeAtlas, "YU", true) == rightEdge(arcadeAtlas, "YU", false),
+            "Outline-only contact leaves Arcades YU at its shaped position");
+        require(rightEdge(robotoAtlas, "YU", true) > rightEdge(robotoAtlas, "YU", false),
+            "Touching Roboto fill pixels move the U away from the Y");
         require(SDL_RenderClear(renderer), "Clear for underline drawing");
         {
             TextEngineAtlas underlined(renderer, underlinedFont, nullptr, 0,
@@ -980,7 +1049,10 @@ void imageAsyncIOChecks(Configuration& config) {
         require(SDL_SetRenderTarget(renderer, target), "Select image-test target");
         require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) && SDL_RenderClear(renderer), "Clear image-test target");
         image.draw();
-        const auto color = pixel(renderer, target->w / 2, target->h / 2);
+        int outputW = 0, outputH = 0;
+        require(SDL_GetCurrentRenderOutputSize(renderer, &outputW, &outputH),
+            "Query image-test output size");
+        const auto color = pixel(renderer, outputW / 2, outputH / 2);
         require(red ? color.r > 245 && color.g < 10 : color.g > 245 && color.r < 10,
             "Async image renders expected fixture pixels");
         require(SDL_SetRenderTarget(renderer, nullptr), "Restore image-test target");
@@ -1110,8 +1182,78 @@ void startupBenchmark(const std::string& file, const std::string& alternate) {
     GlibLoop::instance().stop();
 }
 
+// Compare the same SDL_Renderer workload with and without the full-size
+// intermediate target. Present is included so queued GPU work is submitted.
+void compositeBenchmark(Configuration& config) {
+    constexpr int layoutW = 1920;
+    constexpr int layoutH = 1080;
+    constexpr int warmupFrames = 30;
+    constexpr int measuredFrames = 240;
+    config.setProperty("horizontal0", layoutW);
+    config.setProperty("vertical0", layoutH);
+
+    const char* order = SDL_getenv("RETROFE_BENCH_DIRECT_FIRST");
+    const bool directFirst = order && SDL_strcmp(order, "1") == 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        const bool direct = (pass == 0) == directFirst;
+        require(SDL_SetEnvironmentVariable(SDL_GetEnvironment(),
+            "RETROFE_DIRECT_BACKBUFFER", direct ? "1" : "0", true),
+            "Set composite benchmark render path");
+        require(SDL::initialize(config), "Initialize composite benchmark renderer");
+        SDL_Renderer* renderer = SDL::getRenderer(0);
+        require(renderer != nullptr, "Create composite benchmark renderer");
+        Uint32 pixels[16];
+        std::fill_n(pixels, 16, 0xffffffffu);
+        SDL_Texture* texture = SDL_CreateTexture(renderer, SDL_PIXELFORMAT_RGBA32,
+            SDL_TEXTUREACCESS_STATIC, 4, 4);
+        require(texture && SDL_UpdateTexture(texture, nullptr, pixels, 16),
+            "Create composite benchmark texture");
+        SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
+        std::vector<double> frameMs;
+        frameMs.reserve(measuredFrames);
+        const double tickToMs = 1000.0 / SDL_GetPerformanceFrequency();
+        for (int frame = 0; frame < warmupFrames + measuredFrames; ++frame) {
+            const Uint64 start = SDL_GetPerformanceCounter();
+            require(SDL_SetRenderTarget(renderer, SDL::getRenderTarget(0)),
+                "Select composite benchmark output");
+            require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) &&
+                SDL_RenderClear(renderer), "Clear composite benchmark output");
+            for (int i = 0; i < 120; ++i) {
+                ViewInfo view;
+                SDL_FRect destination{float((i % 15) * 128),
+                    float((i / 15) * 135), 128.f, 135.f};
+                require(SDL::renderCopyF(texture, 1.f, nullptr, &destination,
+                    view, layoutW, layoutH), "Draw composite benchmark quad");
+            }
+            if (!direct) {
+                require(SDL_SetRenderTarget(renderer, nullptr) &&
+                    SDL_RenderTexture(renderer, SDL::getRenderTarget(0), nullptr, nullptr),
+                    "Composite benchmark target");
+            }
+            require(SDL_RenderPresent(renderer), "Present composite benchmark frame");
+            if (frame >= warmupFrames)
+                frameMs.push_back((SDL_GetPerformanceCounter() - start) * tickToMs);
+        }
+        std::sort(frameMs.begin(), frameMs.end());
+        int outputW = 0, outputH = 0;
+        require(SDL_GetRenderOutputSize(renderer, &outputW, &outputH),
+            "Query composite benchmark output size");
+        const std::string result = std::string("COMPOSITE mode=") +
+            (direct ? "direct" : "offscreen") +
+            " backend=" + SDL_GetRendererName(renderer) +
+            " output=" + std::to_string(outputW) + 'x' + std::to_string(outputH) +
+            " median_ms=" + std::to_string(frameMs[frameMs.size() / 2]) +
+            " p95_ms=" + std::to_string(frameMs[frameMs.size() * 95 / 100]);
+        LOG_INFO("Benchmark", result);
+        std::cout << result << '\n';
+        SDL_DestroyTexture(texture);
+        require(SDL::deInitialize(true), "Shutdown composite benchmark renderer");
+    }
+}
+
 int main(int argc, char** argv) {
-    const bool hardware = argc > 2 && std::string(argv[2]) == "--hardware";
+    const bool composite = argc > 2 && std::string(argv[2]) == "--composite-benchmark";
+    const bool hardware = argc > 2 && (std::string(argv[2]) == "--hardware" || composite);
     const bool benchmark = argc > 3 && std::string(argv[3]) == "--startup-benchmark";
     if (!hardware && !benchmark) SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
 #ifdef _WIN32
@@ -1138,6 +1280,11 @@ int main(int argc, char** argv) {
     config.setProperty("hideMouse", false);
     config.setProperty("vSync", false);
     config.setProperty("layoutScaleMode", std::string("stretch"));
+    if (composite) {
+        compositeBenchmark(config);
+        Logger::deInitialize();
+        return EXIT_SUCCESS;
+    }
     if (benchmark) {
         require(SDL::initialize(config), "Initialize benchmark renderer");
         const std::string file = argc > 4 ? argv[4] : std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4";

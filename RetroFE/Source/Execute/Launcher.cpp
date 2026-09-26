@@ -456,16 +456,19 @@ bool Launcher::run(std::string collection, Item* collectionItem, Page* currentPa
             bool animateDuringGame = true;
             config_.getProperty(OPTION_ANIMATEDURINGGAME, animateDuringGame);
             if (animateDuringGame && multiple_display) {
+                const bool directBackbuffer = SDL::usesDirectBackbuffer();
                 for (int i = 0; i < SDL::getScreenCount(); ++i) {
                     SDL_Renderer* r = SDL::getRenderer(i);
                     SDL_Texture* t = SDL::getRenderTarget(i);
-                    if (!r || !t) continue;
+                    if (!r || (!directBackbuffer && !t)) continue;
                     SDL_SetRenderTarget(r, t);
                     SDL_SetRenderDrawColor(r, 0, 0, 0, 255);
                     SDL_RenderClear(r);
                     currentPage->draw(i);
-                    SDL_SetRenderTarget(r, nullptr);
-                    SDL_RenderTexture(r, t, nullptr, nullptr);
+                    if (!directBackbuffer) {
+                        SDL_SetRenderTarget(r, nullptr);
+                        SDL_RenderTexture(r, t, nullptr, nullptr);
+                    }
                     SDL_RenderPresent(r);
                 }
             }
@@ -1016,4 +1019,3 @@ bool Launcher::findFile(std::string& foundFilePath, std::string& foundFilename, 
 
 	return fileFound;
 }
-

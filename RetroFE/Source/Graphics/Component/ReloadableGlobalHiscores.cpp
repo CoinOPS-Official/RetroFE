@@ -870,9 +870,10 @@ void ReloadableGlobalHiscores::reloadTexture() {
         const float targetHeight = finalScale * font->getMaxHeight();
         const auto* mip = font->getMipLevelForHeight(targetHeight);
         if (!mip || mip->height <= 0) return;
+        const float glyphScale = targetHeight / mip->height;
         if (auto* engine = font->getTextEngineAtlas(mip))
-            engine->draw(text, x, std::round(y), targetHeight / mip->height,
-                baseViewInfo.textColor);
+            engine->draw(text, x, std::round(y), glyphScale,
+                baseViewInfo.textColor, glyphScale < 1.f);
     };
 
     auto measureTextWidthExact = [&](FontManager* font, const std::string& text,
@@ -884,7 +885,8 @@ void ReloadableGlobalHiscores::reloadTexture() {
         auto* engine = font->getTextEngineAtlas(mip);
         if (!engine) return 0.0f;
         float width = 0.0f;
-        return engine->measure(text, targetHeight / mip->height, width) ? width : 0.0f;
+        const float glyphScale = targetHeight / mip->height;
+        return engine->measure(text, glyphScale, width, glyphScale < 1.f) ? width : 0.0f;
     };
 
     // --- Column alignment helper ---

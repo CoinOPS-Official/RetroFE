@@ -4,9 +4,11 @@
 #include "../SDL.h"
 #include <SDL3_ttf/SDL_textengine.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iterator>
 #include <list>
+#include <limits>
 #include <string>
 #include <unordered_map>
 #include <utility>
@@ -39,10 +41,21 @@ public:
     TextEngineAtlas(const TextEngineAtlas&) = delete;
     TextEngineAtlas& operator=(const TextEngineAtlas&) = delete;
 
-    bool measure(const std::string& string, float scale, float& width) {
+    bool measure(const std::string& string, float scale, float& width,
+        bool ensureDownscaledFillGap = false) {
         CachedText* cached = getText(string);
         if (!cached) return false;
-        width = static_cast<float>(cached->width + (cached->hasGlyph ? 2 * outlinePx_ : 0)) * scale;
+        const float outlineWidth = cached->hasGlyph ? 2.f * outlinePx_ * scale : 0.f;
+        if (!ensureDownscaledFillGap || scale >= 1.f) {
+            width = cached->width * scale + outlineWidth;
+        } else {
+            if (!prepareFillGapOffsets(cached, scale)) return false;
+            width = 0.f;
+            for (size_t line = 0; line < cached->lineWidths.size(); ++line)
+                width = std::max(width, cached->lineWidths[line] * scale +
+                    cached->lineFillGapOffsets[line]);
+            width += outlineWidth;
+        }
         return true;
     }
 
@@ -52,18 +65,19 @@ public:
         TTF_Text* wrapped = TTF_CreateText(nullptr, font_, string.c_str(), string.size());
         if (!wrapped) return false;
         const int width = std::max(1, static_cast<int>(maxWidth / scale) - 2 * outlinePx_);
-        bool ok = TTF_SetTextWrapWidth(wrapped, width) && TTF_UpdateText(wrapped);
-        if (ok) {
+        auto collect = [&](int wrapWidth, std::vector<std::string>& result) {
+            result.clear();
+            if (!TTF_SetTextWrapWidth(wrapped, wrapWidth) || !TTF_UpdateText(wrapped))
+                return false;
             for (int i = 0; i < wrapped->num_lines; ++i) {
                 TTF_SubString line{};
-                if (!TTF_GetTextSubStringForLine(wrapped, i, &line)) {
-                    ok = false;
-                    break;
-                }
-                lines.emplace_back(string.substr(line.offset, line.length));
+                if (!TTF_GetTextSubStringForLine(wrapped, i, &line)) return false;
+                result.emplace_back(string.substr(line.offset, line.length));
             }
-            if (wrapped->num_lines == 0) lines.emplace_back();
-        }
+            if (wrapped->num_lines == 0) result.emplace_back();
+            return true;
+        };
+        bool ok = collect(width, lines);
         TTF_DestroyText(wrapped);
         return ok;
     }
@@ -81,17 +95,25 @@ public:
         return true;
     }
 
-    bool draw(const std::string& string, float x, float y, float scale, SDL_Color color) {
-        return drawImpl(string, x, y, scale, color, nullptr, 0, 0, nullptr);
+    bool draw(const std::string& string, float x, float y, float scale, SDL_Color color,
+        bool ensureDownscaledFillGap = false) {
+        return drawImpl(string, x, y, scale, color, nullptr, 0, 0, nullptr,
+            ensureDownscaledFillGap);
     }
 
     bool drawTransformed(const std::string& string, float x, float y, float scale,
         SDL_Color color, const ViewInfo& view, int layoutWidth, int layoutHeight,
-        const SDL_FRect* clip = nullptr) {
-        return drawImpl(string, x, y, scale, color, &view, layoutWidth, layoutHeight, clip);
+        const SDL_FRect* clip = nullptr, bool ensureDownscaledFillGap = false) {
+        return drawImpl(string, x, y, scale, color, &view, layoutWidth, layoutHeight, clip,
+            ensureDownscaledFillGap);
     }
 
 private:
+    // Only colored fill pixels need clearance. Outlines may touch or overlap.
+    // Antialiased fringe below this alpha is not a reliable visible collision.
+    static constexpr float minimumInkGapPx_ = 1.f;
+    static constexpr Uint8 visibleInkAlpha_ = 128;
+
     static bool SDLCALL createText(void*, TTF_Text* text) {
         text->internal->engine_text = text;
         return true;
@@ -103,7 +125,7 @@ private:
 
     bool drawImpl(const std::string& string, float x, float y, float scale,
         SDL_Color color, const ViewInfo* view, int layoutWidth, int layoutHeight,
-        const SDL_FRect* clip) {
+        const SDL_FRect* clip, bool ensureDownscaledFillGap) {
         CachedText* cached = getText(string);
         if (!cached || !renderer_) return false;
         TTF_TextData* data = cached->text->internal;
@@ -117,6 +139,8 @@ private:
         // Upload every missing glyph before emitting geometry. Updating an atlas
         // page while a batch references it would break draw ordering.
         if (!prepareGlyphs(cached)) return false;
+        const bool adjustSpacing = ensureDownscaledFillGap && scale < 1.f;
+        if (adjustSpacing && !prepareFillGapOffsets(cached, scale)) return false;
 
         GeometryBatch batch;
         const SDL_FColor fillTop{color.r / 255.f, color.g / 255.f,
@@ -161,9 +185,19 @@ private:
                 const auto& op = data->ops[i];
                 if (op.cmd == TTF_DRAW_COMMAND_FILL && !isOutline) {
                     if (!solidTexture_ && !createSolidTexture()) return false;
+                    int lineIndex = 0;
+                    if (adjustSpacing && !cached->lineY.empty()) {
+                        for (size_t line = 1; line < cached->lineY.size(); ++line) {
+                            if (op.fill.rect.y < cached->lineY[line]) break;
+                            lineIndex = static_cast<int>(line);
+                        }
+                    }
+                    const float extraWidth = adjustSpacing &&
+                        lineIndex < static_cast<int>(cached->lineFillGapOffsets.size())
+                        ? cached->lineFillGapOffsets[lineIndex] : 0.f;
                     const SDL_FRect dst{x + op.fill.rect.x * scale,
                         y + op.fill.rect.y * scale,
-                        op.fill.rect.w * scale, op.fill.rect.h * scale};
+                        op.fill.rect.w * scale + extraWidth, op.fill.rect.h * scale};
                     if (view) {
                         const SDL_Rect src{0, 0, 1, 1};
                         if (!SDL::appendCopyFGradient(batch, solidTexture_, view->Alpha,
@@ -177,8 +211,11 @@ private:
                 const Glyph& glyph = *(isOutline ? cached->outlineGlyphs[i] : cached->fillGlyphs[i]);
                 SDL_Texture* texture = atlas.pages[glyph.page].texture;
                 const float offset = isOutline ? static_cast<float>(outlinePx_) : 0.f;
+                const float spacingOffset = adjustSpacing &&
+                    i < static_cast<int>(cached->opFillGapOffsets.size())
+                    ? cached->opFillGapOffsets[i] : 0.f;
                 const SDL_FRect dst{
-                    x + (op.copy.dst.x - offset) * scale,
+                    x + (op.copy.dst.x - offset) * scale + spacingOffset,
                     y + (op.copy.dst.y - offset) * scale,
                     glyph.src.w * scale, glyph.src.h * scale};
                 if (clip && view && !view->hasReflection &&
@@ -215,7 +252,13 @@ private:
             return (std::hash<TTF_Font*>{}(key.font) << 1) ^ std::hash<Uint32>{}(key.index);
         }
     };
-    struct Glyph { size_t page = 0; SDL_Rect src{}; TTF_ImageType imageType = TTF_IMAGE_INVALID; };
+    struct InkRow { int left = -1; int right = -1; };
+    struct Glyph {
+        size_t page = 0;
+        SDL_Rect src{};
+        TTF_ImageType imageType = TTF_IMAGE_INVALID;
+        std::vector<InkRow> inkRows;
+    };
     struct CachedText {
         TTF_Text* text = nullptr;
         int width = 0;
@@ -223,6 +266,12 @@ private:
         bool ready = false;
         std::vector<const Glyph*> fillGlyphs;
         std::vector<const Glyph*> outlineGlyphs;
+        bool fillGapOffsetsReady = false;
+        float fillGapOffsetScale = 0.f;
+        std::vector<float> opFillGapOffsets;
+        std::vector<int> lineWidths;
+        std::vector<float> lineFillGapOffsets;
+        std::vector<int> lineY;
         std::list<std::string>::iterator lru;
     };
     struct Page {
@@ -235,6 +284,102 @@ private:
         std::vector<Page> pages;
         std::unordered_map<GlyphKey, Glyph, GlyphKeyHash> glyphs;
     };
+
+    float inkGap(const CachedText* cached, int previousOp, int currentOp,
+        float scale) const {
+        const TTF_TextData* data = cached->text->internal;
+        const auto& previous = data->ops[previousOp].copy;
+        const auto& current = data->ops[currentOp].copy;
+        const Glyph* previousGlyph = cached->fillGlyphs[previousOp];
+        const Glyph* currentGlyph = cached->fillGlyphs[currentOp];
+        if (!previousGlyph || !currentGlyph)
+            return std::numeric_limits<float>::infinity();
+
+        const int previousX = previous.dst.x;
+        const int previousY = previous.dst.y;
+        const int currentX = current.dst.x;
+        const int currentY = current.dst.y;
+        float gap = std::numeric_limits<float>::infinity();
+        // Row edges were recorded while each glyph entered the atlas. This
+        // checks actual ink on overlapping scanlines, not glyph rectangles.
+        for (size_t row = 0; row < previousGlyph->inkRows.size(); ++row) {
+            const auto& before = previousGlyph->inkRows[row];
+            if (before.left < 0) continue;
+            const int otherRow = previousY + static_cast<int>(row) - currentY;
+            if (otherRow < 0 || otherRow >= static_cast<int>(currentGlyph->inkRows.size()))
+                continue;
+            const auto& after = currentGlyph->inkRows[otherRow];
+            if (after.left < 0) continue;
+            gap = std::min(gap, static_cast<float>(currentX + after.left -
+                previousX - before.right) * scale);
+        }
+        return gap;
+    }
+
+    bool prepareFillGapOffsets(CachedText* cached, float scale) {
+        if (cached->fillGapOffsetsReady && cached->fillGapOffsetScale == scale) return true;
+        if (!prepareGlyphs(cached)) return false;
+        TTF_Text* text = cached->text;
+        TTF_TextData* data = text->internal;
+        const int lineCount = std::max(1, text->num_lines);
+        std::vector<std::vector<const TTF_SubString*>> visualLines(lineCount);
+        for (int i = 0; i < data->num_clusters; ++i) {
+            const auto& cluster = data->clusters[i];
+            if (cluster.length > 0 && cluster.line_index >= 0 &&
+                cluster.line_index < lineCount)
+                visualLines[cluster.line_index].push_back(&cluster);
+        }
+
+        cached->lineWidths.clear();
+        cached->lineFillGapOffsets.clear();
+        cached->lineY.clear();
+        cached->lineWidths.reserve(lineCount);
+        cached->lineFillGapOffsets.reserve(lineCount);
+        cached->lineY.reserve(lineCount);
+        cached->opFillGapOffsets.assign(data->num_ops, 0.f);
+        for (int lineIndex = 0; lineIndex < lineCount; ++lineIndex) {
+            auto& clusters = visualLines[lineIndex];
+            std::stable_sort(clusters.begin(), clusters.end(),
+                [](const TTF_SubString* a, const TTF_SubString* b) {
+                    return a->rect.x < b->rect.x;
+                });
+            std::vector<std::vector<int>> clusterOps(clusters.size());
+            for (int opIndex = 0; opIndex < data->num_ops; ++opIndex) {
+                const auto& op = data->ops[opIndex];
+                if (op.cmd != TTF_DRAW_COMMAND_COPY) continue;
+                for (size_t step = 0; step < clusters.size(); ++step) {
+                    if (op.copy.text_offset >= clusters[step]->offset &&
+                        op.copy.text_offset < clusters[step]->offset + clusters[step]->length) {
+                        clusterOps[step].push_back(opIndex);
+                        break;
+                    }
+                }
+            }
+            float offset = 0.f;
+            for (size_t step = 0; step < clusters.size(); ++step) {
+                // SDL_ttf clusters keep combining marks and ligatures together.
+                // Apply a gap only between separate clusters with one glyph each.
+                if (step > 0 &&
+                    clusterOps[step - 1].size() == 1 && clusterOps[step].size() == 1) {
+                    const float gap = inkGap(cached, clusterOps[step - 1][0],
+                        clusterOps[step][0], scale);
+                    if (std::isfinite(gap))
+                        offset += std::max(0.f, std::ceil(minimumInkGapPx_ - gap));
+                }
+                for (int opIndex : clusterOps[step])
+                    cached->opFillGapOffsets[opIndex] = offset;
+            }
+
+            TTF_SubString line{};
+            cached->lineWidths.push_back(text->num_lines == 1 ? cached->width :
+                (TTF_GetTextSubStringForLine(text, lineIndex, &line) ? line.rect.w : cached->width));
+            cached->lineFillGapOffsets.push_back(offset);
+            cached->lineY.push_back(line.rect.y);
+        }
+        cached->fillGapOffsetScale = scale;
+        cached->fillGapOffsetsReady = true;
+        return true;
+    }
 
     bool prepareGlyphs(CachedText* cached) {
         if (cached->ready) return true;
@@ -321,6 +466,21 @@ private:
         }
         const int w = surface->w;
         const int h = surface->h;
+        Glyph glyph;
+        glyph.imageType = imageType;
+        if (&atlas == &fill_) glyph.inkRows.resize(h);
+        // The CPU surface is available only during upload. Retain compact
+        // per-row ink edges so spacing never reads back an atlas texture.
+        for (int row = 0; row < h && &atlas == &fill_; ++row) {
+            const auto* pixels = reinterpret_cast<const Uint32*>(
+                static_cast<const Uint8*>(surface->pixels) + row * surface->pitch);
+            for (int col = 0; col < w; ++col) {
+                if ((pixels[col] >> 24) < visibleInkAlpha_) continue;
+                auto& ink = glyph.inkRows[row];
+                if (ink.left < 0) ink.left = col;
+                ink.right = col + 1;
+            }
+        }
         if (w + 2 > pageSize_ || h + 2 > pageSize_) {
             SDL_DestroySurface(surface);
             return SDL_SetError("Text engine glyph exceeds atlas page");
@@ -349,7 +509,9 @@ private:
         const bool uploaded = SDL_UpdateTexture(page.texture, &upload, pixels.data(), pitch);
         SDL_DestroySurface(surface);
         if (!uploaded) return false;
-        atlas.glyphs.emplace(key, Glyph{atlas.pages.size() - 1, src, imageType});
+        glyph.page = atlas.pages.size() - 1;
+        glyph.src = src;
+        atlas.glyphs.emplace(key, std::move(glyph));
         page.nextX += w + 1;
         page.rowHeight = std::max(page.rowHeight, h);
         return true;
@@ -378,6 +540,7 @@ private:
         outline_ = Atlas{};
         for (auto& entry : texts_) {
             entry.second.ready = false;
+            entry.second.fillGapOffsetsReady = false;
             entry.second.fillGlyphs.clear();
             entry.second.outlineGlyphs.clear();
         }

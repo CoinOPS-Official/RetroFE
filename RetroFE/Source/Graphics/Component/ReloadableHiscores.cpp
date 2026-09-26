@@ -48,7 +48,12 @@ namespace {
 		};
 	}
 
-	static float measureTextWidthExact(FontManager* font, const std::string& text, float scale) {
+	static void setAtlasTextColor(FontManager* font, SDL_Color color) {
+		if (font) font->setColor(color);
+	}
+
+	static float measureTextWidthExact(FontManager* font,
+		const std::string& text, float scale) {
 		if (!font || text.empty()) return 0.0f;
 		const float targetHeight = scale * font->getMaxHeight();
 		const auto* mip = font->getMipLevelForHeight(targetHeight);
@@ -56,11 +61,8 @@ namespace {
 		auto* engine = font->getTextEngineAtlas(mip);
 		if (!engine) return 0.0f;
 		float width = 0.0f;
-		return engine->measure(text, targetHeight / mip->height, width) ? width : 0.0f;
-	}
-
-	static void setAtlasTextColor(FontManager* font, SDL_Color color) {
-		if (font) font->setColor(color);
+		const float glyphScale = targetHeight / mip->height;
+		return engine->measure(text, glyphScale, width, glyphScale < 1.f) ? width : 0.0f;
 	}
 
 	static void renderAtlasText(SDL_Renderer* renderer, FontManager* font,
@@ -68,7 +70,7 @@ namespace {
 		float x, float y, float scale) {
 		if (!renderer || !font || !mip || text.empty()) return;
 		if (auto* engine = font->getTextEngineAtlas(mip))
-			engine->draw(text, x, std::round(y), scale, font->getColor());
+			engine->draw(text, x, std::round(y), scale, font->getColor(), scale < 1.f);
 	}
 
 } // namespace

@@ -169,16 +169,17 @@ void RetroFE::render() {
 	// With the overlay disabled this adds no extra performance-counter reads
 	// around Present and therefore remains effectively benign.
 	double presentWaitMsThisRender = 0.0;
+	const bool directBackbuffer = SDL::usesDirectBackbuffer();
 
 	// ---------------------------------------------------------
-	// 1. Clear render targets and draw the current page
+	// 1. Clear the selected output and draw the current page
 	// ---------------------------------------------------------
 
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
 		SDL_Renderer* rr = SDL::getRenderer(i);
 		SDL_Texture* rt = SDL::getRenderTarget(i);
 
-		if (!rr || !rt) {
+		if (!rr || (!directBackbuffer && !rt)) {
 			continue;
 		}
 
@@ -250,8 +251,7 @@ void RetroFE::render() {
 		}
 
 		/*
-		 * FPS overlay is intentionally not drawn into the virtual
-		 * layout render target anymore.
+		 * FPS overlay is drawn after the page and Fit masking.
 		 *
 		 * It is drawn directly to the physical backbuffer after
 		 * Fit-mode masking so it always remains visible.
@@ -259,19 +259,19 @@ void RetroFE::render() {
 	}
 
 	// ---------------------------------------------------------
-	// 2. Blit to backbuffer, mask Fit bars, draw HUD, present
+	// 2. Composite when enabled, mask Fit bars, draw HUD, present
 	// ---------------------------------------------------------
 
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
 		SDL_Renderer* rr = SDL::getRenderer(i);
 		SDL_Texture* rt = SDL::getRenderTarget(i);
 
-		if (!rr || !rt) {
+		if (!rr || (!directBackbuffer && !rt)) {
 			continue;
 		}
 
 
-		if (!SDL_SetRenderTarget(rr, nullptr)) {
+		if (!directBackbuffer && !SDL_SetRenderTarget(rr, nullptr)) {
 			LOG_ERROR(
 				"SDL",
 				"SetRenderTarget(backbuffer) failed: " +
@@ -283,11 +283,8 @@ void RetroFE::render() {
 			break;
 		}
 
-		/*
-		 * Copy the completed virtual-screen render target to the
-		 * physical output.
-		 */
-		if (!SDL_RenderTexture(
+		/* Copy the completed page only in the offscreen mode. */
+		if (!directBackbuffer && !SDL_RenderTexture(
 			rr,
 			rt,
 			nullptr,
@@ -310,8 +307,8 @@ void RetroFE::render() {
 		 * layoutScaleMode == Fit.
 		 *
 		 * Page owns the authoritative per-monitor virtual layout
-		 * dimensions. If currentPage_ is null, the render target was
-		 * already cleared to black, so no masking is necessary.
+		 * dimensions. If currentPage_ is null, the output was already
+		 * cleared to black, so no masking is necessary.
 		 *
 		 * Stretch -> drawFitBars() is a no-op.
 		 * Fill    -> drawFitBars() is a no-op.

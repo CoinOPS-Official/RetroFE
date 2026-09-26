@@ -37,6 +37,7 @@
 std::vector<SDL_Window*>    SDL::window_;
 std::vector<SDL_Renderer*>  SDL::renderer_;
 static std::vector<SDL_Texture*> renderTargets_;
+static bool directBackbuffer_ = false;
 std::vector<int>            SDL::displayWidth_;
 std::vector<int>            SDL::displayHeight_;
 std::vector<int>            SDL::windowWidth_;
@@ -310,6 +311,14 @@ bool SDL::initialize(Configuration& config) {
             : "stretch"
         )
     );
+
+    // Opt-in rendering experiment: draw the page directly to the window.
+    // The default path retains its full-size composite texture for comparison.
+    const char* directBackbuffer = SDL_getenv("RETROFE_DIRECT_BACKBUFFER");
+    directBackbuffer_ = directBackbuffer && SDL_strcmp(directBackbuffer, "1") == 0;
+    LOG_INFO("SDL", directBackbuffer_
+        ? "Render path: direct backbuffer (RETROFE_DIRECT_BACKBUFFER=1)"
+        : "Render path: offscreen composite");
 
     if (config.getProperty(OPTION_HIDEMOUSE, hideMouse))
         hideMouse ? SDL_HideCursor() : SDL_ShowCursor();
@@ -1173,7 +1182,7 @@ bool SDL::initialize(Configuration& config) {
             // Create offscreen compositing render target
             // -------------------------------------------------
 
-            {
+            if (!directBackbuffer_) {
                 SDL_Renderer* r =
                     renderer_[logicalScreen];
 
@@ -1425,8 +1434,13 @@ SDL_Window* SDL::getWindow(int index) {
 
 // current target to render into for this frame
 SDL_Texture* SDL::getRenderTarget(int index) {
+	if (directBackbuffer_) return nullptr;
 	if (renderTargets_.empty()) return nullptr;
 	return (index >= 0 && index < screenCount_ ? renderTargets_[index] : renderTargets_[0]);
+}
+
+bool SDL::usesDirectBackbuffer() {
+    return directBackbuffer_;
 }
 
 void SDL::drawFitBars(
