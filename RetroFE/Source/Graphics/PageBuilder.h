@@ -36,6 +36,8 @@ public:
     PageBuilder(const std::string& layoutKey, const std::string& layoutPage, Configuration &c, FontCache *fc, bool isMenu = false);
     virtual ~PageBuilder();
     Page *buildPage( const std::string& collectionName = "", bool defaultToCurrentLayout = false);
+    FontManager *addFont(const rapidxml::xml_node<> *component, const rapidxml::xml_node<> *defaults, int monitor);
+    void prepareTweensForFont(FontManager* font, const rapidxml::xml_node<>* node, bool usesLineHeight);
 
 private:
     std::string layoutKey;
@@ -49,13 +51,13 @@ private:
     int monitor_{ 0 };
     SDL_Color fontColor_;
     std::string fontName_;
+    std::string fallbackFontName_;
     int fontSize_{ 24 };
 	bool fontGradient_{ false };
 	int fontOutline_{ 0 };
     FontCache *fontCache_;
     bool isMenu_;
 
-    FontManager *addFont(const rapidxml::xml_node<> *component, const rapidxml::xml_node<> *defaults, int monitor);
     void loadReloadableImages(const rapidxml::xml_node<> *layout, const std::string& tagName, Page *page);
     float getVerticalAlignment(const rapidxml::xml_attribute<> *attribute, float valueIfNull) const;
     float getHorizontalAlignment(const rapidxml::xml_attribute<> *attribute, float valueIfNull) const;

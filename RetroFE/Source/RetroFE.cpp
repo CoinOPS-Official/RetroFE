@@ -31,6 +31,8 @@
 #include "Graphics/Page.h"
 #include "Graphics/PageBuilder.h"
 #include "Graphics/Component/Text.h"
+#include "Graphics/Font.h"
+#include "Graphics/TextEngineAtlas.h"
 #include "Sound/MusicPlayer.h"
 #include "Menu/Menu.h"
 #include "SDL.h"
@@ -336,38 +338,12 @@ void RetroFE::render() {
 		if (showFps_ &&
 			i == 0)
 		{
-			if (fpsOverlayTexture_)
+			if (debugTextAtlas_)
 			{
-				SDL_FRect dst{
-					20,
-					20,
-					static_cast<float>(fpsOverlayW_),
-					static_cast<float>(fpsOverlayH_)
-				};
-
-				SDL_RenderTexture(
-					rr,
-					fpsOverlayTexture_,
-					nullptr,
-					&dst
-				);
-			}
-
-			if (fpsStatsOverlayTexture_)
-			{
-				SDL_FRect statsDst{
-					20,
-					24.0f + static_cast<float>(fpsOverlayH_),
-					static_cast<float>(fpsStatsOverlayW_),
-					static_cast<float>(fpsStatsOverlayH_)
-				};
-
-				SDL_RenderTexture(
-					rr,
-					fpsStatsOverlayTexture_,
-					nullptr,
-					&statsDst
-				);
+				const SDL_Color yellow{255, 255, 0, 255};
+				debugTextAtlas_->draw(lastOverlayText_, 20, 20, 1.0f, yellow);
+				debugTextAtlas_->draw(lastStatsOverlayText_, 20,
+					24.0f + static_cast<float>(fpsOverlayH_), 1.0f, yellow);
 			}
 		}
 
@@ -692,6 +668,11 @@ void RetroFE::render() {
 
 			SDL_Renderer* renderer0 =
 				SDL::getRenderer(0);
+			if (debugFont_ && renderer0 &&
+				!debugTextAtlas_) {
+				debugTextAtlas_ = new TextEngineAtlas(renderer0, debugFont_, nullptr,
+					0, {0, 0, 0, 255}, false);
+			}
 
 			if (renderer0) {
 				SDL_GetCurrentRenderOutputSize(
@@ -754,96 +735,16 @@ void RetroFE::render() {
 				);
 			}
 
-			// Only swap the texture if the string actually changed.
+			// Measure only when the displayed values change.
 			if (lastOverlayText_ != overlayText) {
-				lastOverlayText_ =
-					overlayText;
-
-				if (fpsOverlayTexture_) {
-					SDL_DestroyTexture(
-						fpsOverlayTexture_
-					);
-
-					fpsOverlayTexture_ =
-						nullptr;
-				}
-
-				if (debugFont_) {
-					SDL_Color color{
-						255,
-						255,
-						0,
-						255
-					};
-
-					SDL_Surface* surf =
-						TTF_RenderText_Solid(
-							debugFont_,
-							overlayText,
-							0,
-							color
-						);
-
-					if (surf) {
-						if (renderer0) {
-							fpsOverlayTexture_ =
-								SDL_CreateTextureFromSurface(
-									renderer0,
-									surf
-								);
-
-							fpsOverlayW_ =
-								surf->w;
-
-							fpsOverlayH_ =
-								surf->h;
-						}
-
-						SDL_DestroySurface(surf);
-					}
-				}
+				lastOverlayText_ = overlayText;
+				fpsOverlayH_ = debugFont_ ? TTF_GetFontHeight(debugFont_) : 0;
 			}
 
 			// Second line: rolling busy-work distribution.
 			if (lastStatsOverlayText_ != statsText) {
 				lastStatsOverlayText_ = statsText;
 
-				if (fpsStatsOverlayTexture_) {
-					SDL_DestroyTexture(fpsStatsOverlayTexture_);
-					fpsStatsOverlayTexture_ = nullptr;
-				}
-
-				if (debugFont_) {
-					SDL_Color color{
-						255,
-						255,
-						0,
-						255
-					};
-
-					SDL_Surface* surf =
-						TTF_RenderText_Solid(
-							debugFont_,
-							statsText,
-							0,
-							color
-						);
-
-					if (surf) {
-						if (renderer0) {
-							fpsStatsOverlayTexture_ =
-								SDL_CreateTextureFromSurface(
-									renderer0,
-									surf
-								);
-
-							fpsStatsOverlayW_ = surf->w;
-							fpsStatsOverlayH_ = surf->h;
-						}
-
-						SDL_DestroySurface(surf);
-					}
-				}
 			}
 		}
 	}
@@ -851,26 +752,12 @@ void RetroFE::render() {
 		// ---------------------------------------------------------
 		// 5. Cleanup when disabled
 		// ---------------------------------------------------------
-
-		if (fpsOverlayTexture_) {
-			SDL_DestroyTexture(
-				fpsOverlayTexture_
-			);
-
-			fpsOverlayTexture_ =
-				nullptr;
+		if (debugTextAtlas_) {
+			delete debugTextAtlas_;
+			debugTextAtlas_ = nullptr;
 		}
 
-		fpsOverlayW_ = 0;
 		fpsOverlayH_ = 0;
-
-		if (fpsStatsOverlayTexture_) {
-			SDL_DestroyTexture(fpsStatsOverlayTexture_);
-			fpsStatsOverlayTexture_ = nullptr;
-		}
-
-		fpsStatsOverlayW_ = 0;
-		fpsStatsOverlayH_ = 0;
 
 		lastOverlayText_.clear();
 		lastStatsOverlayText_.clear();
@@ -1177,6 +1064,9 @@ void RetroFE::freeGraphicsMemory() {
 	bool unloadSDL = false;
 	config_.getProperty(OPTION_UNLOADSDL, unloadSDL);
 	if (unloadSDL) {
+		if (debugTextAtlas_) { delete debugTextAtlas_; debugTextAtlas_ = nullptr; }
+		lastOverlayText_.clear();
+		lastStatsOverlayText_.clear();
 		if (currentPage_) {
 			currentPage_->deInitializeFonts();
 		}
@@ -1251,9 +1141,8 @@ bool RetroFE::deInitialize() {
 	// 4. Tear down shared global database/font instances safely
 	if (metadb_) { delete metadb_; metadb_ = nullptr; }
 	if (db_) { delete db_; db_ = nullptr; }
+	if (debugTextAtlas_) { delete debugTextAtlas_; debugTextAtlas_ = nullptr; }
 	if (debugFont_) { TTF_CloseFont(debugFont_); debugFont_ = nullptr; }
-	if (fpsOverlayTexture_) { SDL_DestroyTexture(fpsOverlayTexture_); fpsOverlayTexture_ = nullptr; }
-	if (fpsStatsOverlayTexture_) { SDL_DestroyTexture(fpsStatsOverlayTexture_); fpsStatsOverlayTexture_ = nullptr; }
 
 	initialized = false;
 	Image::cleanupTextureCache();
@@ -1348,15 +1237,15 @@ bool RetroFE::run() {
 		if (Utils::isOutputATerminal())
 		{
 			fprintf(stderr,
-				"RetroFE failed to find a valid controls.conf in the current directory\nCheck the log for details: "
-				"%s\n",
+				"RetroFE failed to find a valid controls.conf in the current directory\r\nCheck the log for details: "
+				"%s\r\n",
 				logFile.c_str());
 		}
 		else
 		{
 			SDL_ShowSimpleMessageBox(
 				SDL_MESSAGEBOX_ERROR, "Configuration Error",
-				("RetroFE failed to find a valid controls.conf in the current directory\nCheck the log for details: " +
+				("RetroFE failed to find a valid controls.conf in the current directory\r\nCheck the log for details: " +
 					logFile)
 				.c_str(),
 				NULL);

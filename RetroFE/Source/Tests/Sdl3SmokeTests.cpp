@@ -15,6 +15,7 @@
 #include "../Sound/AudioBus.h"
 #include "../Sound/Sound.h"
 #include "../Graphics/Font.h"
+#include "../Graphics/TextEngineAtlas.h"
 #include "../Graphics/GeometryBatch.h"
 #include "../Graphics/Component/Text.h"
 #include "../Graphics/FontCache.h"
@@ -25,6 +26,7 @@
 #include "../Graphics/Component/VideoComponent.h"
 #include "../Graphics/Component/Image.h"
 #include "../Graphics/Page.h"
+#include "../Graphics/PageBuilder.h"
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
 #include <cstdlib>
@@ -41,6 +43,12 @@ namespace {
 void require(bool value, const char* message) {
     if (!value) {
         std::cerr << message << ": " << SDL_GetError() << '\n';
+        SDL_Log("REQUIRE FAILED: %s: %s", message, SDL_GetError());
+        FILE* f = fopen("test_failure.txt", "w");
+        if (f) {
+            fprintf(f, "%s: %s\n", message, SDL_GetError());
+            fclose(f);
+        }
         std::exit(EXIT_FAILURE);
     }
 }
@@ -172,6 +180,33 @@ void renderChecks(Configuration& config, bool checkPixels) {
         require(layoutPixel(12, 16).r == 0, "Container clips left side");
         require(layoutPixel(20, 16).r >= 195, "Container preserves visible side");
     }
+    require(SDL_RenderClear(renderer), "Clear for glyph gradient");
+    require(SDL_SetTextureColorMod(texture, 255, 255, 255), "Use white glyph atlas");
+    ViewInfo gradientView;
+    gradientView.ContainerX = 8;
+    gradientView.ContainerY = 16;
+    gradientView.ContainerWidth = 40;
+    gradientView.ContainerHeight = 8;
+    GeometryBatch gradientBatch;
+    const SDL_Rect glyphSrc{0, 0, 4, 4};
+    const SDL_FColor top{1, 1, 1, 1};
+    const SDL_FColor bottom{0, 0, 0, 1};
+    const SDL_FRect firstGlyph{8, 8, 16, 16};
+    const SDL_FRect secondGlyph{28, 8, 16, 16};
+    require(SDL::appendCopyFGradient(gradientBatch, texture, 1.0f, &glyphSrc,
+        &firstGlyph, gradientView, 64, 64, top, bottom), "Append clipped glyph gradient");
+    require(SDL::appendCopyFGradient(gradientBatch, texture, 1.0f, &glyphSrc,
+        &secondGlyph, gradientView, 64, 64, top, bottom), "Restart gradient for next glyph");
+    require(gradientBatch.flush(), "Draw glyph gradients");
+    if (checkPixels) {
+        const auto upper = layoutPixel(16, 17).r;
+        const auto lower = layoutPixel(16, 22).r;
+        require(upper > lower && upper < 200 && layoutPixel(16, 12).r == 0,
+            "Clipping retains each glyph's original gradient position");
+        const auto nextUpper = layoutPixel(36, 17).r;
+        require(std::abs(int(upper) - int(nextUpper)) <= 8,
+            "Gradient restarts at each glyph");
+    }
     // Verify coalesced renderer flush contract
     require(SDL::beginVideoFrame(renderer), "beginVideoFrame resets flush state");
     require(SDL::flushVideoRenderer(renderer), "First video flush succeeds");
@@ -238,13 +273,79 @@ void mediaChecks(const std::string& assets) {
     require(TTF_Init(), "Initialize SDL3_ttf");
     {
         FontManager font(assets + "/retrofe/OpenSans.ttf", 24, {255,255,255,255}, true, 1, 0);
-        require(font.initialize(), "Build gradient and outline font atlases");
-        require(font.getWidth("RetroFE") > 0, "Measure text using migrated glyph metrics");
+        require(font.initialize(), "Open gradient and outline font faces");
+        require(font.getWidth("RetroFE") > 0, "Measure text using SDL_ttf shaping");
         const std::string accented = "caf\xc3\xa9";
         const int coldWidth = font.getWidth(accented);
         auto* mip = const_cast<FontManager::MipLevel*>(font.getMipLevelForSize(24));
-        require(mip->dynamicGlyphs.empty(), "Measurement does not upload glyphs");
-        require(font.loadGlyphOnDemand(0xe9, mip), "Load accented Latin glyph");
+        require(mip->outlineFont && TTF_GetFontOutline(mip->font) == 0 &&
+            TTF_GetFontOutline(mip->outlineFont) == mip->outlinePx,
+            "Outline uses a separate font face");
+        const Uint32 fillGeneration = TTF_GetFontGeneration(mip->font);
+        auto* shaped = font.getTextEngineAtlas(mip);
+        require(shaped != nullptr, "Create shaped text atlas");
+        require(shaped->prewarmAscii() && shaped->prewarmAscii(),
+            "Prewarm and reuse printable ASCII glyphs without drawing");
+        float shapedWidth = 0.0f;
+        require(shaped->measure("", 1.0f, shapedWidth) && shapedWidth == 0.0f,
+            "Empty outlined text has zero width");
+        require(shaped->measure("office caf\xc3\xa9", 1.0f, shapedWidth) && shapedWidth > 0,
+            "Shape Unicode text with the SDL3_ttf text engine");
+        std::vector<std::string> wrappedLines;
+        require(shaped->wrapLines("one two three four five six", 1.0f, 90.0f, wrappedLines) &&
+            wrappedLines.size() > 1, "SDL3_ttf wraps scrolling text into rows");
+        std::string joinedWords;
+        for (const auto& line : wrappedLines)
+            for (char ch : line) if (ch != ' ') joinedWords += ch;
+        require(joinedWords == "onetwothreefourfivesix", "Wrapped rows retain all text");
+        wrappedLines.clear();
+        const std::string japanese = "\xe6\x97\xa5\xe6\x9c\xac\xe8\xaa\x9e\xe3\x81\xae\xe6\x96\x87\xe7\xab\xa0\xe3\x82\x92\xe6\x8a\x98\xe3\x82\x8a\xe8\xbf\x94\xe3\x81\x99";
+        require(shaped->wrapLines(japanese, 1.0f, 50.0f, wrappedLines) &&
+            wrappedLines.size() > 1, "SDL3_ttf wraps CJK text without ASCII spaces");
+        std::string joinedJapanese;
+        for (const auto& line : wrappedLines) joinedJapanese += line;
+        require(joinedJapanese == japanese, "CJK wrapping retains every UTF-8 byte");
+        require(shaped->draw("office caf\xc3\xa9", 1, 1, 1.0f, {255, 255, 255, 255}),
+            "Draw shaped gradient and outlined glyphs through paged atlas");
+        require(shaped->draw("office caf\xc3\xa9", 1, 1, 1.0f, {120, 190, 255, 255}),
+            "Reuse shaped glyphs and atlas pages when color changes");
+        TTF_Font* underlinedFont = TTF_CopyFont(mip->font);
+        require(underlinedFont != nullptr, "Copy font for underline drawing");
+        TTF_SetFontStyle(underlinedFont, TTF_STYLE_UNDERLINE);
+        TTF_Text* underlinedText = TTF_CreateText(nullptr, underlinedFont, "test", 4);
+        require(underlinedText && TTF_UpdateText(underlinedText), "Shape underlined text");
+        SDL_Rect underline{};
+        for (int i = 0; i < underlinedText->internal->num_ops; ++i) {
+            if (underlinedText->internal->ops[i].cmd == TTF_DRAW_COMMAND_FILL)
+                underline = underlinedText->internal->ops[i].fill.rect;
+        }
+        require(underline.w > 0 && underline.h > 0, "Underline produces a fill operation");
+        SDL_Renderer* renderer = SDL::getRenderer(0);
+        require(renderer && SDL_SetRenderTarget(renderer, SDL::getRenderTarget(0)),
+            "Select text test render target");
+        require(SDL_RenderClear(renderer), "Clear for underline drawing");
+        {
+            TextEngineAtlas underlined(renderer, underlinedFont, nullptr, 0,
+                {0, 0, 0, 0}, false);
+            require(underlined.draw("test", 10, 10, 1.0f, {255, 0, 0, 255}),
+                "Draw SDL3_ttf underline fill operation");
+        }
+        const auto underlinePixel = pixel(renderer,
+            10 + underline.x + underline.w / 2,
+            10 + underline.y + underline.h / 2);
+        require(underlinePixel.r > 100, "Underline fill operation reaches renderer");
+        TTF_DestroyText(underlinedText);
+        TTF_CloseFont(underlinedFont);
+        require(TTF_GetFontGeneration(mip->font) == fillGeneration,
+            "Shaped outline glyphs do not invalidate the fill font");
+        require(font.prepareSize(36), "Prepare a second shaped font size");
+        const auto* shapedMip = font.getMipLevelForSize(36);
+        require(shapedMip && shapedMip->fontSize == 36 &&
+            font.getTextEngineAtlas(shapedMip)->draw("caf\xc3\xa9", 1, 1, 1.0f,
+                {180, 220, 255, 255}),
+            "The text engine uses an atlas for each prepared size");
+        require(TTF_GetFontGeneration(mip->font) == fillGeneration,
+            "Drawing outlined glyphs does not invalidate fill text");
         require(coldWidth == font.getWidth(accented), "Width is independent of atlas population");
         const auto generation = font.getResourceGeneration();
         font.deInitialize();
@@ -260,34 +361,36 @@ void mediaChecks(const std::string& assets) {
         Text label(accented, page, &font, 0);
         label.baseViewInfo.FontSize = 24;
         label.draw();
-        require(font.getMipLevelForSize(24)->dynamicGlyphs.count(0xe9) == 1,
+        require(font.getMipLevelForSize(24)->textEngineAtlas != nullptr,
             "Text renders accented Latin outside the ASCII preload");
         require(font.initialize(), "Reload font used by existing text");
         label.draw();
-        require(font.getMipLevelForSize(24)->dynamicGlyphs.count(0xe9) == 1,
+        require(font.getMipLevelForSize(24)->textEngineAtlas != nullptr,
             "Text rebuilds glyph cache after resource reload");
         FontManager larger(assets + "/retrofe/OpenSans.ttf", 48, {255,255,255,255}, true, 1, 0);
         require(larger.initialize(), "Prepare second font at layout load time");
         label.baseViewInfo.font = &larger;
         label.baseViewInfo.FontSize = 48; // The scale remains 1.0 across this switch.
         label.draw();
-        require(larger.getMipLevelForSize(48)->dynamicGlyphs.count(0xe9) == 1,
+        require(larger.getMipLevelForSize(48)->textEngineAtlas != nullptr,
             "Text rebuilds glyph cache when font changes at the same scale");
         label.baseViewInfo.font = &font;
         {
             FontManager mipped(assets + "/retrofe/OpenSans.ttf", 96, {255,255,255,255}, true, 4, 0);
-            require(mipped.initialize(), "Prebuild mip ladder");
+            require(mipped.initialize(), "Prebuild reference size font");
+            require(mipped.getMipLevelForSize(96) != nullptr, "Reference size prepared");
+            require(mipped.getMipLevelForSize(24)->fontSize == 96, "Unprepared query returns reference ceiling");
+            for (int size : {12, 18, 24, 36, 48, 72}) {
+                require(mipped.prepareSize(float(size)), "Prepare font size");
+            }
             for (int size : {12, 18, 24, 36, 48, 72, 96}) {
                 const auto* level = mipped.getMipLevelForSize(float(size));
-                require(level && level->fontSize == size && level->font && level->fillTexture && level->outlineTexture,
-                    "Each mip owns its font and styled atlas");
+                require(level && level->fontSize == size && level->font && level->outlineFont,
+                    "Each mip owns its fill and outline font faces");
                 require(level->outlinePx == std::max(1, int(std::lround(4.0 * size / 96))),
                     "Outline thickness follows raster size");
             }
             require(mipped.getMipLevelForSize(24.1f)->fontSize == 36, "Fractional requests select the ceiling mip");
-            require(mipped.getMipLevelForSize(24)->dynamicFillTexture->w == 512 &&
-                mipped.getMipLevelForSize(96)->dynamicFillTexture->w == 2048,
-                "Unicode atlases are preallocated proportionately to mip size");
             require(mipped.getMipLevelForSize(1)->fontSize == 12, "Small sizes use the minimum prepared mip");
             require(mipped.getMipLevelForSize(120)->fontSize == 96, "Selection does not open unprepared fonts");
             require(mipped.prepareSize(26) && mipped.prepareSize(34), "Prepare sizes found in active layouts");
@@ -298,8 +401,8 @@ void mediaChecks(const std::string& assets) {
             label.draw();
             label.baseViewInfo.FontSize = 34;
             label.draw();
-            require(mipped.getMipLevelForSize(26)->dynamicGlyphs.count(0xe9) == 1 &&
-                mipped.getMipLevelForSize(34)->dynamicGlyphs.count(0xe9) == 1,
+            require(mipped.getMipLevelForSize(26)->textEngineAtlas != nullptr &&
+                mipped.getMipLevelForSize(34)->textEngineAtlas != nullptr,
                 "Text changes mip at constant scale and uses each mip's Unicode atlas");
             label.baseViewInfo.font = &font;
             require(mipped.prepareSize(120), "Prepare an explicit size above loadFontSize");
@@ -307,10 +410,9 @@ void mediaChecks(const std::string& assets) {
             require(mipped.prepareHeight(65), "Prepare hiscore line height");
             const auto* level = mipped.getMipLevelForHeight(65);
             require(level && level->height >= 65, "Height selector avoids upscaling");
-            int advance = 0, kerning = 0;
-            require(TTF_GetGlyphMetrics(level->font, 'A', nullptr, nullptr, nullptr, nullptr, &advance), "Read selected metrics");
-            require(TTF_GetGlyphKerning(level->font, 'A', 'A', &kerning), "Read selected kerning");
-            require(mipped.getWidth("AA", *level) == advance * 2 + kerning + level->outlinePx * 2,
+            float shapedAA = 0.0f;
+            require(mipped.getTextEngineAtlas(level)->measure("AA", 1.0f, shapedAA) &&
+                mipped.getWidth("AA", *level) == static_cast<int>(std::lround(shapedAA)),
                 "Measurement uses selected font and outline");
             const int heightSize = level->fontSize;
             mipped.deInitialize();
@@ -326,6 +428,131 @@ void mediaChecks(const std::string& assets) {
                 cache.loadFont(path, 24, {255,255,255,255}, false, 0, 0), "Load larger layout before smaller layout");
             require(cache.getFont(path, 24, false, 0, 0)->getMaxFontSize() == 24,
                 "Layout default size is independent of previously loaded larger fonts");
+
+            Configuration pbConfig;
+            PageBuilder builder("Arcades", "layout", pbConfig, &cache);
+            const std::string fontAttr = std::filesystem::absolute(path).generic_string();
+
+            // Verify hiscore content-dependent shrinking step heights
+            rapidxml::xml_document<> hiscoreDoc;
+            std::string hiscoreStr = "<reloadableHiscores font=\"" + fontAttr +
+                "\" loadFontSize=\"96\" fontSize=\"60\"/>";
+            std::vector<char> hiscoreBuf(hiscoreStr.begin(), hiscoreStr.end());
+            hiscoreBuf.push_back('\0');
+            hiscoreDoc.parse<0>(hiscoreBuf.data());
+            auto* hiscoreNode = hiscoreDoc.first_node("reloadableHiscores");
+            require(hiscoreNode != nullptr, "Parse hiscore test XML");
+            auto* hiscoreFont = builder.addFont(hiscoreNode, nullptr, 0);
+            require(hiscoreFont != nullptr, "Prepare hiscore font through PageBuilder");
+            require(hiscoreFont->getMipLevelForHeight(60) != nullptr &&
+                hiscoreFont->getMipLevelForHeight(60)->height >= 60, "Exact hiscore line height prepared");
+            // Check that 0.75 (45), 0.50 (30), and 0.35 (21) step heights were prepared:
+            require(hiscoreFont->getMipLevelForHeight(45) != nullptr &&
+                hiscoreFont->getMipLevelForHeight(30) != nullptr &&
+                hiscoreFont->getMipLevelForHeight(21) != nullptr,
+                "Hiscore shrinking step heights pre-prepared");
+
+            // Verify fontSize tween preparation
+            rapidxml::xml_document<> tweenDoc;
+            std::string tweenStr = "<reloadableText font=\"" + fontAttr +
+                "\" loadFontSize=\"96\" fontSize=\"28\">"
+                "  <onEnter>"
+                "    <set duration=\"0.5\">"
+                "      <animate type=\"fontSize\" from=\"28\" to=\"56\"/>"
+                "    </set>"
+                "  </onEnter>"
+                "</reloadableText>";
+            std::vector<char> tweenBuf(tweenStr.begin(), tweenStr.end());
+            tweenBuf.push_back('\0');
+            tweenDoc.parse<0>(tweenBuf.data());
+            auto* tweenNode = tweenDoc.first_node("reloadableText");
+            require(tweenNode != nullptr, "Parse tween test XML");
+            auto* tweenFont = builder.addFont(tweenNode, nullptr, 0);
+            require(tweenFont != nullptr, "Prepare tween font through PageBuilder");
+            require(tweenFont->getMipLevelForSize(28)->fontSize == 28, "Tween start fontSize prepared");
+            require(tweenFont->getMipLevelForSize(56)->fontSize == 56, "Tween target fontSize prepared");
+
+            // Verify fallback font loading and symbol rendering
+            const auto fallbackPath = assets + "/retrofe/Symbola.ttf";
+            if (std::filesystem::exists(fallbackPath)) {
+                FontManager fallbackMgr(path, 24, {255, 255, 255, 255}, false, 1, 0, fallbackPath);
+                require(fallbackMgr.initialize(), "Initialize FontManager with fallback font");
+                require(fallbackMgr.getFallbackFontPath() == fallbackPath, "Fallback font path preserved");
+
+                auto* fbMip = const_cast<FontManager::MipLevel*>(fallbackMgr.getMipLevelForSize(24));
+                require(fbMip && fbMip->fallbackFont, "Fallback font is attached to the mip");
+                TTF_Font* plainPrimary = TTF_OpenFont(path.c_str(), 24);
+                require(plainPrimary != nullptr, "Open primary font without fallback for coverage check");
+                Uint32 fallbackOnlySymbol = 0;
+                for (Uint32 candidate = 0x2190; candidate <= 0x2BFF; ++candidate) {
+                    if (!TTF_FontHasGlyph(plainPrimary, candidate) &&
+                        TTF_FontHasGlyph(fbMip->fallbackFont, candidate)) {
+                        fallbackOnlySymbol = candidate;
+                        break;
+                    }
+                }
+                TTF_CloseFont(plainPrimary);
+                require(fallbackOnlySymbol != 0, "Symbola provides a glyph missing from OpenSans");
+                char symbolUtf8[5]{};
+                SDL_UCS4ToUTF8(fallbackOnlySymbol, symbolUtf8);
+                const std::string textWithoutSymbol = "AB";
+                const std::string textWithSymbol = std::string("A") + symbolUtf8 + "B";
+                const int w1 = fallbackMgr.getWidth(textWithoutSymbol);
+                const int w2 = fallbackMgr.getWidth(textWithSymbol);
+                require(w2 > w1, "Width of text with symbol reflects fallback glyph advance");
+
+                TTF_Text* fallbackProbe = TTF_CreateText(nullptr, fbMip->font,
+                    textWithSymbol.c_str(), textWithSymbol.size());
+                require(fallbackProbe && TTF_UpdateText(fallbackProbe),
+                    "Shape fallback-only symbol through SDL_ttf");
+                bool usedFallback = false;
+                for (int i = 0; i < fallbackProbe->internal->num_ops; ++i) {
+                    const auto& op = fallbackProbe->internal->ops[i];
+                    if (op.cmd == TTF_DRAW_COMMAND_COPY &&
+                        op.copy.glyph_font == fbMip->fallbackFont) usedFallback = true;
+                }
+                TTF_DestroyText(fallbackProbe);
+                require(usedFallback, "SDL_ttf selects the fallback face for missing symbols");
+
+                if (auto* fbEngine = fallbackMgr.getTextEngineAtlas(fbMip)) {
+                    float fbShapedWidth = 0.0f;
+                    require(fbEngine->measure(textWithSymbol, 1.0f, fbShapedWidth), "Measure text with symbol via TextEngineAtlas");
+                    require(fbShapedWidth > 0.0f, "Shaped symbol has positive width");
+                    require(fbEngine->draw(textWithSymbol, 0, 0, 1.0f, {255, 255, 255, 255}), "Draw text with symbol via TextEngineAtlas");
+                }
+
+                // Verify fallback font loading through PageBuilder XML
+                const std::string fbAttr = std::filesystem::absolute(fallbackPath).generic_string();
+                rapidxml::xml_document<> fbDoc;
+                std::string fbStr = "<reloadableHiscores font=\"" + fontAttr +
+                    "\" fallbackFont=\"" + fbAttr +
+                    "\" loadFontSize=\"96\" fontSize=\"32\"/>";
+                std::vector<char> fbBuf(fbStr.begin(), fbStr.end());
+                fbBuf.push_back('\0');
+                fbDoc.parse<0>(fbBuf.data());
+                auto* fbNode = fbDoc.first_node("reloadableHiscores");
+                require(fbNode != nullptr, "Parse hiscore with fallback font XML");
+                auto* fbFont = builder.addFont(fbNode, nullptr, 0);
+                require(fbFont != nullptr, "Prepare hiscore font with fallback through PageBuilder");
+                require(fbFont->getFallbackFontPath() == fbAttr, "PageBuilder applied fallback font from XML");
+
+                // Verify cache isolation between font with fallback and font without fallback
+                auto* noFbFont = cache.getFont(fontAttr, 96, false, 0, 0, "");
+                auto* withFbFont = cache.getFont(fontAttr, 96, false, 0, 0, fbAttr);
+                require(noFbFont != nullptr, "Font without fallback exists in cache");
+                require(withFbFont != nullptr, "Font with fallback exists in cache");
+                require(noFbFont != withFbFont, "FontCache isolates font instances by fallback font key");
+
+                rapidxml::xml_document<> noFallbackDoc;
+                std::string noFallbackStr = "<text font=\"" + fontAttr +
+                    "\" fallbackFont=\"none\" loadFontSize=\"96\" fontSize=\"24\"/>";
+                std::vector<char> noFallbackBuf(noFallbackStr.begin(), noFallbackStr.end());
+                noFallbackBuf.push_back('\0');
+                noFallbackDoc.parse<0>(noFallbackBuf.data());
+                auto* disabledFont = builder.addFont(noFallbackDoc.first_node("text"), nullptr, 0);
+                require(disabledFont && disabledFont->getFallbackFontPath().empty(),
+                    "Component can disable automatic symbol fallback");
+            }
         }
     }
     TTF_Quit();

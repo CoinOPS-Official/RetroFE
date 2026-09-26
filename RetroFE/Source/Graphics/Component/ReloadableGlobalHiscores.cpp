@@ -24,7 +24,7 @@
 #include "../../SDL.h"
 #include <SDL3_image/SDL_image.h>
 #include "../Font.h"
-#include "../GeometryBatch.h"
+#include "../TextEngineAtlas.h"
 
 #include <algorithm>
 #include <cmath>
@@ -864,128 +864,28 @@ void ReloadableGlobalHiscores::computeGridBaseline_(
 // ============================================================================
 
 void ReloadableGlobalHiscores::reloadTexture() {
-    // --- Text rendering helper (mipmapped outlined glyphs) ---
-    auto renderTextOutlined = [&](SDL_Renderer* r, FontManager* f,
-        const std::string& s, float x, float y, float finalScale) {
-            if (s.empty()) return;
+    auto renderTextOutlined = [&](SDL_Renderer* renderer, FontManager* font,
+        const std::string& text, float x, float y, float finalScale) {
+        if (text.empty()) return;
+        const float targetHeight = finalScale * font->getMaxHeight();
+        const auto* mip = font->getMipLevelForHeight(targetHeight);
+        if (!mip || mip->height <= 0) return;
+        if (auto* engine = font->getTextEngineAtlas(mip))
+            engine->draw(text, x, std::round(y), targetHeight / mip->height,
+                baseViewInfo.textColor);
+    };
 
-            const float targetH = finalScale * f->getMaxHeight();
-            const FontManager::MipLevel* mip = f->getMipLevelForHeight(targetH);
-            if (!mip || !mip->fillTexture) return;
-
-            const float k = (mip->height > 0) ? (targetH / mip->height) : 1.0f;
-            SDL_Texture* fillTex = mip->fillTexture;
-            SDL_Texture* outlineTex = mip->outlineTexture;
-            const float ySnap = std::round(y);
-            GeometryBatch batch;
-
-            SDL_SetTextureColorMod(fillTex, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
-            if (mip->dynamicFillTexture) {
-                SDL_SetTextureColorMod(mip->dynamicFillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
-            }
-
-            // Helper to process UTF-8 strings for both passes
-            auto renderPass = [&](SDL_Texture* tex, bool isFill) {
-                if (!tex) return;
-                const unsigned char* ptr = (const unsigned char*)s.c_str();
-                const unsigned char* end = ptr + s.length();
-                float penX = x;
-                Uint16 prev = 0;
-
-                while (ptr < end) {
-                    Uint32 ch;
-                    // UTF-8 Decoding (1, 2, or 3 byte sequences)
-                    if (*ptr < 0x80) ch = *ptr++;
-                    else if ((*ptr & 0xE0) == 0xC0) {
-                        if (ptr + 1 >= end) break;
-                        ch = ((*ptr & 0x1F) << 6) | (*(ptr + 1) & 0x3F);
-                        ptr += 2;
-                    }
-                    else if ((*ptr & 0xF0) == 0xE0) {
-                        if (ptr + 2 >= end) break;
-                        ch = ((*ptr & 0x0F) << 12) | ((*(ptr + 1) & 0x3F) << 6) | (*(ptr + 2) & 0x3F);
-                        ptr += 3;
-                    }
-                    else { ptr++; continue; }
-
-                    if (prev) penX += f->getKerning(*mip, prev, ch) * k;
-
-                    auto it = mip->glyphs.find((Uint16)ch);
-                    if (it != mip->glyphs.end()) {
-                        const auto& g = it->second;
-                        if (isFill) {
-                            SDL_Rect srcFill{ g.rect.x + g.fillX, g.rect.y + g.fillY, g.fillW, g.fillH };
-                            SDL_FRect dstFill{ penX, ySnap, g.fillW * k, g.fillH * k };
-                            batch.appendTexture(r, tex, srcFill, dstFill);
-                        }
-                        else {
-                            const SDL_Rect& src = g.rect;
-                            SDL_FRect dst = { penX - g.fillX * k, ySnap - g.fillY * k, src.w * k, src.h * k };
-                            batch.appendTexture(r, tex, src, dst);
-                        }
-                        penX += g.advance * k;
-                    }
-                    prev = (Uint16)ch;
-                }
-                };
-
-            renderPass(outlineTex, false);
-            renderPass(fillTex, true);
-            batch.flush();
-        };
-
-    // --- Exact width measure (mip + kerning + outline overhang) ---
-    auto measureTextWidthExact = [&](FontManager* f, const std::string& s, float scale) -> float {
-        if (!f || s.empty()) return 0.0f;
-        const float targetH = scale * f->getMaxHeight();
-        const FontManager::MipLevel* mip = f->getMipLevelForHeight(targetH);
-        if (!mip || !mip->fillTexture) return (float)f->getWidth(s) * scale;
-
-        const float k = (mip->height > 0) ? (targetH / mip->height) : 1.0f;
-        const bool hasOutline = (mip->outlineTexture != nullptr);
-
-        const unsigned char* ptr = (const unsigned char*)s.c_str();
-        const unsigned char* end = ptr + s.length();
-        float penX = 0.0f, minX = 0.0f, maxX = 0.0f;
-        bool first = true;
-        Uint16 prev = 0;
-
-        while (ptr < end) {
-            Uint32 ch;
-            if (*ptr < 0x80) ch = *ptr++;
-            else if ((*ptr & 0xE0) == 0xC0) {
-                if (ptr + 1 >= end) break;
-                ch = ((*ptr & 0x1F) << 6) | (*(ptr + 1) & 0x3F);
-                ptr += 2;
-            }
-            else if ((*ptr & 0xF0) == 0xE0) {
-                if (ptr + 2 >= end) break;
-                ch = ((*ptr & 0x0F) << 12) | ((*(ptr + 1) & 0x3F) << 6) | (*(ptr + 2) & 0x3F);
-                ptr += 3;
-            }
-            else { ptr++; continue; }
-
-            if (prev) penX += f->getKerning(*mip, prev, ch) * k;
-
-            auto it = mip->glyphs.find((Uint16)ch);
-            if (it != mip->glyphs.end()) {
-                const auto& g = it->second;
-                float left = penX;
-                float right = penX + g.fillW * k;
-                if (hasOutline) {
-                    const float oL = penX - g.fillX * k;
-                    const float oR = oL + g.rect.w * k;
-                    left = std::min(left, oL);
-                    right = std::max(right, oR);
-                }
-                if (first) { minX = left; maxX = right; first = false; }
-                else { minX = std::min(minX, left); maxX = std::max(maxX, right); }
-                penX += g.advance * k;
-            }
-            prev = (Uint16)ch;
-        }
-        return std::max(0.0f, maxX - minX);
-        };
+    auto measureTextWidthExact = [&](FontManager* font, const std::string& text,
+        float scale) -> float {
+        if (!font || text.empty()) return 0.0f;
+        const float targetHeight = scale * font->getMaxHeight();
+        const auto* mip = font->getMipLevelForHeight(targetHeight);
+        if (!mip || mip->height <= 0) return 0.0f;
+        auto* engine = font->getTextEngineAtlas(mip);
+        if (!engine) return 0.0f;
+        float width = 0.0f;
+        return engine->measure(text, targetHeight / mip->height, width) ? width : 0.0f;
+    };
 
     // --- Column alignment helper ---
     enum class ColAlign { Left, Center, Right };

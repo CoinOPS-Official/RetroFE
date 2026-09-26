@@ -1663,9 +1663,17 @@ bool SDL::appendCopyF(GeometryBatch& batch, SDL_Texture* texture, float alpha,
     return renderCopyFImpl(&batch, texture, alpha, src, dest, viewInfo, layoutWidth, layoutHeight);
 }
 
+bool SDL::appendCopyFGradient(GeometryBatch& batch, SDL_Texture* texture, float alpha,
+    const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo,
+    int layoutWidth, int layoutHeight, SDL_FColor top, SDL_FColor bottom) {
+    return renderCopyFImpl(&batch, texture, alpha, src, dest, viewInfo,
+        layoutWidth, layoutHeight, &top, &bottom);
+}
+
 bool SDL::renderCopyFImpl(GeometryBatch* batch, SDL_Texture* texture, float alpha,
     const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo,
-    int layoutWidth, int layoutHeight) {
+    int layoutWidth, int layoutHeight, const SDL_FColor* top,
+    const SDL_FColor* bottom) {
     if (!texture) {
         return false;
     }
@@ -2363,29 +2371,47 @@ bool SDL::renderCopyFImpl(GeometryBatch* batch, SDL_Texture* texture, float alph
                 std::clamp(alpha01, 0.0f, 1.0f)
             };
 
+            SDL_FColor upper = color;
+            SDL_FColor lower = color;
+            if (top && bottom && src0.h > 0.0f) {
+                float t0 = std::clamp((sourceRect.y - src0.y) / src0.h, 0.0f, 1.0f);
+                float t1 = std::clamp((sourceRect.y + sourceRect.h - src0.y) / src0.h, 0.0f, 1.0f);
+                if (flipVertical) std::swap(t0, t1);
+                auto tint = [&](float t) -> SDL_FColor {
+                    return {
+                        textureR * (top->r + (bottom->r - top->r) * t),
+                        textureG * (top->g + (bottom->g - top->g) * t),
+                        textureB * (top->b + (bottom->b - top->b) * t),
+                        std::clamp(alpha01 * (top->a + (bottom->a - top->a) * t), 0.0f, 1.0f)
+                    };
+                };
+                upper = tint(t0);
+                lower = tint(t1);
+            }
+
             const int base = vertexCount;
 
             vertices[vertexCount++] = {
                 points[0],
-                color,
+                upper,
                 {u0, v0}
             };
 
             vertices[vertexCount++] = {
                 points[1],
-                color,
+                upper,
                 {u1, v0}
             };
 
             vertices[vertexCount++] = {
                 points[2],
-                color,
+                lower,
                 {u1, v1}
             };
 
             vertices[vertexCount++] = {
                 points[3],
-                color,
+                lower,
                 {u0, v1}
             };
 

@@ -44,6 +44,7 @@
 class CollectionInfo;
 class Configuration;
 class Page;
+class TextEngineAtlas;
 
 
 class RetroFE
@@ -86,16 +87,10 @@ private:
     void initializeMusicPlayer();
 
     //fps counter resources
-    std::unique_ptr<Text> fpsOverlayText_;
     TTF_Font* debugFont_ = nullptr;
-    SDL_Texture* fpsOverlayTexture_ = nullptr;
-    int fpsOverlayW_ = 0;
+    TextEngineAtlas* debugTextAtlas_ = nullptr;
     int fpsOverlayH_ = 0;
     std::string lastOverlayText_ = "";
-
-    SDL_Texture* fpsStatsOverlayTexture_ = nullptr;
-    int fpsStatsOverlayW_ = 0;
-    int fpsStatsOverlayH_ = 0;
     std::string lastStatsOverlayText_ = "";
 
     bool showFps_ = false;

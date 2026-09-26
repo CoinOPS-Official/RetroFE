@@ -29,11 +29,11 @@ public:
     void deInitialize();
 
     // MODIFIED: Parameter renamed to reflect it's the maximum size for the mipmap chain.
-    bool loadFont(std::string fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor);
-    FontManager* getFont(const std::string& fontPath, int maxFontSize, bool gradient, int outlinePx, int monitor);
+    bool loadFont(std::string fontPath, int maxFontSize, SDL_Color color, bool gradient, int outlinePx, int monitor, std::string fallbackFontPath = "");
+    FontManager* getFont(const std::string& fontPath, int maxFontSize, bool gradient, int outlinePx, int monitor, const std::string& fallbackFontPath = "");
 
 private:
     std::unordered_map<std::string, std::unique_ptr<FontManager>> fontFaceMap_;
 
-    std::string buildFontKey(std::string font, int maxFontSize, bool gradient, int outlinePx, int monitor);
+    std::string buildFontKey(std::string font, int maxFontSize, bool gradient, int outlinePx, int monitor, const std::string& fallbackFontPath = "");
 };

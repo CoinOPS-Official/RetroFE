@@ -45,6 +45,7 @@
 #include <map>
 #include <filesystem>
 #include <memory>
+#include <cstring>
 
 using namespace rapidxml;
 
@@ -218,6 +219,7 @@ Page* PageBuilder::buildPage(const std::string& collectionName, bool /* defaultT
 			xml_attribute<> const* fontSizeXml = root->first_attribute("loadFontSize");
 			xml_attribute<> const* fontGradientXml = root->first_attribute("fontGradient");
 			xml_attribute<> const* fontOutlineXml = root->first_attribute("fontOutline");
+			xml_attribute<> const* fallbackFontXml = root->first_attribute("fallbackFont");
 			xml_attribute<> const* minShowTimeXml = root->first_attribute("minShowTime");
 			xml_attribute<> const* controls = root->first_attribute("controls");
 			xml_attribute<> const* layoutMonitorXml = root->first_attribute("monitor");
@@ -235,6 +237,66 @@ Page* PageBuilder::buildPage(const std::string& collectionName, bool /* defaultT
 						Utils::combinePath(config_.absolutePath, "layouts", layoutKey, ""),
 						"fonts/standard.ttf");
 				}
+			}
+
+			// Process fallback font attributes
+			fallbackFontName_.clear();
+			bool fallbackDisabled = false;
+			if (fallbackFontXml) {
+				const std::string val = fallbackFontXml->value();
+				const std::string choice = Utils::toLower(val);
+				fallbackDisabled = choice == "none" || choice == "false" || choice == "off";
+				if (!fallbackDisabled) {
+					fallbackFontName_ = config_.convertToAbsolutePath(
+						Utils::combinePath(config_.absolutePath, "layouts", layoutKey, ""),
+						val);
+					if (!std::filesystem::exists(fallbackFontName_)) {
+						LOG_WARNING("Layout", "Specified fallback font at \n    " + fallbackFontName_ + "\n does not exist.");
+						fallbackFontName_.clear();
+					}
+				}
+			}
+
+			if (fallbackFontName_.empty() && !fallbackDisabled) {
+				std::string confFallback;
+				if (config_.getProperty("fallbackFont", confFallback) && !confFallback.empty()) {
+					const std::string choice = Utils::toLower(confFallback);
+					fallbackDisabled = choice == "none" || choice == "false" || choice == "off";
+					if (!fallbackDisabled) {
+						fallbackFontName_ = config_.convertToAbsolutePath(
+							Utils::combinePath(config_.absolutePath, "layouts", layoutKey, ""),
+							confFallback);
+						if (!std::filesystem::exists(fallbackFontName_)) {
+							LOG_WARNING("Layout", "Configured fallback font at \n    " + fallbackFontName_ + "\n does not exist.");
+							fallbackFontName_.clear();
+						}
+					}
+				}
+			}
+
+			if (fallbackFontName_.empty() && !fallbackDisabled) {
+				const std::vector<std::string> candidates = {
+					Utils::combinePath(config_.absolutePath, "layouts", layoutKey, "fonts/Symbola.ttf"),
+					Utils::combinePath(config_.absolutePath, "layouts", layoutKey, "fonts/symbols.ttf"),
+					Utils::combinePath(config_.absolutePath, "retrofe/Symbola.ttf"),
+					Utils::combinePath(config_.absolutePath, "retrofe/symbols.ttf"),
+					Utils::combinePath(config_.absolutePath, "fonts/Symbola.ttf"),
+					Utils::combinePath(config_.absolutePath, "fonts/symbols.ttf")
+				};
+				for (const auto& candidate : candidates) {
+					if (std::filesystem::exists(candidate)) {
+						fallbackFontName_ = candidate;
+						break;
+					}
+				}
+			}
+
+			if (fontName_ == fallbackFontName_) {
+				fallbackFontName_.clear();
+			}
+
+			if (!fallbackFontName_.empty()) {
+				LOG_INFO("Layout", "Using fallback font: " + fallbackFontName_);
 			}
 
 			// Process font color
@@ -945,6 +1007,7 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 	xml_attribute<> const* fontSizeXml = component->first_attribute("loadFontSize");
 	xml_attribute<> const* fontGradientXml = component->first_attribute("fontGradient");
 	xml_attribute<> const* fontOutlineXml = component->first_attribute("fontOutline");
+	xml_attribute<> const* fallbackFontXml = component->first_attribute("fallbackFont");
 
 	if (defaults) {
 		if (!fontXml && defaults->first_attribute("font")) {
@@ -959,10 +1022,14 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 		if (!fontOutlineXml && defaults->first_attribute("fontOutline")) {
 			fontOutlineXml = defaults->first_attribute("fontOutline");
 		}
+		if (!fallbackFontXml && defaults->first_attribute("fallbackFont")) {
+			fallbackFontXml = defaults->first_attribute("fallbackFont");
+		}
 	}
 
 	// Use layout configuration defaults unless explicitly overridden by component properties
 	std::string fontName = fontName_;
+	std::string fallbackFontName = fallbackFontName_;
 	int fontSize = fontSize_;
 	bool fontGradient = fontGradient_;
 	int fontOutline = fontOutline_;
@@ -973,6 +1040,26 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 			fontXml->value());
 
 		LOG_DEBUG("Layout", "loading font " + fontName);
+	}
+
+	if (fallbackFontXml) {
+		const std::string val = fallbackFontXml->value();
+		const std::string choice = Utils::toLower(val);
+		if (choice == "none" || choice == "false" || choice == "off") {
+			fallbackFontName.clear();
+		} else {
+			fallbackFontName = Configuration::convertToAbsolutePath(
+				Utils::combinePath(Configuration::absolutePath, "layouts", layoutKey, ""),
+				val);
+			if (!std::filesystem::exists(fallbackFontName)) {
+				LOG_WARNING("Layout", "Component fallback font not found: " + fallbackFontName);
+				fallbackFontName = fallbackFontName_;
+			}
+		}
+	}
+
+	if (fontName == fallbackFontName) {
+		fallbackFontName.clear();
 	}
 
 	if (fontSizeXml) {
@@ -991,20 +1078,96 @@ FontManager* PageBuilder::addFont(const xml_node<>* component, const xml_node<>*
 	// Individual text instance color is now a rendering property tracked strictly by ViewInfo!
 	SDL_Color whiteBaseline{ 255, 255, 255, 255 };
 
-	if (!fontCache_->loadFont(fontName, fontSize, whiteBaseline, fontGradient, fontOutline, monitor)) return nullptr;
-	auto* font = fontCache_->getFont(fontName, fontSize, fontGradient, fontOutline, monitor);
+	if (!fontCache_->loadFont(fontName, fontSize, whiteBaseline, fontGradient, fontOutline, monitor, fallbackFontName)) return nullptr;
+	auto* font = fontCache_->getFont(fontName, fontSize, fontGradient, fontOutline, monitor, fallbackFontName);
+	if (!font) return nullptr;
+
+	const std::string tag = component ? component->name() : "";
+	const bool usesLineHeight = tag == "reloadableHiscores" ||
+		tag == "reloadableGlobalHiscores" || tag == "reloadableScrollingText";
+
 	const auto* displaySizeXml = findAttribute(component, "fontSize", defaults);
 	const float displaySize = getVerticalAlignment(displaySizeXml, -1);
-	if (font && displaySize > 0) {
-		const std::string tag = component->name();
-		const bool usesLineHeight = tag == "reloadableHiscores" ||
-			tag == "reloadableGlobalHiscores" || tag == "reloadableScrollingText";
+	if (displaySize > 0) {
 		const bool prepared = usesLineHeight ? font->prepareHeight(displaySize) : font->prepareSize(displaySize);
 		if (!prepared) {
 			LOG_WARNING("Font", "Unable to prepare layout font size: " + std::string(SDL_GetError()));
 		}
+		if (prepared) {
+			const auto* mip = usesLineHeight ? font->getMipLevelForHeight(displaySize)
+				: font->getMipLevelForSize(displaySize);
+			if (mip && !font->prewarmTextEngine(mip))
+				LOG_WARNING("Font", "Unable to prewarm shaped text atlas: " + std::string(SDL_GetError()));
+		}
 	}
+	else {
+		const auto* mip = font->getMipLevelForSize(fontSize);
+		if (mip && !font->prewarmTextEngine(mip))
+			LOG_WARNING("Font", "Unable to prewarm shaped text atlas: " + std::string(SDL_GetError()));
+	}
+
+	// Content-dependent hiscore shrinking: hiscores dynamically scale line height
+	// down to fit column counts and row constraints. Pre-prepare stepping fractions
+	// so shrunk panels don't downscale from a distant reference size.
+	if (tag == "reloadableHiscores" || tag == "reloadableGlobalHiscores") {
+		const float baseH = displaySize > 0 ? displaySize : static_cast<float>(font->getMaxHeight());
+		if (baseH > 0) {
+			for (float ratio : { 0.75f, 0.50f, 0.35f }) {
+				const float shrunkH = baseH * ratio;
+				if (shrunkH >= 8.0f) {
+					if (font->prepareHeight(shrunkH)) {
+						const auto* mip = font->getMipLevelForHeight(shrunkH);
+						if (mip) font->prewarmTextEngine(mip);
+					}
+				}
+			}
+		}
+	}
+
+	// Scan animation nodes for fontSize tweens and pre-prepare from/to sizes.
+	prepareTweensForFont(font, component, usesLineHeight);
+	if (defaults) {
+		prepareTweensForFont(font, defaults, usesLineHeight);
+	}
+
 	return font;
+}
+
+void PageBuilder::prepareTweensForFont(FontManager* font, const rapidxml::xml_node<>* node, bool usesLineHeight) {
+	if (!font || !node) return;
+	for (const rapidxml::xml_node<>* child = node->first_node(); child; child = child->next_sibling()) {
+		if (std::strcmp(child->name(), "animate") == 0) {
+			const rapidxml::xml_attribute<>* typeAttr = child->first_attribute("type");
+			if (typeAttr) {
+				auto optProperty = Tween::getTweenProperty(typeAttr->value());
+				if (optProperty && *optProperty == TWEEN_PROPERTY_FONT_SIZE) {
+					const rapidxml::xml_attribute<>* fromAttr = child->first_attribute("from");
+					const rapidxml::xml_attribute<>* toAttr = child->first_attribute("to");
+					if (fromAttr) {
+						float fromVal = getVerticalAlignment(fromAttr, 0.0f);
+						if (fromVal > 0.0f) {
+							const bool prepared = usesLineHeight ? font->prepareHeight(fromVal) : font->prepareSize(fromVal);
+						if (prepared) {
+								const auto* mip = usesLineHeight ? font->getMipLevelForHeight(fromVal) : font->getMipLevelForSize(fromVal);
+								if (mip) font->prewarmTextEngine(mip);
+							}
+						}
+					}
+					if (toAttr) {
+						float toVal = getVerticalAlignment(toAttr, 0.0f);
+						if (toVal > 0.0f) {
+							const bool prepared = usesLineHeight ? font->prepareHeight(toVal) : font->prepareSize(toVal);
+						if (prepared) {
+								const auto* mip = usesLineHeight ? font->getMipLevelForHeight(toVal) : font->getMipLevelForSize(toVal);
+								if (mip) font->prewarmTextEngine(mip);
+							}
+						}
+					}
+				}
+			}
+		}
+		prepareTweensForFont(font, child, usesLineHeight);
+	}
 }
 
 void PageBuilder::loadTweens(Component* c, xml_node<>* componentXml) {

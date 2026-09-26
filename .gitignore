@@ -32,3 +32,5 @@ CLAUDE.md
 # Build products and a locally retained, retired dependency checkout.
 /RetroFE/Build-*/
 /Package/Environment/Windows/retrofe/
+/Package/Environment/Common/layouts/Arcades/fonts/Symbola.ttf
+/Package/Environment/Common/retrofe/Symbola.ttf

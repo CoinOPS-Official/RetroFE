@@ -477,6 +477,10 @@ endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRuntime.cmake")
 retrofe_stage_runtime(retrofe)
 if(RETROFE_BUILD_TESTING)
+    add_executable(retrofe_text_benchmark Tests/TextRenderBenchmark.cpp)
+    target_link_libraries(retrofe_text_benchmark PRIVATE retrofe_core)
+    retrofe_stage_runtime(retrofe_text_benchmark)
+
     add_executable(retrofe_sdl3_smoke_tests Tests/Sdl3SmokeTests.cpp)
     target_link_libraries(retrofe_sdl3_smoke_tests PRIVATE retrofe_core)
     if(RETROFE_ENABLE_FFMPEG)
@@ -488,12 +492,12 @@ if(RETROFE_BUILD_TESTING)
         set_tests_properties(retrofe_sdl3_smoke_tests PROPERTIES ENVIRONMENT
             "GST_PLUGIN_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>;GST_PLUGIN_SCANNER=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugin-scanner.exe;GST_PLUGIN_SYSTEM_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>;GST_REGISTRY=${CMAKE_BINARY_DIR}/test-gst-pruned-registry.bin")
     endif()
+    set_tests_properties(retrofe_sdl3_smoke_tests PROPERTIES RUN_SERIAL TRUE)
     if(RETROFE_ENABLE_FFMPEG)
         add_test(NAME retrofe_ffmpeg_smoke_tests COMMAND retrofe_sdl3_smoke_tests "${RETROFE_DIR}/../Package/Environment/Common")
         get_property(video_test_environment TEST retrofe_sdl3_smoke_tests PROPERTY ENVIRONMENT)
         set_tests_properties(retrofe_ffmpeg_smoke_tests PROPERTIES
             ENVIRONMENT "${video_test_environment};RETROFE_TEST_VIDEO_BACKEND=ffmpeg" RUN_SERIAL TRUE)
-        set_tests_properties(retrofe_sdl3_smoke_tests PROPERTIES RUN_SERIAL TRUE)
     endif()
     add_executable(retrofe_high_score_change_tests
         "${RETROFE_DIR}/Source/Database/HighScoreChange.cpp"

@@ -24,7 +24,7 @@
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
 #include "../Font.h"
-#include "../GeometryBatch.h"
+#include "../TextEngineAtlas.h"
 #include <fstream>
 #include <sstream>
 #include <vector>
@@ -48,182 +48,27 @@ namespace {
 		};
 	}
 
-	static float measureTextWidthExact(FontManager* f, const std::string& s, float scale) {
-		if (!f || s.empty()) return 0.0f;
-		const float targetH = scale * f->getMaxHeight();
-		const FontManager::MipLevel* mip = f->getMipLevelForHeight(targetH);
-		if (!mip || !mip->fillTexture) {
-			return (float)f->getWidth(s) * scale;
-		}
-		const float k = (mip->height > 0) ? (targetH / mip->height) : 1.0f;
-		const bool hasOutline = (mip->outlineTexture != nullptr);
-
-		float penX = 0.0f, minX = 0.0f, maxX = 0.0f;
-		bool first = true;
-		Uint32 prev = 0;
-
-		const char* ptr = s.c_str();
-		const char* end = ptr + s.size();
-
-		while (ptr < end) {
-			uint32_t codepoint = 0;
-			unsigned char c = static_cast<unsigned char>(*ptr++);
-
-			if (c < 0x80) { codepoint = c; }
-			else if ((c & 0xE0) == 0xC0) {
-				if (ptr + 1 > end) break;
-				codepoint = ((c & 0x1F) << 6) | (static_cast<unsigned char>(*ptr++) & 0x3F);
-			}
-			else if ((c & 0xF0) == 0xE0) {
-				if (ptr + 2 > end) break;
-				unsigned char b1 = static_cast<unsigned char>(*ptr++);
-				unsigned char b2 = static_cast<unsigned char>(*ptr++);
-				codepoint = ((c & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
-			}
-			else if ((c & 0xF8) == 0xF0) {
-				if (ptr + 3 > end) break;
-				unsigned char b1 = static_cast<unsigned char>(*ptr++);
-				unsigned char b2 = static_cast<unsigned char>(*ptr++);
-				unsigned char b3 = static_cast<unsigned char>(*ptr++);
-				codepoint = ((c & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
-			}
-			else { prev = 0; continue; }
-
-			const Uint32 ch = codepoint;
-			if (prev) penX += f->getKerning(*mip, prev, ch) * k;
-
-			// FIXED: Safe multi-map lookup using pointers instead of cross-container iterators
-			const FontManager::GlyphInfo* g = nullptr;
-			auto it = mip->glyphs.find(ch);
-			if (it != mip->glyphs.end()) {
-				g = &it->second;
-			}
-			else {
-				auto itDyn = mip->dynamicGlyphs.find(ch);
-				if (itDyn != mip->dynamicGlyphs.end()) {
-					g = &itDyn->second;
-				}
-			}
-
-			if (g) {
-				float left = penX;
-				float right = penX + g->fillW * k;
-
-				if (hasOutline) {
-					const float oL = penX - g->fillX * k;
-					const float oR = oL + g->rect.w * k;
-					left = std::min(left, oL);
-					right = std::max(right, oR);
-				}
-
-				if (first) {
-					minX = left; maxX = right;
-					first = false;
-				}
-				else {
-					minX = std::min(minX, left);
-					maxX = std::max(maxX, right);
-				}
-				penX += g->advance * k;
-			}
-			prev = ch;
-		}
-
-		return std::max(0.0f, maxX - minX);
+	static float measureTextWidthExact(FontManager* font, const std::string& text, float scale) {
+		if (!font || text.empty()) return 0.0f;
+		const float targetHeight = scale * font->getMaxHeight();
+		const auto* mip = font->getMipLevelForHeight(targetHeight);
+		if (!mip || mip->height <= 0) return 0.0f;
+		auto* engine = font->getTextEngineAtlas(mip);
+		if (!engine) return 0.0f;
+		float width = 0.0f;
+		return engine->measure(text, targetHeight / mip->height, width) ? width : 0.0f;
 	}
 
-	static void renderTextOutlined(
-		SDL_Renderer* r,
-		FontManager* f,
-		const FontManager::MipLevel* mip,
-		SDL_Texture* staticFillTex,
-		SDL_Texture* staticOutlineTex,
-		const std::string& s,
-		float x,
-		float y,
-		float finalScale,
-		float k) {
-		if (!r || !f || !mip || !staticFillTex || s.empty()) return;
+	static void setAtlasTextColor(FontManager* font, SDL_Color color) {
+		if (font) font->setColor(color);
+	}
 
-		const float ySnap = std::round(y);
-		GeometryBatch batch;
-
-		// Helper to perform a single pass (Outline or Fill)
-		auto doPass = [&](SDL_Texture* staticTex, SDL_Texture* dynamicTex, bool isFill) {
-			if (!staticTex && !dynamicTex) return;
-
-			float penX = x;
-			Uint32 prev = 0;
-			const char* ptr = s.c_str();
-			const char* end = ptr + s.size();
-
-			while (ptr < end) {
-				uint32_t codepoint = 0;
-				unsigned char c = static_cast<unsigned char>(*ptr++);
-
-				if (c < 0x80) { codepoint = c; }
-				else if ((c & 0xE0) == 0xC0) {
-					if (ptr + 1 > end) break;
-					codepoint = ((c & 0x1F) << 6) | (static_cast<unsigned char>(*ptr++) & 0x3F);
-				}
-				else if ((c & 0xF0) == 0xE0) {
-					if (ptr + 2 > end) break;
-					unsigned char b1 = static_cast<unsigned char>(*ptr++);
-					unsigned char b2 = static_cast<unsigned char>(*ptr++);
-					codepoint = ((c & 0x0F) << 12) | ((b1 & 0x3F) << 6) | (b2 & 0x3F);
-				}
-				else if ((c & 0xF8) == 0xF0) {
-					if (ptr + 3 > end) break;
-					unsigned char b1 = static_cast<unsigned char>(*ptr++);
-					unsigned char b2 = static_cast<unsigned char>(*ptr++);
-					unsigned char b3 = static_cast<unsigned char>(*ptr++);
-					codepoint = ((c & 0x07) << 18) | ((b1 & 0x3F) << 12) | ((b2 & 0x3F) << 6) | (b3 & 0x3F);
-				}
-				else { prev = 0; continue; }
-
-				const Uint32 ch = codepoint;
-				if (prev) penX += f->getKerning(*mip, prev, ch) * k;
-
-				// FIXED: Safe multi-map lookup
-				const FontManager::GlyphInfo* g = nullptr;
-				SDL_Texture* texToUse = nullptr;
-
-				auto it = mip->glyphs.find(ch);
-				if (it != mip->glyphs.end()) {
-					g = &it->second;
-					texToUse = staticTex;
-				}
-				else {
-					auto itDyn = mip->dynamicGlyphs.find(ch);
-					if (itDyn != mip->dynamicGlyphs.end()) {
-						g = &itDyn->second;
-						texToUse = dynamicTex;
-					}
-				}
-
-				if (g && texToUse) {
-					if (isFill) {
-						SDL_Rect srcFill{ g->rect.x + g->fillX, g->rect.y + g->fillY, g->fillW, g->fillH };
-						SDL_FRect dstFill{ penX, ySnap, g->fillW * k, g->fillH * k };
-						batch.appendTexture(r, texToUse, srcFill, dstFill);
-					}
-					else {
-						const SDL_Rect& src = g->rect;
-						SDL_FRect dst = { penX - g->fillX * k, ySnap - g->fillY * k, src.w * k, src.h * k };
-						batch.appendTexture(r, texToUse, src, dst);
-					}
-					penX += g->advance * k;
-				}
-				prev = ch;
-			}
-			};
-
-		// --- Outline pass ---
-		doPass(staticOutlineTex, mip->dynamicOutlineTexture, false);
-
-		// --- Fill pass ---
-		doPass(staticFillTex, mip->dynamicFillTexture, true);
-		batch.flush();
+	static void renderAtlasText(SDL_Renderer* renderer, FontManager* font,
+		const FontManager::MipLevel* mip, const std::string& text,
+		float x, float y, float scale) {
+		if (!renderer || !font || !mip || text.empty()) return;
+		if (auto* engine = font->getTextEngineAtlas(mip))
+			engine->draw(text, x, std::round(y), scale, font->getColor());
 	}
 
 } // namespace
@@ -660,13 +505,7 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 	const FontManager::MipLevel* mip = font->getMipLevelForHeight(targetPixelHeight);
 	if (mip) {
 		const float mipRelativeScale = (mip->height > 0) ? (targetPixelHeight / mip->height) : 1.0f;
-		SDL_Texture* fillTex = mip->fillTexture;
-		SDL_Texture* outlineTex = mip->outlineTexture;
-
-		SDL_SetTextureColorMod(fillTex, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
-		if (mip->dynamicFillTexture) {
-			SDL_SetTextureColorMod(mip->dynamicFillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
-		}
+		setAtlasTextColor(font, baseViewInfo.textColor);
 
 		// Draw Header
 		if (headerTexture_) {
@@ -677,7 +516,7 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 			float y = 0.0f;
 			if (!table.id.empty()) {
 				float titleW = measureTextWidthExact(font, table.id, finalScale);
-				renderTextOutlined(renderer, font, mip, fillTex, outlineTex, table.id, (totalTableWidth - titleW) / 2.0f, y, finalScale, mipRelativeScale);
+				renderAtlasText(renderer, font, mip, table.id, (totalTableWidth - titleW) / 2.0f, y, mipRelativeScale);
 				y += drawableHeight + rowPadding;
 			}
 
@@ -688,7 +527,7 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 			for (size_t i = 0; i < visibleColumnIndices_.size(); ++i) {
 				const std::string& hText = table.columns[visibleColumnIndices_[i]];
 				float hW = measureTextWidthExact(font, hText, finalScale);
-				renderTextOutlined(renderer, font, mip, fillTex, outlineTex, hText, x + (cachedColumnWidths_[i] - hW) / 2.0f, y, finalScale, mipRelativeScale);
+				renderAtlasText(renderer, font, mip, hText, x + (cachedColumnWidths_[i] - hW) / 2.0f, y, mipRelativeScale);
 				x += cachedColumnWidths_[i] + paddingBetweenColumns;
 			}
 		}
@@ -710,7 +549,7 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 					if (colIdx < table.rows[r].size()) {
 						const std::string& cell = table.rows[r][colIdx];
 						float cW = measureTextWidthExact(font, cell, finalScale);
-						renderTextOutlined(renderer, font, mip, fillTex, outlineTex, cell, x + (cachedColumnWidths_[i] - cW) / 2.0f, y, finalScale, mipRelativeScale);
+						renderAtlasText(renderer, font, mip, cell, x + (cachedColumnWidths_[i] - cW) / 2.0f, y, mipRelativeScale);
 					}
 					x += cachedColumnWidths_[i] + paddingBetweenColumns;
 				}
@@ -780,21 +619,16 @@ void ReloadableHiscores::renderNoDataMessage(SDL_Renderer* renderer, FontManager
 	SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
 	SDL_RenderClear(renderer);
 
-	if (mip && mip->fillTexture) {
+	if (mip && mip->font) {
 		const float mipRelativeScale = (mip->height > 0) ? (targetPixelHeight / mip->height) : 1.0f;
-
-		SDL_SetTextureColorMod(mip->fillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
-		if (mip->dynamicFillTexture) {
-			SDL_SetTextureColorMod(mip->dynamicFillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
-		}
+		setAtlasTextColor(font, baseViewInfo.textColor);
 
 		for (const auto& line : lines) {
 			float textW = measureTextWidthExact(font, line, scale);
 			float x = (viewW - textW) * 0.5f;
 			if (x < 0.0f) x = 0.0f;
 
-			renderTextOutlined(renderer, font, mip, mip->fillTexture, mip->outlineTexture,
-				line, x, y, scale, mipRelativeScale);
+			renderAtlasText(renderer, font, mip, line, x, y, mipRelativeScale);
 			y += drawableHeight + rowPadding;
 		}
 	}
@@ -917,11 +751,11 @@ void ReloadableHiscores::buildCurrentPage_(bool resetPresentation) {
 		PagePanel panel;
 		panel.tableIndex = plan.tableIndices[pi]; panel.visibleColumns = pageCols[pi]; panel.width = cellW;
 		panel.x = pi == 0 ? 0.0f : cellW + gap; panel.scale = baseScale * sharedRatio;
-		panel.lineStep = font->getMaxHeight() * panel.scale * (1.0f + baseRowPadding_);
+		const float glyphH = font->getMaxHeight() * panel.scale;
+		panel.lineStep = glyphH * (1.0f + baseRowPadding_);
 		panel.headerHeight = panel.lineStep * (1 + (reserveTitle ? 1 : 0));
 		const auto& table = highScoreTable_.tables[panel.tableIndex];
 		const size_t rowCount = std::min(table.rows.size(), maxRows_);
-		const float glyphH = font->getMaxHeight() * panel.scale;
 		const float padH = glyphH * baseRowPadding_;
 		panel.rowsHeight = rowCount > 0
 			? rowCount * glyphH + (static_cast<float>(rowCount) - 0.5f) * padH
@@ -952,14 +786,13 @@ void ReloadableHiscores::buildCurrentPage_(bool resetPresentation) {
 			SDL_SetRenderTarget(renderer, panel.header); SDL_SetRenderDrawColor(renderer, 0,0,0,0); SDL_RenderClear(renderer);
 			const float pixelH = panel.scale * font->getMaxHeight(); const auto* mip = font->getMipLevelForHeight(pixelH);
 			if (mip) {
-				SDL_SetTextureColorMod(mip->fillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
-				if (mip->dynamicFillTexture) SDL_SetTextureColorMod(mip->dynamicFillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
 				const float k = mip->height > 0 ? pixelH / mip->height : 1.0f;
-				if (!table.id.empty()) renderTextOutlined(renderer, font, mip, mip->fillTexture, mip->outlineTexture, table.id,
-					(cellW - measureTextWidthExact(font, table.id, panel.scale)) * 0.5f, 0, panel.scale, k);
+				setAtlasTextColor(font, baseViewInfo.textColor);
+				if (!table.id.empty()) renderAtlasText(renderer, font, mip, table.id,
+					(cellW - measureTextWidthExact(font, table.id, panel.scale)) * 0.5f, 0, k);
 				float x = startX, y = reserveTitle ? panel.lineStep : 0.0f;
 				for (size_t ci=0; ci<panel.visibleColumns.size(); ++ci) { size_t c=panel.visibleColumns[ci]; std::string s=c<table.columns.size()?table.columns[c]:"";
-					renderTextOutlined(renderer,font,mip,mip->fillTexture,mip->outlineTexture,s,x+(panel.columnWidths[ci]-measureTextWidthExact(font,s,panel.scale))*0.5f,y,panel.scale,k); x+=panel.columnWidths[ci]+colPad; }
+					renderAtlasText(renderer,font,mip,s,x+(panel.columnWidths[ci]-measureTextWidthExact(font,s,panel.scale))*0.5f,y,k); x+=panel.columnWidths[ci]+colPad; }
 			}
 		}
 
@@ -973,14 +806,15 @@ void ReloadableHiscores::buildCurrentPage_(bool resetPresentation) {
 			SDL_SetRenderTarget(renderer, tile);
 			SDL_SetRenderDrawColor(renderer, 0, 0, 0, 0);
 			SDL_RenderClear(renderer);
-			const float pixelH=panel.scale*font->getMaxHeight(); const auto* mip=font->getMipLevelForHeight(pixelH); if(mip){SDL_SetTextureColorMod(mip->fillTexture,baseViewInfo.textColor.r,baseViewInfo.textColor.g,baseViewInfo.textColor.b);if(mip->dynamicFillTexture)SDL_SetTextureColorMod(mip->dynamicFillTexture,baseViewInfo.textColor.r,baseViewInfo.textColor.g,baseViewInfo.textColor.b);const float k=mip->height>0?pixelH/mip->height:1.0f;
+			const float pixelH=panel.scale*font->getMaxHeight(); const auto* mip=font->getMipLevelForHeight(pixelH); if(mip){const float k=mip->height>0?pixelH/mip->height:1.0f;
+				setAtlasTextColor(font, baseViewInfo.textColor);
 				for(size_t rr=0;rr<count;++rr){
 					float x=startX,y=panel.lineStep*rr;
 					SDL_Rect rowClip{0,(int)std::floor(y),std::max(1,(int)std::ceil(cellW)),
 						std::max(1,(int)std::ceil(panel.lineStep))};
 					SDL_SetRenderClipRect(renderer,&rowClip);
 					const auto& row=table.rows[first+rr];
-					for(size_t ci=0;ci<panel.visibleColumns.size();++ci){size_t c=panel.visibleColumns[ci];std::string s=c<row.size()?row[c]:"";renderTextOutlined(renderer,font,mip,mip->fillTexture,mip->outlineTexture,s,x+(panel.columnWidths[ci]-measureTextWidthExact(font,s,panel.scale))*0.5f,y,panel.scale,k);x+=panel.columnWidths[ci]+colPad;}
+					for(size_t ci=0;ci<panel.visibleColumns.size();++ci){size_t c=panel.visibleColumns[ci];std::string s=c<row.size()?row[c]:"";renderAtlasText(renderer,font,mip,s,x+(panel.columnWidths[ci]-measureTextWidthExact(font,s,panel.scale))*0.5f,y,k);x+=panel.columnWidths[ci]+colPad;}
 				}
 				SDL_SetRenderClipRect(renderer,nullptr);
 			}
@@ -1745,8 +1579,7 @@ void ReloadableHiscores::renderHeaderTexture(
 		return;
 	}
 	const float mipRelativeScale = (mip->height > 0) ? (targetPixelHeight / mip->height) : 1.0f;
-	SDL_Texture* fillTex = mip->fillTexture;
-	SDL_Texture* outlineTex = mip->outlineTexture;
+	setAtlasTextColor(font, baseViewInfo.textColor);
 
 	float y = 0.0f; // This is the baseline y for the current row.
 
@@ -1754,7 +1587,7 @@ void ReloadableHiscores::renderHeaderTexture(
 	if (!table.id.empty()) {
 		float titleWidth = measureTextWidthExact(font, table.id, scale);
 		float titleX = (totalTableWidth - titleWidth) / 2.0f;
-		renderTextOutlined(renderer, font, mip, fillTex, outlineTex, table.id, titleX, y, scale, mipRelativeScale);
+		renderAtlasText(renderer, font, mip, table.id, titleX, y, mipRelativeScale);
 		y += drawableHeight + rowPadding;
 	}
 
@@ -1765,7 +1598,7 @@ void ReloadableHiscores::renderHeaderTexture(
 		const std::string& header = table.columns[colIndex];
 		float headerWidth = measureTextWidthExact(font, header, scale);
 		float xAligned = x + (cachedColumnWidths_[i] - headerWidth) / 2.0f;
-		renderTextOutlined(renderer, font, mip, fillTex, outlineTex, header, xAligned, y, scale, mipRelativeScale);
+		renderAtlasText(renderer, font, mip, header, xAligned, y, mipRelativeScale);
 		x += cachedColumnWidths_[i] + paddingBetweenColumns;
 	}
 
@@ -1806,8 +1639,7 @@ void ReloadableHiscores::renderTableRowsTexture(
 		return;
 	}
 	const float mipRelativeScale = (mip->height > 0) ? (targetPixelHeight / mip->height) : 1.0f;
-	SDL_Texture* fillTex = mip->fillTexture;
-	SDL_Texture* outlineTex = mip->outlineTexture;
+	setAtlasTextColor(font, baseViewInfo.textColor);
 
 	for (size_t rowIndex = 0; rowIndex < rowsToActuallyRender; ++rowIndex) {
 		float y = (drawableHeight + rowPadding) * rowIndex; // This is the baseline y for this row.
@@ -1821,7 +1653,7 @@ void ReloadableHiscores::renderTableRowsTexture(
 			const std::string& cell = table.rows[rowIndex][colIndex];
 			float cellWidth = measureTextWidthExact(font, cell, scale);
 			float xAligned = x + (cachedColumnWidths_[i] - cellWidth) / 2.0f;
-			renderTextOutlined(renderer, font, mip, fillTex, outlineTex, cell, xAligned, y, scale, mipRelativeScale);
+			renderAtlasText(renderer, font, mip, cell, xAligned, y, mipRelativeScale);
 			x += cachedColumnWidths_[i] + paddingBetweenColumns;
 		}
 	}

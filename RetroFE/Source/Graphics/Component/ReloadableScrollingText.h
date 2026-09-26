@@ -20,13 +20,7 @@
 #include <vector>
 #include <string>
 #include <filesystem>
-
-struct CachedGlyph {
-    SDL_Rect sourceRect;  // Source rectangle on the font texture
-    SDL_FRect destRect;    // Destination rectangle on the screen
-    float advance;        // Advance value for the glyph
-};
-
+#include <cstdint>
 
 class ReloadableScrollingText : public Component
 {
@@ -42,11 +36,17 @@ public:
 
 
 private:
+    struct ShapedRow {
+        std::string text;
+        std::vector<std::string> words;
+        std::vector<float> wordWidths;
+        float width = 0.0f;
+        bool justify = false;
+    };
     bool loadFileText(const std::string& filePath);
     void reloadTexture(bool resetScroll = true);
     void loadText( std::string collection, std::string type, std::string basename, std::string filepath, bool systemMode );
     bool createIntermediateTexture(SDL_Renderer* renderer, int width, int height);
-    void updateGlyphCache();
     Configuration           &config_;
     bool                     systemMode_;
     bool                     layoutMode_;
@@ -59,6 +59,14 @@ private:
     std::string              pluralPostfix_;
     std::string              alignment_;
     std::vector<std::string> text_;
+    std::string shapedHorizontalText_;
+    float shapedHorizontalWidth_ = 0.0f;
+    std::vector<ShapedRow> shapedRows_;
+    bool shapedCacheDirty_ = true;
+    float shapedWrapWidth_ = -1.0f;
+    float shapedScale_ = -1.0f;
+    int shapedMipSize_ = 0;
+    uint64_t shapedFontGeneration_ = 0;
     std::string              direction_;
     std::string              location_; 
     float                    scrollingSpeed_;
@@ -70,13 +78,7 @@ private:
     float                    waitEndTime_;
     std::string              currentCollection_;
     int                      displayOffset_;
-    std::vector<CachedGlyph> cachedGlyphs_;
-    bool needsUpdate_;
     float textWidth_;
-    float textHeight_;
-    float lastScale_;
-    float lastImageMaxWidth_;
-    float lastImageMaxHeight_;
     std::filesystem::file_time_type lastWriteTime_;
     SDL_Texture* intermediateTexture_;
     bool needsTextureUpdate_;

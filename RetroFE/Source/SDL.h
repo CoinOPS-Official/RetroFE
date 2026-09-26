@@ -49,6 +49,9 @@ public:
     static bool renderCopy( SDL_Texture *texture, float alpha, SDL_Rect const *src, SDL_Rect const *dest, ViewInfo &viewInfo, int layoutWidth, int layoutHeight );
     static bool renderCopyF(SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight);
     static bool appendCopyF(GeometryBatch& batch, SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight);
+    static bool appendCopyFGradient(GeometryBatch& batch, SDL_Texture* texture, float alpha,
+        const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo,
+        int layoutWidth, int layoutHeight, SDL_FColor top, SDL_FColor bottom);
     static int getScreenCount( ) 
 	{
         return screenCount_;
@@ -93,7 +96,10 @@ public:
         return (index >= 0 && index < screenCount_ ? (rotation_[index] & 3) : (rotation_[0] & 3));
     }
 private:
-    static bool renderCopyFImpl(GeometryBatch* batch, SDL_Texture* texture, float alpha, const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo, int layoutWidth, int layoutHeight);
+    static bool renderCopyFImpl(GeometryBatch* batch, SDL_Texture* texture, float alpha,
+        const SDL_Rect* src, const SDL_FRect* dest, ViewInfo& viewInfo,
+        int layoutWidth, int layoutHeight, const SDL_FColor* top = nullptr,
+        const SDL_FColor* bottom = nullptr);
     
     enum class LayoutScaleMode {
         Stretch,

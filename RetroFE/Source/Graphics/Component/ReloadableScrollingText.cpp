@@ -22,11 +22,13 @@
 #include "../../Utility/Utils.h"
 #include "../../SDL.h"
 #include "../Font.h"
+#include "../TextEngineAtlas.h"
 #include <fstream>
 #include <sstream>
 #include <vector>
 #include <iostream>
 #include <algorithm>
+#include <utility>
 
 
 ReloadableScrollingText::ReloadableScrollingText(Configuration& config, bool systemMode, bool layoutMode, [[maybe_unused]] bool menuMode, std::string type, std::string textFormat, std::string singlePrefix, std::string singlePostfix, std::string pluralPrefix, std::string pluralPostfix, std::string alignment, Page& p, int displayOffset, FontManager* font, std::string direction, float scrollingSpeed, float startPosition, float startTime, float endTime, std::string location)
@@ -100,6 +102,7 @@ bool ReloadableScrollingText::loadFileText(const std::string& filePath) {
 
 	std::string line;
 	text_.clear();  // Clear previous content
+	shapedCacheDirty_ = true;
 
 	while (std::getline(fileStream, line)) {
 		if (direction_ == "horizontal" && !text_.empty()) {
@@ -168,6 +171,7 @@ void ReloadableScrollingText::allocateGraphicsMemory() {
 void ReloadableScrollingText::freeGraphicsMemory() {
 	Component::freeGraphicsMemory();
 	text_.clear();
+	shapedCacheDirty_ = true;
 }
 
 
@@ -183,16 +187,10 @@ void ReloadableScrollingText::initializeFonts() {
 
 void ReloadableScrollingText::reloadTexture(bool resetScroll) {
 	// If the type is "file", check if the file has changed
-	if (type_ == "file" && !location_.empty()) {
-		bool fileChanged = loadFileText(location_);  // Load text and check if file changed
-
-		// Reset the scroll only if the file has changed
-		if (fileChanged) {
-			resetScroll = true;
-		}
-		else {
-			resetScroll = false;
-		}
+	const bool fileMode = type_ == "file" && !location_.empty();
+	if (fileMode) {
+		if (!loadFileText(location_)) return;
+		resetScroll = true;
 	}
 
 	if (resetScroll) {
@@ -209,13 +207,12 @@ void ReloadableScrollingText::reloadTexture(bool resetScroll) {
 		waitEndTime_ = 0.0f;  // Reset to zero when scroll restarts
 	}
 
+	if (fileMode) return;
+
 	text_.clear();
+	shapedCacheDirty_ = true;
 
 	// Load the appropriate text content
-	if (type_ == "file" && !location_.empty()) {
-		loadFileText(location_);  // Load the text from the file, but don't reset scroll
-		return;  // Since it's file-based, just return after loading the text
-	}
 
 	Item* selectedItem = page.getSelectedItem(displayOffset_);
 	if (!selectedItem) {
@@ -480,17 +477,9 @@ void ReloadableScrollingText::draw() {
 
 	// --- Select the best MipLevel for the current render size ---
 	const FontManager::MipLevel* mip = font->getMipLevelForHeight(baseViewInfo.FontSize);
-	if (!mip || !mip->fillTexture) {
+	if (!mip || !mip->font) {
 		// If no suitable mip is found, we cannot draw.
 		return;
-	}
-
-	// Get texture from the selected mip level.
-	SDL_Texture* t = mip->fillTexture;
-
-	SDL_SetTextureColorMod(t, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
-	if (mip->dynamicFillTexture) {
-		SDL_SetTextureColorMod(mip->dynamicFillTexture, baseViewInfo.textColor.r, baseViewInfo.textColor.g, baseViewInfo.textColor.b);
 	}
 
 	float imageMaxWidth = 0;
@@ -515,230 +504,115 @@ void ReloadableScrollingText::draw() {
 	float xOrigin = baseViewInfo.XRelativeToOrigin();
 	float yOrigin = baseViewInfo.YRelativeToOrigin();
 
-	SDL_Rect rect = { 0, 0, 0, 0 };
-	float position = 0.0f;
-
-	if (direction_ == "horizontal") {
-		rect.x = static_cast<int>(xOrigin);
-		if (currentPosition_ < 0) {
-			rect.x -= static_cast<int>(currentPosition_);
-		}
-		textWidth_ = 0;
-
-		float imageWidth = 0; // Local variable to track total width
-
-		for (unsigned int l = 0; l < text_.size(); ++l) {
-			for (unsigned int i = 0; i < text_[l].size(); ++i) {
-				auto it = mip->glyphs.find(text_[l][i]);
-				if (it != mip->glyphs.end() && it->second.rect.h > 0) {
-					const FontManager::GlyphInfo& glyph = it->second;
-					textWidth_ += static_cast<int>(glyph.advance * scale);
-
-					if (rect.x >= (static_cast<int>(xOrigin) + imageMaxWidth)) {
-						break;
-					}
-
-					SDL_Rect charRect = glyph.rect;
-					rect.h = static_cast<int>(charRect.h * scale);
-					rect.w = static_cast<int>(charRect.w * scale);
-
-					// CORRECTED: Set the y position to the row's baseline directly.
-					rect.y = static_cast<int>(yOrigin);
-
-					// REMOVED the incorrect per-glyph vertical alignment calculation.
-					// if (mip->ascent < glyph.maxY) { ... }
-
-					if ((rect.x + static_cast<int>(glyph.advance * scale)) >= (static_cast<int>(xOrigin) + imageMaxWidth)) {
-						rect.w = static_cast<int>(xOrigin) + static_cast<int>(imageMaxWidth) - rect.x;
-						charRect.w = static_cast<int>(rect.w / scale);
-					}
-
-					if (position + glyph.advance * scale > currentPosition_) {
-						if (position < currentPosition_) {
-							rect.w = static_cast<int>(glyph.advance * scale + position - currentPosition_);
-							charRect.x = static_cast<int>(charRect.x + charRect.w - rect.w / scale);
-							charRect.w = static_cast<int>(rect.w / scale);
-						}
-						if (rect.w > 0) {
-							SDL::renderCopy(t, baseViewInfo.Alpha, &charRect, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
-							rect.x += rect.w;
-						}
-						else if ((rect.x + static_cast<int>(glyph.advance * scale)) >= (static_cast<int>(xOrigin) + imageMaxWidth)) {
-							rect.x = static_cast<int>(xOrigin) + static_cast<int>(imageMaxWidth) + 10;
-						}
-					}
-					position += glyph.advance * scale;
+	if (auto* engine = font->getTextEngineAtlas(mip)) {
+			const int layoutW = page.getLayoutWidthByMonitor(baseViewInfo.Monitor);
+			const int layoutH = page.getLayoutHeightByMonitor(baseViewInfo.Monitor);
+			const float viewportW = imageMaxWidth > 0 ? imageMaxWidth : static_cast<float>(layoutW);
+			const float viewportH = imageMaxHeight > 0 ? imageMaxHeight : static_cast<float>(layoutH);
+			const SDL_FRect viewport{xOrigin, yOrigin, viewportW, viewportH};
+			if (shapedCacheDirty_) {
+				shapedHorizontalText_.clear();
+				for (const auto& line : text_) shapedHorizontalText_ += line;
+				shapedRows_.clear();
+				shapedWrapWidth_ = -1.0f;
+				shapedScale_ = -1.0f;
+				shapedCacheDirty_ = false;
+			}
+			const bool fontChanged = shapedScale_ != scale ||
+				shapedMipSize_ != mip->fontSize ||
+				shapedFontGeneration_ != font->getResourceGeneration();
+			if (direction_ == "horizontal") {
+				if (fontChanged && !engine->measure(shapedHorizontalText_, scale,
+					shapedHorizontalWidth_)) return;
+				shapedScale_ = scale;
+				shapedMipSize_ = mip->fontSize;
+				shapedFontGeneration_ = font->getResourceGeneration();
+				textWidth_ = shapedHorizontalWidth_;
+				if (startPosition_ == 0.0f && shapedHorizontalWidth_ <= viewportW)
+					currentPosition_ = 0.0f;
+				if (currentPosition_ > shapedHorizontalWidth_) {
+					waitStartTime_ = startTime_;
+					waitEndTime_ = endTime_;
+					currentPosition_ = -startPosition_;
 				}
-			}
-		}
-
-		for (unsigned int l = 0; l < text_.size(); ++l) {
-			for (unsigned int i = 0; i < text_[l].size(); ++i) {
-				auto it = mip->glyphs.find(text_[l][i]);
-				if (it != mip->glyphs.end()) {
-					imageWidth += it->second.advance;
-				}
-			}
-		}
-
-		if (currentPosition_ > imageWidth * scale) {
-			waitStartTime_ = startTime_;
-			waitEndTime_ = endTime_;
-			currentPosition_ = -startPosition_;
-		}
-
-	}
-	else if (direction_ == "vertical") {
-		// This entire block was already correct and needs no changes.
-		unsigned int spaceWidth = 0; {
-			auto it = mip->glyphs.find(' ');
-			if (it != mip->glyphs.end()) {
-				spaceWidth = static_cast<int>(it->second.advance * scale);
-			}
-		}
-
-		std::vector<std::string>  text;
-		std::vector<unsigned int> textWords;
-		std::vector<unsigned int> textWidth;
-		std::vector<bool>         textLast;
-		for (unsigned int l = 0; l < text_.size(); ++l) {
-			std::string        line = "";
-			std::istringstream iss(text_[l]);
-			std::string        word;
-			unsigned int       width = 0;
-			unsigned int       lineWidth = 0;
-			unsigned int       wordCount = 0;
-			while (iss >> word) {
-				unsigned int wordWidth = 0;
-				for (unsigned int i = 0; i < word.size(); ++i) {
-					auto it = mip->glyphs.find(word[i]);
-					if (it != mip->glyphs.end()) {
-						wordWidth += static_cast<int>(it->second.advance * scale);
-					}
-				}
-				if (width > 0 && (width + spaceWidth + wordWidth > imageMaxWidth)) {
-					text.push_back(line);
-					textWords.push_back(wordCount);
-					textWidth.push_back(lineWidth);
-					textLast.push_back(false);
-					line = word;
-					width = wordWidth;
-					lineWidth = wordWidth;
-					wordCount = 1;
-				}
-				else {
-					if (width == 0) {
-						line += word;
-						width += wordWidth;
-					}
-					else {
-						line += " " + word;
-						width += spaceWidth + wordWidth;
-					}
-					lineWidth += wordWidth;
-					wordCount += 1;
-				}
-			}
-			if (text_[l] == "" || line != "") {
-				text.push_back(line);
-				textWords.push_back(wordCount);
-				textWidth.push_back(lineWidth);
-				textLast.push_back(true);
-			}
-		}
-
-		rect.y = static_cast<int>(yOrigin);
-		if (currentPosition_ < 0) {
-			rect.y -= static_cast<int>(currentPosition_);
-		}
-
-		if (text.size() * mipHeight * scale <= imageMaxHeight && startPosition_ == 0.0f) {
-			currentPosition_ = 0.0f;
-			waitStartTime_ = 0.0f;
-			waitEndTime_ = 0.0f;
-		}
-
-		for (unsigned int l = 0; l < text.size(); ++l) {
-			if (rect.y >= (static_cast<int>(yOrigin) + imageMaxHeight)) {
-				break;
-			}
-
-			rect.x = static_cast<int>(xOrigin);
-			if (alignment_ == "right") {
-				rect.x = static_cast<int>(xOrigin + imageMaxWidth - textWidth[l] - (textWords[l] - 1) * spaceWidth * scale);
-			}
-			if (alignment_ == "centered") {
-				rect.x = static_cast<int>(xOrigin + imageMaxWidth / 2 - textWidth[l] / 2 - (textWords[l] - 1) * spaceWidth * scale / 2);
-			}
-
-			std::istringstream iss(text[l]);
-			std::string word;
-			unsigned int wordCount = textWords[l];
-			unsigned int spaceFill = static_cast<int>(imageMaxWidth) - textWidth[l];
-			unsigned int yAdvance = static_cast<int>(mipHeight * scale);
-
-			while (iss >> word) {
-				for (unsigned int i = 0; i < word.size(); ++i) {
-					auto it = mip->glyphs.find(word[i]);
-					if (it != mip->glyphs.end() && it->second.rect.h > 0) {
-						const FontManager::GlyphInfo& glyph = it->second;
-						SDL_Rect charRect = glyph.rect;
-						rect.h = static_cast<int>(charRect.h * scale);
-						rect.w = static_cast<int>(charRect.w * scale);
-						yAdvance = static_cast<int>(mipHeight * scale);
-
-						if ((rect.y + rect.h) >= (static_cast<int>(yOrigin) + imageMaxHeight)) {
-							rect.h = static_cast<int>(yOrigin) + static_cast<int>(imageMaxHeight) - rect.y;
-							charRect.h = static_cast<int>(rect.h / scale);
-						}
-
-						if (position + mipHeight * scale > currentPosition_) {
-							if (position < currentPosition_) {
-								yAdvance -= rect.h - static_cast<int>(mipHeight * scale + position - currentPosition_);
-								rect.h = static_cast<int>(mipHeight * scale + position - currentPosition_);
-								charRect.y = static_cast<int>(charRect.y + charRect.h - rect.h / scale);
-								charRect.h = static_cast<int>(rect.h / scale);
-							}
-							if (rect.h > 0) {
-								SDL::renderCopy(t, baseViewInfo.Alpha, &charRect, &rect, baseViewInfo, page.getLayoutWidthByMonitor(baseViewInfo.Monitor), page.getLayoutHeightByMonitor(baseViewInfo.Monitor));
+				if (engine->drawTransformed(shapedHorizontalText_,
+					xOrigin - currentPosition_, yOrigin, scale, baseViewInfo.textColor,
+					baseViewInfo, layoutW, layoutH, &viewport)) return;
+			} else if (direction_ == "vertical") {
+				if (fontChanged || shapedWrapWidth_ != viewportW) {
+					shapedRows_.clear();
+					auto pushRow = [&](const std::string& value, float width, bool justify) {
+						ShapedRow row;
+						row.text = value;
+						row.width = width;
+						row.justify = justify;
+						if (justify) {
+							std::istringstream words(value);
+							std::string word;
+							while (words >> word) {
+								float wordWidth = 0.0f;
+								engine->measure(word, scale, wordWidth);
+								row.words.push_back(word);
+								row.wordWidths.push_back(wordWidth);
 							}
 						}
-						rect.x += static_cast<int>(glyph.advance * scale);
+						shapedRows_.push_back(std::move(row));
+					};
+					for (const auto& sourceLine : text_) {
+						std::vector<std::string> lines;
+						if (!engine->wrapLines(sourceLine, scale, viewportW, lines)) return;
+						for (size_t i = 0; i < lines.size(); ++i) {
+							float width = 0.0f;
+							if (!engine->measure(lines[i], scale, width)) return;
+							pushRow(lines[i], width, alignment_ == "justified" && i + 1 < lines.size());
+						}
 					}
+					shapedWrapWidth_ = viewportW;
+					shapedScale_ = scale;
+					shapedMipSize_ = mip->fontSize;
+					shapedFontGeneration_ = font->getResourceGeneration();
 				}
-
-				wordCount -= 1;
-				if (wordCount > 0 && !textLast[l] && alignment_ == "justified") {
-					unsigned int advance = static_cast<int>(spaceFill / wordCount);
-					spaceFill -= advance;
-					rect.x += advance;
+				const float lineHeight = mipHeight * scale;
+				const float totalHeight = shapedRows_.size() * lineHeight;
+				if (startPosition_ == 0.0f && totalHeight <= viewportH) {
+					currentPosition_ = 0.0f;
+					waitStartTime_ = 0.0f;
+					waitEndTime_ = 0.0f;
 				}
-				else {
-					rect.x += static_cast<int>(spaceWidth);
+				if (currentPosition_ > totalHeight) {
+					waitStartTime_ = startTime_;
+					waitEndTime_ = endTime_;
+					currentPosition_ = -startPosition_;
 				}
-			}
-
-			if (text[l] == "") {
-				auto it = mip->glyphs.find(' ');
-				if (it != mip->glyphs.end() && it->second.rect.h > 0) {
-					rect.h = static_cast<int>(it->second.rect.h * scale);
-					if ((position + mipHeight * scale > currentPosition_) && (position < currentPosition_)) {
-						yAdvance -= rect.h - static_cast<int>(mipHeight * scale + position - currentPosition_);
+				bool drawn = true;
+				for (size_t i = 0; i < shapedRows_.size(); ++i) {
+					const auto& row = shapedRows_[i];
+					const float rowY = yOrigin + i * lineHeight - currentPosition_;
+					if (rowY + lineHeight <= yOrigin || rowY >= yOrigin + viewportH) continue;
+					if (row.justify && row.words.size() > 1) {
+						float wordWidthSum = 0.0f;
+						for (float wordWidth : row.wordWidths) wordWidthSum += wordWidth;
+						if (!drawn) break;
+						const float gap = std::max(0.0f,
+							(viewportW - wordWidthSum) / (row.words.size() - 1));
+						float wordX = xOrigin;
+						for (size_t wordIndex = 0; wordIndex < row.words.size(); ++wordIndex) {
+							if (!engine->drawTransformed(row.words[wordIndex], wordX, rowY, scale,
+								baseViewInfo.textColor, baseViewInfo, layoutW, layoutH,
+								&viewport)) { drawn = false; break; }
+							wordX += row.wordWidths[wordIndex] + gap;
+						}
+					} else if (!row.text.empty()) {
+						float rowX = xOrigin;
+						if (alignment_ == "right") rowX += viewportW - row.width;
+						else if (alignment_ == "centered") rowX += (viewportW - row.width) * 0.5f;
+						if (!engine->drawTransformed(row.text, rowX, rowY, scale,
+							baseViewInfo.textColor, baseViewInfo, layoutW, layoutH,
+							&viewport)) drawn = false;
 					}
+					if (!drawn) break;
 				}
+				if (drawn) return;
 			}
-
-			if (position + mipHeight * scale > currentPosition_) {
-				rect.y += yAdvance;
-			}
-			position += mipHeight * scale;
-		}
-
-		if (currentPosition_ > text.size() * mipHeight * scale) {
-			waitStartTime_ = startTime_;
-			waitEndTime_ = endTime_;
-			currentPosition_ = -startPosition_;
-		}
 	}
-
 }

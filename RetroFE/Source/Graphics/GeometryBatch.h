@@ -37,6 +37,27 @@ public:
         return append(renderer, texture, vertices, 4, indices, 6);
     }
 
+    // Colors belong to this glyph quad. A clipped glyph can pass colors
+    // interpolated at its clipped top and bottom edges.
+    bool appendGradientTexture(SDL_Renderer* renderer, SDL_Texture* texture,
+        const SDL_Rect& src, const SDL_FRect& dst,
+        SDL_FColor top, SDL_FColor bottom) {
+        if (!texture || texture->w <= 0 || texture->h <= 0) return false;
+        if (src.w <= 0 || src.h <= 0 || dst.w <= 0 || dst.h <= 0) return true;
+        const float u0 = float(src.x) / texture->w;
+        const float v0 = float(src.y) / texture->h;
+        const float u1 = float(src.x + src.w) / texture->w;
+        const float v1 = float(src.y + src.h) / texture->h;
+        const SDL_Vertex vertices[] = {
+            {{dst.x, dst.y}, top, {u0, v0}},
+            {{dst.x + dst.w, dst.y}, top, {u1, v0}},
+            {{dst.x + dst.w, dst.y + dst.h}, bottom, {u1, v1}},
+            {{dst.x, dst.y + dst.h}, bottom, {u0, v1}}
+        };
+        constexpr int indices[] = {0, 1, 2, 0, 2, 3};
+        return append(renderer, texture, vertices, 4, indices, 6);
+    }
+
     bool append(SDL_Renderer* renderer, SDL_Texture* texture,
         const SDL_Vertex* vertices, int vertexCount,
         const int* indices, int indexCount) {
