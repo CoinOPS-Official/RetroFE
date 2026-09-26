@@ -949,10 +949,8 @@ void GStreamerVideo::stopOnControl() {
 }
 
 void GStreamerVideo::finishStopOnMain() {
-	if (videoSourceId_ != 0) {
+	if (audioHandle_) {
 		AudioBus::instance().setGain(audioHandle_, 0.0f);
-		AudioBus::instance().removeSource(videoSourceId_);
-		videoSourceId_ = 0;
 		audioHandle_.reset();
 	}
 	destroyTextures();
@@ -1651,7 +1649,7 @@ bool GStreamerVideo::prepareForRetarget() {
         stagedSample_.epoch = 0;
     }
 
-    if (videoSourceId_ != 0) {
+    if (audioHandle_) {
         AudioBus::instance().setGain(audioHandle_, 0.0f);
         AudioBus::instance().clear(audioHandle_);
     }
@@ -1753,7 +1751,7 @@ bool GStreamerVideo::unload() {
 			});
 	}
 
-	if (videoSourceId_ != 0) {
+	if (audioHandle_) {
 		AudioBus::instance().setGain(audioHandle_, 0.0f);
 		AudioBus::instance().clear(audioHandle_);
 	}
@@ -2303,12 +2301,8 @@ bool GStreamerVideo::openMedia(const std::string& file, bool cpuFallback) {
 
     scheduleUriPump();
 
-    if (videoSourceId_ == 0) {
-        videoSourceId_ =
-            AudioBus::instance().addSource("video-preview");
-        audioHandle_ =
-            AudioBus::instance().getHandle(videoSourceId_);
-    }
+    if (!audioHandle_)
+        audioHandle_ = AudioBus::instance().createSource("video-preview");
 
     AudioBus::instance().setGain(audioHandle_, 0.0f);
     return true;

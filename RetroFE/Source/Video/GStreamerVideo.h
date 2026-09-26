@@ -350,7 +350,6 @@ private:
     std::atomic<uint64_t> lastFadedEpoch_{ 0 };
 
     // Audio bus integration
-    AudioBus::SourceId videoSourceId_{ 0 };
     std::shared_ptr<AudioBus::Handle> audioHandle_;
     GstElement* audioSink_{ nullptr };
     float lastVolume_ = -1.0f;

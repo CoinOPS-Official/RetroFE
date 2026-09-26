@@ -15,6 +15,7 @@
 #include <string>
 #include <vector>
 #include <atomic>
+#include <array>
 #include <mutex>
 #include <random>
 #include <filesystem>
@@ -75,7 +76,9 @@ public:
     void setPlaybackState(PlaybackState state) { playbackState_ = state; }
     PlaybackState getPlaybackState() const { return playbackState_; }
 
-    void processAudioData(Uint8* stream, int len);
+    void processAudioData(const Uint8* stream, int len);
+    // Deliver captured music PCM to visualizers on the UI thread.
+    void drainVisualizerAudio();
     const std::vector<float>& getAudioLevels() const { return audioLevels_; }
     int getAudioChannels() const { return audioChannels_; }
     int getAudioSampleRate() const { return audioSampleRate_; }
@@ -225,7 +228,18 @@ private:
 
     std::vector<MusicPlayerComponent*> visualizerListeners_;
     std::mutex visualizerMutex_;
-    bool hasActiveVisualizers_ = false;
+    std::atomic<bool> hasActiveVisualizers_{ false };
+    static constexpr uint64_t kVisualizerBlockCount = 16;
+    static constexpr int kVisualizerBlockSamples = 2048;
+    struct VisualizerBlock {
+        std::array<float, kVisualizerBlockSamples> pcm;
+        int samples = 0;
+        int channels = 0;
+        int rate = 0;
+    };
+    std::array<VisualizerBlock, kVisualizerBlockCount> visualizerBlocks_{};
+    std::atomic<uint64_t> visualizerWrite_{ 0 };
+    std::atomic<uint64_t> visualizerRead_{ 0 };
     std::vector<float> audioLevels_;
     int audioChannels_;
     int audioSampleRate_;

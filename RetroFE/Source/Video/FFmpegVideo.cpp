@@ -329,7 +329,6 @@ struct FFmpegVideo::Impl {
     SwsContext *workerScaler = nullptr;
     SwsContext *fallbackScaler = nullptr;
     std::vector<Frame> conversionPool; // worker-owned reusable output frames
-    AudioBus::SourceId source = 0;
     std::shared_ptr<AudioBus::Handle> audio;
     AVBufferRef *hardware = nullptr;
     AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;
@@ -374,8 +373,7 @@ struct FFmpegVideo::Impl {
     int64_t workerSeek = 0;
     explicit Impl(int m) : monitor(m) {
         installFFmpegLog();
-        source = AudioBus::instance().addSource("FFmpeg video");
-        audio = AudioBus::instance().getHandle(source);
+        audio = AudioBus::instance().createSource("FFmpeg video");
         if (Configuration::HardwareVideoAccel) {
             SDL_Renderer *r = SDL::getRenderer(m);
             auto shared = acquireSharedHardware(r);
@@ -433,7 +431,7 @@ struct FFmpegVideo::Impl {
         releaseSharedHardware(SDL::getRenderer(monitor));
         sws_freeContext(workerScaler);
         sws_freeContext(fallbackScaler);
-        AudioBus::instance().removeSource(source);
+        audio.reset();
     }
     int64_t now() const {
         return position + (target == VideoState::Playing && ready ? int64_t(SDL_GetTicksNS() - anchor) : 0);

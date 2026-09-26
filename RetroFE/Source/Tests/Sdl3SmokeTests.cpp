@@ -29,6 +29,7 @@
 #include "../Graphics/PageBuilder.h"
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -266,6 +267,47 @@ void inputChecks(Configuration& config) {
 
 void mediaChecks(const std::string& assets) {
     require(AudioBus::instance().mixer() != nullptr, "Open SDL3 audio mixer");
+    // A live stream track must recover after a temporary underrun without
+    // restarting playback. Generate through a device-free mixer to inspect it.
+    const SDL_AudioSpec streamSpec{ SDL_AUDIO_F32, 2, 48000 };
+    MIX_Mixer* offlineMixer = MIX_CreateMixer(&streamSpec);
+    require(offlineMixer != nullptr, "Create offline stream mixer");
+    SDL_AudioStream* stream = SDL_CreateAudioStream(&streamSpec, &streamSpec);
+    require(stream != nullptr, "Create offline audio stream");
+    MIX_Track* streamTrack = MIX_CreateTrack(offlineMixer);
+    require(streamTrack != nullptr && MIX_SetTrackAudioStream(streamTrack, stream),
+            "Attach stream track");
+    const SDL_PropertiesID streamOptions = SDL_CreateProperties();
+    require(streamOptions != 0 &&
+            SDL_SetBooleanProperty(streamOptions, MIX_PROP_PLAY_HALT_WHEN_EXHAUSTED_BOOLEAN, false) &&
+            MIX_PlayTrack(streamTrack, streamOptions), "Start continuous stream track");
+    SDL_DestroyProperties(streamOptions);
+    std::array<float, 256> tone;
+    tone.fill(0.25f);
+    std::array<float, 256> mixed{};
+    const int toneBytes = static_cast<int>(tone.size() * sizeof(float));
+    require(SDL_PutAudioStreamData(stream, tone.data(), toneBytes), "Queue initial stream audio");
+    require(MIX_Generate(offlineMixer, mixed.data(), toneBytes) > 0 &&
+            std::any_of(mixed.begin(), mixed.end(), [](float sample) { return sample > 0.1f; }),
+            "Mix initial stream audio");
+    require(MIX_Generate(offlineMixer, mixed.data(), toneBytes) >= 0,
+            "Generate stream underrun silence");
+    require(SDL_PutAudioStreamData(stream, tone.data(), toneBytes), "Queue resumed stream audio");
+    require(MIX_Generate(offlineMixer, mixed.data(), toneBytes) > 0 &&
+            std::any_of(mixed.begin(), mixed.end(), [](float sample) { return sample > 0.1f; }),
+            "Resume stream audio after underrun");
+    MIX_DestroyTrack(streamTrack);
+    SDL_DestroyAudioStream(stream);
+    MIX_DestroyMixer(offlineMixer);
+
+    auto& audioBus = AudioBus::instance();
+    auto source = audioBus.createSource("stream lifecycle test", 4);
+    require(source != nullptr, "Create streaming audio source");
+    std::array<float, 128> pcm{};
+    audioBus.triggerFadeIn(source);
+    audioBus.push(source, pcm.data(), static_cast<int>(pcm.size() * sizeof(float)));
+    audioBus.clear(source);
+    source.reset();
     Sound sound(assets + "/layouts/Arcades/sounds/select.wav", "");
     require(sound.allocate(), "Decode packaged WAV sound");
     sound.play();

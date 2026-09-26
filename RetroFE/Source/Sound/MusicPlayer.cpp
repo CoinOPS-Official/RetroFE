@@ -1010,9 +1010,51 @@ void SDLCALL MusicPlayer::musicFinishedCallback(void* userdata, MIX_Track*) {
 
 void SDLCALL MusicPlayer::musicMixCallback(void* userdata, MIX_Track*, const SDL_AudioSpec* spec, float* pcm, int samples) {
     auto* self = static_cast<MusicPlayer*>(userdata);
-    if (!pcm || samples <= 0 || spec->channels != self->audioChannels_ || spec->freq != self->audioSampleRate_) return;
-    // Cooked PCM includes music gain/fades, but no sound effects or video audio.
-    self->processAudioData(reinterpret_cast<Uint8*>(pcm), samples * static_cast<int>(sizeof(float)));
+    if (!self || !spec || !pcm || samples <= 0 || spec->channels <= 0 ||
+        spec->channels > 8 || spec->freq <= 0 ||
+        !self->hasActiveVisualizers_.load(std::memory_order_relaxed))
+        return;
+
+    // Cooked PCM includes music gain/fades, but no effects or video audio.
+    // Copy to a fixed SPSC queue; listeners and allocations run on the UI thread.
+    const int alignedSamples = samples - samples % spec->channels;
+    int offset = 0;
+    while (offset < alignedSamples) {
+        const uint64_t write = self->visualizerWrite_.load(std::memory_order_relaxed);
+        const uint64_t read = self->visualizerRead_.load(std::memory_order_acquire);
+        if (write - read >= kVisualizerBlockCount)
+            break;
+        auto& block = self->visualizerBlocks_[write % kVisualizerBlockCount];
+        int count = std::min(alignedSamples - offset, kVisualizerBlockSamples);
+        count -= count % spec->channels;
+        if (count <= 0)
+            break;
+        std::memcpy(block.pcm.data(), pcm + offset, count * sizeof(float));
+        block.samples = count;
+        block.channels = spec->channels;
+        block.rate = spec->freq;
+        self->visualizerWrite_.store(write + 1, std::memory_order_release);
+        offset += count;
+    }
+}
+
+void MusicPlayer::drainVisualizerAudio() {
+    // Visuals should follow the most recent audio if rendering fell behind.
+    uint64_t read = visualizerRead_.load(std::memory_order_relaxed);
+    const uint64_t write = visualizerWrite_.load(std::memory_order_acquire);
+    if (write - read > 4)
+        read = write - 4;
+    while (read < write) {
+        const auto& block = visualizerBlocks_[read % kVisualizerBlockCount];
+        if (block.channels != audioChannels_) {
+            audioChannels_ = block.channels;
+            audioLevels_.assign(audioChannels_, 0.0f);
+        }
+        audioSampleRate_ = block.rate;
+        processAudioData(reinterpret_cast<const Uint8*>(block.pcm.data()),
+                         block.samples * static_cast<int>(sizeof(float)));
+        visualizerRead_.store(++read, std::memory_order_release);
+    }
 }
 
 bool MusicPlayer::ensureAudio() {
@@ -1044,6 +1086,8 @@ void MusicPlayer::haltTrack() {
     MIX_StopTrack(musicTrack_, 0);
     MIX_SetTrackStoppedCallback(musicTrack_, musicFinishedCallback, this);
     finishEvent_.store(FinishEvent::None, std::memory_order_release);
+    visualizerRead_.store(visualizerWrite_.load(std::memory_order_acquire),
+                          std::memory_order_release);
 }
 
 int MusicPlayer::musicVolume(int value) {
@@ -1071,6 +1115,8 @@ void MusicPlayer::releaseAudio() {
         MIX_DestroyTrack(musicTrack_);
     }
     musicTrack_ = nullptr;
+    visualizerRead_.store(visualizerWrite_.load(std::memory_order_acquire),
+                          std::memory_order_release);
     if (currentMusic_) MIX_DestroyAudio(currentMusic_);
     currentMusic_ = nullptr;
     finishEvent_.store(FinishEvent::None, std::memory_order_release);
@@ -1123,8 +1169,11 @@ void MusicPlayer::addVisualizerListener(MusicPlayerComponent* listener) {
     audioLevels_.resize(audioChannels_, 0.0f);
 
     if (std::find(visualizerListeners_.begin(), visualizerListeners_.end(), listener) == visualizerListeners_.end()) {
+        if (visualizerListeners_.empty())
+            visualizerRead_.store(visualizerWrite_.load(std::memory_order_acquire),
+                                  std::memory_order_release);
         visualizerListeners_.push_back(listener);
-        hasActiveVisualizers_ = true;
+        hasActiveVisualizers_.store(true, std::memory_order_release);
     }
 }
 
@@ -1132,10 +1181,10 @@ void MusicPlayer::removeVisualizerListener(MusicPlayerComponent* listener) {
     std::lock_guard<std::mutex> lock(visualizerMutex_);
     auto it = std::remove(visualizerListeners_.begin(), visualizerListeners_.end(), listener);
     visualizerListeners_.erase(it, visualizerListeners_.end());
-    hasActiveVisualizers_ = !visualizerListeners_.empty();
+    hasActiveVisualizers_.store(!visualizerListeners_.empty(), std::memory_order_release);
 }
 
-void MusicPlayer::processAudioData(Uint8* stream, int len) {
+void MusicPlayer::processAudioData(const Uint8* stream, int len) {
     if (!hasActiveVisualizers_ || !stream || len <= 0) return;
 
     {

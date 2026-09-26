@@ -607,6 +607,7 @@ std::string_view MusicPlayerComponent::filePath() {
 
 bool MusicPlayerComponent::update(float dt) {
 	refreshTimer_ += dt;
+	musicPlayer_->drainVisualizerAudio();
 
 	if (!musicPlayer_->hasStartedPlaying())
 		return Component::update(dt);
