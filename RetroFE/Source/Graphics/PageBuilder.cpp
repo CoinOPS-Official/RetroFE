@@ -775,6 +775,8 @@ void PageBuilder::loadReloadableImages(const xml_node<>* layout, const std::stri
 		xml_attribute<> const* locationXml = componentXml->first_attribute("location");
 		xml_attribute<> const* baseColumnPaddingXml = componentXml->first_attribute("baseColumnPadding");
 		xml_attribute<> const* baseRowPaddingXml = componentXml->first_attribute("baseRowPadding");
+		xml_attribute<> const* qrDelaySecXml = componentXml->first_attribute("qrDelaySec");
+		xml_attribute<> const* qrFadeSecXml = componentXml->first_attribute("qrFadeSec");
 		xml_attribute<> const* maxRowsXml = componentXml->first_attribute("maxRows");
 		xml_attribute<> const* excludedColumnsXml = componentXml->first_attribute("excludedColumns");
 
@@ -878,12 +880,15 @@ void PageBuilder::loadReloadableImages(const xml_node<>* layout, const std::stri
 		else if (tagName == "reloadableGlobalHiscores") {
 			FontManager* font = addFont(componentXml, nullptr, cMonitor);
 			std::string textFormat = textFormatXml ? textFormatXml->value() : "";
+			std::string renderType = type ? type->value() : "";
 			float baseColumnPadding = baseColumnPaddingXml ? Utils::convertFloat(baseColumnPaddingXml->value()) : 1.5f;
 			float baseRowPadding = baseRowPaddingXml ? Utils::convertFloat(baseRowPaddingXml->value()) : 0.5f;
+			float qrDelaySec = qrDelaySecXml ? Utils::convertFloat(qrDelaySecXml->value()) : 2.0f;
+			float qrFadeSec = qrFadeSecXml ? Utils::convertFloat(qrFadeSecXml->value()) : 1.0f;
 			std::string excludedColumns = excludedColumnsXml ? excludedColumnsXml->value() : "";
 
 			c = new ReloadableGlobalHiscores(config_, textFormat, *page, selectedOffset,
-				font, baseColumnPadding, baseRowPadding);
+				font, baseColumnPadding, baseRowPadding, renderType, qrDelaySec, qrFadeSec);
 		}
 
 		else if (tagName == "musicPlayer") {
