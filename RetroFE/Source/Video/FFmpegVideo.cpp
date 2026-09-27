@@ -31,6 +31,8 @@ extern "C" {
 }
 #ifdef RETROFE_HAVE_D3D12
 #include "D3D12VideoInterop.h"
+#include <dxgi1_4.h>
+#include <wrl/client.h>
 extern "C" {
 #include <libavutil/hwcontext_d3d12va.h>
 }
@@ -215,18 +217,56 @@ static SharedHwEntry acquireSharedHardware(SDL_Renderer* renderer) {
     if (Configuration::HardwareVideoAccel) {
         auto* device = static_cast<ID3D12Device*>(
             SDL_GetPointerProperty(SDL_GetRendererProperties(renderer),
-                                   SDL_PROP_RENDERER_D3D12_DEVICE_POINTER, nullptr));
+                SDL_PROP_RENDERER_D3D12_DEVICE_POINTER, nullptr));
         if (device) {
             hw = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_D3D12VA);
             if (hw) {
                 auto* d = static_cast<AVD3D12VADeviceContext*>(
                     reinterpret_cast<AVHWDeviceContext*>(hw->data)->hwctx);
                 d->device = device;
+
+                // 1. Default to maximum performance (enabled for AMD, NVIDIA, and modern Intel)
                 d->resource_flags = D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
+
+                // 2. Safely query DXGI to intercept legacy Intel drivers
+                LUID luid = device->GetAdapterLuid();
+                Microsoft::WRL::ComPtr<IDXGIFactory4> factory;
+                if (SUCCEEDED(CreateDXGIFactory1(IID_PPV_ARGS(&factory)))) {
+                    Microsoft::WRL::ComPtr<IDXGIAdapter> adapter;
+                    if (SUCCEEDED(factory->EnumAdapterByLuid(luid, IID_PPV_ARGS(&adapter)))) {
+                        DXGI_ADAPTER_DESC desc;
+                        if (SUCCEEDED(adapter->GetDesc(&desc))) {
+
+                            // Check if the GPU Vendor is Intel (0x8086)
+                            if (desc.VendorId == 0x8086) {
+                                // Mask out the specific SKU to isolate the architecture family
+                                const UINT family = desc.DeviceId & 0xFF00;
+
+                                // Known Intel Gen12+ (Xe) families that correctly support implicit state promotion
+                                const bool isGen12OrNewer =
+                                    (family == 0x4600 || // Alder Lake / Raptor Lake / N-Series (N95)
+                                        family == 0x9A00 || // Tiger Lake
+                                        family == 0x4C00 || // Rocket Lake
+                                        family == 0x7D00 || // Meteor Lake (Core Ultra)
+                                        family == 0x7E00 || // Meteor Lake Graphics
+                                        family == 0x5600 || // Arc Alchemist DG2
+                                        family == 0x4F00);  // Arc Alchemist / Meteor Lake SoC
+
+                                // Disable the flag to force explicit memory barriers on 10th-Gen and older
+                                if (!isGen12OrNewer) {
+                                    d->resource_flags = D3D12_RESOURCE_FLAG_NONE;
+                                    LOG_INFO("FFmpegVideo", "Legacy Intel GPU detected; disabled simultaneous access to prevent driver crashes");
+                                }
+                            }
+                        }
+                    }
+                }
+
                 device->AddRef();
                 if (av_hwdevice_ctx_init(hw) < 0) {
                     av_buffer_unref(&hw);
-                } else {
+                }
+                else {
                     fmt = AV_PIX_FMT_D3D12;
                 }
             }

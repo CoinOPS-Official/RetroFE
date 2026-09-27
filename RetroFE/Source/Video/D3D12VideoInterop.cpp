@@ -70,7 +70,6 @@ struct D3D12VideoInterop::Impl {
         std::array<UINT, 2> planes{};
         int cropX = 0, cropY = 0, cropW = 0, cropH = 0;
         bool pending = false;
-        bool native = false; // FFmpeg-native frame; never stall SDL's queue waiting for it.
     };
     SDL_Renderer* renderer;
     ComPtr<ID3D12Device> device;
@@ -157,7 +156,6 @@ struct D3D12VideoInterop::Impl {
                 slot.producerValue = 0;
                 slot.planes = {};
                 slot.cropX = slot.cropY = slot.cropW = slot.cropH = 0;
-                slot.native = false;
             }
         }
     }
@@ -171,7 +169,6 @@ struct D3D12VideoInterop::Impl {
             slot.producerValue = 0;
             slot.planes = {};
             slot.cropX = slot.cropY = slot.cropW = slot.cropH = 0;
-            slot.native = false;
         }
         current = nullptr;
     }
@@ -365,7 +362,6 @@ struct D3D12VideoInterop::Impl {
         selected->cropY = cropY;
         selected->cropW = cropW;
         selected->cropH = cropH;
-        selected->native = false;
         selected->pending = true;
         current = selected->texture;
         return current;
@@ -664,7 +660,6 @@ SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence
         selected->cropY = effectiveCropY;
         selected->cropW = cropW > 0 ? cropW : 0;
         selected->cropH = cropH > 0 ? cropH : 0;
-        selected->native = true;
         selected->pending = true;
 
         // No presentation exists until beginFrame submits the first copy.
