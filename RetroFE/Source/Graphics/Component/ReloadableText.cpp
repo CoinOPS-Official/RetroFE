@@ -104,8 +104,10 @@ bool ReloadableText::update(float dt)
         // Get the MusicPlayer instance
         MusicPlayer* musicPlayer = MusicPlayer::getInstance();
 
-        // Check if the music player exists and if the track has changed
-        if (musicPlayer && (musicPlayer->hasTrackChanged())) {
+        // Track each text instance independently so stream tag updates refresh every copy.
+        const std::string trackInfo = musicPlayer ? musicPlayer->getFormattedTrackInfo() : "";
+        if (trackInfo != lastTrackInfo_) {
+            lastTrackInfo_ = trackInfo;
             ReloadTexture();
         }
     }
@@ -249,11 +251,13 @@ void ReloadableText::ReloadTexture() {
             std::string currentArtist = musicPlayer->getCurrentArtist();
             std::string currentTitle = musicPlayer->getCurrentTitle();
 
-            if (!currentArtist.empty() && !currentTitle.empty())
+            if (musicPlayer->getCurrentTrackPath().empty() && !currentTitle.empty())
+                text = currentTitle;
+            else if (!currentArtist.empty() && !currentTitle.empty())
                 text = currentArtist + " - " + currentTitle;
             else if (!currentTitle.empty())
                 text = currentTitle;
-            else
+            else if (!musicPlayer->getCurrentTrackPath().empty())
                 text = musicPlayer->getCurrentTrackName();
         }
     }

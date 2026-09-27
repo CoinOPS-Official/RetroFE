@@ -1827,7 +1827,8 @@ Component* MusicPlayerComponent::reloadComponent() {
 		}
 		else if (typeLC == "trackinfo") {
 			newTextValue = musicPlayer_->getFormattedTrackInfo();
-			if (newTextValue.empty()) newTextValue = "No track playing";
+			if (newTextValue.empty() && musicPlayer_->getCurrentTrackName().empty())
+				newTextValue = "No track playing";
 		}
 		else if (typeLC == "title") {
 			newTextValue = musicPlayer_->getCurrentTitle();

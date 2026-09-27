@@ -19,6 +19,8 @@
 #include <mutex>
 #include <random>
 #include <filesystem>
+#include <gst/gst.h>
+#include <gst/app/gstappsink.h>
 
 #include <SDL3/SDL.h>
 #include <SDL3_mixer/SDL_mixer.h>
@@ -180,8 +182,25 @@ private:
     static MusicPlayer* instance_;
     Configuration* config_;
 
-    MIX_Audio* currentMusic_;
     MIX_Track* musicTrack_ = nullptr;
+    SDL_AudioStream* musicStream_ = nullptr;
+    GstElement* pipeline_ = nullptr;
+    GstElement* audioSink_ = nullptr; // owned by pipeline_
+    GstBus* bus_ = nullptr;
+    std::mutex streamMutex_;
+    bool wantsPlayback_ = false;
+    bool endOfStream_ = false;
+    bool playbackError_ = false;
+    bool buffering_ = false;
+    bool sourceIsUrl_ = false;
+    double seekBaseSeconds_ = 0.0;
+    double pendingSeekSeconds_ = -1.0;
+    std::atomic<bool> acceptSamples_{ false };
+    std::atomic<uint64_t> decodedBytes_{ 0 };
+    static GstFlowReturn onNewSample(GstAppSink* sink, gpointer userdata);
+    void pollGStreamer();
+    void closePipeline();
+    bool openPipeline(const std::string& uri);
     bool ensureAudio();
     void haltTrack();
     int musicVolume(int volume = -1);
@@ -189,6 +208,7 @@ private:
 
     // Keep paths as fs::path; display names as UTF-8 strings.
     std::vector<std::filesystem::path> musicFiles_;
+    std::vector<std::string> musicUris_; // empty for local files
     std::vector<std::string> musicNames_; // UTF-8 display names
     std::vector<TrackMetadata> trackMetadata_;
 
@@ -203,8 +223,7 @@ private:
     bool hasStartedPlaying_;
     int fadeMs_;
 
-    // Path compare should be done with fs::path (normalize in .cpp if needed).
-    std::filesystem::path lastCheckedTrackPath_;
+    std::string lastCheckedTrackSignature_;
 
     int savedTrackIndex_;
     double savedPosition_;

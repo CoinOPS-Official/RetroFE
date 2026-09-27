@@ -338,8 +338,6 @@ int main(int argc, char** argv)
     gst_debug_set_default_threshold(GST_LEVEL_ERROR);
 
 
-    gst_init(nullptr, nullptr);
-    GlibLoop::instance().start();
     try {
         while (true) {
             if (!ImportConfiguration(&config)) {
@@ -371,7 +369,7 @@ int main(int argc, char** argv)
     GStreamerVideo::waitForControlTasks();
     ThreadPool::getInstance().shutdown();
     GlibLoop::instance().stop();
-    gst_deinit();
+    if (gst_is_initialized()) gst_deinit();
     SDL::deInitialize(true);
     Logger::deInitialize();
 #ifdef WIN32
@@ -434,15 +432,6 @@ static bool ImportConfiguration(Configuration* c) {
         LOG_INFO("RetroFE", "OS: Linux");
     #endif
     
-    // Check if GStreamer initialization was successful
-    if (gst_is_initialized()) {
-        LOG_INFO("RetroFE", "GStreamer successfully initialized");
-    }
-    else {
-        LOG_ERROR("RetroFE", "Failed to initialize GStreamer");
-        return false;
-    }
-
     LOG_INFO("RetroFE", "Absolute path: " + Configuration::absolutePath);
 
     // Process launchers

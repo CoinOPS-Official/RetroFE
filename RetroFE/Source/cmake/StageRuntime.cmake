@@ -6,7 +6,7 @@ function(retrofe_stage_runtime target)
     set(gst_plugins app audioconvert audioparsers audioresample coreelements
         d3d11 d3d12 qsv isomp4 libav matroska playback typefindfunctions
         videoconvertscale videofilter videoparsersbad geometrictransform
-        goom audiovisualizers avi wavparse ogg vorbis flac)
+        goom audiovisualizers avi wavparse ogg vorbis flac soup adaptivedemux2 icydemux id3demux apetag)
     set(runtime_dlls)
     foreach(plugin IN LISTS gst_plugins)
         set(path "${GSTREAMER_ROOT}/lib/gstreamer-1.0/gst${plugin}.dll")

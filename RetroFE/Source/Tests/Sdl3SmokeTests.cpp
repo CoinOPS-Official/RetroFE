@@ -13,6 +13,7 @@
 #include "../Database/Configuration.h"
 #include "../Control/UserInput.h"
 #include "../Sound/AudioBus.h"
+#include "../Sound/MusicPlayer.h"
 #include "../Sound/Sound.h"
 #include "../Graphics/Font.h"
 #include "../Graphics/TextEngineAtlas.h"
@@ -38,6 +39,7 @@
 #include <cstring>
 #include <cmath>
 #include <filesystem>
+#include <fstream>
 
 std::vector<std::string> settingsFromCLI;
 
@@ -316,6 +318,136 @@ void mediaChecks(const std::string& assets) {
     require(sound.isPlaying(), "Play overlapping sound voices");
     sound.free();
     require(!sound.isPlaying(), "Release sound tracks");
+    Configuration musicConfig;
+    const char* testMusicFolder = std::getenv("RETROFE_TEST_MUSIC_FOLDER");
+    musicConfig.setProperty("musicPlayer.folder", testMusicFolder
+        ? testMusicFolder : assets + "/layouts/Arcades/sounds");
+    musicConfig.setProperty("musicPlayer.fadeMs", 200);
+    if (VideoFactory::backend() == "ffmpeg")
+        require(!GlibLoop::instance().isRunning(), "FFmpeg backend starts without GLib loop");
+    auto* music = MusicPlayer::getInstance();
+    require(music->initialize(musicConfig) && music->getTrackCount() > 0,
+            "Initialize GStreamer music player with WAV files");
+    require(music->playMusic(0), "Play audio through GStreamer music pipeline");
+    require(music->isFading() && music->getVolume() == 0,
+            "Initial playback begins with silent fade-in");
+    bool advanced = false;
+    bool fadedIn = false;
+    for (int i = 0; i < 150; ++i) {
+        music->pump();
+        advanced = advanced || music->getCurrent() > 0.02;
+        fadedIn = fadedIn || (advanced && !music->isFading() && music->getVolume() > 0);
+        if (advanced && fadedIn) break;
+        SDL_Delay(10);
+    }
+    require(advanced, "GStreamer music playback advances");
+    require(fadedIn, "Initial playback fades in after decoded audio arrives");
+    if (VideoFactory::backend() == "ffmpeg")
+        require(!GlibLoop::instance().isRunning(), "Music playback needs no GLib loop");
+    require(music->pauseMusic(0) && music->isPaused(), "Pause GStreamer music");
+    require(music->resumeMusic(0) && music->isPlaying(), "Resume GStreamer music");
+    require(music->nextTrack(0), "Advance GStreamer music playlist");
+    require(music->stopMusic(0), "Stop GStreamer music");
+    const auto streamPlaylist = std::filesystem::temp_directory_path() /
+        ("retrofe-stream-test-" + std::to_string(SDL_GetTicks()) + ".m3u");
+    const char* testMusicUrl = std::getenv("RETROFE_TEST_MUSIC_URL");
+    {
+        std::ofstream out(streamPlaylist, std::ios::binary);
+        out << "#EXTM3U\n#EXTINF:-1,Test Radio\n"
+            << (testMusicUrl ? testMusicUrl : "https://example.invalid/live.mp3") << '\n';
+    }
+    const auto streamPlaylistUtf8 = streamPlaylist.u8string();
+    require(music->loadM3UPlaylist(std::string(streamPlaylistUtf8.begin(), streamPlaylistUtf8.end())) &&
+            music->getTrackCount() == 1 &&
+            music->getTrackMetadata(0).title == "Test Radio",
+            "Accept URL and station title in M3U playlist");
+    require(music->loadM3UPlaylist(
+                "https://example.invalid/one.mp3, https://example.invalid/two.mp3") &&
+            music->getTrackCount() == 2 &&
+            music->getTrackMetadata(0).title == "https://example.invalid/one.mp3" &&
+            music->getTrackMetadata(1).title == "https://example.invalid/two.mp3",
+            "Keep comma-separated stations in skip order");
+    require(music->loadM3UPlaylist(std::string(streamPlaylistUtf8.begin(), streamPlaylistUtf8.end())),
+            "Restore local stream playlist");
+    if (testMusicUrl) {
+        require(music->playMusic(0, 0), "Start HTTP music stream");
+        bool streamed = false;
+        for (int i = 0; i < 300; ++i) {
+            music->pump();
+            if (music->getCurrent() > 0.1) { streamed = true; break; }
+            SDL_Delay(10);
+        }
+        require(streamed, "HTTP music stream advances");
+        require(music->stopMusic(0), "Stop HTTP music stream");
+    }
+    if (const char* stationPlaylist = std::getenv("RETROFE_TEST_MUSIC_PLAYLIST_URL")) {
+        require(music->loadM3UPlaylist(stationPlaylist) && music->getTrackCount() > 0,
+                "Resolve remote station playlist");
+        require(music->playMusic(0), "Start resolved radio station");
+        require(music->getCurrentTitle().empty() &&
+                music->getFormattedTrackInfo().empty(),
+                "Hide station label until live song title arrives");
+        require(music->isFading() && music->getVolume() == 0,
+                "Radio starts silent before buffering completes");
+        bool receivedPcm = false;
+        bool radioFadedIn = false;
+        for (int i = 0; i < 1000; ++i) {
+            music->pump();
+            receivedPcm = receivedPcm || music->getCurrent() > 0.15;
+            radioFadedIn = radioFadedIn ||
+                (receivedPcm && !music->isFading() && music->getVolume() > 0);
+            if (receivedPcm && radioFadedIn) break;
+            SDL_Delay(10);
+        }
+        require(receivedPcm, "Receive decoded radio PCM");
+        require(radioFadedIn, "Radio fades in after decoded PCM arrives");
+        const bool checkLiveMetadata = std::getenv("RETROFE_TEST_MUSIC_METADATA") != nullptr;
+        if (checkLiveMetadata) {
+            bool receivedSongTitle = false;
+            for (int i = 0; i < 1000; ++i) {
+                music->pump();
+                receivedSongTitle = !music->getCurrentTitle().empty() &&
+                    music->getCurrentTitle() != music->getCurrentTrackName();
+                if (receivedSongTitle) break;
+                SDL_Delay(10);
+            }
+            require(receivedSongTitle, "Receive first station's live song title");
+        }
+        if (music->getTrackCount() > 1) {
+            require(music->nextTrack(), "Request next radio station");
+            receivedPcm = false;
+            bool secondFadedIn = false;
+            for (int i = 0; i < 1000; ++i) {
+                music->pump();
+                receivedPcm = receivedPcm ||
+                    (music->getCurrentTrackIndex() == 1 && music->getCurrent() > 0.15);
+                secondFadedIn = secondFadedIn ||
+                    (receivedPcm && !music->isFading() && music->getVolume() > 0);
+                if (receivedPcm && secondFadedIn) break;
+                SDL_Delay(10);
+            }
+            require(receivedPcm, "Receive decoded PCM from second radio station");
+            require(secondFadedIn, "Second radio station fades in");
+            if (checkLiveMetadata) {
+                bool receivedStationName = false;
+                bool receivedSongTitle = false;
+                for (int i = 0; i < 1000; ++i) {
+                    music->pump();
+                    receivedStationName = music->getCurrentTrackName().rfind("http", 0) != 0;
+                    receivedSongTitle = !music->getCurrentTitle().empty() &&
+                        music->getCurrentTitle() != music->getCurrentTrackName();
+                    if (receivedStationName && receivedSongTitle) break;
+                    SDL_Delay(10);
+                }
+                require(receivedStationName, "Receive second station's ICY name");
+                require(receivedSongTitle, "Receive second station's live song title");
+            }
+        }
+        require(music->stopMusic(0), "Stop radio station");
+    }
+    std::error_code removeError;
+    std::filesystem::remove(streamPlaylist, removeError);
+    music->shutdown();
     require(TTF_Init(), "Initialize SDL3_ttf");
     {
         FontManager font(assets + "/retrofe/OpenSans.ttf", 24, {255,255,255,255}, true, 1, 0);

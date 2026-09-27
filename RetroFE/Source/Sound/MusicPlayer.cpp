@@ -24,6 +24,9 @@
 #include <thread>
 #include <tuple>
 #include <cctype>
+#include <limits>
+#include <map>
+#include <curl/curl.h>
 
 namespace fs = std::filesystem;
 
@@ -115,6 +118,133 @@ namespace {
             static_cast<unsigned char>(s[2]) == 0xBF) {
             s.erase(0, 3);
         }
+    }
+
+    struct RadioEntry {
+        std::string uri;
+        std::string title;
+    };
+
+    std::string trimText(std::string value) {
+        const auto first = value.find_first_not_of(" \t\r\n");
+        if (first == std::string::npos) return "";
+        const auto last = value.find_last_not_of(" \t\r\n");
+        return value.substr(first, last - first + 1);
+    }
+
+    bool isHttpUrl(const std::string& value) {
+        return value.rfind("http://", 0) == 0 || value.rfind("https://", 0) == 0;
+    }
+
+    bool isStationPlaylistUrl(const std::string& uri) {
+        const auto end = uri.find_first_of("?#");
+        const auto path = uri.substr(0, end);
+        const auto dot = path.find_last_of('.');
+        if (dot == std::string::npos) return false;
+        std::string extension = path.substr(dot);
+        std::transform(extension.begin(), extension.end(), extension.begin(),
+            [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+        return extension == ".pls" || extension == ".m3u";
+    }
+
+    std::string resolveRadioUrl(const std::string& base, const std::string& value) {
+        if (value.empty()) return "";
+        if (isHttpUrl(value)) return value;
+        const auto schemeEnd = base.find("://");
+        if (schemeEnd == std::string::npos) return "";
+        if (value.rfind("//", 0) == 0) return base.substr(0, schemeEnd + 1) + value;
+        const auto authorityEnd = base.find('/', schemeEnd + 3);
+        if (value.front() == '/')
+            return base.substr(0, authorityEnd) + value;
+        const auto queryStart = base.find_first_of("?#");
+        const auto slash = base.rfind('/', queryStart);
+        return base.substr(0, slash == std::string::npos ? base.size() : slash + 1) + value;
+    }
+
+    size_t receivePlaylist(char* data, size_t size, size_t count, void* userdata) {
+        auto& output = *static_cast<std::string*>(userdata);
+        const size_t bytes = size * count;
+        constexpr size_t maxPlaylistBytes = 128 * 1024;
+        if (bytes > maxPlaylistBytes - output.size()) return 0;
+        output.append(data, bytes);
+        return bytes;
+    }
+
+    bool fetchRadioPlaylist(const std::string& uri, std::string& text) {
+        CURL* curl = curl_easy_init();
+        if (!curl) return false;
+        curl_easy_setopt(curl, CURLOPT_URL, uri.c_str());
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        curl_easy_setopt(curl, CURLOPT_MAXREDIRS, 3L);
+        curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT_MS, 2500L);
+        curl_easy_setopt(curl, CURLOPT_TIMEOUT_MS, 5000L);
+        curl_easy_setopt(curl, CURLOPT_NOSIGNAL, 1L);
+        curl_easy_setopt(curl, CURLOPT_USERAGENT, "RetroFE/1.0");
+        curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, receivePlaylist);
+        curl_easy_setopt(curl, CURLOPT_WRITEDATA, &text);
+        const CURLcode result = curl_easy_perform(curl);
+        long status = 0;
+        curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &status);
+        curl_easy_cleanup(curl);
+        return result == CURLE_OK && status >= 200 && status < 300 && !text.empty();
+    }
+
+    std::vector<RadioEntry> readRadioPlaylist(const std::string& uri, int depth = 0) {
+        if (depth > 2) return {};
+        std::string text;
+        if (!fetchRadioPlaylist(uri, text)) return {};
+        stripUtf8Bom(text);
+        std::vector<RadioEntry> entries;
+        std::istringstream input(text);
+        const bool pls = text.rfind("[playlist]", 0) == 0;
+        if (pls) {
+            std::map<int, RadioEntry> numbered;
+            std::string line;
+            while (std::getline(input, line)) {
+                line = trimText(line);
+                const auto equals = line.find('=');
+                if (equals == std::string::npos) continue;
+                std::string key = line.substr(0, equals);
+                std::transform(key.begin(), key.end(), key.begin(),
+                    [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+                const auto digit = key.find_first_of("0123456789");
+                if (digit == std::string::npos) continue;
+                const int index = std::atoi(key.c_str() + digit);
+                if (index <= 0 || index > 1000) continue;
+                const std::string value = trimText(line.substr(equals + 1));
+                if (key.rfind("file", 0) == 0) numbered[index].uri = resolveRadioUrl(uri, value);
+                else if (key.rfind("title", 0) == 0) numbered[index].title = value;
+            }
+            for (const auto& [index, entry] : numbered)
+                if (isHttpUrl(entry.uri)) entries.push_back(entry);
+        } else {
+            std::string line;
+            std::string title;
+            while (std::getline(input, line)) {
+                line = trimText(line);
+                if (line.rfind("#EXTINF:", 0) == 0) {
+                    const auto comma = line.find(',');
+                    title = comma == std::string::npos ? "" : trimText(line.substr(comma + 1));
+                } else if (!line.empty() && line[0] != '#') {
+                    const std::string resolved = resolveRadioUrl(uri, line);
+                    if (isHttpUrl(resolved)) entries.push_back({ resolved, title });
+                    title.clear();
+                }
+            }
+        }
+        std::vector<RadioEntry> expanded;
+        for (const auto& entry : entries) {
+            if (isStationPlaylistUrl(entry.uri) && depth < 2) {
+                auto nested = readRadioPlaylist(entry.uri, depth + 1);
+                for (auto& item : nested) {
+                    if (item.title.empty()) item.title = entry.title;
+                    expanded.push_back(std::move(item));
+                }
+            } else {
+                expanded.push_back(entry);
+            }
+        }
+        return expanded;
     }
 
     // Helper to extract album art raw bytes from ID3 tags
@@ -217,10 +347,6 @@ namespace {
         return false;
     }
 
-    inline fs::path normalizeForCompare(const fs::path& p) {
-        // Cheap + stable: normalize separators and dot segments; do NOT hit filesystem.
-        return p.lexically_normal();
-    }
 } // namespace
 
 // -------------------------------------------------------------------------
@@ -236,7 +362,6 @@ MusicPlayer* MusicPlayer::getInstance() {
 
 MusicPlayer::MusicPlayer()
     : config_(nullptr)
-    , currentMusic_(nullptr)
     , currentShufflePos_(-1)
     , playbackState_(PlaybackState::NONE)
     , currentIndex_(-1)
@@ -305,24 +430,19 @@ void MusicPlayer::shutdown() {
         if (startVol >= 0) musicVolume(startVol);
     }
 
-    if (currentMusic_) {
-        haltTrack();
-        if (musicTrack_) MIX_SetTrackAudio(musicTrack_, nullptr);
-        MIX_DestroyAudio(currentMusic_);
-        currentMusic_ = nullptr;
-    }
-
     releaseAudio();
     musicFiles_.clear();
+    musicUris_.clear();
     musicNames_.clear();
     trackMetadata_.clear();
     currentIndex_ = -1;
-    lastCheckedTrackPath_.clear();
+    lastCheckedTrackSignature_.clear();
 }
 
 bool MusicPlayer::initialize(Configuration& config) {
     config_ = &config;
     isShuttingDown_.store(false, std::memory_order_release);
+    if (!gst_is_initialized()) gst_init(nullptr, nullptr);
 
     int configVolume = 100;
     if (config.getProperty("musicPlayer.volume", configVolume)) {
@@ -353,6 +473,11 @@ bool MusicPlayer::initialize(Configuration& config) {
 
     std::string m3uPlaylist;
     if (config.getProperty("musicPlayer.m3uplaylist", m3uPlaylist)) {
+        m3uPlaylist = trimText(m3uPlaylist);
+        if (isHttpUrl(m3uPlaylist)) {
+            if (!loadM3UPlaylist(m3uPlaylist)) loadMusicFolderFromConfig();
+            return true;
+        }
         fs::path p = pathFromUtf8(m3uPlaylist);
         if (!p.is_absolute()) {
             p = pathFromUtf8(Utils::combinePath(Configuration::absolutePath, m3uPlaylist));
@@ -378,6 +503,7 @@ void MusicPlayer::reinitialize() {
 }
 
 void MusicPlayer::pump() {
+    pollGStreamer();
     if (!musicTrack_) return;
     if (isShuttingDown_.load(std::memory_order_relaxed)) return;
 
@@ -389,6 +515,10 @@ void MusicPlayer::pump() {
 
     if (musicFade_.active) {
         const uint64_t now = SDL_GetTicks();
+        if (!musicFade_.fadingOut && musicFade_.startTimeMs == 0) {
+            if (decodedBytes_.load(std::memory_order_relaxed) == 0) return;
+            musicFade_.startTimeMs = now;
+        }
         const uint64_t elapsed = now - musicFade_.startTimeMs;
         int currentLogical = 0;
 
@@ -416,6 +546,8 @@ void MusicPlayer::pump() {
                 switch (action) {
                     case FinishEvent::PauseAfterFade:
                     MIX_PauseTrack(musicTrack_);
+                    wantsPlayback_ = false;
+                    if (pipeline_) gst_element_set_state(pipeline_, GST_STATE_PAUSED);
                     musicVolume(0);
                     setPlaybackState(PlaybackState::PAUSED);
                     break;
@@ -429,10 +561,7 @@ void MusicPlayer::pump() {
                     case FinishEvent::TrackChangeAfterFade:
                     haltTrack();
                     musicVolume(0);
-                    if (playMusic(idx, 0, seekPos)) {
-                        beginFadeInToSteadyVolume(fadeInMs);
-                    }
-                    else {
+                    if (!playMusic(idx, fadeInMs, seekPos)) {
                         musicVolume(applyVolumeCurve(getLogicalVolume()));
                     }
                     break;
@@ -554,6 +683,7 @@ void MusicPlayer::loadMusicFolderFromConfig() {
 
 bool MusicPlayer::loadMusicFolder(const std::string& folderPathUtf8) {
     musicFiles_.clear();
+    musicUris_.clear();
     musicNames_.clear();
     trackMetadata_.clear();
 
@@ -589,6 +719,7 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPathUtf8) {
 
     for (const auto& e : musicEntries) {
         musicFiles_.push_back(std::get<0>(e));
+        musicUris_.emplace_back();
         musicNames_.push_back(std::get<1>(e));
         trackMetadata_.push_back(std::get<2>(e));
     }
@@ -599,10 +730,33 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPathUtf8) {
 
 bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPathUtf8) {
     musicFiles_.clear();
+    musicUris_.clear();
     musicNames_.clear();
     trackMetadata_.clear();
 
-    if (!parseM3UFile(pathFromUtf8(playlistPathUtf8))) return false;
+    const auto firstSeparator = playlistPathUtf8.find(',');
+    if (isHttpUrl(trimText(playlistPathUtf8.substr(0, firstSeparator)))) {
+        std::istringstream sources(playlistPathUtf8);
+        std::string source;
+        while (std::getline(sources, source, ',')) {
+            source = trimText(source);
+            if (!isHttpUrl(source)) continue;
+            const auto stations = isStationPlaylistUrl(source)
+                ? readRadioPlaylist(source)
+                : std::vector<RadioEntry>{ { source, "" } };
+            for (const auto& station : stations) {
+                const std::string title = station.title.empty() ? station.uri : station.title;
+                TrackMetadata metadata;
+                metadata.title = title;
+                musicFiles_.emplace_back();
+                musicUris_.push_back(station.uri);
+                musicNames_.push_back(title);
+                trackMetadata_.push_back(std::move(metadata));
+            }
+        }
+    } else if (!parseM3UFile(pathFromUtf8(playlistPathUtf8))) {
+        return false;
+    }
 
     LOG_INFO("MusicPlayer", "M3U Loaded: " + std::to_string(musicFiles_.size()) + " files");
     return !musicFiles_.empty();
@@ -619,13 +773,32 @@ bool MusicPlayer::parseM3UFile(const fs::path& playlistPath) {
     std::string line;
     bool firstLine = true;
 
-    std::vector<std::tuple<fs::path, std::string, TrackMetadata>> musicEntries;
+    std::vector<std::tuple<fs::path, std::string, std::string, TrackMetadata>> musicEntries;
+    std::string extinfTitle;
 
     while (std::getline(playlistFile, line)) {
         trimCR(line);
         if (firstLine) { stripUtf8Bom(line); firstLine = false; }
 
+        if (line.rfind("#EXTINF:", 0) == 0) {
+            const size_t comma = line.find(',');
+            extinfTitle = comma == std::string::npos ? "" : line.substr(comma + 1);
+            continue;
+        }
         if (line.empty() || line[0] == '#') continue;
+
+        if (line.rfind("http://", 0) == 0 || line.rfind("https://", 0) == 0) {
+            const auto stations = isStationPlaylistUrl(line)
+                ? readRadioPlaylist(line) : std::vector<RadioEntry>{ { line, "" } };
+            for (const auto& station : stations) {
+                TrackMetadata metadata;
+                metadata.title = station.title.empty()
+                    ? (extinfTitle.empty() ? station.uri : extinfTitle) : station.title;
+                musicEntries.emplace_back(fs::path(), station.uri, metadata.title, metadata);
+            }
+            extinfTitle.clear();
+            continue;
+        }
 
         // Interpret M3U text as UTF-8.
         fs::path trackPath = pathFromUtf8(line);
@@ -635,17 +808,19 @@ bool MusicPlayer::parseM3UFile(const fs::path& playlistPath) {
         if (fs::exists(trackPath) && isValidAudioFile(trackPath)) {
             TrackMetadata metadata;
             readTrackMetadata(trackPath, metadata);
-            musicEntries.emplace_back(trackPath, toUtf8String(trackPath.filename()), metadata);
+            musicEntries.emplace_back(trackPath, "", toUtf8String(trackPath.filename()), metadata);
         }
+        extinfTitle.clear();
     }
 
     std::sort(musicEntries.begin(), musicEntries.end(),
-        [](const auto& a, const auto& b) { return std::get<1>(a) < std::get<1>(b); });
+        [](const auto& a, const auto& b) { return std::get<2>(a) < std::get<2>(b); });
 
     for (const auto& e : musicEntries) {
         musicFiles_.push_back(std::get<0>(e));
-        musicNames_.push_back(std::get<1>(e));
-        trackMetadata_.push_back(std::get<2>(e));
+        musicUris_.push_back(std::get<1>(e));
+        musicNames_.push_back(std::get<2>(e));
+        trackMetadata_.push_back(std::get<3>(e));
     }
 
     return true;
@@ -654,35 +829,222 @@ bool MusicPlayer::parseM3UFile(const fs::path& playlistPath) {
 bool MusicPlayer::isValidAudioFile(const fs::path& filePath) const {
     std::string ext = toUtf8String(filePath.extension());
     std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
-    return (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac" || ext == ".mod");
+    return (ext == ".mp3" || ext == ".ogg" || ext == ".wav" || ext == ".flac");
 }
 
 void MusicPlayer::loadTrack(int index) {
     if (!ensureAudio()) return;
-    if (currentMusic_) {
-        haltTrack();
-        if (musicTrack_) MIX_SetTrackAudio(musicTrack_, nullptr);
-        MIX_DestroyAudio(currentMusic_);
-        currentMusic_ = nullptr;
-    }
+    haltTrack();
+    acceptSamples_.store(false, std::memory_order_release);
 
     if (index < 0 || index >= static_cast<int>(musicFiles_.size())) {
         currentIndex_ = -1;
         return;
     }
 
-    // SDL expects UTF-8 paths; fs::path stays native, convert at the boundary.
-    const std::string pathUtf8 = toUtf8String(musicFiles_[index]);
-    currentMusic_ = MIX_LoadAudio(AudioBus::instance().mixer(), pathUtf8.c_str(), false);
-
-    if (!currentMusic_) {
-        LOG_ERROR("MusicPlayer", "Load failed: " + pathUtf8 + " " + SDL_GetError());
+    std::string uri = musicUris_[index];
+    if (uri.empty()) {
+        const std::string pathUtf8 = toUtf8String(fs::absolute(musicFiles_[index]));
+        gchar* fileUri = gst_filename_to_uri(pathUtf8.c_str(), nullptr);
+        if (!fileUri) {
+            LOG_ERROR("MusicPlayer", "Could not create URI for: " + pathUtf8);
+            currentIndex_ = -1;
+            return;
+        }
+        uri = fileUri;
+        g_free(fileUri);
+    }
+    if (!openPipeline(uri)) {
+        LOG_ERROR("MusicPlayer", "Load failed: " + uri);
         currentIndex_ = -1;
         return;
     }
 
     currentIndex_ = index;
+    sourceIsUrl_ = !musicUris_[index].empty();
+    if (sourceIsUrl_) {
+        // A station label is not a song title. Keep the title empty until an
+        // ICY/GStreamer title tag arrives so the UI does not cycle placeholders.
+        trackMetadata_[index].title.clear();
+        trackMetadata_[index].artist.clear();
+        trackMetadata_[index].album.clear();
+    }
+    endOfStream_ = false;
+    playbackError_ = false;
+    buffering_ = false;
+    seekBaseSeconds_ = 0.0;
     LOG_INFO("MusicPlayer", "Loaded: " + musicNames_[index]);
+}
+
+GstFlowReturn MusicPlayer::onNewSample(GstAppSink* sink, gpointer userdata) {
+    auto* self = static_cast<MusicPlayer*>(userdata);
+    GstSample* sample = gst_app_sink_pull_sample(sink);
+    if (!sample) return GST_FLOW_EOS;
+    GstBuffer* buffer = gst_sample_get_buffer(sample);
+    GstMapInfo map{};
+    if (buffer && gst_buffer_map(buffer, &map, GST_MAP_READ)) {
+        if (self->acceptSamples_.load(std::memory_order_acquire) &&
+            map.size <= static_cast<size_t>(std::numeric_limits<int>::max())) {
+            std::lock_guard<std::mutex> lock(self->streamMutex_);
+            if (self->musicStream_) {
+                // The sink is clocked, so this is normally only a few buffers.
+                // A stalled device must not let decoded PCM grow without bound.
+                const int maxQueued = self->audioSampleRate_ * self->audioChannels_ *
+                                      static_cast<int>(sizeof(float)) * 8;
+                if (SDL_GetAudioStreamQueued(self->musicStream_) > maxQueued)
+                    SDL_ClearAudioStream(self->musicStream_);
+                if (SDL_PutAudioStreamData(self->musicStream_, map.data,
+                                           static_cast<int>(map.size)))
+                    self->decodedBytes_.fetch_add(map.size, std::memory_order_relaxed);
+            }
+        }
+        gst_buffer_unmap(buffer, &map);
+    }
+    gst_sample_unref(sample);
+    return GST_FLOW_OK;
+}
+
+bool MusicPlayer::openPipeline(const std::string& uri) {
+    if (!gst_is_initialized()) gst_init(nullptr, nullptr);
+    if (!pipeline_) {
+        pipeline_ = gst_element_factory_make("playbin3", "music-player");
+        audioSink_ = gst_element_factory_make("appsink", "music-pcm");
+        if (!pipeline_ || !audioSink_) {
+            if (audioSink_) gst_object_unref(audioSink_);
+            if (pipeline_) gst_object_unref(pipeline_);
+            pipeline_ = nullptr;
+            audioSink_ = nullptr;
+            return false;
+        }
+        g_object_set(audioSink_, "max-buffers", 8, "sync", TRUE,
+                     "qos", FALSE, "enable-last-sample", FALSE,
+                     "wait-on-eos", FALSE, nullptr);
+        GstAppSinkCallbacks callbacks{};
+        callbacks.new_sample = &MusicPlayer::onNewSample;
+        gst_app_sink_set_callbacks(GST_APP_SINK(audioSink_), &callbacks, this, nullptr);
+        const char* format = SDL_BYTEORDER == SDL_LIL_ENDIAN ? "F32LE" : "F32BE";
+        GstCaps* caps = gst_caps_new_simple("audio/x-raw",
+            "format", G_TYPE_STRING, format,
+            "layout", G_TYPE_STRING, "interleaved",
+            "rate", G_TYPE_INT, audioSampleRate_,
+            "channels", G_TYPE_INT, audioChannels_, nullptr);
+        gst_app_sink_set_caps(GST_APP_SINK(audioSink_), caps);
+        gst_caps_unref(caps);
+        // Sink the floating reference before handing the sink to playbin.
+        gst_object_ref_sink(audioSink_);
+        g_object_set(pipeline_, "flags", 1 << 1, "audio-sink", audioSink_, nullptr); // audio only
+        gst_object_unref(audioSink_);
+        bus_ = gst_element_get_bus(pipeline_);
+    }
+    g_object_set(pipeline_, "uri", uri.c_str(), nullptr);
+    return true;
+}
+
+void MusicPlayer::closePipeline() {
+    acceptSamples_.store(false, std::memory_order_release);
+    if (pipeline_) gst_element_set_state(pipeline_, GST_STATE_NULL);
+    if (bus_) gst_object_unref(bus_);
+    if (pipeline_) gst_object_unref(pipeline_);
+    bus_ = nullptr;
+    pipeline_ = nullptr;
+    audioSink_ = nullptr;
+}
+
+void MusicPlayer::pollGStreamer() {
+    if (!bus_) return;
+    while (GstMessage* message = gst_bus_pop(bus_)) {
+        switch (GST_MESSAGE_TYPE(message)) {
+        case GST_MESSAGE_EOS:
+            endOfStream_ = true;
+            break;
+        case GST_MESSAGE_ERROR: {
+            GError* error = nullptr;
+            gchar* debug = nullptr;
+            gst_message_parse_error(message, &error, &debug);
+            LOG_ERROR("MusicPlayer", (error ? error->message : "GStreamer playback error"));
+            if (debug) LOG_ERROR("MusicPlayer", std::string("GStreamer details: ") + debug);
+            if (error) g_error_free(error);
+            g_free(debug);
+            endOfStream_ = true;
+            playbackError_ = true;
+            break;
+        }
+        case GST_MESSAGE_BUFFERING: {
+            gint percent = 100;
+            gst_message_parse_buffering(message, &percent);
+            buffering_ = percent < 100;
+            if (wantsPlayback_)
+                gst_element_set_state(pipeline_, buffering_ ? GST_STATE_PAUSED : GST_STATE_PLAYING);
+            break;
+        }
+        case GST_MESSAGE_ASYNC_DONE:
+            if (pendingSeekSeconds_ > 0.0) {
+                const double seconds = pendingSeekSeconds_;
+                pendingSeekSeconds_ = -1.0;
+                if (!gst_element_seek_simple(pipeline_, GST_FORMAT_TIME,
+                        static_cast<GstSeekFlags>(GST_SEEK_FLAG_FLUSH | GST_SEEK_FLAG_KEY_UNIT),
+                        static_cast<gint64>(seconds * GST_SECOND))) {
+                    LOG_WARNING("MusicPlayer", "Could not restore playback position");
+                    seekBaseSeconds_ = 0.0;
+                }
+                if (musicStream_) SDL_ClearAudioStream(musicStream_);
+                decodedBytes_.store(0, std::memory_order_relaxed);
+                acceptSamples_.store(true, std::memory_order_release);
+            }
+            break;
+        case GST_MESSAGE_TAG:
+            if (currentIndex_ >= 0 &&
+                currentIndex_ < static_cast<int>(trackMetadata_.size()) &&
+                !musicUris_[currentIndex_].empty()) {
+                GstTagList* tags = nullptr;
+                gst_message_parse_tag(message, &tags);
+                if (tags) {
+                    auto& metadata = trackMetadata_[currentIndex_];
+                    gchar* value = nullptr;
+                    if (gst_tag_list_get_string(tags, GST_TAG_ORGANIZATION, &value)) {
+                        // Keep the station name for station navigation, not the song title.
+                        auto& name = musicNames_[currentIndex_];
+                        if (name == musicUris_[currentIndex_]) {
+                            name = value;
+                        }
+                        g_free(value);
+                    }
+                    if (gst_tag_list_get_string(tags, GST_TAG_TITLE, &value)) {
+                        metadata.title = value; g_free(value);
+                    }
+                    if (gst_tag_list_get_string(tags, GST_TAG_ARTIST, &value)) {
+                        metadata.artist = value; g_free(value);
+                    }
+                    if (gst_tag_list_get_string(tags, GST_TAG_ALBUM, &value)) {
+                        metadata.album = value; g_free(value);
+                    }
+                    gst_tag_list_unref(tags);
+                }
+            }
+            break;
+        default:
+            break;
+        }
+        gst_message_unref(message);
+    }
+    if (endOfStream_ && musicStream_ && SDL_GetAudioStreamQueued(musicStream_) == 0) {
+        if (playbackError_) {
+            playbackError_ = false;
+            endOfStream_ = false;
+            haltTrack();
+            musicFade_.active = false;
+            musicVolume(steadyMusicVolume());
+            setPlaybackState(PlaybackState::NONE);
+            return;
+        }
+        if (isFading()) return;
+        endOfStream_ = false;
+        if (loopMode_) {
+            playMusic(currentIndex_, 0);
+        } else {
+            nextTrack();
+        }
+    }
 }
 
 // -------------------------------------------------------------------------
@@ -828,7 +1190,7 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
     }
 
     loadTrack(index);
-    if (!currentMusic_) return false;
+    if (!pipeline_) return false;
 
     if (shuffleMode_) {
         auto it = std::find(shuffledIndices_.begin(), shuffledIndices_.end(), index);
@@ -838,15 +1200,15 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
             setShuffle(true);
     }
 
-    if (musicVolume(-1) != 0) musicVolume(steadyMusicVolume());
+    musicVolume(useFadeMs > 0 ? 0 : steadyMusicVolume());
 
     if (!startTrack(position)) {
+        musicVolume(steadyMusicVolume());
         LOG_ERROR("MusicPlayer", "Play error: " + std::string(SDL_GetError()));
         return false;
     }
 
-
-
+    if (useFadeMs > 0) beginFadeInToSteadyVolume(useFadeMs);
     setPlaybackState(PlaybackState::PLAYING);
     hasStartedPlaying_ = true;
     LOG_INFO("MusicPlayer", "Now playing: " + getFormattedTrackInfo(index));
@@ -863,6 +1225,8 @@ bool MusicPlayer::pauseMusic(int customFadeMs) {
     }
 
     MIX_PauseTrack(musicTrack_);
+    wantsPlayback_ = false;
+    if (pipeline_) gst_element_set_state(pipeline_, GST_STATE_PAUSED);
     setPlaybackState(PlaybackState::PAUSED);
     return true;
 }
@@ -873,6 +1237,8 @@ bool MusicPlayer::resumeMusic(int customFadeMs) {
 
     musicVolume(0);
     MIX_ResumeTrack(musicTrack_);
+    wantsPlayback_ = true;
+    if (pipeline_ && !buffering_) gst_element_set_state(pipeline_, GST_STATE_PLAYING);
     setPlaybackState(PlaybackState::PLAYING);
 
     if (useFade > 0) beginFadeInToSteadyVolume(useFade);
@@ -1063,6 +1429,15 @@ bool MusicPlayer::ensureAudio() {
     if (!musicTrack_) {
         musicTrack_ = MIX_CreateTrack(bus.mixer());
         if (!musicTrack_) return false;
+        const SDL_AudioSpec spec{ SDL_AUDIO_F32, bus.dev_channels(), bus.dev_rate() };
+        musicStream_ = SDL_CreateAudioStream(&spec, &spec);
+        if (!musicStream_ || !MIX_SetTrackAudioStream(musicTrack_, musicStream_)) {
+            MIX_DestroyTrack(musicTrack_);
+            musicTrack_ = nullptr;
+            if (musicStream_) SDL_DestroyAudioStream(musicStream_);
+            musicStream_ = nullptr;
+            return false;
+        }
         MIX_SetTrackStoppedCallback(musicTrack_, musicFinishedCallback, this);
         musicVolume(volume_.load());
         audioChannels_ = bus.dev_channels();
@@ -1072,6 +1447,8 @@ bool MusicPlayer::ensureAudio() {
         if (!MIX_SetTrackCookedCallback(musicTrack_, musicMixCallback, this)) {
             MIX_DestroyTrack(musicTrack_);
             musicTrack_ = nullptr;
+            SDL_DestroyAudioStream(musicStream_);
+            musicStream_ = nullptr;
             return false;
         }
     }
@@ -1081,10 +1458,16 @@ bool MusicPlayer::ensureAudio() {
 
 void MusicPlayer::haltTrack() {
     if (!musicTrack_) return;
+    wantsPlayback_ = false;
+    acceptSamples_.store(false, std::memory_order_release);
+    if (pipeline_) gst_element_set_state(pipeline_, GST_STATE_NULL);
     // Explicit stops must never advance the playlist, including already-ended tracks.
     MIX_SetTrackStoppedCallback(musicTrack_, nullptr, nullptr);
     MIX_StopTrack(musicTrack_, 0);
     MIX_SetTrackStoppedCallback(musicTrack_, musicFinishedCallback, this);
+    if (musicStream_) SDL_ClearAudioStream(musicStream_);
+    decodedBytes_.store(0, std::memory_order_relaxed);
+    endOfStream_ = false;
     finishEvent_.store(FinishEvent::None, std::memory_order_release);
     visualizerRead_.store(visualizerWrite_.load(std::memory_order_acquire),
                           std::memory_order_release);
@@ -1092,33 +1475,47 @@ void MusicPlayer::haltTrack() {
 
 int MusicPlayer::musicVolume(int value) {
     const int previous = musicTrack_ ? static_cast<int>(MIX_GetTrackGain(musicTrack_) * 128 + 0.5f) : volume_.load();
-    if (value >= 0 && musicTrack_) MIX_SetTrackGain(musicTrack_, std::clamp(value, 0, 128) / 128.0f);
+    if (value >= 0 && musicTrack_) {
+        value = std::clamp(value, 0, 128);
+        MIX_SetTrackGain(musicTrack_, value / 128.0f);
+        volume_.store(value, std::memory_order_relaxed);
+    }
     return previous;
 }
 
 bool MusicPlayer::startTrack(double position) {
-    if (!musicTrack_ || !currentMusic_ || !MIX_SetTrackAudio(musicTrack_, currentMusic_)) return false;
+    if (!musicTrack_ || !musicStream_ || !pipeline_ ||
+        !MIX_SetTrackAudioStream(musicTrack_, musicStream_)) return false;
+    SDL_ClearAudioStream(musicStream_);
+    decodedBytes_.store(0, std::memory_order_relaxed);
     const auto options = SDL_CreateProperties();
     if (!options) return false;
-    bool ok = SDL_SetNumberProperty(options, MIX_PROP_PLAY_LOOPS_NUMBER, loopMode_ ? -1 : 0);
-    if (position > 0 && std::isfinite(position))
-        ok = ok && SDL_SetNumberProperty(options, MIX_PROP_PLAY_START_MILLISECOND_NUMBER, static_cast<Sint64>(position * 1000));
+    bool ok = SDL_SetBooleanProperty(options, MIX_PROP_PLAY_HALT_WHEN_EXHAUSTED_BOOLEAN, false);
     ok = ok && MIX_PlayTrack(musicTrack_, options);
     SDL_DestroyProperties(options);
-    return ok;
+    if (!ok) return false;
+    seekBaseSeconds_ = position > 0 && std::isfinite(position) ? position : 0.0;
+    pendingSeekSeconds_ = seekBaseSeconds_ > 0 ? seekBaseSeconds_ : -1.0;
+    acceptSamples_.store(pendingSeekSeconds_ < 0, std::memory_order_release);
+    wantsPlayback_ = true;
+    return gst_element_set_state(pipeline_, GST_STATE_PLAYING) != GST_STATE_CHANGE_FAILURE;
 }
 
 void MusicPlayer::releaseAudio() {
     AudioBus::instance().setMusicPlayer(nullptr);
+    closePipeline();
     if (musicTrack_) {
         MIX_SetTrackCookedCallback(musicTrack_, nullptr, nullptr);
         MIX_DestroyTrack(musicTrack_);
     }
     musicTrack_ = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(streamMutex_);
+        if (musicStream_) SDL_DestroyAudioStream(musicStream_);
+        musicStream_ = nullptr;
+    }
     visualizerRead_.store(visualizerWrite_.load(std::memory_order_acquire),
                           std::memory_order_release);
-    if (currentMusic_) MIX_DestroyAudio(currentMusic_);
-    currentMusic_ = nullptr;
     finishEvent_.store(FinishEvent::None, std::memory_order_release);
     cancelFade();
 }
@@ -1146,7 +1543,7 @@ void MusicPlayer::beginFadeInToSteadyVolume(int fadeInMs) {
 
     musicFade_.active = true;
     musicFade_.fadingOut = false;
-    musicFade_.startTimeMs = SDL_GetTicks();
+    musicFade_.startTimeMs = 0; // Begin when decoded PCM first reaches the stream.
     musicFade_.durationMs = duration;
     musicFade_.startVol = 0;
     musicFade_.targetVol = target;
@@ -1263,7 +1660,7 @@ bool MusicPlayer::setShuffle(bool shuffle) {
 
 void MusicPlayer::setLoop(bool loop) {
     loopMode_ = loop;
-    if (isPlaying() && currentMusic_) {
+    if (isPlaying() && pipeline_ && (!sourceIsUrl_ || getDuration() > 0.0)) {
         haltTrack();
         startTrack();
     }
@@ -1287,6 +1684,7 @@ std::string MusicPlayer::getCurrentTrackName() const {
 
 std::string MusicPlayer::getCurrentTrackNameWithoutExtension() const {
     std::string name = getCurrentTrackName();
+    if (currentIndex_ >= 0 && !musicUris_[currentIndex_].empty()) return name;
     size_t lastDot = name.find_last_of('.');
     return (lastDot != std::string::npos) ? name.substr(0, lastDot) : name;
 }
@@ -1314,7 +1712,13 @@ int MusicPlayer::getCurrentTrackNumber() const { return getCurrentTrackMetadata(
 std::string MusicPlayer::getFormattedTrackInfo(int index) const {
     if (index == -1) index = currentIndex_;
     const auto& meta = getTrackMetadata(index);
-    if (meta.title.empty()) return (index >= 0) ? musicNames_[index] : "";
+    if (meta.title.empty()) {
+        if (index < 0 || index >= static_cast<int>(musicNames_.size()) ||
+            !musicUris_[index].empty()) return "";
+        return musicNames_[index];
+    }
+    if (index >= 0 && index < static_cast<int>(musicUris_.size()) &&
+        !musicUris_[index].empty()) return meta.title;
     return meta.artist.empty() ? meta.title : (meta.title + " - " + meta.artist);
 }
 
@@ -1327,32 +1731,40 @@ bool MusicPlayer::hasStartedPlaying() const { return hasStartedPlaying_; }
 bool MusicPlayer::isFading() const { return musicFade_.active || isVolumeFading_; }
 
 bool MusicPlayer::hasTrackChanged() {
-    const fs::path current = (currentIndex_ >= 0) ? normalizeForCompare(musicFiles_[currentIndex_]) : fs::path();
-    bool changed = !current.empty() && (current != lastCheckedTrackPath_);
-    if (changed) lastCheckedTrackPath_ = current;
+    const std::string signature = currentIndex_ >= 0
+        ? std::to_string(currentIndex_) + ":" + musicUris_[currentIndex_] + ":" +
+          getCurrentTitle() + ":" + getCurrentArtist() : "";
+    const bool changed = !signature.empty() && signature != lastCheckedTrackSignature_;
+    if (changed) lastCheckedTrackSignature_ = signature;
     return changed;
 }
 
 bool MusicPlayer::isPlayingNewTrack() { return isPlaying() && hasTrackChanged(); }
 
 double MusicPlayer::saveCurrentMusicPosition() {
-    if (!currentMusic_) return 0.0;
+    if (!pipeline_ || (sourceIsUrl_ && getDuration() <= 0.0)) return 0.0;
     return getCurrent();
 }
 
 double MusicPlayer::getCurrent() {
-    if (!musicTrack_ || !currentMusic_) return -1.0;
-    const auto frames = MIX_GetTrackPlaybackPosition(musicTrack_);
-    return frames < 0 ? -1.0 : MIX_TrackFramesToMS(musicTrack_, frames) / 1000.0;
+    if (!pipeline_ || !musicStream_) return -1.0;
+    const auto decoded = decodedBytes_.load(std::memory_order_relaxed);
+    const int queued = SDL_GetAudioStreamQueued(musicStream_);
+    const uint64_t consumed = queued >= 0 && decoded > static_cast<uint64_t>(queued)
+        ? decoded - static_cast<uint64_t>(queued) : 0;
+    const double bytesPerSecond = static_cast<double>(audioSampleRate_) *
+                                  audioChannels_ * sizeof(float);
+    return seekBaseSeconds_ + (bytesPerSecond > 0 ? consumed / bytesPerSecond : 0.0);
 }
 double MusicPlayer::getDuration() {
-    if (!currentMusic_) return -1.0;
-    const auto frames = MIX_GetAudioDuration(currentMusic_);
-    return frames < 0 ? -1.0 : MIX_AudioFramesToMS(currentMusic_, frames) / 1000.0;
+    if (!pipeline_) return -1.0;
+    gint64 duration = GST_CLOCK_TIME_NONE;
+    return gst_element_query_duration(pipeline_, GST_FORMAT_TIME, &duration) && duration >= 0
+        ? static_cast<double>(duration) / GST_SECOND : -1.0;
 }
 
 std::pair<int, int> MusicPlayer::getCurrentAndDurationSec() {
-    if (!currentMusic_) return { -1, -1 };
+    if (!pipeline_) return { -1, -1 };
     return {
         static_cast<int>(getCurrent()),
         static_cast<int>(getDuration())

@@ -623,19 +623,23 @@ SDL_Texture* GStreamerVideo::getTexture() const {
 }
 
 bool GStreamerVideo::initialize() {
-	if (initialized_) return true;
+	if (initialized_) {
+		GlibLoop::instance().start();
+		return true;
+	}
 	if (!gst_is_initialized())
 	{
 		LOG_DEBUG("GStreamer", "Initializing in instance");
 		gst_init(nullptr, nullptr);
 	}
+	GlibLoop::instance().start();
 	initialized_ = true;
 	return true;
 }
 
 bool GStreamerVideo::deInitialize() {
-	gst_deinit();
-	initialized_ = false;
+	// GStreamer is process-wide and may also be serving MusicPlayer or other
+	// videos. Main releases it after all media objects have shut down.
 	return true;
 }
 

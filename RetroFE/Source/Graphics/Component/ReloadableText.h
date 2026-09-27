@@ -54,6 +54,7 @@ private:
     std::string pluralPostfix_;
     std::string currentType_;
     std::string currentValue_;
+    std::string lastTrackInfo_;
     std::string location_;
     std::string filePath_;
     size_t lastCollectionIdx_ = std::numeric_limits<size_t>::max();

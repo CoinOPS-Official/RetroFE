@@ -477,6 +477,11 @@ endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRuntime.cmake")
 retrofe_stage_runtime(retrofe)
 if(RETROFE_BUILD_TESTING)
+    add_test(NAME retrofe_startup_smoke_test COMMAND ${CMAKE_COMMAND}
+        "-DRETROFE_EXECUTABLE=$<TARGET_FILE:retrofe>"
+        "-DSTARTUP_FIXTURE_DIR=${CMAKE_BINARY_DIR}/startup-smoke-$<CONFIG>"
+        -P "${CMAKE_CURRENT_SOURCE_DIR}/Tests/StartupSmoke.cmake")
+
     add_executable(retrofe_text_benchmark Tests/TextRenderBenchmark.cpp)
     target_link_libraries(retrofe_text_benchmark PRIVATE retrofe_core)
     retrofe_stage_runtime(retrofe_text_benchmark)
