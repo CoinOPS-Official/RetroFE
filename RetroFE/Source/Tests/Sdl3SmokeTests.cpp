@@ -26,6 +26,7 @@
 #include "../Video/VideoFactory.h"
 #include "../Graphics/Component/VideoComponent.h"
 #include "../Graphics/Component/Image.h"
+#include "../Graphics/Animate/AnimationEvents.h"
 #include "../Graphics/Page.h"
 #include "../Graphics/PageBuilder.h"
 #include <SDL3/SDL_main.h>
@@ -55,6 +56,27 @@ void require(bool value, const char* message) {
         }
         std::exit(EXIT_FAILURE);
     }
+}
+
+void scrollTweenResetChecks() {
+    AnimationEvents events;
+    Animation* scroll = events.getAnimation("menuScroll");
+    TweenSet first;
+    first.push(Tween(TWEEN_PROPERTY_X, LINEAR, 0.0f, 100.0f, 0.2f));
+    scroll->Push(first);
+    scroll->Push(first);
+
+    TweenSet& replacement = scroll->resetSingleSet();
+    require(scroll->size() == 1 && replacement.size() == 0,
+        "Scroll reset removes all previous tween sets and targets");
+    replacement.push(Tween(TWEEN_PROPERTY_Y, LINEAR, 10.0f, 20.0f, 0.4f));
+    require(scroll->tweenSet(0)->size() == 1 &&
+        scroll->tweenSet(0)->getTween(0)->property == TWEEN_PROPERTY_Y,
+        "Next scroll uses only its new tween targets");
+
+    scroll->resetSingleSet();
+    scroll->Clear();
+    require(scroll->size() == 0, "A scroll with no changed properties has no animation");
 }
 
 SDL_Color pixel(SDL_Renderer* renderer, int x, int y) {
@@ -1410,6 +1432,7 @@ void compositeBenchmark(Configuration& config) {
 }
 
 int main(int argc, char** argv) {
+    scrollTweenResetChecks();
     const bool composite = argc > 2 && std::string(argv[2]) == "--composite-benchmark";
     const bool hardware = argc > 2 && (std::string(argv[2]) == "--hardware" || composite);
     const bool benchmark = argc > 3 && std::string(argv[3]) == "--startup-benchmark";

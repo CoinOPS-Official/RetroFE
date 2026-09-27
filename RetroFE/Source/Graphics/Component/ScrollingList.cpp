@@ -1148,7 +1148,7 @@ void ScrollingList::resetTweens(Component* c, const std::shared_ptr<AnimationEve
     Animation* scrollAnimation = sets->getAnimation("menuScroll");
     if (!scrollAnimation)
         return;
-    scrollAnimation->Clear();
+    TweenSet& set = scrollAnimation->resetSingleSet();
 
     // Backup only the fields this function temporarily patches.
     const float oldCurImageHeight = currentViewInfo->ImageHeight;
@@ -1171,8 +1171,6 @@ void ScrollingList::resetTweens(Component* c, const std::shared_ptr<AnimationEve
     c->baseViewInfo = *currentViewInfo;
 
 
-    // Allocate the TweenSet on the stack for cache efficiency
-    TweenSet set;
     const float EPSILON_FLOAT = 0.0001f;
 
     // Conditionally add Tweens only if properties differ
@@ -1231,10 +1229,7 @@ void ScrollingList::resetTweens(Component* c, const std::shared_ptr<AnimationEve
         set.push(Tween(TWEEN_PROPERTY_MONITOR, LINEAR, static_cast<float>(currentViewInfo->Monitor), static_cast<float>(nextViewInfo->Monitor), scrollTime));
     }
 
-    // C++20: Use std::move to trigger the rvalue overload and avoid deep-copying the vector
-    if (set.size() > 0) {
-        scrollAnimation->Push(std::move(set));
-    }
+    if (set.size() == 0) scrollAnimation->Clear();
 
     // Restore layout slot definitions so stale image dimensions do not leak
 // into future playlist/menu states.
@@ -1483,6 +1478,11 @@ void ScrollingList::scrollToSelectedIndex(size_t newSelectedIndex, bool forward,
         ? loopIncrement(oldItemIndex, N, itemsSize)
         : loopDecrement(oldItemIndex, 1, itemsSize);
 
+    // The exiting slot is about to be rebound to the incoming item. Retain its
+    // video instance so GStreamer can switch URI on its control worker.
+    if (auto* exitingVideo = dynamic_cast<VideoComponent*>(components_[exitIndex])) {
+        exitingVideo->preserveInstanceOnNextRecycle();
+    }
     allocateTexture(exitIndex, fullListIndex);
 
     if (components_[exitIndex]) {
@@ -1558,6 +1558,11 @@ void ScrollingList::scroll(bool forward) {
         itemIndex_ = loopDecrement(itemIndex_, 1, itemsSize);
     }
 
+    // Reuse the exiting video's pipeline for the incoming item when possible.
+    // recycleAsVideo() falls back to the pool if it cannot safely retarget it.
+    if (auto* exitingVideo = dynamic_cast<VideoComponent*>(components_[exitIndex])) {
+        exitingVideo->preserveInstanceOnNextRecycle();
+    }
     allocateTexture(exitIndex, fullListIndex);
 
     if (components_[exitIndex]) {

@@ -39,6 +39,9 @@ public:
 
     void Clear();
 
+    // Rebuild a one-set runtime animation without releasing its tween storage.
+    TweenSet& resetSingleSet();
+
     [[nodiscard]] TweenSet* tweenSet(unsigned int index);
     [[nodiscard]] size_t size() const noexcept;
 

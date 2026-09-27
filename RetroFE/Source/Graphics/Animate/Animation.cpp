@@ -31,6 +31,16 @@ void Animation::Clear() {
     animationVector_.clear();
 }
 
+TweenSet& Animation::resetSingleSet() {
+    if (animationVector_.empty()) {
+        animationVector_.emplace_back();
+    } else if (animationVector_.size() > 1) {
+        animationVector_.resize(1);
+    }
+    animationVector_.front().clear();
+    return animationVector_.front();
+}
+
 TweenSet* Animation::tweenSet(unsigned int index) {
     if (index < animationVector_.size()) {
         return &animationVector_[index];

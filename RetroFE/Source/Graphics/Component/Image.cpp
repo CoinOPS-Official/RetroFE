@@ -480,6 +480,15 @@ bool Image::update(float dt) {
 
 void Image::draw() {
 	Component::draw();
+	// Hidden list slots still update/load in the logic pass. Preserve their
+	// animation timeline, but do not upload frames until they can be seen.
+	if (baseViewInfo.Alpha <= 0.0f) {
+		if (animatedTexture_ && !animatedSurfaces_.empty() && !frameDelays_.empty() && animationStartTime_ == 0) {
+			animationStartTime_ = SDL_GetTicks();
+			lastRenderedFrame_ = std::numeric_limits<size_t>::max();
+		}
+		return;
+	}
 
 	if (status_ == LoadStatus::Error || (status_ == LoadStatus::Unloaded && !texture_ && !animatedTexture_)) {
 		return;

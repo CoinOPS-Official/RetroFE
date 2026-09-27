@@ -372,13 +372,26 @@ bool VideoComponent::update(float dt) {
         }
     }
 
-    if (std::abs(baseViewInfo.Volume - lastVolume_) > 1e-4f) {
-        lastVolume_ = baseViewInfo.Volume;
-        videoInst_->setVolume(baseViewInfo.Volume);
-    }
-
     // 6. --- ORCHESTRATION PIPELINE ---
     computeDesiredIntent(visibleNow, snap);
+
+    // A layout's idle volume tween may still be nonzero while another item is
+    // entering or scroll input is held. Keep previews silent until the current
+    // selection has a frame to show; then use the layout's animated volume.
+    const bool selectedAndSettled = listId_ == -1 ||
+        (isHighPriority_ && !currentPage_->isMenuScrolling() &&
+         !currentPage_->isUserScrollInputActive());
+    // A list preview must show its own first frame before any audio is heard.
+    // Standalone audio-only media have no frame to wait for.
+    const bool frameReady = videoInst_->getTexture() != nullptr ||
+        (listId_ == -1 && !snap.hasVideoStream);
+    const float audibleVolume = visibleNow && selectedAndSettled && frameReady &&
+        desiredState_ == PlaybackTarget::Playing ? baseViewInfo.Volume : 0.0f;
+    if (std::abs(audibleVolume - lastVolume_) > 1e-4f) {
+        lastVolume_ = audibleVolume;
+        videoInst_->setVolume(audibleVolume);
+    }
+
     syncPlaybackIntent(snap);
 
     return Component::update(dt);

@@ -18,6 +18,7 @@
 #include "../Collection/CollectionInfo.h"
 
 #include <map>
+#include <array>
 #include <string>
 #include <list>
 #include <vector>
@@ -246,6 +247,8 @@ private:
 
     static const unsigned int NUM_LAYERS = 20;
     std::vector<std::vector<Component*>> LayerComponents_; // Grouped by layer
+    std::array<std::vector<Component*>, NUM_LAYERS> menuLayerBuckets_;
+    void collectMenuLayerBuckets(int monitor);
     std::list<ScrollingList *> deleteMenuList_;
     std::list<CollectionInfo *> deleteCollectionList_;
     std::map<std::string, size_t> lastPlaylistOffsets_;

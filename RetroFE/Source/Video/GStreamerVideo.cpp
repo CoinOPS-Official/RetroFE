@@ -2705,6 +2705,7 @@ GstFlowReturn GStreamerVideo::on_audio_new_sample(
 	 */
 	const bool active =
 		video->audioHandle_ &&
+		video->playbackState_.load(std::memory_order_acquire) == PlaybackState::Playing &&
 		video->lifecycle_.load(
 			std::memory_order_acquire) ==
 		PipelineLifecycle::Ready;
@@ -3040,7 +3041,9 @@ void GStreamerVideo::setVolume(float volume) {
 	if (!audioHandle_) return;
 	volume_ = volume;
 	float finalGain = std::clamp(volume_, 0.0f, 1.0f);
-	if (Configuration::MuteVideo || finalGain < 0.01f) finalGain = 0.0f;
+	if (Configuration::MuteVideo || finalGain < 0.01f ||
+		playbackState_.load(std::memory_order_acquire) != PlaybackState::Playing)
+		finalGain = 0.0f;
 	AudioBus::instance().setGain(audioHandle_, finalGain);
 }
 
@@ -3176,6 +3179,9 @@ void GStreamerVideo::pause() {
 			std::memory_order_acq_rel) == PlaybackState::Paused)
 		return;
 
+	AudioBus::instance().setGain(audioHandle_, 0.0f);
+	AudioBus::instance().clear(audioHandle_);
+
 	const uint64_t epoch = playbackEpoch_.load(std::memory_order_acquire);
 	std::weak_ptr<GStreamerVideo> weak = weak_from_this();
 
@@ -3201,6 +3207,8 @@ void GStreamerVideo::resume() {
 			PlaybackState::Playing,
 			std::memory_order_acq_rel) == PlaybackState::Playing)
 		return;
+
+	setVolume(volume_);
 
 	const uint64_t epoch = playbackEpoch_.load(std::memory_order_acquire);
 	std::weak_ptr<GStreamerVideo> weak = weak_from_this();
@@ -3251,6 +3259,8 @@ void GStreamerVideo::rewindAndPause() {
 		return;
 
 	playbackState_.store(PlaybackState::Paused, std::memory_order_release);
+	AudioBus::instance().setGain(audioHandle_, 0.0f);
+	AudioBus::instance().clear(audioHandle_);
 
 	const uint64_t epoch = playbackEpoch_.load(std::memory_order_acquire);
 	std::weak_ptr<GStreamerVideo> weak = weak_from_this();

@@ -482,6 +482,8 @@ if(RETROFE_BUILD_TESTING)
         "-DSTARTUP_FIXTURE_DIR=${CMAKE_BINARY_DIR}/startup-smoke-$<CONFIG>"
         -P "${CMAKE_CURRENT_SOURCE_DIR}/Tests/StartupSmoke.cmake")
 
+    add_executable(retrofe_page_traversal_benchmark Tests/PageTraversalBenchmark.cpp)
+
     add_executable(retrofe_text_benchmark Tests/TextRenderBenchmark.cpp)
     target_link_libraries(retrofe_text_benchmark PRIVATE retrofe_core)
     retrofe_stage_runtime(retrofe_text_benchmark)

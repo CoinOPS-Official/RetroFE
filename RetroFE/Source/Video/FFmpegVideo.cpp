@@ -414,6 +414,7 @@ struct FFmpegVideo::Impl {
     explicit Impl(int m) : monitor(m) {
         installFFmpegLog();
         audio = AudioBus::instance().createSource("FFmpeg video");
+        AudioBus::instance().setGain(audio, 0.0f);
         if (Configuration::HardwareVideoAccel) {
             SDL_Renderer *r = SDL::getRenderer(m);
             auto shared = acquireSharedHardware(r);

@@ -1589,27 +1589,34 @@ void Page::cleanup() {
 }
 
 
-void Page::prepareVideoFrames(int monitor) {
-	for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
-		for (Component* c : LayerComponents_[i]) {
-			if (c && c->baseViewInfo.Monitor == monitor) {
-				c->prepareVideoFrame();
-			}
-		}
-		for (const auto& menuList : menus_) {
-			for (ScrollingList const* const menu : menuList) {
-				if (!menu) continue;
-				for (Component* c : menu->getComponents()) {
-					if (c && c->baseViewInfo.Layer == i && c->baseViewInfo.Monitor == monitor) {
-						c->prepareVideoFrame();
-					}
+void Page::collectMenuLayerBuckets(int monitor) {
+	for (auto& bucket : menuLayerBuckets_) bucket.clear();
+	for (const auto& menuList : menus_) {
+		for (ScrollingList const* const menu : menuList) {
+			if (!menu) continue;
+			for (Component* c : menu->getComponents()) {
+				if (c && c->baseViewInfo.Monitor == monitor && c->baseViewInfo.Layer < NUM_LAYERS) {
+					menuLayerBuckets_[c->baseViewInfo.Layer].push_back(c);
 				}
 			}
 		}
 	}
 }
 
+void Page::prepareVideoFrames(int monitor) {
+	collectMenuLayerBuckets(monitor);
+	for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
+		for (Component* c : LayerComponents_[i]) {
+			if (c && c->baseViewInfo.Monitor == monitor) {
+				c->prepareVideoFrame();
+			}
+		}
+		for (Component* c : menuLayerBuckets_[i]) c->prepareVideoFrame();
+	}
+}
+
 void Page::draw(int monitor) {
+	collectMenuLayerBuckets(monitor);
 	for (unsigned int i = 0; i < NUM_LAYERS; ++i) {
 		// Draw all components in this layer for the given monitor
 		for (Component* c : LayerComponents_[i]) {
@@ -1618,16 +1625,7 @@ void Page::draw(int monitor) {
 			}
 		}
 		// Draw all menu components belonging to this layer and monitor
-		for (const auto& menuList : menus_) {
-			for (ScrollingList const* const menu : menuList) {
-				if (!menu) continue;
-				for (Component* c : menu->getComponents()) {
-					if (c && c->baseViewInfo.Layer == i && c->baseViewInfo.Monitor == monitor) {
-						c->draw();
-					}
-				}
-			}
-		}
+		for (Component* c : menuLayerBuckets_[i]) c->draw();
 	}
 }
 
