@@ -12,14 +12,14 @@ if (!(Test-Path -LiteralPath "$PSScriptRoot/../ThirdParty/openhi2txt/CMakeLists.
     throw 'OpenHi2txt is missing. Run git submodule update --init --recursive from the repository root.'
 }
 $packages = @(
-    @{ Repo='SDL'; Name='SDL3'; Version='3.4.12'; Archive='sdl'; Hash='8793A153C7EBA93B1EB8022FD2356383EC446B2584E43724A72EF68D682813AB' },
-    @{ Repo='SDL_image'; Name='SDL3_image'; Version='3.2.4'; Archive='image'; Hash='76141D9535B77B1D6561368DE934B3797D87F834906016E1087940C85A8DAB85' },
+    @{ Repo='SDL'; Name='SDL3'; Version='3.4.16'; Archive='sdl'; Hash='1A784CB2A5C64D56FE7A62090FE9D242D9865F235E4EA9678F1A6BA4E693E7DE' },
+    @{ Repo='SDL_image'; Name='SDL3_image'; Version='3.4.6'; Archive='image'; Hash='03C6B313623EDADF707A7C187E2036A5BE5F12E693025C0697833379970BB4C0' },
     @{ Repo='SDL_ttf'; Name='SDL3_ttf'; Version='3.2.2'; Archive='ttf'; Hash='67805C5BABFC49CA0C56882DC9B8CABBCDD1E6F9EDDE10DDAC91DDB38F3AFB8C' },
     @{ Repo='SDL_mixer'; Name='SDL3_mixer'; Version='3.2.4'; Archive='mixer'; Hash='F4263ED5082FB7018059D64952017534E26821E9E878CE6B8C924B77CB17C4FB' }
 )
 New-Item -ItemType Directory -Force "$BuildDirectory/downloads", "$BuildDirectory/deps" | Out-Null
 $prefixes = foreach ($package in $packages) {
-    $archive = "$BuildDirectory/downloads/$($package.Archive).zip"
+    $archive = "$BuildDirectory/downloads/$($package.Archive)-$($package.Version).zip"
     if (!(Test-Path -LiteralPath $archive)) {
         $url = "https://github.com/libsdl-org/$($package.Repo)/releases/download/release-$($package.Version)/$($package.Name)-devel-$($package.Version)-VC.zip"
         Invoke-WebRequest -Uri $url -OutFile $archive

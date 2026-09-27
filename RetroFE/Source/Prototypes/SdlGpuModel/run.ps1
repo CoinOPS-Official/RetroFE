@@ -7,8 +7,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $projectRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..\..')).Path
 $build = Join-Path $PSScriptRoot 'build'
-$sdlRoot = Join-Path $projectRoot 'Build\deps\SDL3-3.4.12\cmake'
-$imageRoot = Join-Path $projectRoot 'Build\deps\SDL3_image-3.2.4\cmake'
+$sdlRoot = Join-Path $projectRoot 'Build\deps\SDL3-3.4.16\cmake'
+$imageRoot = Join-Path $projectRoot 'Build\deps\SDL3_image-3.4.6\cmake'
 
 if (-not $SkipBuild) {
     & cmake -S $PSScriptRoot -B $build -G 'Visual Studio 17 2022' -A x64 `
