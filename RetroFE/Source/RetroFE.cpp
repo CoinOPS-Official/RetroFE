@@ -169,17 +169,15 @@ void RetroFE::render() {
 	// With the overlay disabled this adds no extra performance-counter reads
 	// around Present and therefore remains effectively benign.
 	double presentWaitMsThisRender = 0.0;
-	const bool directBackbuffer = SDL::usesDirectBackbuffer();
 
 	// ---------------------------------------------------------
-	// 1. Clear the selected output and draw the current page
+	// 1. Clear the backbuffer and draw the current page
 	// ---------------------------------------------------------
 
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
 		SDL_Renderer* rr = SDL::getRenderer(i);
-		SDL_Texture* rt = SDL::getRenderTarget(i);
 
-		if (!rr || (!directBackbuffer && !rt)) {
+		if (!rr) {
 			continue;
 		}
 
@@ -214,7 +212,7 @@ void RetroFE::render() {
 		}
 
 		// Native copies are submitted before queuing SDL drawing for this renderer.
-		if (!SDL_SetRenderTarget(rr, rt)) {
+		if (!SDL_SetRenderTarget(rr, nullptr)) {
 			LOG_ERROR(
 				"SDL",
 				"SetRenderTarget failed: " +
@@ -259,48 +257,16 @@ void RetroFE::render() {
 	}
 
 	// ---------------------------------------------------------
-	// 2. Composite when enabled, mask Fit bars, draw HUD, present
+	// 2. Mask Fit bars, draw HUD, present
 	// ---------------------------------------------------------
 
 	for (int i = 0; i < SDL::getScreenCount(); ++i) {
 		SDL_Renderer* rr = SDL::getRenderer(i);
-		SDL_Texture* rt = SDL::getRenderTarget(i);
 
-		if (!rr || (!directBackbuffer && !rt)) {
+		if (!rr) {
 			continue;
 		}
 
-
-		if (!directBackbuffer && !SDL_SetRenderTarget(rr, nullptr)) {
-			LOG_ERROR(
-				"SDL",
-				"SetRenderTarget(backbuffer) failed: " +
-				std::string(SDL_GetError())
-			);
-
-			reboot_ = true;
-			setState(RETROFE_QUIT_REQUEST);
-			break;
-		}
-
-		/* Copy the completed page only in the offscreen mode. */
-		if (!directBackbuffer && !SDL_RenderTexture(
-			rr,
-			rt,
-			nullptr,
-			nullptr
-		))
-		{
-			LOG_ERROR(
-				"SDL",
-				"Final RenderCopy failed: " +
-				std::string(SDL_GetError())
-			);
-
-			reboot_ = true;
-			setState(RETROFE_QUIT_REQUEST);
-			break;
-		}
 
 		/*
 		 * Mask anything extending outside the virtual screen when

@@ -548,7 +548,7 @@ void MusicPlayerComponent::updateVolumeBarTexture() {
 		return;
 	}
 
-	SDL_Texture* previousTarget = SDL::getRenderTarget(baseViewInfo.Monitor);
+	SDL_Texture* previousTarget = SDL_GetRenderTarget(renderer_);
 
 	int volumeRaw = std::clamp(musicPlayer_->getLogicalVolume(), 0, 128);
 
@@ -1625,7 +1625,7 @@ void MusicPlayerComponent::updateProgressBarTexture() {
 		return;
 	}
 
-	SDL_Texture* previousTarget = SDL::getRenderTarget(baseViewInfo.Monitor);
+	SDL_Texture* previousTarget = SDL_GetRenderTarget(renderer_);
 	SDL_SetRenderTarget(renderer_, progressBarTexture_);
 
 	SDL_SetRenderDrawColor(renderer_, 0, 0, 0, 0);

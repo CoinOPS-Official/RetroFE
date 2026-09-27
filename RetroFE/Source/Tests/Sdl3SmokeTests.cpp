@@ -137,7 +137,7 @@ void renderChecks(Configuration& config, bool checkPixels) {
     require(SDL::initialize(config), "Initialize RetroFE SDL3 backend");
     auto* renderer = SDL::getRenderer(0);
     require(renderer != nullptr, "Create renderer");
-    require(SDL_SetRenderTarget(renderer, SDL::getRenderTarget(0)), "Set target");
+    require(SDL_SetRenderTarget(renderer, nullptr), "Set target");
     require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) && SDL_RenderClear(renderer), "Clear target");
 
     SDL_Surface* surface = SDL_CreateSurface(4, 4, SDL_PIXELFORMAT_RGBA32);
@@ -223,8 +223,6 @@ void renderChecks(Configuration& config, bool checkPixels) {
     batchChecks(renderer, texture);
     SDL_DestroyTexture(texture);
     require(SDL_SetRenderTarget(renderer, nullptr), "Restore backbuffer");
-    if (!SDL::usesDirectBackbuffer())
-        require(SDL_RenderTexture(renderer, SDL::getRenderTarget(0), nullptr, nullptr), "Present target");
     require(SDL_RenderPresent(renderer), "Present frame");
 }
 
@@ -499,7 +497,7 @@ void mediaChecks(const std::string& assets) {
         }
         require(underline.w > 0 && underline.h > 0, "Underline produces a fill operation");
         SDL_Renderer* renderer = SDL::getRenderer(0);
-        require(renderer && SDL_SetRenderTarget(renderer, SDL::getRenderTarget(0)),
+        require(renderer && SDL_SetRenderTarget(renderer, nullptr),
             "Select text test render target");
         TTF_Font* gapOutline = TTF_CopyFont(mip->font);
         require(gapOutline && TTF_SetFontOutline(gapOutline, 6),
@@ -1219,8 +1217,7 @@ void imageAsyncIOChecks(Configuration& config) {
         image.baseViewInfo.Width = image.baseViewInfo.Height = 64;
         image.baseViewInfo.Alpha = 1;
         auto* renderer = SDL::getRenderer(0);
-        auto* target = SDL::getRenderTarget(0);
-        require(SDL_SetRenderTarget(renderer, target), "Select image-test target");
+        require(SDL_SetRenderTarget(renderer, nullptr), "Select image-test target");
         require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) && SDL_RenderClear(renderer), "Clear image-test target");
         image.draw();
         int outputW = 0, outputH = 0;
@@ -1356,8 +1353,7 @@ void startupBenchmark(const std::string& file, const std::string& alternate) {
     GlibLoop::instance().stop();
 }
 
-// Compare the same SDL_Renderer workload with and without the full-size
-// intermediate target. Present is included so queued GPU work is submitted.
+// Measure direct-backbuffer rendering, including submission at Present.
 void compositeBenchmark(Configuration& config) {
     constexpr int layoutW = 1920;
     constexpr int layoutH = 1080;
@@ -1366,13 +1362,7 @@ void compositeBenchmark(Configuration& config) {
     config.setProperty("horizontal0", layoutW);
     config.setProperty("vertical0", layoutH);
 
-    const char* order = SDL_getenv("RETROFE_BENCH_DIRECT_FIRST");
-    const bool directFirst = order && SDL_strcmp(order, "1") == 0;
-    for (int pass = 0; pass < 2; ++pass) {
-        const bool direct = (pass == 0) == directFirst;
-        require(SDL_SetEnvironmentVariable(SDL_GetEnvironment(),
-            "RETROFE_DIRECT_BACKBUFFER", direct ? "1" : "0", true),
-            "Set composite benchmark render path");
+    {
         require(SDL::initialize(config), "Initialize composite benchmark renderer");
         SDL_Renderer* renderer = SDL::getRenderer(0);
         require(renderer != nullptr, "Create composite benchmark renderer");
@@ -1388,7 +1378,7 @@ void compositeBenchmark(Configuration& config) {
         const double tickToMs = 1000.0 / SDL_GetPerformanceFrequency();
         for (int frame = 0; frame < warmupFrames + measuredFrames; ++frame) {
             const Uint64 start = SDL_GetPerformanceCounter();
-            require(SDL_SetRenderTarget(renderer, SDL::getRenderTarget(0)),
+            require(SDL_SetRenderTarget(renderer, nullptr),
                 "Select composite benchmark output");
             require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) &&
                 SDL_RenderClear(renderer), "Clear composite benchmark output");
@@ -1399,11 +1389,6 @@ void compositeBenchmark(Configuration& config) {
                 require(SDL::renderCopyF(texture, 1.f, nullptr, &destination,
                     view, layoutW, layoutH), "Draw composite benchmark quad");
             }
-            if (!direct) {
-                require(SDL_SetRenderTarget(renderer, nullptr) &&
-                    SDL_RenderTexture(renderer, SDL::getRenderTarget(0), nullptr, nullptr),
-                    "Composite benchmark target");
-            }
             require(SDL_RenderPresent(renderer), "Present composite benchmark frame");
             if (frame >= warmupFrames)
                 frameMs.push_back((SDL_GetPerformanceCounter() - start) * tickToMs);
@@ -1412,8 +1397,7 @@ void compositeBenchmark(Configuration& config) {
         int outputW = 0, outputH = 0;
         require(SDL_GetRenderOutputSize(renderer, &outputW, &outputH),
             "Query composite benchmark output size");
-        const std::string result = std::string("COMPOSITE mode=") +
-            (direct ? "direct" : "offscreen") +
+        const std::string result = std::string("COMPOSITE mode=direct") +
             " backend=" + SDL_GetRendererName(renderer) +
             " output=" + std::to_string(outputW) + 'x' + std::to_string(outputH) +
             " median_ms=" + std::to_string(frameMs[frameMs.size() / 2]) +

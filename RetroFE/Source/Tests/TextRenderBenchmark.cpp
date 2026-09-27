@@ -142,7 +142,7 @@ int main(int argc, char** argv) {
             actualRenderer ? actualRenderer : "null");
         return EXIT_FAILURE;
     }
-    if (!SDL_SetRenderTarget(renderer, SDL::getRenderTarget(0))) fail("Set render target");
+    if (!SDL_SetRenderTarget(renderer, nullptr)) fail("Set render target");
 
     std::printf("CONFIG mode=sdl3_ttf renderer=%s entries=%zu layout=1920x1080 vsync=off prewarm=%s timer=CPU_text_draw\n",
         actualRenderer, entries.size(),

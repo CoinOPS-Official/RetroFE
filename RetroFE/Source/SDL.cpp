@@ -36,8 +36,6 @@
 
 std::vector<SDL_Window*>    SDL::window_;
 std::vector<SDL_Renderer*>  SDL::renderer_;
-static std::vector<SDL_Texture*> renderTargets_;
-static bool directBackbuffer_ = false;
 std::vector<int>            SDL::displayWidth_;
 std::vector<int>            SDL::displayHeight_;
 std::vector<int>            SDL::windowWidth_;
@@ -312,13 +310,7 @@ bool SDL::initialize(Configuration& config) {
         )
     );
 
-    // Opt-in rendering experiment: draw the page directly to the window.
-    // The default path retains its full-size composite texture for comparison.
-    const char* directBackbuffer = SDL_getenv("RETROFE_DIRECT_BACKBUFFER");
-    directBackbuffer_ = directBackbuffer && SDL_strcmp(directBackbuffer, "1") == 0;
-    LOG_INFO("SDL", directBackbuffer_
-        ? "Render path: direct backbuffer (RETROFE_DIRECT_BACKBUFFER=1)"
-        : "Render path: offscreen composite");
+    LOG_INFO("SDL", "Render path: direct backbuffer");
 
     if (config.getProperty(OPTION_HIDEMOUSE, hideMouse))
         hideMouse ? SDL_HideCursor() : SDL_ShowCursor();
@@ -1172,80 +1164,6 @@ bool SDL::initialize(Configuration& config) {
                 return false;
             }
 
-            // Ensure vector is sized for all screens.
-            renderTargets_.resize(
-                screenCount_,
-                nullptr
-            );
-
-            // -------------------------------------------------
-            // Create offscreen compositing render target
-            // -------------------------------------------------
-
-            if (!directBackbuffer_) {
-                SDL_Renderer* r =
-                    renderer_[logicalScreen];
-
-                if (!r)
-                    return false;
-
-                const int w =
-                    windowWidth_[logicalScreen];
-
-                const int h =
-                    windowHeight_[logicalScreen];
-
-                SDL_Texture* t =
-                    SDL_CreateTexture(
-                        r,
-                        SDL_PIXELFORMAT_RGBA32,
-                        SDL_TEXTUREACCESS_TARGET,
-                        w,
-                        h
-                    );
-
-                if (!t) {
-                    LOG_ERROR(
-                        "SDL",
-                        "Failed to create render target texture: " +
-                        std::string(SDL_GetError())
-                    );
-
-                    return false;
-                }
-
-                // Standard alpha blend mode for compositing UI.
-                SDL_SetTextureBlendMode(
-                    t,
-                    SDL_BLENDMODE_BLEND
-                );
-
-                SDL_SetTextureScaleMode(
-                    t,
-                    SDL_SCALEMODE_LINEAR
-                );
-
-                // One-time clear so texture contents are defined.
-                SDL_SetRenderTarget(r, t);
-
-                SDL_SetRenderDrawColor(
-                    r,
-                    0,
-                    0,
-                    0,
-                    255
-                );
-
-                SDL_RenderClear(r);
-
-                SDL_SetRenderTarget(
-                    r,
-                    nullptr
-                );
-
-                renderTargets_[logicalScreen] = t;
-            }
-
             // -------------------------------------------------
             // Renderer logging / backend-specific settings
             // -------------------------------------------------
@@ -1351,15 +1269,6 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 		LOG_WARNING("SDL", "Window 0 is NULL, cannot center mouse within it");
 	}
 
-// Destroy render target textures
-	for (auto& t : renderTargets_) {
-		if (t) {
-			SDL_DestroyTexture(t);
-			t = nullptr;
-		}
-	}
-	renderTargets_.clear();
-
 	// Destroy renderers and windows
 	for (auto renderer : renderer_)
 	{
@@ -1430,17 +1339,6 @@ SDL_Window* SDL::getWindow(int index) {
 		return nullptr;
 	}
 	return (index >= 0 && index < screenCount_ ? window_[index] : window_[0]);
-}
-
-// current target to render into for this frame
-SDL_Texture* SDL::getRenderTarget(int index) {
-	if (directBackbuffer_) return nullptr;
-	if (renderTargets_.empty()) return nullptr;
-	return (index >= 0 && index < screenCount_ ? renderTargets_[index] : renderTargets_[0]);
-}
-
-bool SDL::usesDirectBackbuffer() {
-    return directBackbuffer_;
 }
 
 void SDL::drawFitBars(
