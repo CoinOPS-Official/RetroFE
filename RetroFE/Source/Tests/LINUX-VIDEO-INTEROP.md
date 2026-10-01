@@ -43,7 +43,15 @@ SDLRenderDriver=opengles2
 log=INFO,WARNING,ERROR
 ```
 
-`opengles2` selects EGL, suitable for testing on Wayland or X11. `opengl` is also
+On Linux, explicitly selecting `opengles2` now requests EGL before SDL video
+initialization. This prevents SDL from choosing a GLES context through GLX on
+X11/Xwayland, which renders successfully but cannot provide the EGL display
+needed for DMA-BUF import. The `SDL` INFO log records the effective preference.
+Explicit `SDL_VIDEO_FORCE_EGL` environment settings take precedence; setting it
+to `0` opts out. The application's default is cleared if a later initialization
+selects another renderer. Check the ACTIVE/fallback logs to confirm actual import.
+
+`opengl` is also
 supported through EGL or GLX, depending on SDL's chosen context. Desktop GLX
 does not guarantee that a decoder's DMA-BUF format can be imported efficiently.
 Keep perspective disabled for the first video test: that filter intentionally

@@ -31,6 +31,14 @@ log=INFO,WARNING,ERROR
 
 The ACTIVE log identifies direct sampling or RGBA conversion, plus `GPU fences` and `no GStreamer GL context`. RETROFE_GL_DIRECT does not select this backend. This build option replaces the old GL backend; desktop opengl does not use the EGL importer. Configure EGL_DMABUF OFF to return to the previous GL implementation.
 
+Linux startup requests EGL automatically for an explicit `SDLRenderDriver=opengles2`.
+The hint is applied before SDL video initialization at default priority, preserving
+explicit `SDL_VIDEO_FORCE_EGL=0/1` overrides. On Steam Deck Gaming Mode this avoids
+a GLES-through-GLX context that reports `no EGL display`. For Flatpak, after
+rebuilding the application this should no longer require the launch option
+`--env=SDL_VIDEO_FORCE_EGL=1`. Compare Desktop/Gaming Mode with that option removed,
+then verify the `SDL` preference log and GPU interop ACTIVE message.
+
 The importer retains decoder samples, EGL images and external textures until their last GPU reads complete. The RGBA output, SDL wrapper, shader and FBO survive unload/reopen; output allocation changes when visible dimensions change. Imports are recreated per frame to avoid stale FD reuse. Capability caching is bounded. Up to four pending conversions are retained; pressure defers replacement while preserving the last texture. Resize and unload poll without draining. Teardown may wait; ordinary frames poll fences. Driver-error recovery may still call glFinish.
 
 Plane offsets and pitches come from VideoMeta, including multi-FD layouts. EGL must advertise the exact FourCC/modifier and accept the import. Crop is applied during conversion. SDR BT.601/709 YUV is supported; P010 is reduced to RGBA8 when importable. HDR tone mapping is not implemented. Unsupported imports renegotiate system-memory upload; this fallback is not a guarantee of correct HDR rendering.

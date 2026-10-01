@@ -145,6 +145,21 @@ bool SDL::initialize(Configuration& config) {
     int audioRate = 48000;
     int audioChannels = 2;
     bool hideMouse = false;
+    std::string SDLRenderDriver;
+    config.getProperty(OPTION_SDLRENDERDRIVER, SDLRenderDriver);
+
+#ifdef __linux__
+    // GLES can use GLX on X11/Xwayland, but DMA-BUF import needs EGL.
+    // Set this before video initialization; environment/API overrides win.
+    // Clear our default when a later initialization selects another renderer.
+    SDL_SetHintWithPriority(SDL_HINT_VIDEO_FORCE_EGL,
+        SDLRenderDriver == "opengles2" ? "1" : nullptr, SDL_HINT_DEFAULT);
+    if (SDLRenderDriver == "opengles2") {
+        LOG_INFO("SDL", std::string("opengles2 EGL context preference: ") +
+            (SDL_GetHintBoolean(SDL_HINT_VIDEO_FORCE_EGL, false)
+                ? "enabled" : "disabled by override"));
+    }
+#endif
 
 #ifdef RETROFE_HAVE_D3D12
     D3D12VideoInterop::configureDiagnostics();
@@ -226,9 +241,6 @@ bool SDL::initialize(Configuration& config) {
             return false;
         }
     }
-
-    std::string SDLRenderDriver;
-    config.getProperty(OPTION_SDLRENDERDRIVER, SDLRenderDriver);
 
 #ifdef WIN32
     if (SDLRenderDriver == "direct3d")
