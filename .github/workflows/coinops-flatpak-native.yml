@@ -126,14 +126,14 @@ jobs:
       # Install matching Freedesktop runtime + SDK
       # ============================================================
 
-      - name: Install Freedesktop 25.08 runtime and SDK
+      - name: Install Freedesktop 26.08 runtime and SDK
         run: |
           flatpak install \
             --user \
             --noninteractive \
             flathub \
-            org.freedesktop.Platform//25.08 \
-            org.freedesktop.Sdk//25.08
+            org.freedesktop.Platform//26.08 \
+            org.freedesktop.Sdk//26.08
       # ============================================================
       # Audit Freedesktop SDK/runtime dependency baseline
       #
@@ -143,9 +143,9 @@ jobs:
       #   - Promote a dependency into Runtime only when multiple payloads
       #     genuinely share it or the dependency cannot be safely bundled.
       #
-      # Freedesktop 25.08 already supplies the broad graphics/audio/system
-      # ABI expected by libretro cores. SDL2_image and SDL2_ttf are built
-      # explicitly below because 25.08 removed those SDL2 add-on projects.
+      # Freedesktop 26.08 already supplies the broad graphics/audio/system
+      # ABI expected by libretro cores, including FFmpeg and SDL3_image.
+      # SDL2_ttf (MAME) and SDL2_net (Supermodel) are supplied by /app.
       # ============================================================
 
       - name: Audit emulator dependency baseline
@@ -154,7 +154,7 @@ jobs:
 
           flatpak run \
             --command=sh \
-            org.freedesktop.Sdk//25.08 \
+            org.freedesktop.Sdk//26.08 \
             -c '
               set -eu
 
@@ -185,10 +185,19 @@ jobs:
 
               for pkg in \
                 sdl2 \
-                SDL2_mixer \
                 gstreamer-1.0 \
                 gstreamer-app-1.0 \
                 gstreamer-video-1.0 \
+                gstreamer-gl-egl-1.0 \
+                gstreamer-allocators-1.0 \
+                sdl3-image \
+                sdl3-ttf \
+                sdl3-mixer \
+                libavformat \
+                libavcodec \
+                libavutil \
+                libswresample \
+                libswscale \
                 fontconfig \
                 libcurl \
                 libusb-1.0 \
@@ -209,8 +218,7 @@ jobs:
                 vorbis \
                 vorbisenc \
                 vorbisfile \
-                openal \
-                SDL2_net
+                openal
               do
                 require_pkg "$pkg"
               done
@@ -221,8 +229,8 @@ jobs:
               echo "============================================================"
 
               for pkg in \
-                SDL2_image \
                 SDL2_ttf \
+                SDL2_net \
                 libzip \
                 libevdev \
                 libserialport \
@@ -332,24 +340,23 @@ jobs:
       #
       #   SDL2_ttf
       #   MAME
-      #   SDL2_image
       #   libzip
-      #   Hypseus Singe (last SDL2 release)
       #   libevdev
       #   libserialport
       #   minizip
-      #   SDL3, SDL3_image, SDL3_ttf, SDL3_mixer
+      #   SDL3, SDL3_ttf, SDL3_mixer (SDL3_image comes from 26.08)
+      #   Hypseus Singe (SDL3)
       #   RetroFE
       #   stripped RetroArch runtime
       #   CoinOPS generic libretro launcher
-      #   GLU
+      #   SDL2_net, GLU
       #   Supermodel
       #   runtime-cleanup
       #   launcher metadata
       #
       # SDL2_ttf must precede MAME because MAME requires it.
       #
-      # SDL2_image, libzip, Hypseus Singe and RetroFE-only dependencies
+      # libzip, Hypseus Singe and RetroFE-only dependencies
       # remain after MAME so changes to them do not invalidate MAME.
       #
       # RetroArch is deliberately placed after RetroFE. Updating the
@@ -366,7 +373,7 @@ jobs:
           cat > org.coinops.Runtime.yml <<'EOF'
           app-id: org.coinops.Runtime
           runtime: org.freedesktop.Platform
-          runtime-version: '25.08'
+          runtime-version: '26.08'
           sdk: org.freedesktop.Sdk
           command: coinops-launcher
           finish-args:
@@ -533,67 +540,6 @@ jobs:
                   path: MAME
                   branch: codex/mame0289-rebase-ps1
             # ======================================================
-            # SDL2_image
-            #
-            # Load:
-            #   PNG
-            #   JPG/JPEG
-            #   QOI
-            #   WebP
-            #   GIF
-            #
-            # Save:
-            #   PNG only
-            #
-            # PNG_SAVE is required by RetroFE IMG_SavePNG() for
-            # generated QR codes.
-            # ======================================================
-            - name: SDL2_image
-              buildsystem: cmake-ninja
-              builddir: true
-              build-options:
-                strip: true
-                no-debuginfo: true
-              config-opts:
-                - -DCMAKE_BUILD_TYPE=Release
-                - -DCMAKE_INSTALL_PREFIX=/app
-                - -DBUILD_SHARED_LIBS=ON
-                - -DSDL2IMAGE_SAMPLES=OFF
-                - -DSDL2IMAGE_TESTS=OFF
-                # Formats used by the CoinOPS runtime.
-                - -DSDL2IMAGE_PNG=ON
-                - -DSDL2IMAGE_JPG=ON
-                - -DSDL2IMAGE_QOI=ON
-                - -DSDL2IMAGE_WEBP=ON
-                - -DSDL2IMAGE_GIF=ON
-                # PNG writing required for generated QR codes.
-                - -DSDL2IMAGE_PNG_SAVE=ON
-                # JPEG writing not required.
-                - -DSDL2IMAGE_JPG_SAVE=OFF
-                # Disable unused formats.
-                - -DSDL2IMAGE_AVIF=OFF
-                - -DSDL2IMAGE_BMP=OFF
-                - -DSDL2IMAGE_JXL=OFF
-                - -DSDL2IMAGE_LBM=OFF
-                - -DSDL2IMAGE_PCX=OFF
-                - -DSDL2IMAGE_PNM=OFF
-                - -DSDL2IMAGE_SVG=OFF
-                - -DSDL2IMAGE_TGA=OFF
-                - -DSDL2IMAGE_TIF=OFF
-                - -DSDL2IMAGE_XCF=OFF
-                - -DSDL2IMAGE_XPM=OFF
-                - -DSDL2IMAGE_XV=OFF
-              cleanup:
-                - /include
-                - /lib/cmake
-                - /lib/pkgconfig
-                - '*.a'
-                - '*.la'
-              sources:
-                - type: git
-                  url: https://github.com/libsdl-org/SDL_image.git
-                  branch: SDL2
-            # ======================================================
             # libzip
             #
             # Required by Hypseus Singe for zipped LUA game support.
@@ -625,86 +571,6 @@ jobs:
                 - type: git
                   url: https://github.com/nih-at/libzip.git
                   commit: 6f8a0cdd24a0dc6cce9dac4a7679da784ab124ea
-            # ======================================================
-            # Hypseus Singe
-            #
-            # v2.12.1 is the final SDL2-based Hypseus release.
-            # Only the immutable emulator executable and license are
-            # installed. Game data and mutable support directories
-            # remain in the external CoinOPS data tree.
-            # ======================================================
-            - name: hypseus-singe
-              buildsystem: simple
-              build-options:
-                strip: true
-                no-debuginfo: true
-                cflags-override: true
-                cxxflags-override: true
-                # Hypseus only propagates the base SDL2 include path.
-                # Its video targets also include SDL_ttf.h and SDL_image.h,
-                # which are supplied by the /app SDL2 add-on modules.
-                cflags: -O2 -g0 -I/app/include/SDL2
-                cxxflags: -O2 -g0 -I/app/include/SDL2
-              build-commands:
-                - |
-                  echo "============================================================"
-                  echo "Checking Hypseus Singe build dependencies"
-                  echo "============================================================"
-                  for tool in cmake make libtoolize autoreconf; do
-                    command -v "$tool"
-                  done
-                  for pkg in \
-                    sdl2 \
-                    SDL2_ttf \
-                    SDL2_image \
-                    SDL2_mixer \
-                    ogg \
-                    vorbis \
-                    vorbisenc \
-                    vorbisfile \
-                    zlib \
-                    libzip
-                  do
-                    printf '%-20s ' "$pkg"
-                    pkg-config --modversion "$pkg"
-                  done
-                  echo
-                  echo "SDL2 add-on compiler flags:"
-                  pkg-config --cflags SDL2_ttf SDL2_image
-                  test -f /app/include/SDL2/SDL_ttf.h
-                  test -f /app/include/SDL2/SDL_image.h
-                - |
-                  echo
-                  echo "============================================================"
-                  echo "Configuring Hypseus Singe v2.12.1 (SDL2)"
-                  echo "============================================================"
-                  # Hypseus's bundled libmpeg2 ExternalProject does not declare
-                  # libmpeg2.a as a Ninja BUILD_BYPRODUCT. Use the upstream
-                  # Unix Makefiles path so libmpeg2 is built before Hypseus links.
-                  rm -rf build
-                  cmake \
-                    -S src \
-                    -B build \
-                    -G "Unix Makefiles" \
-                    -DCMAKE_BUILD_TYPE=Release \
-                    -DCMAKE_INSTALL_PREFIX=/app \
-                    -DCMAKE_PREFIX_PATH=/app \
-                    -DBUILD_SINGE=ON \
-                    -DABSTRACT_SINGE=ON \
-                    -DBUILDBOT=OFF
-                - |
-                  echo
-                  echo "============================================================"
-                  echo "Building Hypseus Singe"
-                  echo "============================================================"
-                  cmake --build build --parallel 10
-                - test -x build/hypseus
-                - install -Dm755 build/hypseus /app/bin/hypseus
-                - install -Dm644 LICENSE /app/share/licenses/hypseus-singe/LICENSE
-              sources:
-                - type: git
-                  url: https://github.com/DirtBagXon/hypseus-singe.git
-                  commit: 4cfd20d834ee6cf42c1c347ffd2627d87aaf8e2f
             # ======================================================
             # libevdev
             # ======================================================
@@ -809,7 +675,8 @@ jobs:
                   url: https://github.com/madler/zlib.git
                   tag: v1.3.1
             # ======================================================
-            # SDL3 dependencies pinned to Source/cmake/SDL3Dependencies.cmake.
+            # SDL3, ttf and mixer pinned to Source/cmake/SDL3Dependencies.cmake.
+            # SDL3_image comes from the 26.08 runtime (minimum 3.4.4).
             # Keep these after MAME and Hypseus to preserve their caches.
             # Vendored codec submodules are included by the Git sources;
             # link codecs directly so runtime cleanup cannot remove
@@ -834,26 +701,6 @@ jobs:
                 - type: git
                   url: https://github.com/libsdl-org/SDL.git
                   commit: fa2c02bb6e21974a89ea9824bc53c9932abe5f9c
-            - name: SDL3_image
-              buildsystem: cmake-ninja
-              builddir: true
-              build-options:
-                strip: true
-                no-debuginfo: true
-              config-opts:
-                - -DCMAKE_INSTALL_LIBDIR=lib
-                - -DSDLIMAGE_INSTALL=ON
-                - -DCMAKE_BUILD_TYPE=Release
-                - -DBUILD_SHARED_LIBS=ON
-                - -DSDLIMAGE_VENDORED=ON
-                - -DSDLIMAGE_DEPS_SHARED=OFF
-                - -DSDLIMAGE_AVIF=OFF
-                - -DSDLIMAGE_SAMPLES=OFF
-                - -DSDLIMAGE_TESTS=OFF
-              sources:
-                - type: git
-                  url: https://github.com/libsdl-org/SDL_image.git
-                  commit: f661fa1ad24ab1b81e43662532f9a6a9fcf67ea6
             - name: SDL3_ttf
               buildsystem: cmake-ninja
               builddir: true
@@ -890,6 +737,72 @@ jobs:
                 - type: git
                   url: https://github.com/libsdl-org/SDL_mixer.git
                   commit: 72a81869b45e249e8e67102db4e98dd2441f05a1
+            # Hypseus shares /app SDL3, ttf and mixer with RetroFE; image
+            # is supplied by the Freedesktop runtime. Game data remains external.
+            - name: hypseus-singe
+              buildsystem: simple
+              build-options:
+                strip: true
+                no-debuginfo: true
+                cflags-override: true
+                cxxflags-override: true
+                cflags: -O2 -g0
+                cxxflags: -O2 -g0
+              build-commands:
+                - |
+                  echo "============================================================"
+                  echo "Checking Hypseus Singe build dependencies"
+                  echo "============================================================"
+                  for tool in cmake make libtoolize autoreconf; do
+                    command -v "$tool"
+                  done
+                  for pkg in \
+                    sdl3 \
+                    sdl3-ttf \
+                    sdl3-image \
+                    sdl3-mixer \
+                    ogg \
+                    vorbis \
+                    vorbisenc \
+                    vorbisfile \
+                    zlib \
+                    libzip
+                  do
+                    printf '%-20s ' "$pkg"
+                    pkg-config --modversion "$pkg"
+                  done
+                - |
+                  echo
+                  echo "============================================================"
+                  echo "Configuring Hypseus Singe v3.0.2 (SDL3)"
+                  echo "============================================================"
+                  # Hypseus's bundled libmpeg2 ExternalProject does not declare
+                  # libmpeg2.a as a Ninja BUILD_BYPRODUCT. Use the upstream
+                  # Unix Makefiles path so libmpeg2 is built before Hypseus links.
+                  rm -rf build
+                  cmake \
+                    -S src \
+                    -B build \
+                    -G "Unix Makefiles" \
+                    -DCMAKE_BUILD_TYPE=Release \
+                    -DCMAKE_INSTALL_PREFIX=/app \
+                    -DCMAKE_PREFIX_PATH=/app \
+                    -DBUILD_SINGE=ON \
+                    -DABSTRACT_SINGE=ON \
+                    -DBUILDBOT=OFF
+                - |
+                  echo
+                  echo "============================================================"
+                  echo "Building Hypseus Singe"
+                  echo "============================================================"
+                  cmake --build build --parallel 10
+                - test -x build/hypseus
+                - install -Dm755 build/hypseus /app/bin/hypseus
+                - install -Dm644 LICENSE /app/share/licenses/hypseus-singe/LICENSE
+              sources:
+                - type: git
+                  url: https://github.com/DirtBagXon/hypseus-singe.git
+                  tag: v3.0.2
             # Flatpak-builder copies the contents of RetroFE/ here.
             - name: retrofe
               buildsystem: simple
@@ -914,7 +827,7 @@ jobs:
                   echo
                   echo "--- SDL ---"
                   check_pkg "sdl3 >= 3.4.16"
-                  check_pkg "sdl3-image >= 3.4.6"
+                  check_pkg "sdl3-image >= 3.4.4"
                   check_pkg "sdl3-ttf >= 3.2.2"
                   check_pkg "sdl3-mixer >= 3.2.4"
                   echo
@@ -929,6 +842,13 @@ jobs:
                   check_pkg gstreamer-allocators-1.0
                   check_pkg egl
                   check_pkg glesv2
+                  echo
+                  echo "--- FFmpeg ---"
+                  check_pkg libavformat
+                  check_pkg libavcodec
+                  check_pkg "libavutil >= 60"
+                  check_pkg libswresample
+                  check_pkg libswscale
                   echo
                   echo "--- Other dependencies ---"
                   check_pkg fontconfig
@@ -962,6 +882,8 @@ jobs:
                     -DBUILD_TESTING=OFF \
                     -DRETROFE_ENABLE_GSTREAMER_GL=ON \
                     -DRETROFE_ENABLE_EGL_DMABUF=ON \
+                    -DRETROFE_ENABLE_FFMPEG=ON \
+                    -DFFMPEG_ROOT=/usr \
                     -DCMAKE_PREFIX_PATH=/app \
                     -DCMAKE_INSTALL_PREFIX=/app \
                     -DMINIZIP_INCLUDE_DIR=/app/include/minizip \
@@ -1292,10 +1214,27 @@ jobs:
             # GLU
             #
             # Supermodel's legacy renderer calls gluPerspective().
-            # Freedesktop 25.08 supplies OpenGL but does not include GLU
+            # Freedesktop 26.08 supplies OpenGL but does not include GLU
             # in the base Platform/SDK, so keep GLU package-private and
             # immediately adjacent to its only consumer.
             # ======================================================
+            # SDL2_net is absent from 26.08 and is required by Supermodel.
+            - name: SDL2_net
+              buildsystem: cmake-ninja
+              builddir: true
+              build-options:
+                strip: true
+                no-debuginfo: true
+              config-opts:
+                - -DCMAKE_BUILD_TYPE=Release
+                - -DCMAKE_INSTALL_LIBDIR=lib
+                - -DBUILD_SHARED_LIBS=ON
+                - -DSDL2NET_INSTALL=ON
+                - -DSDL2NET_SAMPLES=OFF
+              sources:
+                - type: git
+                  url: https://github.com/libsdl-org/SDL_net.git
+                  tag: release-2.2.0
             - name: glu
               buildsystem: meson
               build-options:
@@ -1317,8 +1256,8 @@ jobs:
             # Supermodel
             #
             # Build the requested bezel-view-system branch with its
-            # upstream Unix Makefile. SDL2, SDL2_net, OpenGL and zlib are
-            # supplied by Freedesktop 25.08; GLU is supplied above. GLEW,
+            # upstream Unix Makefile. SDL2, OpenGL and zlib are supplied
+            # by Freedesktop 26.08; SDL2_net and GLU are supplied above. GLEW,
             # minizip, tinyxml2, ImGui and MPEG decoding are vendored.
             #
             # Config/, Assets/, NVRAM/, Saves/, Screenshots/ and Analysis/
@@ -1537,10 +1476,28 @@ jobs:
 
       - name: Analyze native Flatpak
         run: |
+          set -euo pipefail
           echo "============================================================"
           echo "TOTAL /APP PAYLOAD"
           echo "============================================================"
           du -sh build-dir/files
+          # flatpak-builder --run uses the SDK. Check against Platform itself,
+          # exposing the built payload read-only and preserving codec paths.
+          flatpak run --user --filesystem="$PWD/build-dir/files:ro" \
+            --command=sh org.freedesktop.Platform//26.08 -c '
+            set -eu
+            APP_FILES="$1"
+            export LD_LIBRARY_PATH="$APP_FILES/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+            for executable in retrofe mame hypseus supermodel coinops-retroarch; do
+              echo "Checking runtime dependencies: $executable"
+              ldd "$APP_FILES/bin/$executable" > /tmp/coinops-runtime-ldd.txt
+              cat /tmp/coinops-runtime-ldd.txt
+              if grep -q "not found" /tmp/coinops-runtime-ldd.txt; then
+                echo "Unresolved runtime dependency: $executable" >&2
+                exit 1
+              fi
+            done
+          ' sh "$PWD/build-dir/files"
           echo
           echo "============================================================"
           echo "/APP/BIN"
@@ -1553,7 +1510,7 @@ jobs:
           file build-dir/files/bin/retrofe
           echo
           echo "Dynamic dependencies:"
-          ldd build-dir/files/bin/retrofe || true
+          # Dependency closure checked against Platform above.
           echo
           echo "============================================================"
           echo "MAME"
@@ -1561,7 +1518,7 @@ jobs:
           file build-dir/files/bin/mame
           echo
           echo "Dynamic dependencies:"
-          ldd build-dir/files/bin/mame || true
+          # Dependency closure checked against Platform above.
           echo
           echo "============================================================"
           echo "HYPSEUS SINGE"
@@ -1570,16 +1527,7 @@ jobs:
           file build-dir/files/bin/hypseus
           echo
           echo "Dynamic dependencies:"
-          if ! ldd build-dir/files/bin/hypseus \
-            | tee /tmp/coinops-hypseus-ldd.txt
-          then
-            echo "Unable to inspect Hypseus dynamic dependencies" >&2
-            exit 1
-          fi
-          if grep -q 'not found' /tmp/coinops-hypseus-ldd.txt; then
-            echo "Hypseus has unresolved dynamic dependencies" >&2
-            exit 1
-          fi
+          # Dependency closure checked inside Flatpak above.
           echo
           echo "============================================================"
           echo "SUPERMODEL"
@@ -1591,29 +1539,7 @@ jobs:
           test -f build-dir/files/share/supermodel/Assets/Bezel2.png
           file build-dir/files/bin/supermodel
           echo
-          echo "Dynamic dependencies inside Freedesktop 25.08 runtime:"
-          # Do not use the host ldd here. Supermodel consumes SDL2_net from
-          # the Freedesktop runtime and GLU from /app, neither of which is
-          # represented correctly by the self-hosted runner's /usr/lib.
-          if ! flatpak-builder \
-            --run \
-            build-dir \
-            org.coinops.Runtime.yml \
-            sh \
-            -c '
-              set -eu
-              ldd /app/bin/supermodel \
-                > /tmp/supermodel-ldd.txt
-              cat /tmp/supermodel-ldd.txt
-              if grep -q "not found" /tmp/supermodel-ldd.txt; then
-                echo "Supermodel has unresolved dynamic dependencies" >&2
-                exit 1
-              fi
-            '
-          then
-            echo "Unable to validate Supermodel inside the Flatpak runtime" >&2
-            exit 1
-          fi
+          # Dependency closure checked against Platform above.
           echo
           echo "============================================================"
           echo "COINOPS RETROARCH RUNTIME"
@@ -1621,7 +1547,7 @@ jobs:
           file build-dir/files/bin/coinops-retroarch
           echo
           echo "Dynamic dependencies:"
-          ldd build-dir/files/bin/coinops-retroarch || true
+          # Dependency closure checked against Platform above.
           echo
           echo "============================================================"
           echo "BUNDLED /APP/LIB"
