@@ -1752,7 +1752,9 @@ bool GStreamerVideo::unload() {
 		{ -1, -1 },
 		std::memory_order_release);
 
-	if (videoSink_ && GST_IS_APP_SINK(videoSink_)) {
+	// Appsink queue statistics were introduced in GStreamer 1.28.
+	if (videoSink_ && GST_IS_APP_SINK(videoSink_) &&
+		g_object_class_find_property(G_OBJECT_GET_CLASS(videoSink_), "dropped")) {
 		guint64 inFrames = 0, outFrames = 0, droppedFrames = 0;
 		g_object_get(videoSink_,
 			"in", &inFrames,
@@ -2011,7 +2013,11 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 
 	g_object_set(audioSink_,
 		"max-buffers", 16,
+#if GST_CHECK_VERSION(1, 28, 0)
 		"leaky-type", GST_APP_LEAKY_TYPE_DOWNSTREAM,
+#else
+		"drop", TRUE,
+#endif
 		"qos", FALSE,
 		"sync", TRUE,
 		"enable-last-sample", FALSE,
@@ -2058,7 +2064,11 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 
 	g_object_set(videoSink_,
 		"max-buffers", 1,
+#if GST_CHECK_VERSION(1, 28, 0)
 		"leaky-type", GST_APP_LEAKY_TYPE_DOWNSTREAM,
+#else
+		"drop", TRUE,
+#endif
 		"qos", TRUE,
 		"max-lateness", gint64(25 * GST_MSECOND),
 		"sync", TRUE,
