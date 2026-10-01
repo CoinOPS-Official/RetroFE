@@ -32,7 +32,9 @@ macro(retrofe_sdl_dependency package version repository commit)
 endmacro()
 
 retrofe_sdl_dependency(SDL3 3.4.16 SDL fa2c02bb6e21974a89ea9824bc53c9932abe5f9c)
-retrofe_sdl_dependency(SDL3_image 3.4.6 SDL_image f661fa1ad24ab1b81e43662532f9a6a9fcf67ea6)
+# Freedesktop 26.08 supplies 3.4.4, which provides all image APIs we use.
+# Source builds still fetch the pinned 3.4.6 release when needed.
+retrofe_sdl_dependency(SDL3_image 3.4.4 SDL_image f661fa1ad24ab1b81e43662532f9a6a9fcf67ea6)
 retrofe_sdl_dependency(SDL3_ttf 3.2.2 SDL_ttf a1ce3670aec736ecbf0936c43f2f0cc53aa61e5b)
 
 set(SDLMIXER_VENDORED ON CACHE BOOL "Use pinned mixer codecs")
