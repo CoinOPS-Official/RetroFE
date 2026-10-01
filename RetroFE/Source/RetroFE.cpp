@@ -43,6 +43,9 @@
 #include "Video/VideoFactory.h"
 #include "Video/GStreamerVideo.h"
 #include "Video/VideoPool.h"
+#ifdef RETROFE_HAVE_GST_VULKAN
+#include "Video/VulkanVideoInterop.h"
+#endif
 #include <algorithm>
 #include <array>
 #include <filesystem>
@@ -169,6 +172,9 @@ void RetroFE::render() {
 	// With the overlay disabled this adds no extra performance-counter reads
 	// around Present and therefore remains effectively benign.
 	double presentWaitMsThisRender = 0.0;
+	#ifdef RETROFE_HAVE_GST_VULKAN
+	static unsigned tracedActiveFrames[2]{};
+	#endif
 
 	// ---------------------------------------------------------
 	// 1. Clear the backbuffer and draw the current page
@@ -183,11 +189,29 @@ void RetroFE::render() {
 
 
 		SDL::startVideoFrame(rr);
+		#ifdef RETROFE_HAVE_GST_VULKAN
+		const bool traceActiveFrame = i < 2 && tracedActiveFrames[i] < 6 &&
+			VulkanVideoInterop::hasActiveFrame(rr);
+		if (traceActiveFrame)
+			LOG_INFO("SDL", "Active Vulkan frame: preparing monitor " + std::to_string(i));
+		#endif
 		if (currentPage_) {
 			currentPage_->prepareVideoFrames(i);
 		}
+		#ifdef RETROFE_HAVE_GST_VULKAN
+		if (traceActiveFrame)
+			LOG_INFO("SDL", "Active Vulkan frame: prepared monitor " + std::to_string(i));
+		#endif
 
 		if (!SDL::submitVideoFrame(rr)) {
+			#ifdef RETROFE_HAVE_GST_VULKAN
+			if (VulkanVideoInterop::hasSharedDevice(rr)) {
+				LOG_ERROR("SDL", "Vulkan video frame synchronization failed; stopping renderer");
+				reboot_ = true;
+				setState(RETROFE_QUIT_REQUEST);
+				return;
+			}
+			#endif
 			bool deviceLost = false;
 #ifdef RETROFE_HAVE_D3D12
 			auto* d3d12Device = static_cast<ID3D12Device*>(
@@ -245,7 +269,15 @@ void RetroFE::render() {
 		}
 
 		if (currentPage_) {
+			#ifdef RETROFE_HAVE_GST_VULKAN
+			if (traceActiveFrame)
+				LOG_INFO("SDL", "Active Vulkan frame: drawing monitor " + std::to_string(i));
+			#endif
 			currentPage_->draw(i);
+			#ifdef RETROFE_HAVE_GST_VULKAN
+			if (traceActiveFrame)
+				LOG_INFO("SDL", "Active Vulkan frame: drawn monitor " + std::to_string(i));
+			#endif
 		}
 
 		/*
@@ -310,13 +342,40 @@ void RetroFE::render() {
 			}
 		}
 
+		#ifdef RETROFE_HAVE_GST_VULKAN
+		if (VulkanVideoInterop::hasSharedDevice(rr) &&
+			!VulkanVideoInterop::beginFrame(rr)) {
+			LOG_ERROR("SDL", "Vulkan video frame synchronization failed; stopping renderer");
+			reboot_ = true;
+			setState(RETROFE_QUIT_REQUEST);
+			return;
+		}
+		#endif
+		#ifdef RETROFE_HAVE_GST_VULKAN
+		static bool firstVulkanPresent[2] = { true, true };
+		const bool traceActiveFrame = i < 2 && tracedActiveFrames[i] < 6 &&
+			VulkanVideoInterop::hasActiveFrame(rr);
+		if (traceActiveFrame)
+			LOG_INFO("SDL", "Active Vulkan frame: presenting monitor " + std::to_string(i));
+		const bool traceVulkanPresent = i < 2 && firstVulkanPresent[i] &&
+			VulkanVideoInterop::hasSharedDevice(rr);
+		if (traceVulkanPresent)
+			LOG_INFO("SDL", "First Vulkan presentation: entering monitor " + std::to_string(i));
+		#endif
 		bool presented = false;
 		if (showFps_)
 		{
 			const uint64_t presentStartTicks =
 				SDL_GetPerformanceCounter();
 
+#ifdef RETROFE_HAVE_GST_VULKAN
+			VulkanVideoInterop::lockPresent(rr);
+#endif
 			presented = SDL_RenderPresent(rr);
+#ifdef RETROFE_HAVE_GST_VULKAN
+			VulkanVideoInterop::unlockPresent(rr);
+			if (presented) presented = VulkanVideoInterop::endFrame(rr);
+#endif
 
 			const uint64_t presentEndTicks =
 				SDL_GetPerformanceCounter();
@@ -330,8 +389,25 @@ void RetroFE::render() {
 		}
 		else
 		{
+#ifdef RETROFE_HAVE_GST_VULKAN
+			VulkanVideoInterop::lockPresent(rr);
+#endif
 			presented = SDL_RenderPresent(rr);
+#ifdef RETROFE_HAVE_GST_VULKAN
+			VulkanVideoInterop::unlockPresent(rr);
+			if (presented) presented = VulkanVideoInterop::endFrame(rr);
+#endif
 		}
+		#ifdef RETROFE_HAVE_GST_VULKAN
+		if (traceActiveFrame) {
+			LOG_INFO("SDL", "Active Vulkan frame: presented monitor " + std::to_string(i));
+			++tracedActiveFrames[i];
+		}
+		if (traceVulkanPresent) {
+			LOG_INFO("SDL", "First Vulkan presentation: returned monitor " + std::to_string(i));
+			firstVulkanPresent[i] = false;
+		}
+		#endif
 		if (!presented) {
 			LOG_ERROR("SDL", "RenderPresent failed: " + std::string(SDL_GetError()));
 #ifdef RETROFE_HAVE_D3D12

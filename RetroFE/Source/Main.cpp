@@ -328,11 +328,16 @@ int main(int argc, char** argv)
     srand(static_cast<unsigned int>(time(nullptr)));
 
 #ifdef WIN32
-    std::string gstPluginPath = Utils::combinePath(Configuration::absolutePath, "retrofe");
+    // Scan only curated plugins. GStreamer's scanner descends into backup
+    // directories, which may contain older copies of the same Vulkan plugin.
+    std::string gstPluginPath = Utils::combinePath(Configuration::absolutePath,
+        "retrofe", "gst-plugins");
     Utils::setEnvVar("GST_PLUGIN_PATH", gstPluginPath);
+    Utils::setEnvVar("GST_PLUGIN_SYSTEM_PATH", gstPluginPath);
+    Utils::setEnvVar("GST_REGISTRY", Utils::combinePath(Configuration::absolutePath,
+        "retrofe", "registry-plugins.bin"));
     Utils::setEnvVar("FREI0R_PATH", gstPluginPath);
 	Utils::setEnvVar("GST_PLUGIN_SCANNER", Utils::combinePath(Configuration::absolutePath, "retrofe", "gst-plugin-scanner.exe"));
-	Utils::setEnvVar("GST_REGISTRY", Utils::combinePath(Configuration::absolutePath, "retrofe", "registry.bin"));
 #endif
 
     gst_debug_set_default_threshold(GST_LEVEL_ERROR);

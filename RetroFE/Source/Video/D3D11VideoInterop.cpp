@@ -16,10 +16,6 @@
 #include <gst/video/video.h>
 
 namespace {
-    ID3D11Device* g_device = nullptr;          // borrowed from SDL renderer
-    GstD3D11Device* g_gstDevice = nullptr;
-    GstContext* g_context = nullptr;
-    std::mutex g_contextMutex;
 
     constexpr size_t RING_SIZE = 3;
     constexpr double SLOW_MS = 2.0;
@@ -66,18 +62,13 @@ namespace {
 bool D3D11VideoInterop::initializeGlobal(SDL_Renderer* renderer)
 {
 #ifdef _WIN32
-    std::lock_guard<std::mutex> lock(g_contextMutex);
-
-    if (g_context)
-        return true;
-
-    g_device = static_cast<ID3D11Device*>(
+    auto* device = static_cast<ID3D11Device*>(
         SDL_GetPointerProperty(
             SDL_GetRendererProperties(renderer),
             SDL_PROP_RENDERER_D3D11_DEVICE_POINTER,
             nullptr));
 
-    if (!g_device) {
+    if (!device) {
         LOG_ERROR(
             "D3D11VideoInterop",
             "SDL renderer does not expose a D3D11 device.");
@@ -89,7 +80,7 @@ bool D3D11VideoInterop::initializeGlobal(SDL_Renderer* renderer)
     // issue D3D11 work from streaming threads while SDL renders on the main
     // thread.
     ID3D11DeviceContext* immediate = nullptr;
-    g_device->GetImmediateContext(&immediate);
+    device->GetImmediateContext(&immediate);
 
     if (immediate) {
         ID3D10Multithread* mt = nullptr;
@@ -106,27 +97,6 @@ bool D3D11VideoInterop::initializeGlobal(SDL_Renderer* renderer)
 
         immediate->Release();
     }
-
-    g_gstDevice = gst_d3d11_device_new_wrapped(g_device);
-    if (g_gstDevice) {
-        g_context = gst_d3d11_context_new(g_gstDevice);
-        if (!g_context) {
-            gst_object_unref(g_gstDevice);
-            g_gstDevice = nullptr;
-            LOG_WARNING(
-                "D3D11VideoInterop",
-                "Could not create GStreamer D3D11 context; GStreamer D3D11 interop disabled.");
-        }
-    } else {
-        LOG_WARNING(
-            "D3D11VideoInterop",
-            "Could not wrap SDL D3D11 device for GStreamer; GStreamer D3D11 interop disabled.");
-    }
-
-    LOG_INFO(
-        "D3D11VideoInterop",
-        "Using D3D11 owned-NV12 ring copy path "
-        "(3 SDL-owned textures; no decoder-surface retention/query/ID3D11DeviceContext::Flush).");
 
     return true;
 #else
@@ -147,7 +117,10 @@ struct D3D11VideoInterop::Impl
                 SDL_PROP_RENDERER_D3D11_DEVICE_POINTER,
                 nullptr));
         if (rendererDevice) {
+            initializeGlobal(renderer);
             rendererDevice->GetImmediateContext(rendererContext.GetAddressOf());
+            gstDevice = gst_d3d11_device_new_wrapped(rendererDevice);
+            if (gstDevice) gstContext = gst_d3d11_context_new(gstDevice);
         }
 #endif
     }
@@ -156,6 +129,8 @@ struct D3D11VideoInterop::Impl
     {
 #ifdef _WIN32
         clearSlots();
+        if (gstContext) gst_context_unref(gstContext);
+        if (gstDevice) gst_object_unref(gstDevice);
 #endif
     }
 
@@ -172,6 +147,8 @@ struct D3D11VideoInterop::Impl
         ID3D11Texture2D* nativeTexture = nullptr;
     };
 
+    GstD3D11Device* gstDevice = nullptr;
+    GstContext* gstContext = nullptr;
     ID3D11Device* rendererDevice = nullptr;
     Microsoft::WRL::ComPtr<ID3D11DeviceContext> rendererContext;
     std::array<Slot, RING_SIZE> slots{};
@@ -187,8 +164,8 @@ struct D3D11VideoInterop::Impl
     {
         if (rendererContext)
             return rendererContext.Get();
-        return g_gstDevice
-            ? gst_d3d11_device_get_device_context_handle(g_gstDevice)
+        return gstDevice
+            ? gst_d3d11_device_get_device_context_handle(gstDevice)
             : nullptr;
     }
 
@@ -255,7 +232,7 @@ struct D3D11VideoInterop::Impl
             return false;
         }
 
-        if (!rendererDevice || rendererDevice != g_device) {
+        if (!rendererDevice) {
             error =
                 "SDL renderer D3D11 device does not match the GStreamer D3D11 device";
             return false;
@@ -383,7 +360,8 @@ struct D3D11VideoInterop::Impl
         int cropX = 0,
         int cropY = 0,
         int cropW = 0,
-        int cropH = 0)
+        int cropH = 0,
+        GstD3D11Device* producerDevice = nullptr)
     {
         if (!SDL_IsMainThread()) {
             error = "D3D11 ring copy must run on the SDL main thread";
@@ -392,6 +370,15 @@ struct D3D11VideoInterop::Impl
 
         const UINT targetW = (cropW > 0) ? static_cast<UINT>(cropW) : sourceDesc.Width;
         const UINT targetH = (cropH > 0) ? static_cast<UINT>(cropH) : sourceDesc.Height;
+
+        if (cropX < 0 || cropY < 0 || (cropX & 1) || (cropY & 1) ||
+            !targetW || !targetH || UINT64(cropX) + targetW > sourceDesc.Width ||
+            UINT64(cropY) + targetH > sourceDesc.Height ||
+            sourceDesc.Format != DXGI_FORMAT_NV12 || !sourceDesc.MipLevels ||
+            sourceSubresource >= sourceDesc.MipLevels * sourceDesc.ArraySize) {
+            error = "Invalid NV12 crop, format or subresource";
+            return nullptr;
+        }
 
         if (width != targetW ||
             height != targetH ||
@@ -449,15 +436,18 @@ struct D3D11VideoInterop::Impl
             srcBox.back = 1;
         }
 
-        ctx->CopySubresourceRegion(
-            slot.nativeTexture,
-            0,
-            0,
-            0,
-            0,
-            source,
-            sourceSubresource,
-            hasCropping ? &srcBox : nullptr);
+        {
+            GstD3D11DeviceLocker lock(producerDevice);
+            ctx->CopySubresourceRegion(
+                slot.nativeTexture,
+                0,
+                0,
+                0,
+                0,
+                source,
+                sourceSubresource,
+                hasCropping ? &srcBox : nullptr);
+        }
 
         const Uint64 copyEndNs = SDL_GetTicksNS();
 
@@ -497,14 +487,8 @@ D3D11VideoInterop::D3D11VideoInterop(SDL_Renderer* renderer)
     : impl_(std::make_unique<Impl>(renderer))
 {
 #ifdef _WIN32
-    if (!g_device) {
-        impl_->error = "Global D3D11 device not initialized";
-    } else if (!impl_->rendererDevice) {
-        impl_->error = "Renderer does not expose a D3D11 device";
-    } else if (impl_->rendererDevice != g_device) {
-        impl_->error =
-            "Renderer D3D11 device does not match global D3D11 device";
-    }
+    if (!impl_->rendererDevice) impl_->error = "Renderer does not expose a D3D11 device";
+    else if (!impl_->gstContext) impl_->error = "Cannot wrap renderer's D3D11 device";
 #endif
 }
 
@@ -515,8 +499,8 @@ bool D3D11VideoInterop::available() const
 #ifdef _WIN32
     return
         impl_ &&
-        g_device != nullptr &&
-        impl_->rendererDevice == g_device;
+        impl_->rendererDevice != nullptr && impl_->rendererContext &&
+        impl_->gstContext != nullptr;
 #else
     return false;
 #endif
@@ -527,13 +511,19 @@ SDL_Texture* D3D11VideoInterop::copyNative(
     ID3D11Resource* source,
     UINT sourceSubresource,
     const D3D11_TEXTURE2D_DESC& sourceDesc,
-    SDL_Colorspace color)
+    SDL_Colorspace color, int cropX, int cropY, int cropW, int cropH)
 {
     if (!source || !available() || !impl_)
         return nullptr;
 
-    GstD3D11DeviceLocker lock(g_gstDevice);
-    return impl_->copyFromDecoder(source, sourceSubresource, sourceDesc, color);
+    Microsoft::WRL::ComPtr<ID3D11Device> owner;
+    source->GetDevice(&owner);
+    if (owner.Get() != impl_->rendererDevice) {
+        impl_->error = "Native frame belongs to a different D3D11 device";
+        return nullptr;
+    }
+    return impl_->copyFromDecoder(source, sourceSubresource, sourceDesc, color,
+        cropX, cropY, cropW, cropH, impl_->gstDevice);
 }
 #endif
 
@@ -550,7 +540,7 @@ void D3D11VideoInterop::configure(GstElement* pipeline)
 
     gst_element_set_context(
         pipeline,
-        g_context);
+        impl_->gstContext);
 
     GstBus* bus = gst_element_get_bus(pipeline);
     if (!bus)
@@ -577,7 +567,7 @@ void D3D11VideoInterop::configure(GstElement* pipeline)
 
             return GST_BUS_PASS;
         },
-        gst_context_ref(g_context),
+        gst_context_ref(impl_->gstContext),
         [](gpointer data) {
             gst_context_unref(
                 static_cast<GstContext*>(data));
@@ -609,7 +599,7 @@ SDL_Texture* D3D11VideoInterop::copy(GstSample* sample)
     if (!sample || !available() || !impl_)
         return nullptr;
 
-    if (!g_gstDevice || !g_context) {
+    if (!impl_->gstDevice || !impl_->gstContext) {
         impl_->error = "GStreamer D3D11 device/context not initialized";
         return nullptr;
     }
@@ -652,7 +642,7 @@ SDL_Texture* D3D11VideoInterop::copy(GstSample* sample)
     if (gst_d3d11_memory_get_native_type(d3dMemory) !=
             GST_D3D11_MEMORY_NATIVE_TYPE_TEXTURE_2D ||
         gst_d3d11_device_get_device_handle(
-            d3dMemory->device) != g_device)
+            d3dMemory->device) != p.rendererDevice)
     {
         return nullptr;
     }
@@ -708,7 +698,6 @@ SDL_Texture* D3D11VideoInterop::copy(GstSample* sample)
 
     SDL_Texture* texture = nullptr;
     {
-        GstD3D11DeviceLocker lock(d3dMemory->device);
         texture =
             p.copyFromDecoder(
                 source,
@@ -718,7 +707,8 @@ SDL_Texture* D3D11VideoInterop::copy(GstSample* sample)
                 cropX,
                 cropY,
                 cropW,
-                cropH);
+                cropH,
+                d3dMemory->device);
     }
 
     if (!texture)

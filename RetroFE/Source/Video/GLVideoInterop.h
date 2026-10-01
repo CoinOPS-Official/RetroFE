@@ -13,6 +13,9 @@ public:
     GstElement* wrapSink(GstElement* sink);
     bool proposeAllocation(GstQuery*) { return false; }
     void discardFrames();
+    bool deferred() const;
+    bool retainsDeferredFrame() const { return false; }
+    void invalidateFrame() { discardFrames(); }
     SDL_Texture* copy(GstSample* sample);
     const char* reason() const;
     // RETROFE_GL_DIRECT=1 requests native NV12 GLMemory. The default keeps

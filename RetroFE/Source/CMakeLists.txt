@@ -424,6 +424,32 @@ endif()
 if(WIN32)
     find_library(GSTREAMER_D3D11_LIBRARY NAMES gstd3d11-1.0 HINTS "${GSTREAMER_ROOT}/lib" REQUIRED)
     target_link_libraries(retrofe_core PUBLIC ${GSTREAMER_D3D11_LIBRARY} d3d11 dxgi)
+    option(RETROFE_ENABLE_GSTREAMER_VULKAN "Enable shared SDL/GStreamer Vulkan Video interop" OFF)
+    option(RETROFE_GSTREAMER_VULKAN_QUEUE_LOCK_PATCHED
+        "GStreamer Vulkan library and plugin include shared lock, queue isolation and playbin context patch" OFF)
+    set(GSTREAMER_VULKAN_SOURCE_DIR "" CACHE PATH "GStreamer Vulkan gst-libs source directory (when not installed)")
+    set(GSTREAMER_VULKAN_BUILD_DIR "" CACHE PATH "GStreamer Vulkan Meson build directory (when not installed)")
+    if(RETROFE_ENABLE_GSTREAMER_VULKAN)
+        if(NOT RETROFE_GSTREAMER_VULKAN_QUEUE_LOCK_PATCHED)
+            message(FATAL_ERROR "Apply cmake/patches/gstreamer-vulkan-shared-queue-lock.patch to GStreamer 1.28.7, rebuild gstvulkan-1.0-0.dll and gstvulkan.dll, then set RETROFE_GSTREAMER_VULKAN_QUEUE_LOCK_PATCHED=ON")
+        endif()
+        find_package(Vulkan REQUIRED)
+        find_path(GSTREAMER_VULKAN_INCLUDE_DIR gst/vulkan/vulkan.h
+            HINTS "${GSTREAMER_ROOT}/include/gstreamer-1.0"
+                "${GSTREAMER_VULKAN_SOURCE_DIR}/gst-libs")
+        find_library(GSTREAMER_VULKAN_LIBRARY NAMES gstvulkan-1.0
+            HINTS "${GSTREAMER_ROOT}/lib"
+                "${GSTREAMER_VULKAN_BUILD_DIR}/gst-libs/gst/vulkan")
+        if(NOT GSTREAMER_VULKAN_INCLUDE_DIR OR NOT GSTREAMER_VULKAN_LIBRARY)
+            message(FATAL_ERROR "GStreamer Vulkan development headers/library are required")
+        endif()
+        target_sources(retrofe_core PRIVATE Video/VulkanVideoInterop.cpp Video/VulkanVideoInterop.h)
+        target_include_directories(retrofe_core PRIVATE "${GSTREAMER_VULKAN_INCLUDE_DIR}"
+            "${GSTREAMER_VULKAN_BUILD_DIR}/gst-libs")
+        target_link_libraries(retrofe_core PUBLIC "${GSTREAMER_VULKAN_LIBRARY}" Vulkan::Vulkan)
+        target_compile_definitions(retrofe_core PUBLIC RETROFE_HAVE_GST_VULKAN)
+        message(STATUS "Windows GStreamer Vulkan Video interop enabled")
+    endif()
     option(RETROFE_ENABLE_D3D12 "Enable native GStreamer 1.28+ D3D12 video interop" ON)
     if(RETROFE_ENABLE_D3D12)
         find_library(GSTREAMER_D3D12_LIBRARY NAMES gstd3d12-1.0 HINTS "${GSTREAMER_ROOT}/lib")
@@ -477,6 +503,32 @@ endif()
 include("${CMAKE_CURRENT_SOURCE_DIR}/cmake/StageRuntime.cmake")
 retrofe_stage_runtime(retrofe)
 if(RETROFE_BUILD_TESTING)
+    if(WIN32 AND RETROFE_ENABLE_GSTREAMER_VULKAN)
+        add_executable(retrofe_vulkan_context_smoke Tests/VulkanContextSmoke.cpp)
+        target_include_directories(retrofe_vulkan_context_smoke PRIVATE
+            "${GSTREAMER_VULKAN_INCLUDE_DIR}"
+            "${GSTREAMER_VULKAN_BUILD_DIR}/gst-libs")
+        target_link_libraries(retrofe_vulkan_context_smoke PRIVATE retrofe_core)
+        retrofe_stage_runtime(retrofe_vulkan_context_smoke)
+        add_test(NAME retrofe_vulkan_context_smoke_test
+            COMMAND $<TARGET_FILE:retrofe_vulkan_context_smoke>)
+        set_tests_properties(retrofe_vulkan_context_smoke_test PROPERTIES
+            WORKING_DIRECTORY $<TARGET_FILE_DIR:retrofe_vulkan_context_smoke>)
+        add_executable(retrofe_vulkan_interop_smoke Tests/VulkanInteropSmoke.cpp)
+        target_include_directories(retrofe_vulkan_interop_smoke PRIVATE
+            "${GSTREAMER_VULKAN_INCLUDE_DIR}"
+            "${GSTREAMER_VULKAN_BUILD_DIR}/gst-libs")
+        target_link_libraries(retrofe_vulkan_interop_smoke PRIVATE retrofe_core)
+        retrofe_stage_runtime(retrofe_vulkan_interop_smoke)
+        if(RETROFE_ENABLE_FFMPEG)
+            add_executable(retrofe_ffmpeg_vulkan_interop_smoke
+                Tests/FFmpegVulkanInteropSmoke.cpp)
+            target_include_directories(retrofe_ffmpeg_vulkan_interop_smoke PRIVATE
+                "${FFMPEG_INCLUDE_DIR}")
+            target_link_libraries(retrofe_ffmpeg_vulkan_interop_smoke PRIVATE retrofe_core)
+            retrofe_stage_runtime(retrofe_ffmpeg_vulkan_interop_smoke)
+        endif()
+    endif()
     add_test(NAME retrofe_startup_smoke_test COMMAND ${CMAKE_COMMAND}
         "-DRETROFE_EXECUTABLE=$<TARGET_FILE:retrofe>"
         "-DSTARTUP_FIXTURE_DIR=${CMAKE_BINARY_DIR}/startup-smoke-$<CONFIG>"
@@ -497,7 +549,7 @@ if(RETROFE_BUILD_TESTING)
     add_test(NAME retrofe_sdl3_smoke_tests COMMAND retrofe_sdl3_smoke_tests "${RETROFE_DIR}/../Package/Environment/Common")
     if(WIN32)
         set_tests_properties(retrofe_sdl3_smoke_tests PROPERTIES ENVIRONMENT
-            "GST_PLUGIN_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>;GST_PLUGIN_SCANNER=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugin-scanner.exe;GST_PLUGIN_SYSTEM_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>;GST_REGISTRY=${CMAKE_BINARY_DIR}/test-gst-pruned-registry.bin")
+            "GST_PLUGIN_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugins;GST_PLUGIN_SCANNER=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugin-scanner.exe;GST_PLUGIN_SYSTEM_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugins;GST_REGISTRY=${CMAKE_BINARY_DIR}/test-gst-pruned-registry.bin")
     endif()
     set_tests_properties(retrofe_sdl3_smoke_tests PROPERTIES RUN_SERIAL TRUE)
     if(RETROFE_ENABLE_FFMPEG)
@@ -521,6 +573,9 @@ endif()
 
 # Keep tests (including the subproject's tests) out of the deployable runtime.
 foreach(test_target IN ITEMS retrofe_sdl3_smoke_tests retrofe_high_score_change_tests
+        retrofe_text_benchmark retrofe_page_traversal_benchmark
+        retrofe_vulkan_context_smoke retrofe_vulkan_interop_smoke
+        retrofe_ffmpeg_vulkan_interop_smoke
         retrofe_mame_software_resolver_tests openhi2txt_xml_parser_tests
         openhi2txt_open_extension_tests openhi2txt_input_planner_tests
         openhi2txt_live_protocol_tests openhi2txt_identity_resolution_tests)

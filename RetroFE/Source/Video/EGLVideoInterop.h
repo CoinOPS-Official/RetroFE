@@ -29,6 +29,9 @@ public:
     SDL_Texture* copy(GstSample*);
     SDL_Texture* copy(const EGLDmaBufFrame&);
     void discardFrames() noexcept;
+    bool deferred() const;
+    bool retainsDeferredFrame() const { return false; }
+    void invalidateFrame() { discardFrames(); }
     const char* reason() const;
     static const char* caps() { return "video/x-raw(memory:DMABuf),format=DMA_DRM"; }
     static SDL_PixelFormat pixelFormat() { return SDL_PIXELFORMAT_ABGR8888; }

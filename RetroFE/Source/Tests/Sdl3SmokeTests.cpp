@@ -24,6 +24,10 @@
 #include "../Video/GlibLoop.h"
 #include "../Video/VideoPool.h"
 #include "../Video/VideoFactory.h"
+#ifdef _WIN32
+#include "../Video/D3D11VideoInterop.h"
+#include <d3d11.h>
+#endif
 #include "../Graphics/Component/VideoComponent.h"
 #include "../Graphics/Component/Image.h"
 #include "../Graphics/Animate/AnimationEvents.h"
@@ -32,6 +36,7 @@
 #include <SDL3/SDL_main.h>
 #include <SDL3_image/SDL_image.h>
 #include <array>
+#include <set>
 #include <cmath>
 #include <cstdlib>
 #include <iostream>
@@ -958,6 +963,45 @@ void dmaBufMetadataChecks() {
 }
 #endif
 
+#ifdef _WIN32
+void d3d11RendererChecks() {
+    auto* renderer=SDL::getRenderer(0);
+    if (std::string(SDL_GetRendererName(renderer)) != "direct3d11") return;
+    auto* window=SDL_CreateWindow("D3D11 interop second renderer",64,64,SDL_WINDOW_HIDDEN);
+    require(window != nullptr, "Create second D3D11 test window");
+    auto* second=SDL_CreateRenderer(window,"direct3d11");
+    require(second != nullptr, "Create second D3D11 renderer");
+    {
+        D3D11VideoInterop firstInterop(renderer), secondInterop(second);
+        require(firstInterop.available() && secondInterop.available(), "Each renderer owns its own D3D11 context");
+        auto* source=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_NV12,SDL_TEXTUREACCESS_STATIC,64,64);
+        require(source != nullptr, "Create split-color NV12 source");
+        std::vector<Uint8> y(64*64), uv(64*32);
+        for (int row=0;row<64;++row) for (int x=0;x<64;++x) y[row*64+x]=x<32?81:41;
+        for (int row=0;row<32;++row) for (int x=0;x<64;x+=2) {
+            uv[row*64+x]=x<32?90:240;
+            uv[row*64+x+1]=x<32?240:110;
+        }
+        require(SDL_UpdateNVTexture(source,nullptr,y.data(),64,uv.data(),64), "Upload split-color source");
+        auto* native=static_cast<ID3D11Texture2D*>(SDL_GetPointerProperty(SDL_GetTextureProperties(source),
+            SDL_PROP_TEXTURE_D3D11_TEXTURE_POINTER,nullptr));
+        require(native != nullptr, "Get native D3D11 source");
+        D3D11_TEXTURE2D_DESC desc{}; native->GetDesc(&desc);
+        require(!secondInterop.copyNative(native,0,desc,SDL_COLORSPACE_BT601_LIMITED), "Reject a foreign renderer's native frame");
+        auto* cropped=firstInterop.copyNative(native,0,desc,SDL_COLORSPACE_BT601_LIMITED,32,0,32,64);
+        require(cropped && cropped->w==32 && cropped->h==64, "D3D11 presentation uses visible crop dimensions");
+        require(SDL_RenderClear(renderer) && SDL_RenderTexture(renderer,cropped,nullptr,nullptr), "Render cropped native frame");
+        const auto blue=pixel(renderer,16,16);
+        require(blue.b>blue.r+80 && blue.b>blue.g+80, "D3D11 crop copies source offset instead of top-left pixels");
+        require(SDL_RenderPresent(renderer), "Present cropped native frame");
+        require(!firstInterop.copyNative(native,0,desc,SDL_COLORSPACE_BT601_LIMITED,1,0,32,64), "Reject an unaligned NV12 crop");
+        SDL_DestroyTexture(source);
+    }
+    SDL_DestroyRenderer(second);
+    SDL_DestroyWindow(window);
+}
+#endif
+
 #ifdef RETROFE_HAVE_D3D12
 void deferredNativeChecks() {
     auto* renderer=SDL::getRenderer(0);
@@ -973,6 +1017,7 @@ void deferredNativeChecks() {
     desc.Dimension=D3D12_RESOURCE_DIMENSION_TEXTURE2D;
     desc.Width=64; desc.Height=64; desc.DepthOrArraySize=1; desc.MipLevels=1;
     desc.Format=DXGI_FORMAT_NV12; desc.SampleDesc.Count=1;
+    desc.Flags=D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS;
     require(SUCCEEDED(device->CreateCommittedResource(&heap,D3D12_HEAP_FLAG_NONE,&desc,
         D3D12_RESOURCE_STATE_COMMON,nullptr,IID_PPV_ARGS(&resource))), "Create native test surface");
     require(SUCCEEDED(device->CreateFence(0,D3D12_FENCE_FLAG_NONE,IID_PPV_ARGS(&fence))), "Create delayed producer fence");
@@ -987,6 +1032,57 @@ void deferredNativeChecks() {
         require(SDL::beginVideoFrame(renderer) && interop.currentTexture(), "Submission exposes frame without another decoder update");
         interop.discardFrames();
     }
+    // Replacing unsubmitted work must release its owner immediately and never
+    // let an older delayed producer overwrite a newer ready presentation.
+    auto first=std::make_shared<int>(1);
+    std::weak_ptr<int> firstWeak=first;
+    interop.copyNative(resource.Get(),fence.Get(),100,0,1,64,64,
+        SDL_COLORSPACE_BT709_LIMITED,first);
+    first.reset();
+    require(!firstWeak.expired(), "Pending native frame retains owner");
+    auto newest=std::make_shared<int>(2);
+    std::weak_ptr<int> newestWeak=newest;
+    interop.copyNative(resource.Get(),fence.Get(),101,0,1,64,64,
+        SDL_COLORSPACE_BT709_LIMITED,newest);
+    newest.reset();
+    require(firstWeak.expired(), "Newest pending update releases superseded owner");
+    require(SDL::beginVideoFrame(renderer) && !interop.currentTexture(), "Delayed newest frame remains hidden");
+    require(SUCCEEDED(fence->Signal(101)), "Release newest producer");
+    require(SDL::beginVideoFrame(renderer) && interop.currentTexture(), "Newest ready frame is submitted");
+    const Uint64 discardStart=SDL_GetTicksNS();
+    interop.discardFrames();
+    require(SDL_GetTicksNS()-discardStart < 100000000ULL, "Discard polls without waiting for GPU completion");
+    require(!interop.currentTexture(), "Discard hides submitted presentation");
+    const Uint64 deadline=SDL_GetTicks()+2000;
+    while (!newestWeak.expired() && SDL_GetTicks()<deadline) {
+        require(SDL::beginVideoFrame(renderer), "Retire submitted native owner");
+        SDL_Delay(1);
+    }
+    require(newestWeak.expired(), "Completed copy releases native owner");
+    auto pendingOwner=std::make_shared<int>(3);
+    std::weak_ptr<int> pendingWeak=pendingOwner;
+    interop.copyNative(resource.Get(),fence.Get(),1000,0,1,64,64,
+        SDL_COLORSPACE_BT709_LIMITED,pendingOwner);
+    pendingOwner.reset();
+    interop.invalidateFrame();
+    require(pendingWeak.expired(), "Invalidation releases unsubmitted native owner");
+    require(SDL::beginVideoFrame(renderer) && !interop.currentTexture(), "Invalidated pending copy is never submitted");
+    // Switching configurations reuses warm native resources rather than
+    // destroying SDL textures (which would implicitly wait for the queue).
+    std::set<SDL_Texture*> fullSize, croppedSize;
+    for (int i=0;i<18;++i) {
+        const bool crop=i%2;
+        interop.invalidateFrame();
+        interop.copyNative(resource.Get(),fence.Get(),101,0,1,64,64,
+            SDL_COLORSPACE_BT709_LIMITED,owner,0,0,crop?32:0,crop?32:0);
+        require(SDL::beginVideoFrame(renderer), "Submit alternating-size native frame");
+        auto* texture=interop.currentTexture();
+        require(texture != nullptr, "Alternating native configuration has a presentation");
+        (crop?croppedSize:fullSize).insert(texture);
+        require(texture->w==(crop?32:64) && texture->h==(crop?32:64), "Cached native ring has correct dimensions");
+        require(SDL_RenderClear(renderer) && SDL_RenderPresent(renderer), "Keep UI rendering during retarget");
+    }
+    require(fullSize.size()<=3 && croppedSize.size()<=3, "D3D12 configuration cache bounds wrapper allocations");
 }
 #endif
 
@@ -1479,6 +1575,9 @@ int main(int argc, char** argv) {
     if (argc > 1) mediaChecks(argv[1]);
     imageAsyncIOChecks(config);
     ffmpegContractChecks();
+#ifdef _WIN32
+    d3d11RendererChecks();
+#endif
 #ifdef RETROFE_HAVE_D3D12
     deferredNativeChecks();
 #endif

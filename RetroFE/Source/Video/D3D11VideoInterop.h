@@ -20,9 +20,12 @@ public:
     SDL_Texture* copy(GstSample* sample);
 #ifdef _WIN32
     SDL_Texture* copyNative(ID3D11Resource* source, unsigned int sourceSubresource,
-        const D3D11_TEXTURE2D_DESC& sourceDesc, SDL_Colorspace color);
+        const D3D11_TEXTURE2D_DESC& sourceDesc, SDL_Colorspace color,
+        int cropX = 0, int cropY = 0, int cropW = 0, int cropH = 0);
 #endif
     void discardFrames();
+    bool deferred() const { return false; }
+    bool retainsDeferredFrame() const { return false; }
     const char* reason() const;
     GstElement* wrapSink(GstElement* sink);
     bool proposeAllocation(GstQuery*) { return false; }

@@ -1,0 +1,489 @@
+diff --git a/gst-libs/gst/vulkan/gstvkoperation.c b/gst-libs/gst/vulkan/gstvkoperation.c
+--- a/gst-libs/gst/vulkan/gstvkoperation.c
++++ b/gst-libs/gst/vulkan/gstvkoperation.c
+@@ -542,7 +542,9 @@
+       if (frame->updated) {
+         frame->mem[j]->barrier.parent.pipeline_stages = frame->dst_stage;
+         frame->mem[j]->barrier.parent.access_flags = frame->new_access;
+-        frame->mem[j]->barrier.parent.queue = frame->new_queue;
++        /* Image metadata outlives this operation's dependency references. */
++        gst_object_replace ((GstObject **) &frame->mem[j]->barrier.parent.queue,
++            (GstObject *) frame->new_queue);
+         frame->mem[j]->barrier.image_layout = frame->new_layout;
+       }
+ 
+@@ -669,7 +671,8 @@
+   dep_frame->dst_stage = dst_stage;
+   dep_frame->new_access = new_access;
+   dep_frame->new_layout = new_layout;
+-  dep_frame->new_queue = new_queue ? gst_object_ref (new_queue) : NULL;
++  gst_object_replace ((GstObject **) &dep_frame->new_queue,
++      (GstObject *) new_queue);
+ }
+ 
+ /**
+diff --git a/gst-libs/gst/vulkan/gstvkdecoder-private.h b/gst-libs/gst/vulkan/gstvkdecoder-private.h
+--- a/gst-libs/gst/vulkan/gstvkdecoder-private.h
++++ b/gst-libs/gst/vulkan/gstvkdecoder-private.h
+@@ -59,6 +59,7 @@
+ struct _GstVulkanDecoderPicture
+ {
+   GstBuffer *out;
++  GstBuffer *presentation; /* independent output when DPB/output coincide */
+   GstBuffer *dpb; /* only used for out-of-place decoding */
+ 
+   GstVulkanImageView *img_view_ref; /* Image representation view (reference) */
+diff --git a/gst-libs/gst/vulkan/gstvkqueue.c b/gst-libs/gst/vulkan/gstvkqueue.c
+--- a/gst-libs/gst/vulkan/gstvkqueue.c
++++ b/gst-libs/gst/vulkan/gstvkqueue.c
+@@ -276,6 +276,7 @@
+     GstVulkanQueue ** queue)
+ {
+   GstQuery *query;
++  GstContext *local_context;
+ 
+   g_return_val_if_fail (GST_IS_ELEMENT (element), FALSE);
+   g_return_val_if_fail (queue != NULL, FALSE);
+@@ -284,6 +285,15 @@
+ 
+   if (*queue && GST_IS_VULKAN_QUEUE (*queue))
+     return TRUE;
++
++  local_context = gst_element_get_context (element,
++      GST_VULKAN_QUEUE_CONTEXT_TYPE_STR);
++  if (local_context) {
++    gst_context_get_vulkan_queue (local_context, queue);
++    gst_context_unref (local_context);
++    if (*queue)
++      return TRUE;
++  }
+ 
+   if ((query =
+           gst_vulkan_local_context_query (element,
+@@ -305,6 +315,18 @@
+   return FALSE;
+ }
+ 
++static GMutex *
++shared_submit_lock_for_queue (GstVulkanQueue * queue)
++{
++  /* Fixed stripes share the lock for every wrapper of one VkQueue without
++   * leaking a mutex each time a renderer/device is created. Zero-initialized
++   * static GMutex objects are valid. Unrelated queues may share a stripe. */
++  static GMutex queue_locks[64];
++  guintptr key = (guintptr) queue->queue;
++
++  return &queue_locks[(key >> 4) % G_N_ELEMENTS (queue_locks)];
++}
++
+ /**
+  * gst_vulkan_queue_submit_lock:
+  * @queue: a #GstVulkanQueue
+@@ -317,9 +339,7 @@
+ void
+ gst_vulkan_queue_submit_lock (GstVulkanQueue * queue)
+ {
+-  GstVulkanQueuePrivate *priv = GET_PRIV (queue);
+-
+-  g_mutex_lock (&priv->submit_lock);
++  g_mutex_lock (shared_submit_lock_for_queue (queue));
+ }
+ 
+ /**
+@@ -335,7 +355,5 @@
+ void
+ gst_vulkan_queue_submit_unlock (GstVulkanQueue * queue)
+ {
+-  GstVulkanQueuePrivate *priv = GET_PRIV (queue);
+-
+-  g_mutex_unlock (&priv->submit_lock);
+-}
++  g_mutex_unlock (shared_submit_lock_for_queue (queue));
++}
+diff --git a/gst-libs/gst/vulkan/gstvkdevice.c b/gst-libs/gst/vulkan/gstvkdevice.c
+--- a/gst-libs/gst/vulkan/gstvkdevice.c
++++ b/gst-libs/gst/vulkan/gstvkdevice.c
+@@ -472,8 +472,12 @@
+       return array;
+   }
+ 
+-  /* shall we open all -- queue_family_props[family_index].queueCount ? */
+   queue_count = 1;
++  /* SDL owns graphics queue 0. GStreamer uses graphics queue 1 for output
++   * operations even when decode runs on a dedicated video queue family. */
++  if ((queue_family_props[family_index].queueFlags & VK_QUEUE_GRAPHICS_BIT) &&
++      queue_family_props[family_index].queueCount >= 2)
++    queue_count = 2;
+ 
+   priorities = g_new (gfloat, queue_count);
+   for (i = 0; i < queue_count; i++)
+@@ -941,6 +945,7 @@
+     GstVulkanDevice ** device)
+ {
+   GstQuery *query;
++  GstContext *local_context;
+ 
+   g_return_val_if_fail (GST_IS_ELEMENT (element), FALSE);
+   g_return_val_if_fail (device != NULL, FALSE);
+@@ -949,6 +954,18 @@
+ 
+   if (*device && GST_IS_VULKAN_DEVICE (*device))
+     return TRUE;
++
++  /* playbin3 can open a newly created decoder before its pads are linked.
++   * Honor a device context installed by the application's element-setup
++   * callback before querying neighbouring pads. */
++  local_context = gst_element_get_context (element,
++      GST_VULKAN_DEVICE_CONTEXT_TYPE_STR);
++  if (local_context) {
++    gst_context_get_vulkan_device (local_context, device);
++    gst_context_unref (local_context);
++    if (*device)
++      return TRUE;
++  }
+ 
+   if ((query =
+           gst_vulkan_local_context_query (element,
+diff --git a/gst-libs/gst/vulkan/gstvkdecoder-private.c b/gst-libs/gst/vulkan/gstvkdecoder-private.c
+--- a/gst-libs/gst/vulkan/gstvkdecoder-private.c
++++ b/gst-libs/gst/vulkan/gstvkdecoder-private.c
+@@ -290,8 +290,12 @@
+    * VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_DISTINCT_BIT_KHR - reports the
+    * implementation supports using distinct Video Picture Resources for decode
+    * DPB and decode output. */
+-  self->dedicated_dpb = ((priv->caps.decoder.caps.flags &
+-          VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_COINCIDE_BIT_KHR) == 0);
++  /* Prefer distinct output images when the driver supports them. Holding a
++   * decoded output for presentation must not hold a DPB reference image. */
++  self->dedicated_dpb = (priv->caps.decoder.caps.flags &
++      VK_VIDEO_DECODE_CAPABILITY_DPB_AND_OUTPUT_DISTINCT_BIT_KHR) != 0;
++  GST_INFO_OBJECT (self, "using dedicated DPB: %s", self->dedicated_dpb ?
++      "yes" : "no");
+ 
+   /* The DPB or Reconstructed Video Picture Resources for the video session may
+    * be created as a separate VkImage for each DPB picture. If not supported,
+@@ -657,7 +661,7 @@
+ 
+   if (!gst_vulkan_operation_add_dependency_frame (priv->exec, pic->out,
+           VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
+-          VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR)) {
++          VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT)) {
+     return FALSE;
+   }
+ 
+@@ -756,6 +760,81 @@
+   gst_vulkan_operation_end_query (priv->exec, 0);
+   priv->vk.CmdEndVideoCoding (cmd_buf->cmd, &decode_end);
+ 
++  if (pic->presentation) {
++    GstVulkanImageMemory *source = (GstVulkanImageMemory *)
++        gst_buffer_peek_memory (pic->out, 0);
++    GstVulkanImageMemory *dest = (GstVulkanImageMemory *)
++        gst_buffer_peek_memory (pic->presentation, 0);
++    VkImageMemoryBarrier2 copy_barriers[2] = {
++      {
++        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
++        .srcStageMask = VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR,
++        .srcAccessMask = VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR,
++        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
++        .dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT,
++        .oldLayout = new_layout,
++        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .image = source->image,
++        .subresourceRange = source->barrier.subresource_range,
++      }, {
++        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
++        .srcStageMask = VK_PIPELINE_STAGE_2_NONE,
++        .srcAccessMask = VK_ACCESS_2_NONE,
++        .dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT,
++        .dstAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT,
++        .oldLayout = dest->barrier.image_layout,
++        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
++        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
++        .image = dest->image,
++        .subresourceRange = dest->barrier.subresource_range,
++      }
++    };
++    VkDependencyInfo dependency = {
++      .sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO,
++      .imageMemoryBarrierCount = 2,
++      .pImageMemoryBarriers = copy_barriers,
++    };
++    VkImageCopy regions[2] = { 0, };
++    if (!gst_vulkan_operation_add_dependency_frame (priv->exec, pic->presentation,
++            VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT))
++      return FALSE;
++    vkCmdPipelineBarrier2 (cmd_buf->cmd, &dependency);
++    for (guint plane = 0; plane < 2; plane++) {
++      guint divisor = plane ? 2 : 1;
++      regions[plane].srcSubresource = (VkImageSubresourceLayers) {
++        .aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT << plane,
++        .layerCount = 1,
++      };
++      regions[plane].dstSubresource = regions[plane].srcSubresource;
++      regions[plane].extent = (VkExtent3D) {
++        source->create_info.extent.width / divisor,
++        source->create_info.extent.height / divisor, 1
++      };
++    }
++    vkCmdCopyImage (cmd_buf->cmd, source->image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
++        dest->image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 2, regions);
++    copy_barriers[0].srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
++    copy_barriers[0].srcAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
++    copy_barriers[0].dstStageMask = VK_PIPELINE_STAGE_2_VIDEO_DECODE_BIT_KHR;
++    copy_barriers[0].dstAccessMask = VK_ACCESS_2_VIDEO_DECODE_READ_BIT_KHR
++        | VK_ACCESS_2_VIDEO_DECODE_WRITE_BIT_KHR;
++    copy_barriers[0].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++    copy_barriers[0].newLayout = new_layout;
++    copy_barriers[1].srcStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
++    copy_barriers[1].srcAccessMask = VK_ACCESS_2_TRANSFER_WRITE_BIT;
++    copy_barriers[1].dstStageMask = VK_PIPELINE_STAGE_2_TRANSFER_BIT;
++    copy_barriers[1].dstAccessMask = VK_ACCESS_2_TRANSFER_READ_BIT;
++    copy_barriers[1].oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
++    copy_barriers[1].newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
++    vkCmdPipelineBarrier2 (cmd_buf->cmd, &dependency);
++    gst_vulkan_operation_update_frame (priv->exec, pic->presentation,
++        VK_PIPELINE_STAGE_2_TRANSFER_BIT, VK_ACCESS_2_TRANSFER_READ_BIT,
++        VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, self->queue);
++  }
++
+   ret = gst_vulkan_operation_end (priv->exec, error);
+ 
+   return ret;
+@@ -1058,6 +1137,49 @@
+       priv->sampler);
+ }
+ 
++/* The DPB image may be read again before the application presents it. Cache
++ * an independent output on each decoder-pool memory, and copy on the decode
++ * queue inside the decode submission. Never transition a live DPB on SDL's
++ * graphics queue. A busy cached output is replaced while its consumer owns it. */
++static GstBuffer *
++decoder_presentation_buffer (GstVulkanDecoder * self, GstBuffer * out)
++{
++  GstVulkanImageMemory *source = (GstVulkanImageMemory *)
++      gst_buffer_peek_memory (out, 0);
++  GQuark key = g_quark_from_static_string ("retrofe-vulkan-presentation");
++  GstBuffer *buffer = gst_mini_object_get_qdata (GST_MINI_OBJECT_CAST (source), key);
++  if (!buffer || !gst_buffer_is_writable (buffer) ||
++      !gst_memory_is_writable (gst_buffer_peek_memory (buffer, 0))) {
++    GArray *families = gst_vulkan_device_queue_family_indices (self->queue->device);
++    VkImageCreateInfo image = {
++      .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
++      .imageType = VK_IMAGE_TYPE_2D,
++      .format = source->create_info.format,
++      .extent = source->create_info.extent,
++      .mipLevels = 1,
++      .arrayLayers = 1,
++      .samples = VK_SAMPLE_COUNT_1_BIT,
++      .tiling = VK_IMAGE_TILING_OPTIMAL,
++      .usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
++          | VK_IMAGE_USAGE_SAMPLED_BIT,
++      .sharingMode = families->len > 1 ? VK_SHARING_MODE_CONCURRENT : VK_SHARING_MODE_EXCLUSIVE,
++      .queueFamilyIndexCount = families->len > 1 ? families->len : 0,
++      .pQueueFamilyIndices = families->len > 1 ? (guint32 *) families->data : NULL,
++      .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
++    };
++    GstMemory *memory = gst_vulkan_image_memory_alloc_with_image_info (
++        self->queue->device, &image, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
++    g_array_unref (families);
++    if (!memory)
++      return NULL;
++    buffer = gst_buffer_new ();
++    gst_buffer_append_memory (buffer, memory);
++    gst_mini_object_set_qdata (GST_MINI_OBJECT_CAST (source), key, buffer,
++        (GDestroyNotify) gst_buffer_unref);
++  }
++  return buffer;
++}
++
+ /**
+  * gst_vulkan_decoder_picture_init:
+  * @self: a #GstVulkanDecoder
+@@ -1086,6 +1208,17 @@
+   else if (self->dedicated_dpb)
+     g_return_val_if_fail (GST_IS_BUFFER_POOL (priv->dpb_pool), FALSE);
+ 
++  pic->presentation = NULL;
++  if ((!self->dedicated_dpb ||
++          !(self->queue->device->physical_device->queue_family_props[self->queue->family].queueFlags
++              & VK_QUEUE_GRAPHICS_BIT))
++      && (self->codec == VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR
++          || self->codec == VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR)) {
++    GstBuffer *presentation = decoder_presentation_buffer (self, out);
++    if (!presentation)
++      return FALSE;
++    pic->presentation = gst_buffer_ref (presentation);
++  }
+   pic->out = gst_buffer_ref (out);
+   pic->img_view_out =
+       gst_vulkan_decoder_picture_create_view (self, pic->out, TRUE);
+@@ -1125,6 +1258,7 @@
+   gst_clear_vulkan_image_view (&pic->img_view_ref);
+   gst_clear_vulkan_image_view (&pic->img_view_out);
+ 
++  gst_clear_buffer (&pic->presentation);
+   gst_clear_buffer (&pic->out);
+   gst_clear_buffer (&pic->dpb);
+ 
+diff --git a/ext/vulkan/vkh264dec.c b/ext/vulkan/vkh264dec.c
+--- a/ext/vulkan/vkh264dec.c
++++ b/ext/vulkan/vkh264dec.c
+@@ -148,15 +148,19 @@
+     self->graphic_queue = gst_object_ref (queue);
+   }
+ 
+-  if (!self->decode_queue
+-      && ((codec & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR)
++  if (((codec & VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR)
+           == VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR)
+       && ((flags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)
+-          == VK_QUEUE_VIDEO_DECODE_BIT_KHR)) {
++          == VK_QUEUE_VIDEO_DECODE_BIT_KHR)
++      && (!self->decode_queue ||
++          (self->graphic_queue &&
++              self->decode_queue->queue != self->graphic_queue->queue &&
++              queue->queue == self->graphic_queue->queue))) {
++    gst_clear_object (&self->decode_queue);
+     self->decode_queue = gst_object_ref (queue);
+   }
+ 
+-  return !(self->decode_queue && self->graphic_queue);
++  return TRUE; /* prefer the context queue reserved for GStreamer */
+ }
+ 
+ static gboolean
+@@ -189,6 +193,11 @@
+         ("Failed to create/retrieve vulkan H.264 decoder queue"), (NULL));
+     return FALSE;
+   }
++
++  if (self->graphic_queue)
++    GST_INFO_OBJECT (self, "graphics queue %u:%u, decode queue %u:%u",
++        self->graphic_queue->family, self->graphic_queue->index,
++        self->decode_queue->family, self->decode_queue->index);
+ 
+   self->decoder = gst_vulkan_decoder_new_from_queue (self->decode_queue,
+       VK_VIDEO_CODEC_OPERATION_DECODE_H264_BIT_KHR);
+@@ -398,10 +407,13 @@
+   gst_vulkan_image_buffer_pool_config_set_decode_caps (config, profile_caps);
+ 
+   gst_caps_unref (profile_caps);
+-  gst_caps_unref (new_caps);
+ 
+   if (!gst_buffer_pool_set_config (pool, config))
+     goto bail;
++  if (!gst_vulkan_decoder_create_dpb_pool (self->decoder, new_caps))
++    goto bail;
++  gst_caps_unref (new_caps);
++  new_caps = NULL;
+ 
+   if (update_pool)
+     gst_query_set_nth_allocation_pool (query, 0, pool, size, min, max);
+@@ -409,8 +421,6 @@
+     gst_query_add_allocation_pool (query, pool, size, min, max);
+ 
+   gst_object_unref (pool);
+-
+-  gst_vulkan_decoder_create_dpb_pool (self->decoder, new_caps);
+ 
+   return TRUE;
+ 
+@@ -1353,6 +1363,15 @@
+     }
+   }
+ 
++  GstVulkanH264Picture *vk_picture = gst_h264_picture_get_user_data (picture);
++  if (vk_picture->base.presentation) {
++    GstBuffer *presentation = gst_buffer_copy (vk_picture->base.presentation);
++    gst_buffer_copy_into (presentation, frame->output_buffer,
++        GST_BUFFER_COPY_METADATA, 0, -1);
++    gst_buffer_replace (&frame->output_buffer, presentation);
++    gst_buffer_unref (presentation);
++  }
++
+   gst_h264_picture_unref (picture);
+ 
+   return gst_video_decoder_finish_frame (vdec, frame);
+diff --git a/ext/vulkan/vkh265dec.c b/ext/vulkan/vkh265dec.c
+--- a/ext/vulkan/vkh265dec.c
++++ b/ext/vulkan/vkh265dec.c
+@@ -229,15 +229,19 @@
+     self->graphic_queue = gst_object_ref (queue);
+   }
+ 
+-  if (!self->decode_queue
+-      && ((codec & VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR)
++  if (((codec & VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR)
+           == VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR)
+       && ((flags & VK_QUEUE_VIDEO_DECODE_BIT_KHR)
+-          == VK_QUEUE_VIDEO_DECODE_BIT_KHR)) {
++          == VK_QUEUE_VIDEO_DECODE_BIT_KHR)
++      && (!self->decode_queue ||
++          (self->graphic_queue &&
++              self->decode_queue->queue != self->graphic_queue->queue &&
++              queue->queue == self->graphic_queue->queue))) {
++    gst_clear_object (&self->decode_queue);
+     self->decode_queue = gst_object_ref (queue);
+   }
+ 
+-  return !(self->decode_queue && self->graphic_queue);
++  return TRUE; /* prefer the context queue reserved for GStreamer */
+ }
+ 
+ static gboolean
+@@ -270,6 +274,11 @@
+         ("Failed to create/retrieve vulkan H.265 decoder queue"), (NULL));
+     return FALSE;
+   }
++
++  if (self->graphic_queue)
++    GST_INFO_OBJECT (self, "graphics queue %u:%u, decode queue %u:%u",
++        self->graphic_queue->family, self->graphic_queue->index,
++        self->decode_queue->family, self->decode_queue->index);
+ 
+   self->decoder = gst_vulkan_decoder_new_from_queue (self->decode_queue,
+       VK_VIDEO_CODEC_OPERATION_DECODE_H265_BIT_KHR);
+@@ -416,10 +425,13 @@
+   gst_vulkan_image_buffer_pool_config_set_decode_caps (config, profile_caps);
+ 
+   gst_caps_unref (profile_caps);
+-  gst_caps_unref (new_caps);
+ 
+   if (!gst_buffer_pool_set_config (pool, config))
+     goto bail;
++  if (!gst_vulkan_decoder_create_dpb_pool (self->decoder, new_caps))
++    goto bail;
++  gst_caps_unref (new_caps);
++  new_caps = NULL;
+ 
+   if (update_pool)
+     gst_query_set_nth_allocation_pool (query, 0, pool, size, min, max);
+@@ -427,8 +439,6 @@
+     gst_query_add_allocation_pool (query, pool, size, min, max);
+ 
+   gst_object_unref (pool);
+-
+-  gst_vulkan_decoder_create_dpb_pool (self->decoder, new_caps);
+ 
+   return TRUE;
+ 
+@@ -1674,6 +1684,15 @@
+     }
+   }
+ 
++  GstVulkanH265Picture *vk_picture = gst_h265_picture_get_user_data (picture);
++  if (vk_picture->base.presentation) {
++    GstBuffer *presentation = gst_buffer_copy (vk_picture->base.presentation);
++    gst_buffer_copy_into (presentation, frame->output_buffer,
++        GST_BUFFER_COPY_METADATA, 0, -1);
++    gst_buffer_replace (&frame->output_buffer, presentation);
++    gst_buffer_unref (presentation);
++  }
++
+   gst_h265_picture_unref (picture);
+ 
+   return gst_video_decoder_finish_frame (vdec, frame);

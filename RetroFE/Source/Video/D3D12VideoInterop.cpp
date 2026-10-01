@@ -77,9 +77,20 @@ struct D3D12VideoInterop::Impl {
     ComPtr<ID3D12Fence> fence;
     GstD3D12Device* gstDevice = nullptr;
     GstContext* context = nullptr;
-    HANDLE event = nullptr;
     UINT64 sequence = 0;
+    size_t inFlightCopies = 0;
     std::array<Slot, 3> slots;
+    struct Generation {
+        std::array<Slot, 3> slots;
+        int width, height;
+        SDL_Colorspace color;
+    };
+    std::vector<Generation> cached;
+    template<class F> void forEachSlot(F&& visit) {
+        for (auto& slot : slots) visit(slot);
+        for (auto& generation : cached) for (auto& slot : generation.slots) visit(slot);
+    };
+
     struct CachedFence {
         ComPtr<ID3D12Fence> source;
         ComPtr<ID3D12Fence> imported;
@@ -91,6 +102,7 @@ struct D3D12VideoInterop::Impl {
     std::string error = "D3D12 interop unavailable";
     bool ready = false;
     bool failedSubmission = false;
+    bool failedAllocation = false;
     bool deferred = false;
     const gint64 resourceToken = gst_d3d12_create_user_token();
 
@@ -112,8 +124,6 @@ struct D3D12VideoInterop::Impl {
             context = gst_d3d12_context_new(gstDevice);
             if (!context) throw std::runtime_error("Cannot create D3D12 GstContext");
             check(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)), "Create copy fence");
-            event = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-            if (!event) throw std::runtime_error("Cannot create fence event");
             ready = true;
             error.clear();
         } catch (const std::exception& e) { error = e.what(); }
@@ -127,9 +137,10 @@ struct D3D12VideoInterop::Impl {
         clearTextures();
         if (context) gst_context_unref(context);
         if (gstDevice) gst_object_unref(gstDevice);
-        if (event) CloseHandle(event);
     }
     void retire() {
+        // Idle pooled instances have no completion work to poll.
+        if (!inFlightCopies) return;
         const UINT64 completed = fence ? fence->GetCompletedValue() : 0;
         if (completed == UINT64_MAX) {
             if (!failedSubmission) {
@@ -146,9 +157,10 @@ struct D3D12VideoInterop::Impl {
             invalidate();
             return;
         }
-        for (auto& slot : slots) {
+        forEachSlot([&](Slot& slot) {
             if (slot.flight && completed >= slot.flight) {
                 slot.flight = 0;
+                --inFlightCopies;
                 slot.sample.reset();
                 slot.nativeOwner.reset();
                 slot.source.Reset();
@@ -157,7 +169,7 @@ struct D3D12VideoInterop::Impl {
                 slot.planes = {};
                 slot.cropX = slot.cropY = slot.cropW = slot.cropH = 0;
             }
-        }
+        });
     }
     void invalidate() {
         for (auto& slot : slots) if (slot.pending) {
@@ -172,48 +184,42 @@ struct D3D12VideoInterop::Impl {
         }
         current = nullptr;
     }
-    void discard() {
-        // Retargeting only cancels unsubmitted work. Teardown also drains copies.
-        invalidate();
-        for (auto& slot : slots) if (slot.flight && fence->GetCompletedValue() < slot.flight) {
-            const HRESULT hr = fence->SetEventOnCompletion(slot.flight, event);
-            const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
-            if (SUCCEEDED(hr)) {
-                while (fence->GetCompletedValue() < slot.flight) {
-                    WaitForSingleObject(event, 50);
-                    if (FAILED(device->GetDeviceRemovedReason())) break;
-                    if (std::chrono::steady_clock::now() >= deadline) {
-                        LOG_WARNING("D3D12VideoInterop", "discard() timed out waiting for copy fence completion; breaking wait");
-                        break;
-                    }
-                }
-            } else {
-                // Event allocation failure does not imply GPU completion.
-                while (fence->GetCompletedValue() < slot.flight &&
-                    SUCCEEDED(device->GetDeviceRemovedReason())) {
-                    Sleep(1);
-                    if (std::chrono::steady_clock::now() >= deadline) {
-                        LOG_WARNING("D3D12VideoInterop", "discard() timed out waiting for copy fence completion; breaking wait");
-                        break;
-                    }
-                }
-            }
-        }
-        retire();
-        current = nullptr; // allocations remain warm, presentation does not
-    }
     void clearTextures() {
-        discard();
-        fenceCache.clear();
-        for (auto& slot : slots) {
+        invalidate();
+        // Teardown only. SDL's texture destructor submits queued draws and
+        // waits for its graphics queue; retain each source until that returns.
+        forEachSlot([](Slot& slot) {
             if (slot.texture) SDL_DestroyTexture(slot.texture);
             slot = Slot{};
-        }
+        });
+        cached.clear();
+        inFlightCopies = 0;
+        fenceCache.clear();
         width = height = 0;
     }
     void allocate(int w, int h, SDL_Colorspace c) {
         if (w == width && h == height && c == color) return;
-        clearTextures();
+        // SDL's D3D12 texture destructor waits for the queue. Keep compatible
+        // allocations warm across size changes, with at most four rings.
+        for (auto& generation : cached) {
+            if (generation.width == w && generation.height == h && generation.color == c) {
+                invalidate();
+                std::swap(slots, generation.slots);
+                std::swap(width, generation.width);
+                std::swap(height, generation.height);
+                std::swap(color, generation.color);
+                return;
+            }
+        }
+        if (cached.size() >= 3)
+            throw std::runtime_error("D3D12 presentation allocation cache is full; software fallback required");
+        invalidate();
+        if (width && height) {
+            cached.push_back({std::move(slots), width, height, color});
+            slots = {};
+        }
+        width = height = 0;
+        failedAllocation = true; // Retain partial allocations for teardown if creation throws.
         const int pitch = (w + 1) & ~1;
         const int rows = (h + 1) & ~1;
         std::vector<Uint8> black(static_cast<size_t>(pitch) * rows, 16);
@@ -256,7 +262,7 @@ struct D3D12VideoInterop::Impl {
             slot.commands->SetName(L"RetroFE NV12 video copy");
             check(slot.commands->Close(), "Close initial copy list");
         }
-        // SDL 3.4.12 FlushRenderer only records its D3D12 list. This one-pixel
+        // SDL 3.4.16 FlushRenderer only records its D3D12 list. This one-pixel
         // readback forces submission/completion of the initialization uploads.
         // No per-frame readback or upload is used. Never assume FlushRenderer
         // is a native-queue submission boundary.
@@ -265,6 +271,7 @@ struct D3D12VideoInterop::Impl {
         checkSDL(probe != nullptr, "Submit initial SDL texture state");
         SDL_DestroySurface(probe);
         width = w; height = h; color = c;
+        failedAllocation = false;
         LOG_INFO("D3D12VideoInterop", "Allocated NV12 ring; completed one-time SDL state initialization");
     }
     ComPtr<ID3D12Resource> importResource(GstD3D12Memory* memory) {
@@ -311,7 +318,7 @@ struct D3D12VideoInterop::Impl {
         deferred = false;
         if (!ready || failedSubmission) return nullptr;
         retire();
-        if (failedSubmission) return nullptr;
+        if (failedSubmission || failedAllocation) return nullptr;
         auto* buffer = gst_sample_get_buffer(sample);
         GstVideoInfo info{};
         if (!buffer || !gst_video_info_from_caps(&info, gst_sample_get_caps(sample)) ||
@@ -338,14 +345,17 @@ struct D3D12VideoInterop::Impl {
             throw std::runtime_error("Unsupported decoder output resource flags/format");
         const int w = cropW > 0 ? cropW : GST_VIDEO_INFO_WIDTH(&info);
         const int h = cropH > 0 ? cropH : GST_VIDEO_INFO_HEIGHT(&info);
-        if (w <= 0 || h <= 0 || UINT64((cropX + w + 1) & ~1) > desc.Width || UINT((cropY + h + 1) & ~1) > desc.Height)
+        if (w <= 0 || h <= 0 || cropX < 0 || cropY < 0 || (cropX & 1) || (cropY & 1) ||
+            UINT64(cropX) + UINT64((w + 1) & ~1) > desc.Width ||
+            UINT(cropY) + UINT((h + 1) & ~1) > desc.Height)
             throw std::runtime_error("NV12 dimensions exceed decoder allocation");
         allocate(w, h, colorspace(info));
         Slot* selected = nullptr;
         // Multiple updates before rendering replace the pending frame rather
         // than retaining more decoder surfaces or growing the ring.
         for (auto& slot : slots) if (slot.pending) { selected = &slot; break; }
-        if (!selected) for (auto& slot : slots) if (!slot.flight) { selected = &slot; break; }
+        if (!selected) for (auto& slot : slots)
+            if (!slot.flight && slot.texture != current) { selected = &slot; break; }
         if (!selected) { deferred = true; return nullptr; }
         for (guint plane = 0; plane < 2; ++plane)
             if (!gst_d3d12_memory_get_subresource_index(dmem, plane, &selected->planes[plane]))
@@ -363,7 +373,9 @@ struct D3D12VideoInterop::Impl {
         selected->cropW = cropW;
         selected->cropH = cropH;
         selected->pending = true;
-        current = selected->texture;
+        // Preparing is not presentation. In particular an unsignaled producer
+        // must never expose an uninitialized ring texture to SDL.
+        deferred = !current;
         return current;
     }
     bool submit() {
@@ -391,27 +403,11 @@ struct D3D12VideoInterop::Impl {
                 check(slot.allocator->Reset(), "Reset copy allocator");
                 check(slot.commands->Reset(slot.allocator.Get(), nullptr), "Reset copy list");
 
-                // Source resource barrier:
-                // Textures with ALLOW_SIMULTANEOUS_ACCESS promote/decay implicitly.
-                // Non-simultaneous textures (e.g. FFmpeg decoder output) require explicit transitions
-                // from COMMON to COPY_SOURCE and back to COMMON.
                 const auto srcDesc = slot.source->GetDesc();
-                const bool needSourceTransition =
-                    !(srcDesc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS);
-
-                std::vector<D3D12_RESOURCE_BARRIER> beforeBarriers;
-                beforeBarriers.push_back(transition(slot.destination,
+                const auto before = transition(slot.destination,
                     D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE,
-                    D3D12_RESOURCE_STATE_COPY_DEST));
-                if (needSourceTransition) {
-                    for (UINT plane = 0; plane < 2; ++plane) {
-                        beforeBarriers.push_back(transition(slot.source.Get(),
-                            D3D12_RESOURCE_STATE_COMMON,
-                            D3D12_RESOURCE_STATE_COPY_SOURCE,
-                            slot.planes[plane]));
-                    }
-                }
-                slot.commands->ResourceBarrier(static_cast<UINT>(beforeBarriers.size()), beforeBarriers.data());
+                    D3D12_RESOURCE_STATE_COPY_DEST);
+                slot.commands->ResourceBarrier(1, &before);
 
                 const auto dstDesc = slot.destination->GetDesc();
                 for (UINT plane = 0; plane < 2; ++plane) {
@@ -442,19 +438,10 @@ struct D3D12VideoInterop::Impl {
                     slot.commands->CopyTextureRegion(&dst, 0, 0, 0, &src, pBox);
                 }
 
-                std::vector<D3D12_RESOURCE_BARRIER> afterBarriers;
-                afterBarriers.push_back(transition(slot.destination,
+                const auto after = transition(slot.destination,
                     D3D12_RESOURCE_STATE_COPY_DEST,
-                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE));
-                if (needSourceTransition) {
-                    for (UINT plane = 0; plane < 2; ++plane) {
-                        afterBarriers.push_back(transition(slot.source.Get(),
-                            D3D12_RESOURCE_STATE_COPY_SOURCE,
-                            D3D12_RESOURCE_STATE_COMMON,
-                            slot.planes[plane]));
-                    }
-                }
-                slot.commands->ResourceBarrier(static_cast<UINT>(afterBarriers.size()), afterBarriers.data());
+                    D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE);
+                slot.commands->ResourceBarrier(1, &after);
                 check(slot.commands->Close(), "Close copy list");
 
                 // Cross-queue synchronization: ensure the direct queue waits on the producer fence
@@ -469,6 +456,7 @@ struct D3D12VideoInterop::Impl {
                     std::terminate();
                 }
                 slot.flight = sequence;
+                ++inFlightCopies;
                 slot.pending = false;
                 check(signal, "Signal copy completion");
                 current = slot.texture;
@@ -494,17 +482,24 @@ struct D3D12VideoInterop::Impl {
 
 D3D12VideoInterop::D3D12VideoInterop(SDL_Renderer* renderer) : impl_(std::make_unique<Impl>(renderer)) {}
 D3D12VideoInterop::~D3D12VideoInterop() = default;
-bool D3D12VideoInterop::available() const { return impl_->ready && !impl_->failedSubmission; }
+bool D3D12VideoInterop::available() const { return impl_->ready && !impl_->failedSubmission && !impl_->failedAllocation; }
 const char* D3D12VideoInterop::reason() const { return impl_->error.c_str(); }
 void D3D12VideoInterop::discardFrames() {
     SDL_assert(SDL_IsMainThread());
-    impl_->discard();
+    // Keep submitted owners until retire() observes completion. Seeking and
+    // unloading must not wait on the GPU; only destruction drains the ring.
+    impl_->invalidate();
+    impl_->retire();
 }
 void D3D12VideoInterop::invalidateFrame() {
     SDL_assert(SDL_IsMainThread());
     impl_->invalidate();
 }
 bool D3D12VideoInterop::deferred() const { return impl_->deferred; }
+bool D3D12VideoInterop::retainsDeferredFrame() const {
+    return std::any_of(impl_->slots.begin(), impl_->slots.end(),
+        [](const Impl::Slot& slot) { return slot.pending; });
+}
 SDL_Texture* D3D12VideoInterop::currentTexture() const { return available() ? impl_->current : nullptr; }
 SDL_Texture* D3D12VideoInterop::copy(GstSample* sample) {
     SDL_assert(SDL_IsMainThread());
@@ -514,7 +509,10 @@ SDL_Texture* D3D12VideoInterop::copy(GstSample* sample) {
 bool D3D12VideoInterop::beginFrame(SDL_Renderer* renderer) {
     SDL_assert(SDL_IsMainThread());
     bool ok = true;
-    std::vector<Impl*> toSubmit;
+    // This entry point is main-thread-only. Keep its storage warm across frames
+    // instead of allocating/freeing a registry snapshot at the UI refresh rate.
+    static std::vector<Impl*> toSubmit;
+    toSubmit.clear();
     {
         std::lock_guard<std::mutex> lock(Impl::instancesMutex());
         for (auto* instance : Impl::instances())
@@ -607,9 +605,9 @@ SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence
             throw std::runtime_error("Native D3D12 producer fence belongs to a different device");
 
         const auto desc = resource->GetDesc();
-        // FFmpeg native frames do not need ALLOW_SIMULTANEOUS_ACCESS here.
-        // The producer fence is the handoff: once reached, FFmpeg has returned
-        // the decode output to COMMON and this queue may read it as COPY_SOURCE.
+        // A producer fence only covers the initial decode, not subsequent
+        // reference-picture reads. Explicitly transitioning a shared reference
+        // surface would race the decoder's queue.
         const int w = cropW > 0 ? cropW : width;
         const int h = cropH > 0 ? cropH : height;
         const int effectiveCropX = cropW > 0 ? cropX : 0;
@@ -618,10 +616,12 @@ SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence
         if (desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D ||
             desc.Format != DXGI_FORMAT_NV12 ||
             desc.SampleDesc.Count != 1 ||
+            !(desc.Flags & D3D12_RESOURCE_FLAG_ALLOW_SIMULTANEOUS_ACCESS) ||
             (desc.Flags & D3D12_RESOURCE_FLAG_VIDEO_DECODE_REFERENCE_ONLY) ||
             w <= 0 || h <= 0 || effectiveCropX < 0 || effectiveCropY < 0 ||
-            UINT64(effectiveCropX + w) > desc.Width ||
-            UINT(effectiveCropY + h) > desc.Height)
+            (effectiveCropX & 1) || (effectiveCropY & 1) ||
+            UINT64(effectiveCropX) + UINT64((w + 1) & ~1) > desc.Width ||
+            UINT(effectiveCropY) + UINT((h + 1) & ~1) > desc.Height)
             throw std::runtime_error("Incompatible native NV12 resource");
 
         const UINT planeStride = UINT(desc.MipLevels) * desc.DepthOrArraySize;
@@ -633,19 +633,19 @@ SDL_Texture* D3D12VideoInterop::copyNative(ID3D12Resource* resource, ID3D12Fence
 
         p.allocate(w, h, color);
 
-        // Multi-slot ring selection:
-        // Look for an idle slot that is neither in-flight nor pending.
+        // Coalesce unsubmitted updates into the newest frame. Otherwise an
+        // older delayed fence could overwrite a newer presentation later.
         Impl::Slot* selected = nullptr;
+        for (auto& slot : p.slots) if (slot.pending) { selected = &slot; break; }
         for (auto& slot : p.slots) {
-            if (!slot.flight && !slot.pending) {
+            if (!selected && !slot.flight && !slot.pending && slot.texture != p.current) {
                 selected = &slot;
                 break;
             }
         }
 
         if (!selected) {
-            // All slots are active or pending. Defer rather than overwriting
-            // an unsubmitted frame and dropping reference frame ownership.
+            // All copy allocators are in flight. Preserve the last presentation.
             p.deferred = true;
             return p.current;
         }

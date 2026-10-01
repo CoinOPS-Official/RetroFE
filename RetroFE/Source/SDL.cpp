@@ -16,6 +16,9 @@
 
 
 #include "SDL.h"
+#ifdef RETROFE_HAVE_GST_VULKAN
+#include "Video/VulkanVideoInterop.h"
+#endif
 #include "Video/VideoFactory.h"
 #ifdef RETROFE_HAVE_D3D12
 #include "Video/D3D12VideoInterop.h"
@@ -627,6 +630,9 @@ bool SDL::initialize(Configuration& config) {
         // flags. SDL_SetWindowFullscreenMode() below controls
         // exclusive vs borderless fullscreen.
         SDL_WindowFlags windowFlags = 0;
+#ifdef RETROFE_HAVE_GST_VULKAN
+        if (SDLRenderDriver == "vulkan") windowFlags |= SDL_WINDOW_VULKAN;
+#endif
 
         std::string screenIndex =
             std::to_string(logicalScreen);
@@ -1092,6 +1098,14 @@ bool SDL::initialize(Configuration& config) {
 
         if (!renderer_[logicalScreen])
         {
+#ifdef RETROFE_HAVE_GST_VULKAN
+            if (SDLRenderDriver == "vulkan")
+                renderer_[logicalScreen] =
+                    VulkanVideoInterop::createRenderer(window_[logicalScreen]);
+#endif
+        }
+        if (!renderer_[logicalScreen])
+        {
             renderer_[logicalScreen] =
                 SDL_CreateRenderer(
                     window_[logicalScreen],
@@ -1270,11 +1284,17 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 	}
 
 	// Destroy renderers and windows
+#ifdef RETROFE_HAVE_GST_VULKAN
+	VulkanVideoInterop::drainRenderers();
+#endif
 	for (auto renderer : renderer_)
 	{
 		if (renderer) SDL_DestroyRenderer(renderer);
 	}
 	renderer_.clear();
+#ifdef RETROFE_HAVE_GST_VULKAN
+	VulkanVideoInterop::releaseRenderers();
+#endif
 
 	for (auto window : window_)
 	{
@@ -2582,18 +2602,18 @@ bool SDL::renderCopyFImpl(GeometryBatch* batch, SDL_Texture* texture, float alph
         return true;
     }
 
+#ifdef RETROFE_HAVE_GST_VULKAN
+    // SDL can submit an intermediate Vulkan batch before RenderPresent.
+    if (!VulkanVideoInterop::markForDraw(texture)) return false;
+#endif
+
     // One SDL command for base image + reflections + mirror copies.
-    if (batch) {
-        return batch->append(renderer_[m], texture, vertices.data(), vertexCount,
+    const bool drawn = batch
+        ? batch->append(renderer_[m], texture, vertices.data(), vertexCount,
+            indices.data(), indexCount)
+        : SDL_RenderGeometry(renderer_[m], texture, vertices.data(), vertexCount,
             indices.data(), indexCount);
-    }
-    return SDL_RenderGeometry(
-        renderer_[m],
-        texture,
-        vertices.data(),
-        vertexCount,
-        indices.data(),
-        indexCount);
+    return drawn;
 }
 
 namespace {
@@ -2626,11 +2646,18 @@ void SDL::invalidateVideoRendererFlush(SDL_Renderer* renderer) {
 bool SDL::startVideoFrame(SDL_Renderer* renderer) {
     if (!renderer) return false;
     invalidateVideoRendererFlush(renderer);
+#ifdef RETROFE_HAVE_GST_VULKAN
+    VulkanVideoInterop::startFrame(renderer);
+#endif
     return true;
 }
 
 bool SDL::submitVideoFrame(SDL_Renderer* renderer) {
     if (!renderer) return false;
+#ifdef RETROFE_HAVE_GST_VULKAN
+    if (VulkanVideoInterop::hasSharedDevice(renderer))
+        return true;
+#endif
 #ifdef RETROFE_HAVE_D3D12
     return D3D12VideoInterop::beginFrame(renderer);
 #else

@@ -123,3 +123,13 @@ monitors. Compare `opengles2` and `opengl` if context sharing fails. Include
 `log.txt`, driver/GPU details, session type (Wayland/X11), GStreamer version,
 and CMake output when reporting a failure. A clean software comparison can be
 built with `-DRETROFE_ENABLE_GSTREAMER_GL=OFF`.
+
+## Nonblocking regression checks
+
+The current GL/EGL changes require Linux runtime validation. Exercise rapid
+retarget/unload, size changes, and a busy GPU while presenting UI continuously.
+Ring pressure should defer the next frame and preserve the current texture.
+GStreamer GL samples without sync metadata request worker-side system-memory
+fallback instead of running producer `glFinish` on the UI thread. Teardown and
+exceptional driver-error recovery may still wait. Watch decoder-sample retention
+and memory use through repeated playback cycles.

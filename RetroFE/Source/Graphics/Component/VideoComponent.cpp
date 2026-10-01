@@ -465,6 +465,13 @@ void VideoComponent::prepareVideoFrame() {
         return;
     }
 
+    // Keep the selected/incoming item ready even while its visibility tween
+    // starts at zero. Other offscreen videos can retain their latest decoded
+    // frame until the first render in which they become visible.
+    if (!isHighPriority_ && !checkVisibility()) {
+        return;
+    }
+
     if (videoInst_->isPipelineReady()) {
         videoInst_->updateFrame();
         if (!dimensionsUpdated_) {

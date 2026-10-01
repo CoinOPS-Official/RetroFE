@@ -12,6 +12,7 @@ set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "@CMAKE_LINKER@")
 get_filename_component(tool_dir "@CMAKE_LINKER@" DIRECTORY)
 set(CMAKE_GET_RUNTIME_DEPENDENCIES_COMMAND "${tool_dir}/dumpbin.exe")
 set(seeds "@runtime_dlls@")
+set(gst_plugin_files "@gst_plugin_files@")
 list(APPEND seeds ${EXTRA_FILES})
 # Source-built packages can expose only configuration-specific locations.
 # Include resolved target DLL directories when locating their dependencies.
@@ -20,28 +21,62 @@ foreach(path IN LISTS EXTRA_FILES)
     get_filename_component(dir "${path}" DIRECTORY)
     list(APPEND search_dirs "${dir}")
 endforeach()
+# Explicit dependency seeds take priority over similarly named SDK libraries
+# (for example the application's libcurl versus GStreamer's bundled libcurl).
+set(preferred_seeds ${seeds})
+list(REVERSE preferred_seeds)
+foreach(path IN LISTS preferred_seeds)
+    get_filename_component(dir "${path}" DIRECTORY)
+    list(APPEND search_dirs "${dir}")
+endforeach()
 list(APPEND search_dirs @runtime_dirs@)
 list(REMOVE_DUPLICATES search_dirs)
 set(scanner "@scanner@")
+# Inspect the executable away from old staged DLLs so dependency resolution
+# selects the configured SDKs rather than conflicting copies from a prior build.
+get_filename_component(executable_name "${RUNTIME_EXECUTABLE}" NAME)
+string(SHA256 output_id "${output_real}")
+set(analysis_dir "${build_real}/runtime-dependencies/${output_id}")
+file(MAKE_DIRECTORY "${analysis_dir}")
+set(analysis_executable "${analysis_dir}/${executable_name}")
+file(COPY_FILE "${RUNTIME_EXECUTABLE}" "${analysis_executable}" ONLY_IF_DIFFERENT)
 file(GET_RUNTIME_DEPENDENCIES
     LIBRARIES ${seeds}
-    EXECUTABLES "${scanner}"
+    EXECUTABLES "${scanner}" "${analysis_executable}"
     DIRECTORIES ${search_dirs}
     PRE_EXCLUDE_REGEXES "api-ms-.*" "ext-ms-.*"
     POST_EXCLUDE_REGEXES ".*[Ww][Ii][Nn][Dd][Oo][Ww][Ss][/\\].*"
     RESOLVED_DEPENDENCIES_VAR dependencies
     UNRESOLVED_DEPENDENCIES_VAR missing)
+file(REMOVE "${analysis_executable}")
 if(missing)
     message(FATAL_ERROR "Unresolved runtime dependencies: ${missing}")
 endif()
 set(files ${seeds} ${dependencies} "${scanner}")
 list(REMOVE_DUPLICATES files)
+set(plugin_names)
+foreach(path IN LISTS gst_plugin_files)
+    get_filename_component(name "${path}" NAME)
+    string(TOLOWER "${name}" name)
+    list(APPEND plugin_names "${name}")
+endforeach()
+file(MAKE_DIRECTORY "${OUTPUT_DIR}/gst-plugins")
 set(keep)
 foreach(path IN LISTS files)
     get_filename_component(name "${path}" NAME)
     string(TOLOWER "${name}" name)
-    list(APPEND keep "${name}")
-    file(COPY_FILE "${path}" "${OUTPUT_DIR}/${name}" ONLY_IF_DIFFERENT)
+    # Only loadable plugins belong in the scan directory. Shared libraries
+    # remain beside the executable for Windows import resolution and scanner use.
+    if(name IN_LIST plugin_names)
+        set(relative "gst-plugins/${name}")
+    else()
+        set(relative "${name}")
+    endif()
+    if(relative IN_LIST keep)
+        continue()
+    endif()
+    list(APPEND keep "${relative}")
+    file(COPY_FILE "${path}" "${OUTPUT_DIR}/${relative}" ONLY_IF_DIFFERENT)
 endforeach()
 # Remove only known GStreamer-distribution DLLs from this generated output,
 # never recurse or touch an installation, backup, or arbitrary user files.
@@ -52,6 +87,17 @@ foreach(path IN LISTS gst_candidates)
     string(TOLOWER "${name}" name)
     if(NOT name IN_LIST keep)
         file(REMOVE "${output_real}/${name}")
+    endif()
+endforeach()
+# Prune obsolete plugins from the generated scan directory as well, including
+# the optional locally built Vulkan plugin when a build switches Vulkan off.
+file(GLOB plugin_candidates "@GSTREAMER_ROOT@/lib/gstreamer-1.0/*.dll")
+list(APPEND plugin_candidates "gstvulkan.dll")
+foreach(path IN LISTS plugin_candidates)
+    get_filename_component(name "${path}" NAME)
+    string(TOLOWER "${name}" name)
+    if(NOT "gst-plugins/${name}" IN_LIST keep)
+        file(REMOVE "${output_real}/gst-plugins/${name}")
     endif()
 endforeach()
 # SDK upgrades can change FFmpeg DLL majors. Remove only recognized FFmpeg
@@ -67,7 +113,12 @@ foreach(path IN LISTS ffmpeg_candidates)
 endforeach()
 # These obsolete application libraries must not survive an incremental build.
 if(REMOVE_LEGACY_TESTS)
-    foreach(test retrofe_sdl3_smoke_tests retrofe_high_score_change_tests retrofe_mame_software_resolver_tests)
+    foreach(test retrofe_sdl3_smoke_tests retrofe_high_score_change_tests retrofe_mame_software_resolver_tests
+            retrofe_text_benchmark retrofe_page_traversal_benchmark
+            retrofe_vulkan_context_smoke retrofe_vulkan_interop_smoke retrofe_ffmpeg_vulkan_interop_smoke
+            upstream-vkdownload upstream-vkupload upstream-vkimagebufferpool
+            openhi2txt_xml_parser_tests openhi2txt_open_extension_tests openhi2txt_input_planner_tests
+            openhi2txt_live_protocol_tests openhi2txt_identity_resolution_tests)
         foreach(extension exe pdb ilk)
             file(REMOVE "${output_real}/${test}.${extension}")
         endforeach()

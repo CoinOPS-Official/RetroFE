@@ -60,6 +60,7 @@ struct GLVideoInterop::Impl {
     bool ready = false;
     bool gles = false;
     bool direct = false; // true = native NV12 GLMemory Y/UV wrapping
+    bool deferred = false;
     SDL_Texture* directTexture = nullptr;
     GstSample* directSample = nullptr;
     std::string error = "OpenGL/OpenGL ES renderer required";
@@ -101,12 +102,12 @@ struct GLVideoInterop::Impl {
             } else ++it;
         }
     }
-    void clear() {
+    void clear(bool drain = false) {
         if (!SDL_FlushRenderer(renderer)) {
             LOG_WARNING("GLVideoInterop", "SDL_FlushRenderer failed during clear: " + std::string(SDL_GetError()));
         }
         releaseDirect();
-        retire(true);
+        retire(drain);
         for (auto& slot : slots) {
             if (slot.texture) SDL_DestroyTexture(slot.texture);
             if (slot.native) wrapped->gl_vtable->DeleteTextures(1, &slot.native);
@@ -118,7 +119,7 @@ struct GLVideoInterop::Impl {
         if (wrapped) {
             CurrentContext current(renderer, native);
             if (current.valid && gst_gl_context_activate(wrapped, TRUE)) {
-                clear();
+                clear(true);
                 if (framebuffer) wrapped->gl_vtable->DeleteFramebuffers(1, &framebuffer);
                 gst_gl_context_activate(wrapped, FALSE);
             }
@@ -184,6 +185,10 @@ GLVideoInterop::GLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_unique<
         if (!factory) { p.error = "missing GStreamer plugin: glcolorconvert"; return; }
         gst_object_unref(factory);
     }
+    if (!gl->FenceSync || !gl->ClientWaitSync || !gl->DeleteSync) {
+        p.error = "GL interop requires nonblocking sync objects";
+        return;
+    }
     p.ready = true;
     LOG_INFO("GStreamerVideo", (gl->FenceSync && gl->ClientWaitSync && gl->DeleteSync
         ? "GL interop synchronization: GPU fences"
@@ -192,6 +197,7 @@ GLVideoInterop::GLVideoInterop(SDL_Renderer* renderer) : impl_(std::make_unique<
 GLVideoInterop::~GLVideoInterop() = default;
 bool GLVideoInterop::available() const { return impl_->ready; }
 const char* GLVideoInterop::reason() const { return impl_->error.c_str(); }
+bool GLVideoInterop::deferred() const { return impl_->deferred; }
 const char* GLVideoInterop::description() const {
     return impl_->direct
         ? "OpenGL direct NV12 GLMemory Y/UV wrapping; SDL YUV conversion; no RGBA intermediate"
@@ -214,7 +220,7 @@ void GLVideoInterop::discardFrames() {
             LOG_WARNING("GLVideoInterop", "SDL_FlushRenderer failed during discardFrames: " + std::string(SDL_GetError()));
         }
         p.releaseDirect();
-        p.retire(true);
+        p.retire(false);
         gst_gl_context_activate(p.wrapped, FALSE);
     }
 }
@@ -306,6 +312,7 @@ GstElement* GLVideoInterop::wrapSink(GstElement* sink) {
 
 SDL_Texture* GLVideoInterop::copy(GstSample* sample) {
     auto& p = *impl_;
+    p.deferred = false;
     if (!available()) return nullptr;
     auto* buffer = gst_sample_get_buffer(sample);
     GstVideoInfo info{};
@@ -323,7 +330,8 @@ SDL_Texture* GLVideoInterop::copy(GstSample* sample) {
         return nullptr;
     }
     auto* gl = p.wrapped->gl_vtable;
-    p.retire(p.pending.size() >= 4);
+    p.retire(false);
+    if (p.pending.size() >= 4) { p.deferred = true; return nullptr; }
 
     if (p.direct) {
         p.error = "expected shared NV12 GLMemory Y/UV planes";
@@ -345,9 +353,8 @@ SDL_Texture* GLVideoInterop::copy(GstSample* sample) {
         if (auto* sync = gst_buffer_get_gl_sync_meta(buffer)) {
             gst_gl_sync_meta_wait(sync, p.wrapped);
         } else {
-            // Correctness fallback only; log once through reason if this becomes common.
-            gst_gl_context_thread_add(plane[0]->mem.context,
-                [](GstGLContext* c, gpointer) { c->gl_vtable->Finish(); }, nullptr);
+            p.error = "GL producer did not provide synchronization metadata";
+            return nullptr;
         }
 
         const int w = GST_VIDEO_INFO_WIDTH(&info);
@@ -395,7 +402,7 @@ SDL_Texture* GLVideoInterop::copy(GstSample* sample) {
         !gst_gl_context_can_share(p.wrapped, source->mem.context)) return nullptr;
 
     if (auto* sync = gst_buffer_get_gl_sync_meta(buffer)) gst_gl_sync_meta_wait(sync, p.wrapped);
-    else gst_gl_context_thread_add(source->mem.context, [](GstGLContext* c, gpointer) { c->gl_vtable->Finish(); }, nullptr);
+    else { p.error = "GL producer did not provide synchronization metadata"; return nullptr; }
 
     const int w = gst_gl_memory_get_texture_width(source), h = gst_gl_memory_get_texture_height(source);
     if (w <= 0 || h <= 0) return nullptr;

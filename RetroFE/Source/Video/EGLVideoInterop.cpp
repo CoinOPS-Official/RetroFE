@@ -361,6 +361,7 @@ struct EGLVideoInterop::Impl {
     std::vector<Pending> idle;
 
     bool preferDirect = true;
+    bool deferred = false;
     int visibleWidth = 0;
     int visibleHeight = 0;
 
@@ -464,9 +465,9 @@ struct EGLVideoInterop::Impl {
         if (texture && width == w && height == h)
             return;
 
-        // The previous conversion texture may still be referenced by queued GPU
-        // work. At a size transition, drain before replacing its storage.
-        drainPending();
+        // SDL draws have been flushed. GL retains deleted objects for submitted
+        // commands; imported source owners remain in pending until their fences.
+        retireCompleted();
 
         if (texture)
             SDL_DestroyTexture(texture);
@@ -636,16 +637,18 @@ void EGLVideoInterop::discardFrames() noexcept {
         }
         Context current(p.renderer, p.native);
         p.releaseDirectAfterFlush();
-        p.drainPending();
+        p.retireCompleted();
     } catch (const std::exception& e) {
         LOG_WARNING("EGLVideoInterop", "discardFrames exception: " + std::string(e.what()));
     }
     // Keep output, wrapper, FBO and shader for compatible future media.
 }
 SDL_Texture* EGLVideoInterop::copy(GstSample* sample) { return copyFrame(sample, nullptr); }
+bool EGLVideoInterop::deferred() const { return impl_->deferred; }
 SDL_Texture* EGLVideoInterop::copy(const EGLDmaBufFrame& frame) { return copyFrame(nullptr, &frame); }
 SDL_Texture* EGLVideoInterop::copyFrame(GstSample* sample, const EGLDmaBufFrame* native) {
     auto& p=*impl_; if (!p.ready) return nullptr;
+    p.deferred = false;
     EGLImageKHR image=EGL_NO_IMAGE_KHR; GLuint input=0; SDL_Texture* reusableWrapper=nullptr;
     try {
         Frame frame = native ? Frame(*native) : Frame(sample);
@@ -666,10 +669,13 @@ SDL_Texture* EGLVideoInterop::copyFrame(GstSample* sample, const EGLDmaBufFrame*
         // operation is transactional, including fence retirement.
         GLStateGuard restore;
 
-        p.releaseDirectAfterFlush();
         p.retireCompleted();
-        if (p.pending.size() >= Impl::kMaxPending)
-            p.waitOldest();
+        // Preserve the current direct image when the consumer is behind.
+        // Retiring it before this check would invalidate the caller's texture.
+        if (p.pending.size() + (p.direct.sample ? 1 : 0) >= Impl::kMaxPending) {
+            p.deferred = true;
+            return nullptr;
+        }
 
         image=p.createImage(p.display,EGL_NO_CONTEXT,EGL_LINUX_DMA_BUF_EXT,nullptr,frame.attrs.data());
         ensure(image!=EGL_NO_IMAGE_KHR,"EGL DMA-BUF image import failed");
@@ -714,6 +720,7 @@ SDL_Texture* EGLVideoInterop::copyFrame(GstSample* sample, const EGLDmaBufFrame*
                 if (wrapper) LOG_DEBUG("GStreamerVideo", "Created reusable EGL direct texture slot " + std::to_string(frame.crop.w) + "x" + std::to_string(frame.crop.h));
             }
             if (wrapper) {
+                p.releaseDirectAfterFlush();
                 p.direct = {owner, image, input, EGL_NO_SYNC_KHR, wrapper, frame.crop.w, frame.crop.h};
                 image = EGL_NO_IMAGE_KHR; input = 0;
                 p.visibleWidth = frame.crop.w; p.visibleHeight = frame.crop.h;
@@ -724,6 +731,7 @@ SDL_Texture* EGLVideoInterop::copyFrame(GstSample* sample, const EGLDmaBufFrame*
             // Clear errors from the failed wrapper attempt before conversion.
             while (glGetError() != GL_NO_ERROR) {}
         }
+        p.releaseDirectAfterFlush();
         p.resize(frame.crop.w,frame.crop.h);
         p.visibleWidth = frame.crop.w; p.visibleHeight = frame.crop.h;
         glActiveTexture(GL_TEXTURE0); glBindTexture(GL_TEXTURE_EXTERNAL_OES,input);

@@ -107,7 +107,7 @@ public:
     bool stop() override;
     bool isReadyForReuse() const override;
     SDL_Texture* getTexture() const override;
-    bool usingGpuTexture() const override { return texture_ && texture_ == gpuTexture_; }
+    bool usingGpuTexture() const override;
     uint64_t gpuFrameCount() const override { return gpuFrameCount_; }
     void updateFrame() override; // Renamed from draw
     void setNumLoops(int n) override;

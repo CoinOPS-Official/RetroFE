@@ -36,6 +36,9 @@ extern "C" {
 extern "C" {
 #include <libavutil/hwcontext_d3d12va.h>
 }
+#ifdef RETROFE_HAVE_GST_VULKAN
+#include "VulkanVideoInterop.h"
+#endif
 #endif
 #ifdef _WIN32
 #include <d3d11.h>
@@ -212,9 +215,23 @@ static SharedHwEntry acquireSharedHardware(SDL_Renderer* renderer) {
 
     AVBufferRef* hw = nullptr;
     AVPixelFormat fmt = AV_PIX_FMT_NONE;
+    bool sharedVulkan = false;
+
+#ifdef RETROFE_HAVE_GST_VULKAN
+    sharedVulkan = VulkanVideoInterop::hasSharedDevice(renderer);
+    if (Configuration::HardwareVideoAccel && sharedVulkan) {
+        const SDL_PropertiesID properties = SDL_GetRendererProperties(renderer);
+        constexpr const char* failedProperty = "retrofe.ffmpeg.vulkan.device-failed";
+        if (!SDL_GetBooleanProperty(properties, failedProperty, false)) {
+            hw = VulkanVideoInterop::createFFmpegDevice(renderer);
+            if (!hw) SDL_SetBooleanProperty(properties, failedProperty, true);
+        }
+        if (hw) fmt = AV_PIX_FMT_VULKAN;
+    }
+#endif
 
 #ifdef RETROFE_HAVE_D3D12
-    if (Configuration::HardwareVideoAccel) {
+    if (Configuration::HardwareVideoAccel && !hw) {
         auto* device = static_cast<ID3D12Device*>(
             SDL_GetPointerProperty(SDL_GetRendererProperties(renderer),
                 SDL_PROP_RENDERER_D3D12_DEVICE_POINTER, nullptr));
@@ -274,7 +291,7 @@ static SharedHwEntry acquireSharedHardware(SDL_Renderer* renderer) {
     }
 #endif
 #ifdef _WIN32
-    if (Configuration::HardwareVideoAccel && !hw) {
+    if (Configuration::HardwareVideoAccel && !hw && !sharedVulkan) {
         auto* d3d11Device = static_cast<ID3D11Device*>(
             SDL_GetPointerProperty(SDL_GetRendererProperties(renderer),
                                    SDL_PROP_RENDERER_D3D11_DEVICE_POINTER, nullptr));
@@ -294,7 +311,7 @@ static SharedHwEntry acquireSharedHardware(SDL_Renderer* renderer) {
         }
     }
 #endif
-    if (Configuration::HardwareVideoAccel && !hw) {
+    if (Configuration::HardwareVideoAccel && !hw && !sharedVulkan) {
 #ifdef _WIN32
         const auto type = AV_HWDEVICE_TYPE_D3D11VA;
         const auto defFmt = AV_PIX_FMT_D3D11;
@@ -372,6 +389,10 @@ struct FFmpegVideo::Impl {
     std::shared_ptr<AudioBus::Handle> audio;
     AVBufferRef *hardware = nullptr;
     AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;
+#ifdef RETROFE_HAVE_GST_VULKAN
+    std::unique_ptr<VulkanVideoInterop> vulkanInterop;
+    bool vulkanInteropFailed = false;
+#endif
 #ifdef RETROFE_HAVE_D3D12
     std::unique_ptr<D3D12VideoInterop> interop;
 #endif
@@ -421,6 +442,13 @@ struct FFmpegVideo::Impl {
             hardware = shared.deviceCtx;
             hardwareFormat = shared.format;
 
+#ifdef RETROFE_HAVE_GST_VULKAN
+            if (hardware && hardwareFormat == AV_PIX_FMT_VULKAN) {
+                vulkanInterop = std::make_unique<VulkanVideoInterop>(r, true);
+                if (!vulkanInterop->available()) vulkanInterop.reset();
+            }
+#endif
+
 #ifdef RETROFE_HAVE_D3D12
             if (hardware && hardwareFormat == AV_PIX_FMT_D3D12) {
                 interop = std::make_unique<D3D12VideoInterop>(r);
@@ -460,6 +488,9 @@ struct FFmpegVideo::Impl {
 #ifdef RETROFE_HAVE_EGL_DMABUF
         egl.reset();
 #endif
+#ifdef RETROFE_HAVE_GST_VULKAN
+        vulkanInterop.reset();
+#endif
 #ifdef RETROFE_HAVE_D3D12
         interop.reset();
 #endif
@@ -479,6 +510,9 @@ struct FFmpegVideo::Impl {
     }
     void request(const std::string &path, int64_t seek, bool unload, VideoState state, bool keepFrame = false) {
         keepFrame = keepFrame && !unload && path == requested;
+#ifdef RETROFE_HAVE_GST_VULKAN
+        if (vulkanInterop && !keepFrame) vulkanInterop->discardFrames();
+#endif
 #ifdef RETROFE_HAVE_D3D12
         if (interop && !keepFrame) {
             if (unload)
@@ -1383,8 +1417,8 @@ struct FFmpegVideo::Impl {
             }
 #endif
             std::unique_lock lock(mutex);
-            wake.wait(lock, [&] { return quit || revision != rev || videos.size() < 3; });
-            if (quit || revision != rev)
+            wake.wait(lock, [&] { return quit || fallbackRequested || revision != rev || videos.size() < 3; });
+            if (quit || fallbackRequested || revision != rev)
                 return false;
             videos.push_back({
                 std::move(f),
@@ -1862,6 +1896,48 @@ void FFmpegVideo::updateFrame() {
         if (f->colorspace == AVCOL_SPC_BT2020_NCL)
             color = f->color_range == AVCOL_RANGE_JPEG ? SDL_COLORSPACE_BT2020_FULL
                                                        : SDL_COLORSPACE_BT2020_LIMITED;
+#ifdef RETROFE_HAVE_GST_VULKAN
+        if (f->format == AV_PIX_FMT_VULKAN && p.vulkanInterop &&
+            !p.vulkanInteropFailed && !framePerspective) {
+            if (auto* texture = p.vulkanInterop->copy(f.get(), color)) {
+                if (p.texture && p.texture != p.gpuTexture)
+                    SDL_DestroyTexture(p.texture);
+                p.texture = p.gpuTexture = texture;
+                ++p.gpuFrames;
+                const int cropW = f->width - int(f->crop_left) - int(f->crop_right);
+                const int cropH = f->height - int(f->crop_top) - int(f->crop_bottom);
+                p.dim = {cropW > 0 ? cropW : f->width,
+                         cropH > 0 ? cropH : f->height};
+                SDL_SetTextureBlendMode(texture,
+                    p.soft ? softBlend : SDL_BLENDMODE_BLEND);
+                {
+                    std::lock_guard lock(p.mutex);
+                    p.valid = true;
+                    p.needsFrame = false;
+                }
+                if (!p.logged) {
+                    LOG_INFO("FFmpegVideo", "Playback ACTIVE: FFmpeg Vulkan hardware decode / persistent GPU copy ring");
+                    p.logged = true;
+                }
+                if (repeat)
+                    p.request(p.requested, 0, false, VideoState::Playing, true);
+                return;
+            }
+            if (p.vulkanInterop->deferred()) {
+                // Retain one unpresented frame so paused preroll can retry when
+                // decoding finishes. A newer worker update takes precedence.
+                std::lock_guard lock(p.mutex);
+                if (p.videos.empty()) p.videos.push_front({f, p.now(), false, false});
+                return;
+            }
+            LOG_WARNING("FFmpegVideo", std::string("Vulkan image import failed: ") +
+                p.vulkanInterop->reason() + "; switching to software decoding");
+            p.vulkanInterop->discardFrames();
+            p.vulkanInteropFailed = true;
+            p.fallbackRequested = true;
+            p.wake.notify_all();
+        }
+#endif
 #ifdef RETROFE_HAVE_D3D12
         if (f->format == AV_PIX_FMT_D3D12 && p.interop && !framePerspective) {
             if (!p.interop->available()) {
@@ -1931,6 +2007,11 @@ void FFmpegVideo::updateFrame() {
             }
             if (p.interop->deferred()) {
                 if (!p.interop->currentTexture()) {
+                    if (!p.interop->retainsDeferredFrame()) {
+                        std::lock_guard lock(p.mutex);
+                        if (p.videos.empty()) p.videos.push_front({f, p.now(), false, false});
+                        return;
+                    }
                     p.nativePending = true;
                     p.nativePendingSinceNs = SDL_GetTicksNS();
                     p.dim = {visibleW, visibleH};
@@ -1964,7 +2045,10 @@ void FFmpegVideo::updateFrame() {
             D3D11_TEXTURE2D_DESC desc{};
             tex->GetDesc(&desc);
             unsigned int subresource = static_cast<unsigned int>(reinterpret_cast<intptr_t>(f->data[1]));
-            if (auto *texture = p.interop11->copyNative(tex, subresource, desc, color)) {
+            if (auto *texture = p.interop11->copyNative(tex, subresource, desc, color,
+                    static_cast<int>(f->crop_left), static_cast<int>(f->crop_top),
+                    f->width - static_cast<int>(f->crop_left + f->crop_right),
+                    f->height - static_cast<int>(f->crop_top + f->crop_bottom))) {
                 if (p.texture && p.texture != p.gpuTexture)
                     SDL_DestroyTexture(p.texture);
                 p.texture = p.gpuTexture = texture;
@@ -1996,6 +2080,7 @@ void FFmpegVideo::updateFrame() {
             try {
                 auto native = ffmpegDmaBufFrame(f, mapped);
                 auto* texture = p.egl->copy(native);
+                if (!texture && p.egl->deferred()) return;
                 if (!texture) throw std::runtime_error(p.egl->reason());
                 if (p.texture && p.texture != p.gpuTexture) SDL_DestroyTexture(p.texture);
                 p.texture = p.gpuTexture = texture;
@@ -2018,14 +2103,13 @@ void FFmpegVideo::updateFrame() {
 #endif
         const bool downloaded = f->hw_frames_ctx != nullptr;
         if (f->hw_frames_ctx) {
-            auto cpu = frame();
-            if (av_hwframe_transfer_data(cpu.get(), f.get(), 0) < 0) {
-                LOG_ERROR("FFmpegVideo", "Hardware frame download failed");
-                return;
+            // Never download a decoder surface on the UI thread. The worker
+            // reopens with software decoding and prepares subsequent CPU frames.
+            if (!p.fallbackRequested.exchange(true)) {
+                LOG_WARNING("FFmpegVideo", "GPU presentation unavailable; requesting software decoding fallback");
+                p.wake.notify_all();
             }
-            av_frame_copy_props(cpu.get(), f.get());
-            f = cpu;
-            cpuPrepared = false;
+            return;
         }
 
         if (!cpuPrepared) {

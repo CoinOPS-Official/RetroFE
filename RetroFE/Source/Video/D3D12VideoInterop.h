@@ -10,7 +10,7 @@ struct ID3D12Device;
 // All methods except the GStreamer context callback run on the render thread.
 // copy()/copyNative() prepare a frame; beginFrame() submits transfers before SDL draws.
 // FFmpeg-native frames that are not producer-ready are deferred without stalling
-// SDL's D3D12 graphics queue; GStreamer retains its existing queue-wait contract.
+// SDL's D3D12 graphics queue. GStreamer uses the same nonblocking contract.
 class D3D12VideoInterop {
 public:
     explicit D3D12VideoInterop(SDL_Renderer* renderer);
@@ -22,7 +22,8 @@ public:
     bool proposeAllocation(GstQuery*) { return false; }
     SDL_Texture* copy(GstSample* sample);
     // Decoder-neutral entry point. Resource must belong to SDL's device, be
-    // NV12, be in COMMON once producer/value is reached, and remain alive
+    // NV12 with ALLOW_SIMULTANEOUS_ACCESS, be in COMMON once producer/value
+    // is reached, and remain alive
     // through owner until the copy fence retires it.
     SDL_Texture* copyNative(ID3D12Resource* resource, ID3D12Fence* producer,
         uint64_t value, unsigned yPlane, unsigned uvPlane, int width, int height,
@@ -31,6 +32,7 @@ public:
     void discardFrames();
     void invalidateFrame();
     bool deferred() const;
+    bool retainsDeferredFrame() const;
     SDL_Texture* currentTexture() const; // only a successfully submitted presentation
     static bool beginFrame(SDL_Renderer* renderer);
     // Opt-in GPU fault breadcrumbs; call before SDL creates its D3D12 device.

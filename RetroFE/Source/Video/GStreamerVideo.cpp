@@ -37,6 +37,9 @@
 #include <gst/gstdebugutils.h>
 #include <gst/video/video.h>
 #include <gst/app/gstappsink.h>
+#ifdef RETROFE_HAVE_GST_VULKAN
+#include <gst/vulkan/vulkan.h>
+#endif
 #include <sstream>
 #include <iomanip>
 #include <sys/stat.h>
@@ -555,6 +558,22 @@ void GStreamerVideo::initializePlugins() {
 					"GStreamerVideo",
 					"D3D12 hardware decoding requested; awaiting frame verification");
 			}
+#ifdef RETROFE_HAVE_GST_VULKAN
+			else if (rendererBackend == "vulkan" &&
+				VulkanVideoInterop::supportsVideo(SDL::getRenderer(0)))
+			{
+				for (const char* codec : { "h264", "h265" })
+					enablePlugin(std::string("vulkan") + codec + "dec");
+				for (const char* codec : { "h264", "h265", "vp9", "mpeg2", "av1" }) {
+					disablePlugin(std::string("d3d11") + codec + "dec");
+					disablePlugin(std::string("d3d12") + codec + "dec");
+				}
+				disablePlugin("d3d11vp8dec");
+				disablePlugin("qsvh264dec");
+				disablePlugin("qsvh265dec");
+				LOG_INFO("GStreamerVideo", "Vulkan Video hardware decoding requested");
+			}
+#endif
 		}
 		else
 		{
@@ -613,6 +632,15 @@ void GStreamerVideo::setNumLoops(int n) {
 }
 
 SDL_Texture* GStreamerVideo::getTexture() const {
+#ifdef _WIN32
+	if (gpuInterop_ && gpuInterop_->submitsPresentation() &&
+		presentationEpoch_.load(std::memory_order_acquire) == playbackEpoch_.load(std::memory_order_acquire)) {
+		if (auto* texture = gpuInterop_->currentTexture()) {
+			SDL_SetTextureBlendMode(texture, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
+			return texture;
+		}
+	}
+#endif
 	if (!isTextureReady_ ||
 		!textureValid_.load(std::memory_order_acquire))
 	{
@@ -620,6 +648,13 @@ SDL_Texture* GStreamerVideo::getTexture() const {
 	}
 
 	return texture_;
+}
+bool GStreamerVideo::usingGpuTexture() const {
+#ifdef _WIN32
+	if (gpuInterop_ && gpuInterop_->submitsPresentation())
+		return getTexture() && getTexture() == gpuInterop_->currentTexture();
+#endif
+	return getTexture() && texture_ == gpuTexture_;
 }
 
 bool GStreamerVideo::initialize() {
@@ -2490,6 +2525,12 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 
 	if (isHw && GST_IS_VIDEO_DECODER(element)) {
 		if (auto* factory = gst_element_get_factory(element)) {
+			#ifdef RETROFE_HAVE_GST_VULKAN
+			const char* factoryName = GST_OBJECT_NAME(factory);
+			if (self && self->gpuInterop_ && self->gpuInterop_->available() &&
+				factoryName && g_str_has_prefix(factoryName, "vulkan"))
+				self->gpuInterop_->configureElement(element);
+			#endif
 			LOG_INFO(
 				"GStreamerVideo",
 				std::string("playbin3 created video decoder: ") +
@@ -2851,6 +2892,19 @@ void GStreamerVideo::createSdlTexture() {
 }
 
 void GStreamerVideo::updateFrame() {
+#ifdef _WIN32
+	if (gpuInterop_ && gpuInterop_->submitsPresentation() &&
+		presentationEpoch_.load(std::memory_order_acquire) == playbackEpoch_.load(std::memory_order_acquire)) {
+		if (auto* submitted = gpuInterop_->currentTexture()) {
+			if (texture_ != submitted) ++gpuFrameCount_;
+			if (texture_ && texture_ != gpuTexture_) SDL_DestroyTexture(texture_);
+			texture_ = gpuTexture_ = submitted;
+			SDL_SetTextureBlendMode(submitted, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
+			isTextureReady_ = true;
+			textureValid_.store(true, std::memory_order_release);
+		}
+	}
+#endif
 	if (pendingCpuFallback_.exchange(false, std::memory_order_acq_rel)) {
 		const auto file = currentFile_;
 		disableInterop_ = true;
@@ -2910,7 +2964,10 @@ void GStreamerVideo::updateFrame() {
 #ifdef RETROFE_HAVE_EGL_DMABUF
 			dimensions_.store({gpuInterop_->width(), gpuInterop_->height()}, std::memory_order_release);
 #endif
-			++gpuFrameCount_;
+#ifdef _WIN32
+			if (!gpuInterop_->submitsPresentation())
+#endif
+				++gpuFrameCount_;
 			SDL_SetTextureBlendMode(texture_, softOverlay_ ? softOverlayBlendMode : SDL_BLENDMODE_BLEND);
 			isTextureReady_ = true;
 			textureValid_.store(true, std::memory_order_release);
@@ -2922,20 +2979,40 @@ void GStreamerVideo::updateFrame() {
 			gst_sample_unref(sampleToProcess);
 			return;
 		}
-#ifdef _WIN32
-		if (gpuInterop_->deferred()) { gst_sample_unref(sampleToProcess); return; }
-#endif
+		if (gpuInterop_->deferred()) {
+			if (!gpuInterop_->retainsDeferredFrame() &&
+				sampleEpoch == playbackEpoch_.load(std::memory_order_acquire) &&
+				sampleEpoch == presentationEpoch_.load(std::memory_order_acquire)) {
+				std::lock_guard<std::mutex> lock(sampleMutex_);
+				if (!stagedSample_.sample) {
+					stagedSample_.sample = sampleToProcess;
+					stagedSample_.epoch = sampleEpoch;
+					return;
+				}
+			}
+			gst_sample_unref(sampleToProcess);
+			return;
+		}
 		if (!loggedUpload_) LOG_INFO("GStreamerVideo", std::string("GPU texture interop fallback: ") + gpuInterop_->reason() + "; " + currentFile_);
-#ifdef RETROFE_HAVE_EGL_DMABUF
-		// Never CPU-map a tiled DMA_DRM frame as ordinary NV12/RGBA. Reopen
-		// with system-memory negotiation through the existing recovery path.
+		if (gst_buffer_n_memory(buf) > 0 &&
+			!gst_memory_is_type(gst_buffer_peek_memory(buf, 0), GST_ALLOCATOR_SYSMEM)) {
+		// Decoder-owned DMA_DRM and VulkanImage memory cannot be treated as
+		// ordinary CPU NV12/RGBA. Reopen with system-memory negotiation.
 		isTextureReady_ = false;
 		textureValid_.store(false, std::memory_order_release);
 		presentationEpoch_.store(0, std::memory_order_release);
 		pendingCpuFallback_.store(true, std::memory_order_release);
 		gst_sample_unref(sampleToProcess);
 		return;
-#endif
+		}
+	}
+	// A failed device can become unavailable after hardware caps were negotiated.
+	// Reopen on the worker instead of implicitly downloading native memory here.
+	if (gpuInterop_ && gst_buffer_n_memory(buf) > 0 &&
+		!gst_memory_is_type(gst_buffer_peek_memory(buf, 0), GST_ALLOCATOR_SYSMEM)) {
+		pendingCpuFallback_.store(true, std::memory_order_release);
+		gst_sample_unref(sampleToProcess);
+		return;
 	}
 	if (texture_ == gpuTexture_) { texture_ = nullptr; gpuTexture_ = nullptr; }
 	createSdlTexture();
