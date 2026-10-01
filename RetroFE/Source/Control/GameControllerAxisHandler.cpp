@@ -31,7 +31,7 @@ void GameControllerAxisHandler::reset()
 
 bool GameControllerAxisHandler::update(SDL_Event &e)
 {
-    if (e.type != SDL_EVENT_GAMEPAD_AXIS_MOTION || (joyid_ != -1 && e.gaxis.which != joyid_) || static_cast<SDL_GamepadAxis>(e.gaxis.axis) != axis_) return false;
+    if (e.type != SDL_EVENT_GAMEPAD_AXIS_MOTION || (joyid_ != -1 && e.gaxis.which != static_cast<SDL_JoystickID>(joyid_)) || static_cast<SDL_GamepadAxis>(e.gaxis.axis) != axis_) return false;
     pressed_ = (min_ <= e.gaxis.value && e.gaxis.value <= max_);
 
     return true;

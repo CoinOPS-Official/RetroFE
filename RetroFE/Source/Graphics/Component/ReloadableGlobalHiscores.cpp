@@ -864,7 +864,7 @@ void ReloadableGlobalHiscores::computeGridBaseline_(
 // ============================================================================
 
 void ReloadableGlobalHiscores::reloadTexture() {
-    auto renderTextOutlined = [&](SDL_Renderer* renderer, FontManager* font,
+    auto renderTextOutlined = [&](FontManager* font,
         const std::string& text, float x, float y, float finalScale) {
         if (text.empty()) return;
         const float targetHeight = finalScale * font->getMaxHeight();
@@ -1370,7 +1370,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
             if (!table.id.empty()) {
                 float w = measureTextWidthExact(font, table.id, finalScale);
                 float x = std::round((totalWCols - w) * 0.5f);
-                renderTextOutlined(renderer, font, table.id, drawX0 + x, y, finalScale);
+                renderTextOutlined(font, table.id, drawX0 + x, y, finalScale);
                 y += lineH;
             }
 
@@ -1382,7 +1382,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
                         const std::string& header = table.columns[c];
                         float hw = measureTextWidthExact(font, header, finalScale);
                         float xAligned = std::round(drawX0 + x + (colW[c] - hw) * 0.5f);
-                        renderTextOutlined(renderer, font, header, xAligned, y, finalScale);
+                        renderTextOutlined(font, header, xAligned, y, finalScale);
                     }
                     x += colW[c];
                     if (c + 1 < maxCols) x += colPad;
@@ -1404,7 +1404,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
                     const ColAlign a = ph ? ColAlign::Center : colAlignFor(c, maxCols);
                     const float xAligned = alignX(drawX0 + x, colW[c], tw, a);
                     if (!cell.empty())
-                        renderTextOutlined(renderer, font, cell, std::round(xAligned), y, finalScale);
+                        renderTextOutlined(font, cell, std::round(xAligned), y, finalScale);
                     x += colW[c];
                     if (c + 1 < maxCols) x += colPad;
                 }

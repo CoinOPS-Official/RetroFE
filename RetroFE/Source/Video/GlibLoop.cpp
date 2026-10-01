@@ -239,7 +239,7 @@ guint GlibLoop::addBusWatch(GstBus* bus, GstBusFunc func, gpointer user_data, GD
         return 0;
     }
     g_source_set_priority(source, priority);
-    g_source_set_callback(source, reinterpret_cast<GSourceFunc>(func), user_data, notify);
+    g_source_set_callback(source, G_SOURCE_FUNC(func), user_data, notify);
     const guint id = g_source_attach(source, context());
     g_source_unref(source);
     return id;

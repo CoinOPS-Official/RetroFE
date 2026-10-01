@@ -304,9 +304,9 @@ GstElement* GLVideoInterop::wrapSink(GstElement* sink) {
         return nullptr;
     }
     gst_object_unref(sink);
-    LOG_INFO("GStreamerVideo", p.direct
+    LOG_INFO("GStreamerVideo", (p.direct
         ? "GL direct mode: DMA-BUF/GLMemory -> glupload -> NV12 GLMemory; glcolorconvert bypassed"
-        : "GL compatibility mode: DMA-BUF/GLMemory -> glupload -> glcolorconvert -> RGBA copy ring");
+        : "GL compatibility mode: DMA-BUF/GLMemory -> glupload -> glcolorconvert -> RGBA copy ring"));
     return bin;
 }
 

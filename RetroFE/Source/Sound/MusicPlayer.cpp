@@ -741,9 +741,12 @@ bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPathUtf8) {
         while (std::getline(sources, source, ',')) {
             source = trimText(source);
             if (!isHttpUrl(source)) continue;
-            const auto stations = isStationPlaylistUrl(source)
-                ? readRadioPlaylist(source)
-                : std::vector<RadioEntry>{ { source, "" } };
+            std::vector<RadioEntry> stations;
+            if (isStationPlaylistUrl(source)) {
+                stations = readRadioPlaylist(source);
+            } else {
+                stations.push_back({ source, "" });
+            }
             for (const auto& station : stations) {
                 const std::string title = station.title.empty() ? station.uri : station.title;
                 TrackMetadata metadata;
@@ -788,8 +791,12 @@ bool MusicPlayer::parseM3UFile(const fs::path& playlistPath) {
         if (line.empty() || line[0] == '#') continue;
 
         if (line.rfind("http://", 0) == 0 || line.rfind("https://", 0) == 0) {
-            const auto stations = isStationPlaylistUrl(line)
-                ? readRadioPlaylist(line) : std::vector<RadioEntry>{ { line, "" } };
+            std::vector<RadioEntry> stations;
+            if (isStationPlaylistUrl(line)) {
+                stations = readRadioPlaylist(line);
+            } else {
+                stations.push_back({ line, "" });
+            }
             for (const auto& station : stations) {
                 TrackMetadata metadata;
                 metadata.title = station.title.empty()

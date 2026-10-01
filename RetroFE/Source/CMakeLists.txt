@@ -54,7 +54,11 @@ endif()
 # Ensure versioning.h is generated before compiling
 add_custom_command(
     OUTPUT "${CMAKE_BINARY_DIR}/autogen/versioning.h"
-    COMMAND ${CMAKE_COMMAND} -P "${RETROFE_DIR}/CMake/Versioning.cmake"
+    COMMAND ${CMAKE_COMMAND}
+        "-DRETROFE_VERSION_SOURCE_DIR=${CMAKE_SOURCE_DIR}"
+        "-DRETROFE_VERSION_BINARY_DIR=${CMAKE_BINARY_DIR}"
+        -P "${RETROFE_DIR}/CMake/Versioning.cmake"
+    DEPENDS "${RETROFE_DIR}/CMake/Versioning.cmake"
     COMMENT "Generating versioning.h"
 )
 # Create a custom target to generate versioning.h

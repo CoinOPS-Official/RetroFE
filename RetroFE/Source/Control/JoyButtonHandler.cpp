@@ -15,7 +15,7 @@ bool JoyButtonHandler::update(SDL_Event &e)
 {
     if(e.type != SDL_EVENT_JOYSTICK_BUTTON_UP && e.type != SDL_EVENT_JOYSTICK_BUTTON_DOWN) return false;
 
-    if((joynum_ == -1 || e.jbutton.which == joynum_) && e.jbutton.button == button_) {
+    if((joynum_ == -1 || e.jbutton.which == static_cast<SDL_JoystickID>(joynum_)) && e.jbutton.button == button_) {
         pressed_ = (e.type == SDL_EVENT_JOYSTICK_BUTTON_DOWN) ? true : false;
         return true;
     }
@@ -27,4 +27,3 @@ bool JoyButtonHandler::pressed()
 {
     return pressed_;
 }
-

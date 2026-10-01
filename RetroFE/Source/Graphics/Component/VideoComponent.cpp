@@ -254,7 +254,7 @@ void VideoComponent::computeDesiredIntent(bool visibleNow, const VideoSnapshot& 
 }
 
 void VideoComponent::syncPlaybackIntent(const VideoSnapshot& snap) {
-    if (!instanceReady_ || !snap.pipelineReady || snap.hasError) {
+    if (!videoInst_ || !instanceReady_ || !snap.pipelineReady || snap.hasError) {
         return; // Backend is not ready to receive commands yet
     }
 
@@ -266,14 +266,7 @@ void VideoComponent::syncPlaybackIntent(const VideoSnapshot& snap) {
     // Dispatch the intended transient command. Hide-time rewind/pause is one
     // backend operation; do not immediately follow it with a second pause job.
     if (pendingCommand_ == PlaybackCommand::RewindAndPause) {
-        if (auto* gstVideo = videoInst_.get()) {
-            gstVideo->rewindAndPause();
-        }
-        else {
-            // Generic fallback for any future non-GStreamer backend.
-            videoInst_->restart();
-            videoInst_->pause();
-        }
+        videoInst_->rewindAndPause();
 
         pendingCommand_ = PlaybackCommand::None;
         return;
