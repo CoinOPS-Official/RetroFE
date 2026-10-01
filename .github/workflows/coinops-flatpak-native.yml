@@ -17,12 +17,9 @@ jobs:
       # Checkout current CoinOPS repository
       #
       # Keep everything in the current repository for now. The repo is
-      # checked out into RetroFE/ so the Flatpak manifest can consume the
-      # RetroFE source tree without copying the GitHub Actions workspace,
-      # MAME checkout, or persistent flatpak-builder cache into a module.
-      #
-      # clean: true keeps the RetroFE source copy deterministic. Persistent
-      # flatpak-builder state lives at the workspace root, outside RetroFE/.
+      # checked out at the workspace root. The manifest consumes only its
+      # RetroFE/ subdirectory, excluding existing build output. MAME,
+      # Supermodel and persistent flatpak-builder state stay outside it.
       # ============================================================
 
       - name: Checkout current CoinOPS repository
@@ -326,7 +323,7 @@ jobs:
           Categories=Game;
           EOF
           cp \
-            RetroFE/Package/Environment/Common/RetroFE.png \
+            Package/Environment/Common/RetroFE.png \
             Packaging/Flatpak/coinops-runtime.png
       # ============================================================
       # Create native Flatpak manifest
@@ -341,6 +338,7 @@ jobs:
       #   libevdev
       #   libserialport
       #   minizip
+      #   SDL3, SDL3_image, SDL3_ttf, SDL3_mixer
       #   RetroFE
       #   stripped RetroArch runtime
       #   CoinOPS generic libretro launcher
@@ -690,7 +688,6 @@ jobs:
                     -G "Unix Makefiles" \
                     -DCMAKE_BUILD_TYPE=Release \
                     -DCMAKE_INSTALL_PREFIX=/app \
-                    -DRETROFE_FETCH_SDL3=OFF \
                     -DCMAKE_PREFIX_PATH=/app \
                     -DBUILD_SINGE=ON \
                     -DABSTRACT_SINGE=ON \
@@ -812,15 +809,21 @@ jobs:
                   url: https://github.com/madler/zlib.git
                   tag: v1.3.1
             # ======================================================
-            # RetroFE
-            #
-            # Flatpak-builder copies the CONTENTS of the RetroFE
-            # directory into the module build root.
+            # SDL3 dependencies pinned to Source/cmake/SDL3Dependencies.cmake.
+            # Keep these after MAME and Hypseus to preserve their caches.
+            # Vendored codec submodules are included by the Git sources;
+            # link codecs directly so runtime cleanup cannot remove
+            # linker symlinks needed by dynamically loaded codecs.
             # ======================================================
             - name: SDL3
               buildsystem: cmake-ninja
               builddir: true
+              build-options:
+                strip: true
+                no-debuginfo: true
               config-opts:
+                - -DCMAKE_INSTALL_LIBDIR=lib
+                - -DSDL_INSTALL=ON
                 - -DCMAKE_BUILD_TYPE=Release
                 - -DBUILD_SHARED_LIBS=ON
                 - -DSDL_SHARED=ON
@@ -830,25 +833,36 @@ jobs:
               sources:
                 - type: git
                   url: https://github.com/libsdl-org/SDL.git
-                  commit: f87239e71e42da91ca317a12eefb82cfbf3393eb
+                  commit: fa2c02bb6e21974a89ea9824bc53c9932abe5f9c
             - name: SDL3_image
               buildsystem: cmake-ninja
               builddir: true
+              build-options:
+                strip: true
+                no-debuginfo: true
               config-opts:
+                - -DCMAKE_INSTALL_LIBDIR=lib
+                - -DSDLIMAGE_INSTALL=ON
                 - -DCMAKE_BUILD_TYPE=Release
                 - -DBUILD_SHARED_LIBS=ON
                 - -DSDLIMAGE_VENDORED=ON
+                - -DSDLIMAGE_DEPS_SHARED=OFF
                 - -DSDLIMAGE_AVIF=OFF
                 - -DSDLIMAGE_SAMPLES=OFF
                 - -DSDLIMAGE_TESTS=OFF
               sources:
                 - type: git
                   url: https://github.com/libsdl-org/SDL_image.git
-                  commit: 11154afb7855293159588b245b446a4ef09e574f
+                  commit: f661fa1ad24ab1b81e43662532f9a6a9fcf67ea6
             - name: SDL3_ttf
               buildsystem: cmake-ninja
               builddir: true
+              build-options:
+                strip: true
+                no-debuginfo: true
               config-opts:
+                - -DCMAKE_INSTALL_LIBDIR=lib
+                - -DSDLTTF_INSTALL=ON
                 - -DCMAKE_BUILD_TYPE=Release
                 - -DBUILD_SHARED_LIBS=ON
                 - -DSDLTTF_VENDORED=ON
@@ -860,16 +874,23 @@ jobs:
             - name: SDL3_mixer
               buildsystem: cmake-ninja
               builddir: true
+              build-options:
+                strip: true
+                no-debuginfo: true
               config-opts:
+                - -DCMAKE_INSTALL_LIBDIR=lib
+                - -DSDLMIXER_INSTALL=ON
                 - -DCMAKE_BUILD_TYPE=Release
                 - -DBUILD_SHARED_LIBS=ON
                 - -DSDLMIXER_VENDORED=ON
+                - -DSDLMIXER_DEPS_SHARED=OFF
                 - -DSDLMIXER_SAMPLES=OFF
                 - -DSDLMIXER_TESTS=OFF
               sources:
                 - type: git
                   url: https://github.com/libsdl-org/SDL_mixer.git
                   commit: 72a81869b45e249e8e67102db4e98dd2441f05a1
+            # Flatpak-builder copies the contents of RetroFE/ here.
             - name: retrofe
               buildsystem: simple
               build-options:
@@ -892,15 +913,22 @@ jobs:
                   }
                   echo
                   echo "--- SDL ---"
-                  check_pkg sdl3
-                  check_pkg SDL3_image
-                  check_pkg SDL3_ttf
-                  check_pkg SDL3_mixer
+                  check_pkg "sdl3 >= 3.4.16"
+                  check_pkg "SDL3_image >= 3.4.6"
+                  check_pkg "SDL3_ttf >= 3.2.2"
+                  check_pkg "SDL3_mixer >= 3.2.4"
                   echo
                   echo "--- GStreamer ---"
                   check_pkg gstreamer-1.0
                   check_pkg gstreamer-app-1.0
                   check_pkg gstreamer-video-1.0
+                  check_pkg gstreamer-audio-1.0
+                  check_pkg "gstreamer-gl-1.0 >= 1.20"
+                  check_pkg gstreamer-gl-egl-1.0
+                  check_pkg "gstreamer-video-1.0 >= 1.24"
+                  check_pkg gstreamer-allocators-1.0
+                  check_pkg egl
+                  check_pkg glesv2
                   echo
                   echo "--- Other dependencies ---"
                   check_pkg fontconfig
@@ -930,6 +958,10 @@ jobs:
                     -B Build \
                     -DCMAKE_BUILD_TYPE=Release \
                     -DRETROFE_FETCH_SDL3=OFF \
+                    -DRETROFE_BUILD_TESTING=OFF \
+                    -DBUILD_TESTING=OFF \
+                    -DRETROFE_ENABLE_GSTREAMER_GL=ON \
+                    -DRETROFE_ENABLE_EGL_DMABUF=ON \
                     -DCMAKE_PREFIX_PATH=/app \
                     -DCMAKE_INSTALL_PREFIX=/app \
                     -DMINIZIP_INCLUDE_DIR=/app/include/minizip \
@@ -950,6 +982,8 @@ jobs:
                   skip:
                     - .git
                     - .github
+                    - Build
+                    - Source/Prototypes
             # ======================================================
             # Stripped RetroArch libretro runtime
             #
