@@ -914,9 +914,9 @@ jobs:
                   echo
                   echo "--- SDL ---"
                   check_pkg "sdl3 >= 3.4.16"
-                  check_pkg "SDL3_image >= 3.4.6"
-                  check_pkg "SDL3_ttf >= 3.2.2"
-                  check_pkg "SDL3_mixer >= 3.2.4"
+                  check_pkg "SDL3-image >= 3.4.6"
+                  check_pkg "SDL3-ttf >= 3.2.2"
+                  check_pkg "SDL3-mixer >= 3.2.4"
                   echo
                   echo "--- GStreamer ---"
                   check_pkg gstreamer-1.0
