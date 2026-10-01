@@ -36,7 +36,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           repository: CoinOPS-Official/MAME-FFMpeg
-          ref: mame0285-local
+          ref: codex/mame0289-rebase-ps1
           path: MAME
           token: ${{ secrets.MAME_REPO_TOKEN }}
           clean: false
@@ -531,7 +531,7 @@ jobs:
               sources:
                 - type: git
                   path: MAME
-                  branch: mame0285-local
+                  branch: codex/mame0289-rebase-ps1
             # ======================================================
             # SDL2_image
             #
