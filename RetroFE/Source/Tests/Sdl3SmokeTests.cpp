@@ -21,6 +21,7 @@
 #include "../Graphics/Component/Text.h"
 #include "../Graphics/FontCache.h"
 #include "../Video/GStreamerVideo.h"
+#include "GStreamerEGLPitchChecks.h"
 #include "../Video/GlibLoop.h"
 #include "../Video/VideoPool.h"
 #include "../Video/VideoFactory.h"
@@ -1528,6 +1529,7 @@ void compositeBenchmark(Configuration& config) {
 }
 
 int main(int argc, char** argv) {
+    gstreamerEGLPitchChecks(require);
     scrollTweenResetChecks();
     const bool composite = argc > 2 && std::string(argv[2]) == "--composite-benchmark";
     const bool hardware = argc > 2 && (std::string(argv[2]) == "--hardware" || composite);

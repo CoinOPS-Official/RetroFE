@@ -1,4 +1,5 @@
 #include "EGLVideoInterop.h"
+#include "GStreamerEGLPitch.h"
 #include "../Utility/Log.h"
 #include "../SDL.h"
 #include <EGL/egl.h>
@@ -101,8 +102,9 @@ struct Frame {
             ensure(gst_is_dmabuf_memory(memory), "plane does not use DMA-BUF storage");
             gst_memory_get_sizes(memory, &base, nullptr);
             ensure(base <= INT_MAX && skip <= INT_MAX - base && meta->stride[i] > 0, "invalid plane pitch/FD offset");
+            const int planePitch = gstreamerEGLPlanePitch(gst_video_format_get_info(meta->format), i, meta->stride[i]);
             attrs.insert(attrs.end(), {fd[i],gst_dmabuf_memory_get_fd(memory),off[i],static_cast<EGLint>(base+skip),
-                pitch[i],meta->stride[i],low[i],static_cast<EGLint>(drm.drm_modifier & 0xffffffffu),high[i],static_cast<EGLint>(drm.drm_modifier >> 32)});
+                pitch[i],planePitch,low[i],static_cast<EGLint>(drm.drm_modifier & 0xffffffffu),high[i],static_cast<EGLint>(drm.drm_modifier >> 32)});
         }
         GstVideoInfo ordinary{};
         ensure(gst_video_info_dma_drm_to_video_info(&drm, &ordinary), "unknown DRM pixel format");
