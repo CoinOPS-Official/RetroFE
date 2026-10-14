@@ -825,6 +825,9 @@ void mediaChecks(const std::string& assets) {
         }
     }
     TTF_Quit();
+}
+
+void videoLifecycleChecks(const std::string& assets) {
     gst_init(nullptr, nullptr);
     for (const char* name : {"playbin", "appsink", "appsrc", "audioconvert",
             "audioresample", "videoconvert", "perspective", "goom",
@@ -861,7 +864,13 @@ void mediaChecks(const std::string& assets) {
             SDL_SetRenderDrawColor(renderer, 255, 0, 0, 255);
             SDL_FRect overlay{4, 4, 8, 8};
             require(SDL_RenderFillRect(renderer, &overlay), "Draw overlay above video");
-            if (presented == 0) require(pixel(renderer, 6, 6).r == 255, "Video preserves overlay rendering");
+            if (presented == 0) {
+                const auto overlayPixel = pixel(renderer, 6, 6);
+                const auto overlayMessage = std::string("Video preserves overlay rendering (RGB=") +
+                    std::to_string(overlayPixel.r) + "," + std::to_string(overlayPixel.g) + "," +
+                    std::to_string(overlayPixel.b) + ")";
+                require(overlayPixel.r == 255, overlayMessage.c_str());
+            }
             require(SDL_RenderPresent(renderer), "Present decoded video");
             ++presented;
             SDL_Delay(10);
@@ -957,6 +966,26 @@ void dmaBufMetadataChecks() {
     hw->sw_format=AV_PIX_FMT_P010LE;
     descriptor.layers[0].format=0x20363152; descriptor.layers[1].format=0x32335247;
     require(ffmpegDmaBufFrame(source,mapped).fourcc==0x30313050, "P010 separate layers preserve storage format");
+    source->format=AV_PIX_FMT_DRM_PRIME;
+    source->data[0]=reinterpret_cast<uint8_t*>(&descriptor);
+    hw->sw_format=AV_PIX_FMT_NONE; // Pi-specific enums need not exist in stock headers
+    descriptor.nb_layers=1;
+    descriptor.layers[0].format=0x3231564e;
+    descriptor.layers[0].nb_planes=2;
+    descriptor.layers[0].planes[0]={0,0,1088};
+    descriptor.layers[0].planes[1]={1,0,544};
+    descriptor.objects[0].format_modifier=descriptor.objects[1].format_modifier=0x0700000000000004ULL;
+    auto native=ffmpegDmaBufFrame(source,source);
+    require(native.fourcc==0x3231564e && native.planes[0].pitch==1088 && native.planes[1].pitch==544 &&
+        native.planes[1].fd==11 && native.planes[0].modifier==0x0700000000000004ULL &&
+        native.owner.get()==source.get(), "Native SAND frames preserve pitches, modifiers, separate FDs and surface ownership");
+    descriptor.layers[0].format=0x30333050;
+    require(ffmpegDmaBufFrame(source,source).fourcc==0x30333050, "Native ten-bit SAND preserves P030 storage");
+    descriptor.layers[0].format=0;
+    rejected=false;
+    try { ffmpegDmaBufFrame(source,source); } catch (const std::exception&) { rejected=true; }
+    require(rejected, "Unknown native DRM formats are rejected");
+    descriptor.layers[0].format=0x3231564e;
     source->color_trc=AVCOL_TRC_SMPTE2084;
     rejected=false;
     try { ffmpegDmaBufFrame(source,mapped); } catch (const std::exception&) { rejected=true; }
@@ -1404,6 +1433,55 @@ void imageAsyncIOChecks(Configuration& config) {
 
 // Optional measurement mode: keep the renderer identical for CPU/GPU decode.
 // Measure through SDL_RenderPresent and report observations without timing limits.
+void componentStartupBenchmark(Configuration& config, const std::string& file, const std::string& alternate) {
+    gst_init(nullptr, nullptr);
+    Page page(config, 64, 64);
+    GlibLoop::instance().start();
+    {
+        VideoComponent component(page, file, 0, 0, false, 9010);
+        component.baseViewInfo.Width = component.baseViewInfo.Height = 64;
+        component.baseViewInfo.X = component.baseViewInfo.Y = 0;
+        component.baseViewInfo.Alpha = 1;
+        component.setHighPriority(true);
+        component.allocateGraphicsMemory();
+        auto backend = component.extractVideo();
+        require(backend != nullptr, "Acquire component benchmark video");
+        component.adoptVideo(backend);
+        for (int trial = 0; trial < 6; ++trial) {
+            const auto start = SDL_GetTicksNS();
+            if (trial) {
+                component.preserveInstanceOnNextRecycle();
+                require(component.recycleAsVideo(trial % 2 ? alternate : file, ""), "Retarget warm component");
+                require(backend->getTexture() == nullptr, "Retarget hides old texture immediately");
+            }
+            component.setHighPriority(true);
+            bool drawable = false;
+            auto* renderer = SDL::getRenderer(0);
+            while (!drawable && SDL_GetTicksNS() - start < 15000000000ULL) {
+                SDL_PumpEvents();
+                component.update(0.001f);
+                require(SDL::startVideoFrame(renderer), "Start component benchmark frame");
+                component.prepareVideoFrame();
+                require(SDL::submitVideoFrame(renderer), "Submit component benchmark transfers");
+                require(!backend->hasError(), "Component benchmark decode succeeds");
+                require(SDL_SetRenderTarget(renderer, nullptr) && SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255)
+                    && SDL_RenderClear(renderer), "Clear component benchmark frame");
+                component.draw();
+                require(SDL_RenderPresent(renderer), "Present component benchmark frame");
+                drawable = backend->getTexture() != nullptr;
+                if (!drawable) SDL_Delay(1);
+            }
+            require(drawable, "Component first frame arrives");
+            require(backend->usingGpuTexture() == Configuration::HardwareVideoAccel, "Component uses requested decode path");
+            std::cout << "COMPONENT_STARTUP trial=" << trial << " ms="
+                << double(SDL_GetTicksNS() - start) / 1e6 << '\n';
+        }
+    }
+    VideoPool::cleanup(0, 9010);
+    GStreamerVideo::waitForControlTasks();
+    GlibLoop::instance().stop();
+}
+
 void startupBenchmark(const std::string& file, const std::string& alternate) {
     gst_init(nullptr, nullptr);
     GlibLoop::instance().start();
@@ -1533,7 +1611,9 @@ int main(int argc, char** argv) {
     scrollTweenResetChecks();
     const bool composite = argc > 2 && std::string(argv[2]) == "--composite-benchmark";
     const bool hardware = argc > 2 && (std::string(argv[2]) == "--hardware" || composite);
-    const bool benchmark = argc > 3 && std::string(argv[3]) == "--startup-benchmark";
+    const bool componentBenchmark = argc > 3 && std::string(argv[3]) == "--component-startup-benchmark";
+    const bool benchmark = componentBenchmark || (argc > 3 && std::string(argv[3]) == "--startup-benchmark");
+    const bool videoOnly = argc > 3 && std::string(argv[3]) == "--video-only";
     if (!hardware && !benchmark) SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
 #ifdef _WIN32
     const char* hardwareRenderer = std::getenv("RETROFE_TEST_RENDERER");
@@ -1567,14 +1647,49 @@ int main(int argc, char** argv) {
     if (benchmark) {
         require(SDL::initialize(config), "Initialize benchmark renderer");
         const std::string file = argc > 4 ? argv[4] : std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4";
-        startupBenchmark(file, argc > 5 ? argv[5] : file);
+        if (componentBenchmark) {
+            require(argc > 5 && file != argv[5], "Component benchmark needs distinct paths for retargeting");
+            componentStartupBenchmark(config, file, argv[5]);
+        } else startupBenchmark(file, argc > 5 ? argv[5] : file);
         require(SDL::deInitialize(true), "Shutdown benchmark renderer");
         Logger::deInitialize();
         return EXIT_SUCCESS;
     }
+    // KMSDRM uses the physical fullscreen output even for a small test window.
+    // Run video contracts independently of the window-sized tint assertions.
+    if (videoOnly) {
+        const char* driver = std::getenv("SDL_VIDEO_DRIVER");
+        if (driver && std::string(driver) == "kmsdrm") {
+            require(SDL_InitSubSystem(SDL_INIT_VIDEO), "Query KMSDRM test display");
+            const auto* mode = SDL_GetDesktopDisplayMode(SDL_GetPrimaryDisplay());
+            require(mode != nullptr, "Find KMSDRM desktop mode");
+            config.setProperty("horizontal0", mode->w);
+            config.setProperty("vertical0", mode->h);
+            config.setProperty("fullscreen0", true);
+            config.setProperty("hideMouse", true);
+            SDL_QuitSubSystem(SDL_INIT_VIDEO);
+        }
+        require(argc > 1 && SDL::initialize(config), "Initialize video lifecycle renderer");
+#ifdef RETROFE_HAVE_FFMPEG
+        dmaBufMetadataChecks();
+#endif
+        videoLifecycleChecks(argv[1]);
+        ffmpegContractChecks();
+        const std::string file = std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4";
+        if (hardware) concurrentVideoChecks(file);
+        scrollingVideoStartupChecks(config, file);
+        Image::shutdownAsyncIO();
+        require(SDL::deInitialize(true), "Shutdown video lifecycle renderer");
+        Logger::deInitialize();
+        std::cout << "Video lifecycle smoke tests passed\n";
+        return EXIT_SUCCESS;
+    }
     renderChecks(config, true);
     inputChecks(config);
-    if (argc > 1) mediaChecks(argv[1]);
+    if (argc > 1) {
+        mediaChecks(argv[1]);
+        videoLifecycleChecks(argv[1]);
+    }
     imageAsyncIOChecks(config);
     ffmpegContractChecks();
 #ifdef _WIN32

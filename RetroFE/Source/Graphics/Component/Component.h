@@ -46,6 +46,8 @@ public:
 	bool isIdle() const;
 	bool isAttractIdle() const;
 	bool isMenuScrolling() const;
+	// Negative means this component has no completed scroll animation.
+	double completedScrollOvershoot() const;
 	bool isPlaylistScrolling() const;
 	void setTweens(const std::shared_ptr<AnimationEvents>& set) const;
 	bool newItemSelected;

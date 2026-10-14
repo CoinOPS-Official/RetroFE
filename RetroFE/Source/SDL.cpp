@@ -330,6 +330,20 @@ bool SDL::initialize(Configuration& config) {
     if (config.getProperty(OPTION_HIDEMOUSE, hideMouse))
         hideMouse ? SDL_HideCursor() : SDL_ShowCursor();
 
+#ifdef __linux__
+    const char* videoDriver = SDL_GetCurrentVideoDriver();
+    const bool hiddenKmsCursor = hideMouse && videoDriver &&
+        std::string(videoDriver) == "kmsdrm";
+    // Relative input does not need to move a hidden KMS hardware cursor.
+    SDL_SetHintWithPriority(SDL_HINT_MOUSE_RELATIVE_MODE_CENTER,
+        hiddenKmsCursor ? "0" : nullptr, SDL_HINT_DEFAULT);
+    if (hiddenKmsCursor) {
+        LOG_INFO("SDL", "Hidden KMSDRM cursor: skipping explicit warps; relative-mode centering " +
+            std::string(SDL_GetHintBoolean(SDL_HINT_MOUSE_RELATIVE_MODE_CENTER, true)
+                ? "enabled by override" : "disabled"));
+    }
+#endif
+
     // ---------------------------------------------------------
     // Configuration for hardware/video/audio
     // ---------------------------------------------------------
@@ -1078,6 +1092,8 @@ bool SDL::initialize(Configuration& config) {
 
         if (logicalScreen == 0)
         {
+            if (!hideMouse)
+            {
 #ifndef __APPLE__
             SDL_WarpMouseInWindow(
                 window_[logicalScreen],
@@ -1092,6 +1108,7 @@ bool SDL::initialize(Configuration& config) {
             );
 #endif
 
+            }
             SDL_SetWindowRelativeMouseMode(
                 window_[logicalScreen],
                 hideMouse
@@ -1288,7 +1305,9 @@ bool SDL::deInitialize(bool fullShutdown) { // The 'fullShutdown' parameter is k
 #ifdef __APPLE__
 		SDL_SetWindowRelativeMouseMode(window_[0], false);
 #endif
-		SDL_WarpMouseInWindow(window_[0], windowWidth_[0] / 2, windowHeight_[0] / 2);
+		if (SDL_CursorVisible()) {
+			SDL_WarpMouseInWindow(window_[0], windowWidth_[0] / 2, windowHeight_[0] / 2);
+		}
 	}
 	else
 	{

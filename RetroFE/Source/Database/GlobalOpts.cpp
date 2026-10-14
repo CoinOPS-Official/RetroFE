@@ -71,7 +71,7 @@ const global_options::options_entry global_options::s_option_entries[] =
     { OPTION_SCALEQUALITY,             "1",        global_options::option_type::INTEGER,  "Scaling quality (0, 1, 2)" },
     { OPTION_LAYOUTSCALEMODE,          "stretch",  global_options::option_type::STRING,   "Layout scaling mode: stretch, fit, or fill" },
     { OPTION_HIGHPRIORITY,             "false",    global_options::option_type::BOOLEAN,  "RetroFE Windows process priority" },
-    { OPTION_UNLOADSDL,                "false",    global_options::option_type::BOOLEAN,  "Close SDL when launching a game, MUST be true for RPI" },
+    { OPTION_UNLOADSDL,                "false",    global_options::option_type::BOOLEAN,  "Close SDL video when launching a game; needed when handing direct KMSDRM display ownership to another application" },
     { OPTION_MINIMIZEONFOCUSLOSS,      "false",    global_options::option_type::BOOLEAN,  "Minimize RetroFE when focus is lost" },
     { OPTION_AVDECTHREADTYPE,          "2",        global_options::option_type::INTEGER,  "Type of threading in the case of software decoding (1=frame, 2=slice)" },
     { OPTION_GLSWAPINTERVAL,           "1",        global_options::option_type::INTEGER,  "OpenGL Swap Interval (0=immediate updates, 1=synchronized vsync, -1=adaptive vsync" },

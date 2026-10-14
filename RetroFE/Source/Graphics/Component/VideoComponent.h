@@ -93,6 +93,11 @@ private:
     bool instanceReady_ = false;
     bool isHighPriority_ = false;
     bool preserveInstanceOnNextRecycle_ = false;
+    uint64_t startupBoundAt_ = 0;
+    uint64_t startupOpenAt_ = 0;
+    bool startupTracePending_ = false;
+    void beginStartupTrace();
+    void traceDrawableFrame();
 
     // --- Deferred Retry Logic ---
     bool pendingVideoRetry_ = false;

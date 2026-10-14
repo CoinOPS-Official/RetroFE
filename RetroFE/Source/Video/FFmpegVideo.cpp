@@ -17,6 +17,7 @@
 #define NOMINMAX
 #endif
 #include "FFmpegVideo.h"
+#include "VideoStartupTiming.h"
 #include "../Database/Configuration.h"
 #include "../SDL.h"
 #include "../Sound/AudioBus.h"
@@ -331,6 +332,26 @@ static SharedHwEntry acquireSharedHardware(SDL_Renderer* renderer) {
         }
     }
 
+#if defined(__linux__) && defined(RETROFE_HAVE_EGL_DMABUF)
+    // Pi's stateless decoder advertises DRM PRIME directly. Only attempt this
+    // when the linked FFmpeg actually supplies a DRM HEVC hardware decoder;
+    // ordinary desktop FFmpeg/VAAPI behavior remains unchanged.
+    if (Configuration::HardwareVideoAccel && !hw && !sharedVulkan) {
+        const auto* hevc = avcodec_find_decoder(AV_CODEC_ID_HEVC);
+        for (int i = 0; hevc; ++i) {
+            const auto* config = avcodec_get_hw_config(hevc, i);
+            if (!config) break;
+            if (config->device_type == AV_HWDEVICE_TYPE_DRM &&
+                config->pix_fmt == AV_PIX_FMT_DRM_PRIME &&
+                (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) {
+                if (av_hwdevice_ctx_create(&hw, AV_HWDEVICE_TYPE_DRM, nullptr, nullptr, 0) >= 0)
+                    fmt = AV_PIX_FMT_DRM_PRIME;
+                break;
+            }
+        }
+    }
+#endif
+
     if (hw) {
         s_sharedHwEntries[renderer] = { av_buffer_ref(hw), fmt, 1 };
     }
@@ -368,6 +389,8 @@ struct FFmpegVideo::Impl {
     bool nativePending = false;
     Uint64 nativePendingSinceNs = 0;
     bool needsFrame = true; // independent of the last frame retained across a loop
+    Uint64 startupRequestedAt = 0, startupWorkerAt = 0, startupOpenedAt = 0, startupQueuedAt = 0;
+    bool startupTracePending = false;
     bool perspective = false;
     std::array<Point2D, 4> corners{};
     std::vector<uint8_t> warped;
@@ -467,7 +490,7 @@ struct FFmpegVideo::Impl {
             }
 #endif
 #ifdef RETROFE_HAVE_EGL_DMABUF
-            if (hardware && hardwareFormat == AV_PIX_FMT_VAAPI) {
+            if (hardware && (hardwareFormat == AV_PIX_FMT_VAAPI || hardwareFormat == AV_PIX_FMT_DRM_PRIME)) {
                 egl = std::make_unique<EGLVideoInterop>(r);
                 exportDmaBuf = egl->available();
                 if (!exportDmaBuf)
@@ -545,6 +568,11 @@ struct FFmpegVideo::Impl {
         audios.clear();
         ++revision;
         AudioBus::instance().clear(audio);
+        if (videoStartupTimingEnabled()) {
+            startupRequestedAt = SDL_GetTicksNS();
+            startupWorkerAt = startupOpenedAt = startupQueuedAt = 0;
+            startupTracePending = !unload && !path.empty();
+        }
         wake.notify_all();
     }
     void clearPendingVideoReconfiguration() {
@@ -623,6 +651,8 @@ struct FFmpegVideo::Impl {
                         (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) {
                         c->hw_device_ctx = av_buffer_ref(hardware);
                         c->thread_count = 1;
+                        if (hardwareFormat == AV_PIX_FMT_DRM_PRIME)
+                            c->extra_hw_frames = 8; // queued frames plus GPU fence ownership
                         c->opaque = this;
                         c->get_format = [](AVCodecContext *c, const AVPixelFormat *formats) {
                             auto desired = static_cast<Impl *>(c->opaque)->hardwareFormat;
@@ -1406,6 +1436,8 @@ struct FFmpegVideo::Impl {
 
 #ifdef RETROFE_HAVE_EGL_DMABUF
             Frame mapped;
+            if (exportDmaBuf && f->format == AV_PIX_FMT_DRM_PRIME)
+                mapped = f; // descriptor and decoder surface already owned by this frame
             if (exportDmaBuf && f->format == AV_PIX_FMT_VAAPI) {
                 mapped = frame();
                 if (mapped) {
@@ -1420,6 +1452,7 @@ struct FFmpegVideo::Impl {
             wake.wait(lock, [&] { return quit || fallbackRequested || revision != rev || videos.size() < 3; });
             if (quit || fallbackRequested || revision != rev)
                 return false;
+            if (startupTracePending && !startupQueuedAt) startupQueuedAt = SDL_GetTicksNS();
             videos.push_back({
                 std::move(f),
                 std::max<int64_t>(0, pts),
@@ -1488,6 +1521,21 @@ struct FFmpegVideo::Impl {
                 return false;
         }
     }
+    SDL_Texture* traceFirstTexture(SDL_Texture* texture) {
+        if (!texture || !videoStartupTimingEnabled()) return texture;
+        std::lock_guard lock(mutex);
+        if (!startupTracePending || !startupQueuedAt || accepted != revision) return texture;
+        const Uint64 drawableAt = SDL_GetTicksNS();
+        startupTracePending = false;
+        LOG_INFO("VideoStartup", "backend=ffmpeg instance=" << static_cast<const void*>(this)
+            << " revision=" << accepted << " file=" << requested
+            << " request_to_worker_ms=" << double(startupWorkerAt - startupRequestedAt) / 1e6
+            << " worker_open_ms=" << double(startupOpenedAt - startupWorkerAt) / 1e6
+            << " open_to_queued_ms=" << double(startupQueuedAt - startupOpenedAt) / 1e6
+            << " queued_to_drawable_ms=" << double(drawableAt - startupQueuedAt) / 1e6
+            << " request_to_drawable_ms=" << double(drawableAt - startupRequestedAt) / 1e6);
+        return texture;
+    }
     void run() {
         AVPacket *packet = av_packet_alloc();
         if (!packet) {
@@ -1539,6 +1587,8 @@ struct FFmpegVideo::Impl {
                     continue;
 
                 rev = revision;
+                if (startupTracePending && rev != accepted && !startupWorkerAt)
+                    startupWorkerAt = SDL_GetTicksNS();
                 path = requested;
                 seek = seekTarget;
                 idle = unloaded;
@@ -1558,6 +1608,7 @@ struct FFmpegVideo::Impl {
                     std::lock_guard lock(mutex);
                     if (revision != rev)
                         continue;
+                    if (startupTracePending) startupOpenedAt = SDL_GetTicksNS();
                     accepted = rev;
                     ready = !unloaded && !path.empty();
                     videoStream = vi >= 0;
@@ -1728,15 +1779,15 @@ SDL_Texture *FFmpegVideo::getTexture() const {
     if (impl_->nativePending && impl_->interop) {
         auto* texture = impl_->interop->currentTexture();
         if (texture) SDL_SetTextureBlendMode(texture, impl_->soft ? softBlend : SDL_BLENDMODE_BLEND);
-        return texture;
+        return impl_->traceFirstTexture(texture);
     }
     if (impl_->interop && impl_->valid && impl_->gpuTexture && impl_->texture == impl_->gpuTexture)
-        return impl_->interop->currentTexture();
+        return impl_->traceFirstTexture(impl_->interop->currentTexture());
 #endif
 #ifdef _WIN32
     if (impl_->interop11 && impl_->texture == impl_->gpuTexture && !impl_->interop11->available()) return nullptr;
 #endif
-    return impl_->valid ? impl_->texture : nullptr;
+    return impl_->traceFirstTexture(impl_->valid ? impl_->texture : nullptr);
 }
 bool FFmpegVideo::usingGpuTexture() const {
 #ifdef RETROFE_HAVE_D3D12
@@ -2089,7 +2140,9 @@ void FFmpegVideo::updateFrame() {
                 SDL_SetTextureBlendMode(texture, p.soft ? softBlend : SDL_BLENDMODE_BLEND);
                 { std::lock_guard lock(p.mutex); p.valid = true; p.needsFrame = false; }
                 if (!p.logged) {
-                    LOG_INFO("FFmpegVideo", std::string("Playback ACTIVE: VAAPI / ") + p.egl->description() + "; no CPU pixel transfer");
+                    LOG_INFO("FFmpegVideo", std::string("Playback ACTIVE: ") +
+                             (f->format == AV_PIX_FMT_DRM_PRIME ? "DRM PRIME hardware decode / " : "VAAPI / ") +
+                             p.egl->description() + "; no CPU pixel transfer");
                     p.logged = true;
                 }
                 if (repeat) p.request(p.requested, 0, false, VideoState::Playing, true);

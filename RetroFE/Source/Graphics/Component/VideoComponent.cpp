@@ -30,6 +30,7 @@
 #include "../../Video/IVideo.h"
 #include "../../Video/VideoFactory.h"
 #include "../../Video/VideoPool.h"
+#include "../../Video/VideoStartupTiming.h"
 #include "../Page.h"
 
 #ifdef __APPLE__
@@ -46,6 +47,7 @@ static std::vector<VideoComponent*> listVideos;
 VideoComponent::VideoComponent(Page& p, const std::string& videoFile, int monitor, int numLoops, bool softOverlay, int listId, const int* perspectiveCorners)
     : Component(p), videoFile_(videoFile), softOverlay_(softOverlay), numLoops_(numLoops), monitor_(monitor), listId_(listId), currentPage_(&p) {
     isHighPriority_ = (listId_ == -1);
+    beginStartupTrace();
     if (listId_ != -1) listVideos.push_back(this);
     if (perspectiveCorners) {
         std::copy(perspectiveCorners, perspectiveCorners + 8, perspectiveCorners_);
@@ -70,6 +72,7 @@ bool VideoComponent::recycleAsVideo(const std::string& path, const std::string&)
     if (videoFile_ == path && videoInst_ && !videoInst_->hasError()) {
         return true;
     }
+    beginStartupTrace();
 
     // An active pipeline may still contain queued samples from the previous
     // URI. Quiesce and drain it before keeping it attached for this retarget.
@@ -326,7 +329,9 @@ bool VideoComponent::update(float dt) {
     // 4. Retry / Initiate playback orchestrator
     if (!instanceReady_ && !videoInst_->hasError()) {
 
+        const Uint64 openAt = videoStartupTimingEnabled() ? SDL_GetTicksNS() : 0;
         instanceReady_ = videoInst_->open(videoFile_);
+        if (instanceReady_ && startupTracePending_) startupOpenAt_ = openAt;
 
         if (!instanceReady_) {
             // CPU Preroll limit hit! Trigger exponential backoff.
@@ -410,6 +415,7 @@ std::shared_ptr<IVideo> VideoComponent::extractVideo() {
 
 void VideoComponent::adoptVideo(std::shared_ptr<IVideo> video) {
     if (!video || videoInst_ == video) return;
+    beginStartupTrace();
 
     if (videoInst_) {
         if (listId_ != -1) {
@@ -467,6 +473,9 @@ void VideoComponent::prepareVideoFrame() {
 
     if (videoInst_->isPipelineReady()) {
         videoInst_->updateFrame();
+        if (startupTracePending_ && startupOpenAt_ && videoInst_->getTexture()) {
+            traceDrawableFrame();
+        }
         if (!dimensionsUpdated_) {
             const auto dimensions = videoInst_->getDimensions();
             if (dimensions.w > 0 && dimensions.h > 0) {
@@ -497,6 +506,7 @@ void VideoComponent::draw() {
     }
 
     if (texture) {
+        traceDrawableFrame();
         SDL_FRect rect = {
             baseViewInfo.XRelativeToOrigin(),
             baseViewInfo.YRelativeToOrigin(),
@@ -517,6 +527,25 @@ void VideoComponent::draw() {
     }
 }
 std::string_view VideoComponent::filePath() { return videoFile_; }
+
+void VideoComponent::beginStartupTrace() {
+    if (!videoStartupTimingEnabled()) return;
+    startupBoundAt_ = SDL_GetTicksNS();
+    startupOpenAt_ = 0;
+    startupTracePending_ = true;
+}
+
+void VideoComponent::traceDrawableFrame() {
+    if (!startupTracePending_ || !startupOpenAt_) return;
+    const Uint64 drawableAt = SDL_GetTicksNS();
+    startupTracePending_ = false;
+    LOG_INFO("VideoStartup", "component=" << static_cast<const void*>(this)
+        << " file=" << videoFile_ << " monitor=" << monitor_
+        << " selected=" << isHighPriority_
+        << " bound_to_open_ms=" << double(startupOpenAt_ - startupBoundAt_) / 1e6
+        << " open_to_drawable_ms=" << double(drawableAt - startupOpenAt_) / 1e6
+        << " bound_to_drawable_ms=" << double(drawableAt - startupBoundAt_) / 1e6);
+}
 
 void VideoComponent::skipForward() { if (videoInst_) videoInst_->skipForward(); }
 void VideoComponent::skipBackward() { if (videoInst_) videoInst_->skipBackward(); }

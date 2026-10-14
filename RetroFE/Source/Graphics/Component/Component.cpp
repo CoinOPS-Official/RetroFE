@@ -148,6 +148,11 @@ bool Component::isMenuScrolling() const
     return (!currentTweenComplete_ && (animationType_ == "menuScroll" || animationType_ == "playlistScroll"));
 }
 
+double Component::completedScrollOvershoot() const {
+    return animationType_ == "menuScroll" && currentTweenComplete_ && !animationRequested_
+        ? std::max(0.0, elapsedTweenTime_) : -1.0;
+}
+
 bool Component::isPlaylistScrolling() const
 {
     return (!currentTweenComplete_ && animationType_ == "playlistScroll");
@@ -178,7 +183,9 @@ bool Component::update(float dt) {
             currentAnimation_ = newTweens;
 
             currentTweenIndex_ = 0;
-            elapsedTweenTime_ = 0;
+            // Scroll may be primed at an item boundary with leftover frame time.
+            // Other events retain their existing start-on-next-update behavior.
+            elapsedTweenTime_ = animationType_ == "menuScroll" ? dt : 0;
             storeViewInfo_ = baseViewInfo;
             currentTweenComplete_ = false;
         }

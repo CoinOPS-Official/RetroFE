@@ -150,6 +150,16 @@ bool UserInput::initialize()
     retVal = MapKey("quit",   KeyCodeQuit) && retVal;
    
 
+    infoToggleBindings_.clear();
+    for (const auto& entry : keyHandlers_) {
+        if (entry.second != KeyCodeToggleGameInfo && entry.second != KeyCodeToggleCollectionInfo && entry.second != KeyCodeToggleBuildInfo) continue;
+        bool shared = false;
+        for (const auto& combo : keyHandlers_) {
+            if ((combo.second == KeyCodeQuitCombo1 || combo.second == KeyCodeQuitCombo2) &&
+                bindingTokens_[entry.first] == bindingTokens_[combo.first]) shared = true;
+        }
+        infoToggleBindings_.push_back({entry.first, entry.second, shared});
+    }
     return retVal;
 }
 
@@ -403,6 +413,7 @@ else if (tokenLowered.find("gamepad") == 0) {
         LOG_ERROR("Input", "Unsupported property value for " + configKey + "(" + token + "). See Documentation/Keycodes.txt for valid inputs");
     }
 
+    if (found) bindingTokens_[keyHandlers_.back().first] = Utils::toLower(token);
     return found;
 }
 
@@ -449,6 +460,8 @@ bool UserInput::MapKeyCombo(const std::string& keyDescription, KeyCode_E key1, K
 
 void UserInput::resetStates()
 {
+    for (auto& binding : infoToggleBindings_) { binding.held = false; binding.pending = false; }
+    memset(infoTogglePulse_, 0, sizeof(infoTogglePulse_));
     for (unsigned int i = 0; i < keyHandlers_.size(); ++i) {
         if (keyHandlers_[i].first) {
             keyHandlers_[i].first->reset();
@@ -609,6 +622,11 @@ bool UserInput::newKeyPressed(KeyCode_E code) const
     return currentKeyState_[code] && !lastKeyState_[code];
 }
 
+bool UserInput::infoTogglePressed(KeyCode_E code) const
+{
+    return infoTogglePulse_[code];
+}
+
 
 void UserInput::clearJoysticks( )
 {
@@ -629,6 +647,8 @@ void UserInput::reconfigure()
         }
     }
     keyHandlers_.clear();
+    bindingTokens_.clear();
+    infoToggleBindings_.clear();
     initialize( );
 }
 
@@ -664,4 +684,26 @@ void UserInput::updateKeystate() {
             }
         }
     }
+    // Track each binding separately so keyboard alternatives still act on press.
+    // A shared quit button acts on release, unless its chord consumed the press.
+    memset(infoTogglePulse_, 0, sizeof(infoTogglePulse_));
+    bool comboEnabled = false;
+    config_.getProperty(OPTION_CONTROLLERCOMBOEXIT, comboEnabled);
+    const bool completed = comboEnabled && currentKeyState_[KeyCodeQuitCombo1] && currentKeyState_[KeyCodeQuitCombo2];
+    for (auto& binding : infoToggleBindings_) {
+        const bool held = binding.handler->pressed();
+        if (comboEnabled && binding.sharesQuitButton) {
+            if (held && !binding.held) binding.pending = true;
+            if (completed) binding.pending = false;
+            if (!held && binding.held && binding.pending) {
+                infoTogglePulse_[binding.key] = true;
+                binding.pending = false;
+            }
+        } else {
+            infoTogglePulse_[binding.key] |= held && !binding.held && newKeyPressed(binding.key);
+            binding.pending = false;
+        }
+        binding.held = held;
+    }
+
 }

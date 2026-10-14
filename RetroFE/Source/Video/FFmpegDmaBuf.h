@@ -15,8 +15,19 @@ inline EGLDmaBufFrame ffmpegDmaBufFrame(const std::shared_ptr<AVFrame>& source, 
     require(source->hw_frames_ctx && mapped->data[0], "missing exported DMA-BUF descriptor");
     const auto& hw = *reinterpret_cast<AVHWFramesContext*>(source->hw_frames_ctx->data);
     const auto& drm = *reinterpret_cast<AVDRMFrameDescriptor*>(mapped->data[0]);
-    require(hw.sw_format == AV_PIX_FMT_NV12 || hw.sw_format == AV_PIX_FMT_P010LE, "EGL import supports NV12/P010 SDR");
     require(drm.nb_objects > 0 && drm.nb_objects <= 4 && drm.nb_layers > 0 && drm.nb_layers <= 2, "unsupported DMA-BUF objects/layers");
+    const bool native = source->format == AV_PIX_FMT_DRM_PRIME;
+    const auto nv12Fourcc = fourcc('N','V','1','2');
+    const auto p010Fourcc = fourcc('P','0','1','0');
+    const auto p030Fourcc = fourcc('P','0','3','0');
+    // Native Pi frames use FFmpeg-specific RPI4 software format enums. Their
+    // composed DRM layer describes the actual storage without enum extensions.
+    if (native)
+        require(drm.nb_layers == 1 && (drm.layers[0].format == nv12Fourcc ||
+            drm.layers[0].format == p010Fourcc || drm.layers[0].format == p030Fourcc),
+            "unsupported native DRM storage format");
+    else
+        require(hw.sw_format == AV_PIX_FMT_NV12 || hw.sw_format == AV_PIX_FMT_P010LE, "EGL import supports NV12/P010 SDR");
     EGLDmaBufFrame out;
     out.owner = mapped;
     out.width = hw.width; out.height = hw.height;
@@ -25,8 +36,8 @@ inline EGLDmaBufFrame ffmpegDmaBufFrame(const std::shared_ptr<AVFrame>& source, 
         source->crop_bottom < size_t(source->height)-source->crop_top, "invalid decoded crop");
     out.crop = {int(source->crop_left),int(source->crop_top),
         source->width-int(source->crop_left+source->crop_right),source->height-int(source->crop_top+source->crop_bottom)};
-    const bool nv12 = hw.sw_format == AV_PIX_FMT_NV12;
-    out.fourcc = nv12 ? fourcc('N','V','1','2') : fourcc('P','0','1','0');
+    out.fourcc = native ? drm.layers[0].format : (hw.sw_format == AV_PIX_FMT_NV12 ? nv12Fourcc : p010Fourcc);
+    const bool nv12 = out.fourcc == nv12Fourcc;
     // VAAPI exports either a composed layer or separate Y/UV layers. Only
     // combine the recognized R/GR pair; never guess an arbitrary layer layout.
     for (int l=0;l<drm.nb_layers;++l) {
@@ -36,6 +47,7 @@ inline EGLDmaBufFrame ffmpegDmaBufFrame(const std::shared_ptr<AVFrame>& source, 
                      (nv12?fourcc('G','R','8','8'):fourcc('G','R','3','2')));
         require(layer.format==expected && layer.nb_planes==(drm.nb_layers==1?2:1), "unsupported DMA-BUF layer layout");
         for(int i=0;i<layer.nb_planes;++i) {
+            require(out.planeCount < int(out.planes.size()), "too many DMA-BUF planes");
             const auto& plane=layer.planes[i];
             require(plane.object_index>=0 && plane.object_index<drm.nb_objects, "invalid DMA-BUF object index");
             const auto& object=drm.objects[plane.object_index];

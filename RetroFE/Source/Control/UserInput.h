@@ -110,11 +110,22 @@ public:
     bool keystate(KeyCode_E) const;
     bool lastKeyPressed(KeyCode_E code) const;
     bool newKeyPressed(KeyCode_E code) const;
+    bool infoTogglePressed(KeyCode_E code) const;
     void clearJoysticks();
     void reconfigure();
     void updateKeystate();
 
 private:
+    struct InfoToggleBinding {
+        InputHandler* handler;
+        KeyCode_E key;
+        bool sharesQuitButton;
+        bool held = false;
+        bool pending = false;
+    };
+    std::map<InputHandler*, std::string> bindingTokens_;
+    std::vector<InfoToggleBinding> infoToggleBindings_;
+    bool infoTogglePulse_[KeyCodeMax]{};
     bool MapKey(const std::string& keyDescription, KeyCode_E key);
     bool MapKey(const std::string& keyDescription, KeyCode_E key, bool required);
     bool HandleInputMapping(const std::string& token, KeyCode_E key, const std::string& configKey);

@@ -1532,8 +1532,22 @@ void Page::update(float dt) {
 			scrolling_ == ScrollDirectionPlaylistForward ||
 			scrolling_ == ScrollDirectionPlaylistBack;
 
+        // Continue at the exact boundary rather than discarding frame overshoot.
+        float carryTime = std::max(0.0f, dt);
+        bool hasOvershoot = false;
+        if (auto* master = getMasterMenuForScroll(playlist)) {
+            for (Component* component : master->getComponents()) {
+                if (!component) continue;
+                const double overshoot = component->completedScrollOvershoot();
+                if (overshoot < 0.0) continue;
+                carryTime = std::min(carryTime, static_cast<float>(overshoot));
+                hasOvershoot = true;
+            }
+        }
+        if (!hasOvershoot) carryTime = 0.0f;
+
 		if (userScrollInputActive_) {
-			scroll(forward, playlist);
+			scroll(forward, playlist, carryTime);
 			updateScrollPeriod();
 		}
 		else {
@@ -1544,7 +1558,7 @@ void Page::update(float dt) {
 			}
 
 			if (scrolling_ != ScrollDirectionIdle) {
-				scroll(forward, playlist);
+				scroll(forward, playlist, carryTime);
 			}
 		}
 	}
@@ -2090,7 +2104,7 @@ ScrollingList* Page::getMasterMenuForScroll(bool playlist) const {
 	return nullptr;
 }
 
-void Page::scroll(bool forward, bool playlist) {
+void Page::scroll(bool forward, bool playlist, float carryTime) {
 	ScrollingList* masterMenu = getMasterMenuForScroll(playlist);
 	if (!masterMenu) {
 		return;
@@ -2113,6 +2127,11 @@ void Page::scroll(bool forward, bool playlist) {
 		}
 
 		menu->scrollToSelectedIndex(newSelectedIndex, forward, masterPeriod);
+        // Start the newly requested tweens before this frame is drawn. Call only
+        // base animation logic: media loading/decoding still updates once a frame.
+        for (Component* component : menu->getComponents()) {
+            if (component) component->Component::update(carryTime);
+        }
 	}
 
 	pendingScrollSelect_ = true;

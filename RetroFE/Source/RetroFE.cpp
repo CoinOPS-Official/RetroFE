@@ -1582,7 +1582,17 @@ bool RetroFE::run() {
 		}
 
 		SDL_Event e;
-		while (SDL_PollEvent(&e)) input_.update(e);
+		while (SDL_PollEvent(&e)) {
+			// SDL translates SIGTERM into a quit event on Unix. It must be
+			// handled independently of controller bindings and exit animations.
+			if (e.type == SDL_EVENT_QUIT || e.type == SDL_EVENT_TERMINATING) {
+				LOG_INFO("RetroFE", "System quit event received; shutting down.");
+				running = false;
+				break;
+			}
+			input_.update(e);
+		}
+		if (!running) break;
 		input_.updateKeystate(); // once per frame, AFTER consuming events, BEFORE processUserInput()
 
 		if (initialized.load() && mp) {
@@ -3851,6 +3861,20 @@ inline bool RetroFE::state_accepts_input(RetroFE::RETROFE_STATE s) {
 
 // Process the user input
 RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
+	// Prioritize a completed quit chord over actions sharing its buttons.
+	// Held state also catches Start pressed during an info transition.
+	if (input_.keystate(UserInput::KeyCodeQuitCombo1) && input_.keystate(UserInput::KeyCodeQuitCombo2)) {
+		attract_.reset();
+		bool controllerComboExit = false;
+		config_.getProperty(OPTION_CONTROLLERCOMBOEXIT, controllerComboExit);
+		if (controllerComboExit) {
+#ifdef WIN32
+			Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 51, 0);
+#endif
+			return RETROFE_QUIT_REQUEST;
+		}
+	}
+
 	bool screensaver = false;
 	config_.getProperty(OPTION_SCREENSAVER, screensaver);
 
@@ -3981,18 +4005,17 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 		RETROFE_STATE fallbackBackState = (page->getMenuDepth() == 1 || !backOnCollection) ? RETROFE_COLLECTION_UP_REQUEST : RETROFE_BACK_REQUEST;
 
 		// --- A. Kiosk Mode Unrestricted Inputs ---
-		if (input_.newKeyPressed(UserInput::KeyCodeToggleGameInfo) || (input_.keystate(UserInput::KeyCodeGameInfoCombo1) && input_.newKeyPressed(UserInput::KeyCodeGameInfoCombo2))) {
+		if (input_.infoTogglePressed(UserInput::KeyCodeToggleGameInfo) || (input_.keystate(UserInput::KeyCodeGameInfoCombo1) && input_.newKeyPressed(UserInput::KeyCodeGameInfoCombo2))) {
 			attract_.reset();
-			input_.resetStates();
+			// Edge detection prevents repeats; preserve held combo buttons.
 			if (gameInfo_) return RETROFE_GAMEINFO_EXIT;
 			if (collectionInfo_) { resumeAfterInfoExit_ = RETROFE_GAMEINFO_ENTER; return RETROFE_COLLECIONINFO_EXIT; }
 			if (buildInfo_) { resumeAfterInfoExit_ = RETROFE_GAMEINFO_ENTER; return RETROFE_BUILDINFO_EXIT; }
 			return RETROFE_GAMEINFO_ENTER;
 		}
 
-		if (input_.newKeyPressed(UserInput::KeyCodeToggleCollectionInfo) || (input_.keystate(UserInput::KeyCodeCollectionInfoCombo1) && input_.newKeyPressed(UserInput::KeyCodeCollectionInfoCombo2))) {
+		if (input_.infoTogglePressed(UserInput::KeyCodeToggleCollectionInfo) || (input_.keystate(UserInput::KeyCodeCollectionInfoCombo1) && input_.newKeyPressed(UserInput::KeyCodeCollectionInfoCombo2))) {
 			attract_.reset();
-			input_.resetStates();
 			if (gameInfo_) { currentPage_->gameInfoExit(); gameInfo_ = false; }
 			else if (buildInfo_) { currentPage_->buildInfoExit(); buildInfo_ = false; }
 			RETROFE_STATE state = collectionInfo_ ? RETROFE_COLLECIONINFO_EXIT : RETROFE_COLLECTIONINFO_ENTER;
@@ -4000,9 +4023,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			return state;
 		}
 
-		if (input_.newKeyPressed(UserInput::KeyCodeToggleBuildInfo) || (input_.keystate(UserInput::KeyCodeBuildInfoCombo1) && input_.newKeyPressed(UserInput::KeyCodeBuildInfoCombo2))) {
+		if (input_.infoTogglePressed(UserInput::KeyCodeToggleBuildInfo) || (input_.keystate(UserInput::KeyCodeBuildInfoCombo1) && input_.newKeyPressed(UserInput::KeyCodeBuildInfoCombo2))) {
 			attract_.reset();
-			input_.resetStates();
 			if (gameInfo_) { currentPage_->gameInfoExit(); gameInfo_ = false; }
 			else if (collectionInfo_) { currentPage_->collectionInfoExit(); collectionInfo_ = false; }
 			RETROFE_STATE state = buildInfo_ ? RETROFE_BUILDINFO_EXIT : RETROFE_BUILDINFO_ENTER;
@@ -4100,17 +4122,7 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 			if (controllerComboSettings) return RETROFE_SETTINGS_REQUEST;
 		}
 
-		if (input_.keystate(UserInput::KeyCodeQuitCombo1) && input_.newKeyPressed(UserInput::KeyCodeQuitCombo2)) {
-			attract_.reset();
-			bool controllerComboExit = false;
-			config_.getProperty(OPTION_CONTROLLERCOMBOEXIT, controllerComboExit);
-			if (controllerComboExit) {
-#ifdef WIN32
-				Utils::postMessage("MediaplayerHiddenWindow", 0x8001, 51, 0);
-#endif
-				return RETROFE_QUIT_REQUEST;
-			}
-		}
+
 
 		// --- B. Kiosk Mode Strictly Restricted Structural Commands ---
 		if (!kioskLock_) {

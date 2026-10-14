@@ -42,6 +42,7 @@
 #include <cctype>
 #include <iomanip>
 #include <algorithm>
+#include <cstdlib>
 
 int ScrollingList::nextListId = 0;
 
@@ -417,14 +418,22 @@ void ScrollingList::reallocateSpritePoints(Page::VideoPoolPolicy videoPoolPolicy
     }
 
     // Prefer a genuinely idle warm pipeline if one exists.
-    VideoPool::VideoPtr handoff =
-        VideoPool::acquireWarmForReset(monitor, listId_, false);
+    // Diagnostic isolation of cross-playlist reuse, without changing ordinary
+    // scrolling or the default warm-handoff policy on other installations.
+    const char* disableHandoff = std::getenv("RETROFE_VIDEO_DISABLE_PLAYLIST_HANDOFF");
+    const bool allowWarmHandoff = !disableHandoff || std::string(disableHandoff) != "1";
+    VideoPool::VideoPtr handoff = allowWarmHandoff
+        ? VideoPool::acquireWarmForReset(monitor, listId_, false)
+        : nullptr;
+    if (!allowWarmHandoff) {
+        LOG_INFO("VideoPool", "Playlist handoff disabled: retiring all old-generation videos");
+    }
 
     std::vector<VideoPool::VideoPtr> oldVideos;
     oldVideos.reserve(scrollPointsSize);
 
     if (selectedVideo) {
-        if (handoff) {
+        if (handoff || !allowWarmHandoff) {
             // A cached READY instance won. The current selected video remains
             // ordinary old-generation state and will retire at the boundary.
             auto selectedFallback = selectedVideo->extractVideo();

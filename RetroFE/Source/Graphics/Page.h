@@ -180,7 +180,7 @@ public:
     void beginMenuCoast();
     void  updateScrollPeriod() const;
     bool  isMenuFastScrolling() const;
-    void  scroll(bool forward, bool playlist);
+    void  scroll(bool forward, bool playlist, float carryTime = 0.0f);
     ScrollDirection getScrolling() const { return scrolling_; }
     bool  hasSubs();
     int   getLayoutWidth(int layout);
