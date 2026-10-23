@@ -25,6 +25,7 @@
 #include "Utility/ThreadPool.h"
 #include "Utility/Utils.h"
 #include "Utility/CrashHandler.h"
+#include "Utility/DirectoryContents.h"
 #include "RetroFE.h"
 #include "SDL.h"
 #include <SDL3/SDL_main.h>
@@ -389,8 +390,9 @@ static bool ImportConfiguration(Configuration* c) {
     fs::path launchersPath = Utils::combinePath(Configuration::absolutePath, "launchers." + Utils::getOSType()); // Gets launchers directory
     fs::path collectionsPath = Utils::combinePath(Configuration::absolutePath, "collections"); // Gets collections directory
     std::string settingsConfPath = Utils::combinePath(configPath, "settings"); // Gets root settings
+    const DirectoryContents rootContents(configPath);
     
-    if(!fs::exists(Utils::combinePath(Configuration::absolutePath, "settings.conf"))) {
+    if(!rootContents.contains("settings.conf")) {
         std::string logFile = "\nCheck the log for details: " + Utils::combinePath(Configuration::absolutePath, "log.txt");
         if(Utils::isOutputATerminal()) {
             std::cout << std::endl << "RetroFE failed to find a valid settings.conf in the current directory" + logFile << std::endl;
@@ -408,12 +410,12 @@ static bool ImportConfiguration(Configuration* c) {
     }
     for (int i = 1; i < 16; i++) {
         std::string settingsFile = settingsConfPath + std::to_string(i) + ".conf";
-        if (fs::exists(settingsFile)) {
+        if (rootContents.contains("settings" + std::to_string(i) + ".conf")) {
             c->import("", "", settingsFile, false);
         }
     }
     std::string savedSettingsFile = settingsConfPath + "_saved.conf";
-    if (fs::exists(savedSettingsFile)) {
+    if (rootContents.contains("settings_saved.conf")) {
         c->import("", "", savedSettingsFile, false);
     }
     if (!settingsFromCLI.empty()) {
@@ -471,21 +473,22 @@ static bool ImportConfiguration(Configuration* c) {
         std::string collection = entry.path().filename().string();
         if (fs::is_directory(entry) && !collection.empty() && collection[0] != '_' && collection != "." && collection != "..") {
             std::string prefix = "collections." + collection;
+            const DirectoryContents contents(entry.path());
             bool settingsImported = false;
             std::string settingsFile = Utils::combinePath(collectionsPath, collection, "settings.conf");
-            if (fs::exists(settingsFile)) {
+            if (contents.contains("settings.conf")) {
                 settingsImported |= c->import(collection, prefix, settingsFile, false);
             }
 
             for (int i = 1; i < 16; i++) {
                 std::string numberedSettingsFile = Utils::combinePath(collectionsPath, collection, "settings" + std::to_string(i) + ".conf");
-                if (fs::exists(numberedSettingsFile)) {
+                if (contents.contains("settings" + std::to_string(i) + ".conf")) {
                     settingsImported |= c->import(collection, prefix, numberedSettingsFile, false);
                 }
             }
 
             std::string infoFile = Utils::combinePath(collectionsPath, collection, "info.conf");
-            if (fs::exists(infoFile)) {
+            if (contents.contains("info.conf")) {
                 c->import(collection, prefix, infoFile, false);
             }
 
@@ -494,8 +497,8 @@ static bool ImportConfiguration(Configuration* c) {
             std::string defaultLauncherFile = Utils::combinePath(collectionsPath, collection, "launcher.conf");
             std::string launcherKey = "collectionLaunchers." + collection; // Unique key for collection-specific launchers
 
-            std::string importFile = fs::exists(osSpecificLauncherFile) ? osSpecificLauncherFile
-                : fs::exists(defaultLauncherFile) ? defaultLauncherFile
+            std::string importFile = contents.contains("launcher." + Utils::getOSType() + ".conf") ? osSpecificLauncherFile
+                : contents.contains("launcher.conf") ? defaultLauncherFile
                 : "";
 
             // Import the launcher file if it exists under the unique key
@@ -512,11 +515,11 @@ static bool ImportConfiguration(Configuration* c) {
             fs::path defaultLocalLaunchersPath = Utils::combinePath(collectionsPath, collection, "launchers.local");
 
             // Check if OS-specific launchers directory exists, otherwise use the default launchers directory
-            if (!fs::is_directory(localLaunchersPath) && fs::is_directory(defaultLocalLaunchersPath)) {
+            if (!contents.isDirectory("launchers." + Utils::getOSType() + ".local") && contents.isDirectory("launchers.local")) {
                 localLaunchersPath = defaultLocalLaunchersPath;
             }
 
-            if (fs::is_directory(localLaunchersPath)) {
+            if (contents.isDirectory(localLaunchersPath.filename().string())) {
                 for (const auto& launcherEntry : fs::directory_iterator(localLaunchersPath)) {
                     if (launcherEntry.is_regular_file()) {
                         fs::path filePath = launcherEntry.path();

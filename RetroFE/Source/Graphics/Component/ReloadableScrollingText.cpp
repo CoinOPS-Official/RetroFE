@@ -153,6 +153,7 @@ bool ReloadableScrollingText::update(float dt) {
 	else if (newItemSelected || (newScrollItemSelected && getMenuScrollReload())) {
 		reloadTexture();  // Reset scroll position as usual for non-file types
 		newItemSelected = false;
+		newScrollItemSelected = false;
 	}
 
 	return Component::update(dt);
@@ -519,12 +520,14 @@ void ReloadableScrollingText::draw() {
 				shapedCacheDirty_ = false;
 			}
 			const bool fontChanged = shapedScale_ != scale ||
+				shapedLetterSpacing_ != baseViewInfo.LetterSpacing ||
 				shapedMipSize_ != mip->fontSize ||
 				shapedFontGeneration_ != font->getResourceGeneration();
 			if (direction_ == "horizontal") {
 				if (fontChanged && !engine->measure(shapedHorizontalText_, scale,
-					shapedHorizontalWidth_)) return;
+					shapedHorizontalWidth_, false, baseViewInfo.LetterSpacing)) return;
 				shapedScale_ = scale;
+				shapedLetterSpacing_ = baseViewInfo.LetterSpacing;
 				shapedMipSize_ = mip->fontSize;
 				shapedFontGeneration_ = font->getResourceGeneration();
 				textWidth_ = shapedHorizontalWidth_;
@@ -551,7 +554,7 @@ void ReloadableScrollingText::draw() {
 							std::string word;
 							while (words >> word) {
 								float wordWidth = 0.0f;
-								engine->measure(word, scale, wordWidth);
+								engine->measure(word, scale, wordWidth, false, baseViewInfo.LetterSpacing);
 								row.words.push_back(word);
 								row.wordWidths.push_back(wordWidth);
 							}
@@ -560,15 +563,16 @@ void ReloadableScrollingText::draw() {
 					};
 					for (const auto& sourceLine : text_) {
 						std::vector<std::string> lines;
-						if (!engine->wrapLines(sourceLine, scale, viewportW, lines)) return;
+						if (!engine->wrapLines(sourceLine, scale, viewportW, lines, baseViewInfo.LetterSpacing)) return;
 						for (size_t i = 0; i < lines.size(); ++i) {
 							float width = 0.0f;
-							if (!engine->measure(lines[i], scale, width)) return;
+							if (!engine->measure(lines[i], scale, width, false, baseViewInfo.LetterSpacing)) return;
 							pushRow(lines[i], width, alignment_ == "justified" && i + 1 < lines.size());
 						}
 					}
 					shapedWrapWidth_ = viewportW;
 					shapedScale_ = scale;
+					shapedLetterSpacing_ = baseViewInfo.LetterSpacing;
 					shapedMipSize_ = mip->fontSize;
 					shapedFontGeneration_ = font->getResourceGeneration();
 				}

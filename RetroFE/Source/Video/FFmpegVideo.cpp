@@ -380,6 +380,7 @@ struct FFmpegVideo::Impl {
     std::atomic<bool> fallbackRequested{false};
     std::atomic<uint64_t> revision{0};
     uint64_t accepted = 0, workerRevision = 0;
+    uint64_t requestedStream = 0, acceptedStream = 0; // guarded by mutex; seeks stay within the current stream
     std::string requested, loaded;
     int64_t seekTarget = 0, position = 0, duration = 0;
     Uint64 anchor = 0;
@@ -412,6 +413,7 @@ struct FFmpegVideo::Impl {
     std::shared_ptr<AudioBus::Handle> audio;
     AVBufferRef *hardware = nullptr;
     AVPixelFormat hardwareFormat = AV_PIX_FMT_NONE;
+    bool disableHardwareForStream = false; // worker-owned; reset for the next opened stream
 #ifdef RETROFE_HAVE_GST_VULKAN
     std::unique_ptr<VulkanVideoInterop> vulkanInterop;
     bool vulkanInteropFailed = false;
@@ -531,7 +533,8 @@ struct FFmpegVideo::Impl {
     int64_t now() const {
         return position + (target == VideoState::Playing && ready ? int64_t(SDL_GetTicksNS() - anchor) : 0);
     }
-    void request(const std::string &path, int64_t seek, bool unload, VideoState state, bool keepFrame = false) {
+    void request(const std::string &path, int64_t seek, bool unload, VideoState state, bool keepFrame = false,
+        bool newStream = false) {
         keepFrame = keepFrame && !unload && path == requested;
 #ifdef RETROFE_HAVE_GST_VULKAN
         if (vulkanInterop && !keepFrame) vulkanInterop->discardFrames();
@@ -548,6 +551,7 @@ struct FFmpegVideo::Impl {
         if (egl && !keepFrame) egl->discardFrames();
 #endif
         std::lock_guard lock(mutex);
+        if (newStream) ++requestedStream;
         if (requested != path) {
             dim = {};
             nativeDescriptionLogged = false;
@@ -645,7 +649,7 @@ struct FFmpegVideo::Impl {
                 c->thread_count = std::max(0, Configuration::AvdecMaxThreads);
                 c->thread_type = Configuration::AvdecThreadType;
             }
-            if (index == vi && hardware) {
+            if (index == vi && hardware && !disableHardwareForStream) {
                 for (int i = 0; const auto *config = avcodec_get_hw_config(codec, i); ++i) {
                     if (config->pix_fmt == hardwareFormat &&
                         (config->methods & AV_CODEC_HW_CONFIG_METHOD_HW_DEVICE_CTX)) {
@@ -674,6 +678,7 @@ struct FFmpegVideo::Impl {
                 av_buffer_unref(&c->hw_device_ctx);
                 c->get_format = nullptr;
                 c->opaque = nullptr;
+                if (index == vi) disableHardwareForStream = true;
                 c->thread_count = std::max(0, Configuration::AvdecMaxThreads);
                 c->thread_type = Configuration::AvdecThreadType;
                 openRc = avcodec_open2(c, codec, nullptr);
@@ -686,10 +691,7 @@ struct FFmpegVideo::Impl {
         return c;
     }
     void fallbackToSoftwareVideo() {
-        if (hardware) {
-            av_buffer_unref(&hardware);
-        }
-        hardwareFormat = AV_PIX_FMT_NONE;
+        disableHardwareForStream = true;
         fallbackRequested = false;
         avcodec_free_context(&vc);
         avcodec_parameters_free(&videoParameters);
@@ -1203,9 +1205,15 @@ struct FFmpegVideo::Impl {
             throw;
         }
     }
-    void load(const std::string &path, int64_t seek) {
-        const bool fresh = loaded != path || !format;
+    void load(const std::string &path, int64_t seek, bool newStream) {
+        const bool fresh = loaded != path || !format || (newStream && disableHardwareForStream && hardware);
         if (fresh) {
+            // Do not reuse a fallback software codec when trying a new stream.
+            if (disableHardwareForStream && hardware) {
+                avcodec_free_context(&vc);
+                avcodec_parameters_free(&videoParameters);
+            }
+            disableHardwareForStream = false;
             // Close the old container/source but retain both codec contexts just
             // long enough to compare them against the newly probed streams.
             closeMedia(true);
@@ -1551,6 +1559,7 @@ struct FFmpegVideo::Impl {
             std::string path;
             int64_t seek = 0;
             uint64_t rev;
+            uint64_t stream;
             bool idle;
             {
                 std::unique_lock lock(mutex);
@@ -1587,6 +1596,7 @@ struct FFmpegVideo::Impl {
                     continue;
 
                 rev = revision;
+                stream = requestedStream;
                 if (startupTracePending && rev != accepted && !startupWorkerAt)
                     startupWorkerAt = SDL_GetTicksNS();
                 path = requested;
@@ -1604,12 +1614,13 @@ struct FFmpegVideo::Impl {
                     if (path.empty())
                         closeMedia();
                     else if (!idle)
-                        load(path, seek);
+                        load(path, seek, stream != acceptedStream);
                     std::lock_guard lock(mutex);
                     if (revision != rev)
                         continue;
                     if (startupTracePending) startupOpenedAt = SDL_GetTicksNS();
                     accepted = rev;
+                    acceptedStream = stream;
                     ready = !unloaded && !path.empty();
                     videoStream = vi >= 0;
                     duration = format && format->duration != AV_NOPTS_VALUE
@@ -1746,7 +1757,7 @@ bool FFmpegVideo::deInitialize() { return stop(); }
 bool FFmpegVideo::open(const std::string &f) {
     impl_->playCount = 0;
     impl_->logged = false;
-    impl_->request(f, 0, false, VideoState::Paused);
+    impl_->request(f, 0, false, VideoState::Paused, false, true);
     return true;
 }
 bool FFmpegVideo::unload() {

@@ -20,6 +20,8 @@
 #include "Collection/CollectionInfoBuilder.h"
 #include "Collection/Item.h"
 #include "Collection/MenuParser.h"
+#include "Collection/PlaylistRules.h"
+#include "Collection/TitleCleanup.h"
 #include "Control/Restrictor/RestrictorManager.h"
 #include "Control/UserInput.h"
 #include "Database/Configuration.h"
@@ -48,6 +50,7 @@
 #endif
 #include <algorithm>
 #include <array>
+#include <chrono>
 #include <filesystem>
 #include <fstream>
 #include <gst/gst.h>
@@ -1143,6 +1146,11 @@ void RetroFE::allocateGraphicsMemory() {
 
 // Deinitialize RetroFE
 bool RetroFE::deInitialize() {
+    cancelPayloadSync_.store(true);
+    if (payloadSyncFuture_.valid()) {
+        try { payloadSyncFuture_.get(); }
+        catch (const std::exception& e) { LOG_ERROR("Payload", "Sync worker failed: " << e.what()); }
+    }
 	bool retVal = true;
 
 	// The worker can still be using this instance and publishing db_/metadb_.
@@ -1561,17 +1569,24 @@ bool RetroFE::run() {
 		frameStartTicks = SDL_GetPerformanceCounter();
 		frameNowMs = perfTicksToMs(frameStartTicks);
 
-		if (psCfg.enabled && frameNowMs >= nextPayloadSyncMs) {
+		if (payloadSyncFuture_.valid() &&
+			payloadSyncFuture_.wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
+			try {
+				const bool ok = payloadSyncFuture_.get();
+				LOG_INFO("Payload", std::string("Periodic sync (30m): ") + (ok ? "OK" : "Errors (see log)"));
+			}
+			catch (const std::exception& e) { LOG_ERROR("Payload", "Sync worker failed: " << e.what()); }
+			if (auto* page = currentPage_) page->consumeDirtyPlaylistsForActiveCollection();
+		}
+
+		if (psCfg.enabled && initialized.load() && !payloadSyncFuture_.valid() && frameNowMs >= nextPayloadSyncMs) {
 			// avoid drift
 			do { nextPayloadSyncMs += payloadSyncIntervalMs; } while (frameNowMs >= nextPayloadSyncMs);
 
-			const bool ok = PayloadSync::RunWithConfig(psCfg, /*dryRun=*/false);
-			LOG_INFO("Payload", std::string("Periodic sync (5m): ") + (ok ? "OK" : "Errors (see log)"));
-
-			if (auto* page = currentPage_)
-				page->consumeDirtyPlaylistsForActiveCollection();
-
-			resetFrameClockAfterBlockingWork();
+			cancelPayloadSync_.store(false);
+			payloadSyncFuture_ = std::async(std::launch::async, [this, psCfg] {
+				return PayloadSync::RunWithConfig(psCfg, false, &cancelPayloadSync_);
+			});
 		}
 
 
@@ -3021,22 +3036,8 @@ bool RetroFE::run() {
 				config_.getProperty(OPTION_LASTPLAYEDSKIPCOLLECTION, lastPlayedSkipCollection);
 				config_.getProperty(OPTION_LASTPLAYEDSIZE, size);
 
-				bool updateLastPlayed = true;
-
-				if (!lastPlayedSkipCollection.empty())
-				{
-					std::stringstream ss(lastPlayedSkipCollection);
-					std::string collection;
-
-					while (std::getline(ss, collection, ','))
-					{
-						if (nextPageItem_->collectionInfo->name == collection)
-						{
-							updateLastPlayed = false;
-							break;
-						}
-					}
-				}
+				const bool updateLastPlayed = !PlaylistRules::collectionIsSkipped(
+					lastPlayedSkipCollection, nextPageItem_->collectionInfo->name);
 
 				if (updateLastPlayed)
 				{
@@ -3744,22 +3745,11 @@ bool RetroFE::isInAttractModeSkipPlaylist(std::string playlist) {
 }
 
 void RetroFE::goToNextAttractModePlaylistByCycle(std::vector<std::string> cycleVector) {
-	// find current position
-	auto it = cycleVector.begin();
-	while (it != cycleVector.end() && *it != currentPage_->getPlaylistName())
-		++it;
-	// find next playlist that is not in list
-	for (;;)
-	{
-		if (!isInAttractModeSkipPlaylist(*it))
-		{
-			break;
-		}
-		++it;
-		if (it == cycleVector.end())
-			it = cycleVector.begin();
-	}
-	if (currentPage_->playlistExists(*it))
+	const auto it = PlaylistRules::findAttractPlaylist(cycleVector,
+		currentPage_->getPlaylistName(), [this](const std::string& playlist) {
+			return !isInAttractModeSkipPlaylist(playlist) && currentPage_->playlistExists(playlist);
+		});
+	if (it != cycleVector.end())
 	{
 		currentPage_->selectPlaylist(*it);
 	}
@@ -3784,8 +3774,7 @@ void RetroFE::advanceToNextValidAttractPlaylist() {
 	{
 		if (useCycle)
 		{
-			// This existing helper function is already robust for cycling. It finds the current
-			// position in the cycle and iterates until a non-skippable one is found.
+			// Search the cycle once for an existing, non-skipped playlist.
 			goToNextAttractModePlaylistByCycle(getPlaylistCycle());
 		}
 		else
@@ -4076,7 +4065,8 @@ RetroFE::RETROFE_STATE RetroFE::processUserInput(Page* page) {
 					int size = 0;
 					config_.getProperty(OPTION_LASTPLAYEDSKIPCOLLECTION, lastPlayedSkipCollection);
 					config_.getProperty(OPTION_LASTPLAYEDSIZE, size);
-					if (!isInAttractModeSkipPlaylist(currentPage_->getPlaylistName()) && nextPageItem_->collectionInfo->name != lastPlayedSkipCollection) {
+					if (!isInAttractModeSkipPlaylist(currentPage_->getPlaylistName()) &&
+						!PlaylistRules::collectionIsSkipped(lastPlayedSkipCollection, nextPageItem_->collectionInfo->name)) {
 						cib.updateLastPlayedPlaylist(currentPage_->getCollection(), nextPageItem_, size);
 						currentPage_->updateReloadables(0);
 					}
@@ -4456,15 +4446,8 @@ CollectionInfo* RetroFE::getCollection(const std::string& collectionName) {
 	collection->sortPlaylists();
 
 	// Add extra info, if available
-	std::string defaultPath =
-		Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info", "default.conf");
-	for (auto& item : collection->items)
-	{
-		item->loadInfo(defaultPath);
-		std::string path = Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info",
-			item->name + ".conf");
-		item->loadInfo(path);
-	}
+	Item::loadCollectionInfo(collection->items,
+		Utils::combinePath(Configuration::absolutePath, "collections", collectionName, "info"));
 
 	// Remove parenthesis and brackets, if so configured
 	bool showParenthesis = true;
@@ -4473,45 +4456,7 @@ CollectionInfo* RetroFE::getCollection(const std::string& collectionName) {
 	(void)config_.getProperty(OPTION_SHOWPARENTHESIS, showParenthesis);
 	(void)config_.getProperty(OPTION_SHOWSQUAREBRACKETS, showSquareBrackets);
 
-	// using Playlists_T = std::map<std::string, std::vector<Item *> *>;
-	for (auto const& playlistPair : collection->playlists)
-	{
-		for (auto& item : *(playlistPair.second))
-		{
-			if (!showParenthesis)
-			{
-				std::string::size_type firstPos = item->title.find_first_of("(");
-				std::string::size_type secondPos = item->title.find_first_of(")", firstPos);
-
-				while (firstPos != std::string::npos && secondPos != std::string::npos)
-				{
-					firstPos = item->title.find_first_of("(");
-					secondPos = item->title.find_first_of(")", firstPos);
-
-					if (firstPos != std::string::npos)
-					{
-						item->title.erase(firstPos, (secondPos - firstPos) + 1);
-					}
-				}
-			}
-			if (!showSquareBrackets)
-			{
-				std::string::size_type firstPos = item->title.find_first_of("[");
-				std::string::size_type secondPos = item->title.find_first_of("]", firstPos);
-
-				while (firstPos != std::string::npos && secondPos != std::string::npos)
-				{
-					firstPos = item->title.find_first_of("[");
-					secondPos = item->title.find_first_of("]", firstPos);
-
-					if (firstPos != std::string::npos && secondPos != std::string::npos)
-					{
-						item->title.erase(firstPos, (secondPos - firstPos) + 1);
-					}
-				}
-			}
-		}
-	}
+	cleanPlaylistTitles(collection->playlists, showParenthesis, showSquareBrackets);
 
 	return collection;
 }

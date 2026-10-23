@@ -65,6 +65,7 @@ private:
     bool shapedCacheDirty_ = true;
     float shapedWrapWidth_ = -1.0f;
     float shapedScale_ = -1.0f;
+    float shapedLetterSpacing_ = 0.f;
     int shapedMipSize_ = 0;
     uint64_t shapedFontGeneration_ = 0;
     std::string              direction_;

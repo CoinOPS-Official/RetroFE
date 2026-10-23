@@ -334,6 +334,9 @@ bool Component::animate() {
             case TWEEN_PROPERTY_BACKGROUND_ALPHA:
             baseViewInfo.BackgroundAlpha = tween->startDefined ? tween->animate(elapsedTime) : tween->animate(elapsedTime, storeViewInfo_.BackgroundAlpha);
             break;
+            case TWEEN_PROPERTY_LETTER_SPACING:
+            baseViewInfo.LetterSpacing = tween->startDefined ? tween->animate(elapsedTime) : tween->animate(elapsedTime, storeViewInfo_.LetterSpacing);
+            break;
             case TWEEN_PROPERTY_MAX_WIDTH:
             baseViewInfo.MaxWidth = tween->startDefined ? tween->animate(elapsedTime) : tween->animate(elapsedTime, storeViewInfo_.MaxWidth);
             break;

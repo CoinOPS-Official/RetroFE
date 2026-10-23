@@ -70,6 +70,7 @@ public:
     void setInfo( std::string key, std::string value );
     bool getInfo(const std::string& key, std::string& value);
     void loadInfo(const std::string& path);
+    static void loadCollectionInfo(const std::vector<Item*>& items, const std::string& directory);
     bool static validSortType(std::string attribute);
     bool static isSortDesc(std::string attribute);
     void precomputeNameCandidates(const std::vector<std::string>& typesLC) const;

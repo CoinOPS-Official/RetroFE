@@ -18,6 +18,7 @@
 #include "../Database/Configuration.h"
 #include "../Database/GlobalOpts.h"
 #include "../Utility/Utils.h"
+#include "ItemSort.h"
 #include "../Utility/Log.h"
 #include <sstream>
 #include <fstream>
@@ -68,6 +69,11 @@ CollectionInfo::~CollectionInfo() {
     // Do NOT delete the Item* pointers here! 
     // They are owned and deleted by MetadataDatabase/CollectionInfoBuilder.
     items.clear();
+}
+
+const std::string& CollectionInfo::getPlaylistTitle(const std::string& id) const {
+    const auto title = playlistTitles.find(id);
+    return title != playlistTitles.end() ? title->second : id;
 }
 
 bool CollectionInfo::saveFavorites(Item* removed)
@@ -239,53 +245,18 @@ void CollectionInfo::addSubcollection(CollectionInfo *newinfo)
     items.insert(items.begin(), newinfo->items.begin(), newinfo->items.end());
 }
 
-auto CollectionInfo::itemIsLess(const std::string& sortTypeParam, bool currentCollectionMenusort) const
-{
-    return [sortTypeParam, currentCollectionMenusort](Item const* lhs, Item const* rhs) {
-
-        if (lhs->leaf && !rhs->leaf) return true;
-        if (!lhs->leaf && rhs->leaf) return false;
-
-        // sort by collections first
-        if (lhs->collectionInfo->subsSplit && lhs->collectionInfo != rhs->collectionInfo)
-            return lhs->collectionInfo->lowercaseName() < rhs->collectionInfo->lowercaseName();
-        
-        // no elements left
-        if (!lhs->leaf && !rhs->leaf)
-            return false;
-
-        // sort by another attribute
-        if (sortTypeParam != "") {
-            std::string lhsValue = lhs->getMetaAttribute(sortTypeParam);
-            std::string rhsValue = rhs->getMetaAttribute(sortTypeParam);
-            bool desc = Item::isSortDesc(sortTypeParam);
-
-            if (lhsValue != rhsValue) {
-                return desc ? lhsValue > rhsValue : lhsValue < rhsValue;
-            }
-        }
-
-        // menu sort is false then use playlist's order
-        if (!currentCollectionMenusort)
-            return false;
-
-        // default sort by name
-        return lhs->lowercaseFullTitle() < rhs->lowercaseFullTitle();
-    };
-}
-
 void CollectionInfo::sortPlaylistByName(const std::string& playlistName) {
     auto it = playlists.find(playlistName);
     if (it == playlists.end() || !it->second || it->second == &items) return;
 
     std::string sortTypeLocal = Item::validSortType(playlistName) ? playlistName : "";
     auto& vec = *it->second;
-    std::sort(vec.begin(), vec.end(), itemIsLess(sortTypeLocal, menusort));
+    sortItemsByKeys(vec, sortTypeLocal, menusort);
 }
 
 void CollectionInfo::sortItems()
 {
-    std::sort(items.begin(), items.end(), itemIsLess("", menusort));
+    sortItemsByKeys(items, "", menusort);
 }
 
 
@@ -298,7 +269,7 @@ void CollectionInfo::sortPlaylists()
         if ( itP->second != allItems ) {
             // temporarily set collection info's sortType so search has access to it
             sortType = Item::validSortType(itP->first) ? itP->first : "";
-            std::sort(itP->second->begin(), itP->second->end(), itemIsLess(sortType, menusort));
+            sortItemsByKeys(*itP->second, sortType, menusort);
         }
     }
     sortType = "";

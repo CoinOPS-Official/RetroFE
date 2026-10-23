@@ -503,6 +503,7 @@ void MusicPlayer::reinitialize() {
 }
 
 void MusicPlayer::pump() {
+    if (isShuttingDown_.load(std::memory_order_relaxed)) return;
     pollGStreamer();
     if (!musicTrack_) return;
     if (isShuttingDown_.load(std::memory_order_relaxed)) return;
@@ -682,6 +683,7 @@ void MusicPlayer::loadMusicFolderFromConfig() {
 
 
 bool MusicPlayer::loadMusicFolder(const std::string& folderPathUtf8) {
+    cancelStreamRetry();
     musicFiles_.clear();
     musicUris_.clear();
     musicNames_.clear();
@@ -729,6 +731,7 @@ bool MusicPlayer::loadMusicFolder(const std::string& folderPathUtf8) {
 }
 
 bool MusicPlayer::loadM3UPlaylist(const std::string& playlistPathUtf8) {
+    cancelStreamRetry();
     musicFiles_.clear();
     musicUris_.clear();
     musicNames_.clear();
@@ -842,6 +845,7 @@ bool MusicPlayer::isValidAudioFile(const fs::path& filePath) const {
 void MusicPlayer::loadTrack(int index) {
     if (!ensureAudio()) return;
     haltTrack();
+    closePipeline(); // Old-source errors must not be attributed to a new selection.
     acceptSamples_.store(false, std::memory_order_release);
 
     if (index < 0 || index >= static_cast<int>(musicFiles_.size())) {
@@ -957,7 +961,52 @@ void MusicPlayer::closePipeline() {
     audioSink_ = nullptr;
 }
 
+void MusicPlayer::cancelStreamRetry() {
+    streamRetryCount_ = 0;
+    streamRetryAt_ = streamHealthySince_ = streamLastProgress_ = streamProgressBytes_ = 0;
+    streamRetryPaused_ = false;
+}
+
+void MusicPlayer::handlePlaybackFailure(bool retryStream) {
+    haltTrack();
+    // A connection failure must not undo the user's music-volume selection.
+    musicFade_.active = false;
+    isVolumeFading_ = false;
+    musicVolume(steadyMusicVolume());
+    setPlaybackState(PlaybackState::NONE);
+    playbackError_ = endOfStream_ = false;
+    streamRetryAt_ = streamHealthySince_ = streamLastProgress_ = streamProgressBytes_ = 0;
+    if (!retryStream || isShuttingDown_.load(std::memory_order_relaxed)) return;
+
+    constexpr uint64_t delays[] = {5000, 10000, 20000};
+    if (streamRetryCount_ >= std::size(delays)) {
+        LOG_ERROR("MusicPlayer", "Internet stream stopped after three retries; select a station to try again.");
+        return;
+    }
+    const auto delay = delays[streamRetryCount_++];
+    streamRetryAt_ = SDL_GetTicks() + delay;
+    LOG_WARNING("MusicPlayer", "Internet stream retry " + std::to_string(streamRetryCount_) +
+        "/3 in " + std::to_string(delay / 1000) + " seconds.");
+}
+
 void MusicPlayer::pollGStreamer() {
+    const auto now = SDL_GetTicks();
+    if (streamRetryAt_) {
+        if (now < streamRetryAt_) return;
+        streamRetryAt_ = 0;
+        // Rebuild the failed source and bus without resetting the retry budget.
+        closePipeline();
+        buffering_ = false;
+        if (currentIndex_ >= 0 && currentIndex_ < static_cast<int>(musicUris_.size()) &&
+            !musicUris_[currentIndex_].empty() && openPipeline(musicUris_[currentIndex_]) && startTrack()) {
+            musicVolume(fadeMs_ > 0 ? 0 : steadyMusicVolume());
+            if (fadeMs_ > 0) beginFadeInToSteadyVolume(fadeMs_);
+            setPlaybackState(PlaybackState::PLAYING);
+        } else {
+            handlePlaybackFailure(true);
+        }
+        return;
+    }
     if (!bus_) return;
     while (GstMessage* message = gst_bus_pop(bus_)) {
         switch (GST_MESSAGE_TYPE(message)) {
@@ -1036,12 +1085,7 @@ void MusicPlayer::pollGStreamer() {
     }
     if (endOfStream_ && musicStream_ && SDL_GetAudioStreamQueued(musicStream_) == 0) {
         if (playbackError_) {
-            playbackError_ = false;
-            endOfStream_ = false;
-            haltTrack();
-            musicFade_.active = false;
-            musicVolume(steadyMusicVolume());
-            setPlaybackState(PlaybackState::NONE);
+            handlePlaybackFailure(sourceIsUrl_ && wantsPlayback_);
             return;
         }
         if (isFading()) return;
@@ -1050,6 +1094,19 @@ void MusicPlayer::pollGStreamer() {
             playMusic(currentIndex_, 0);
         } else {
             nextTrack();
+        }
+    }
+    if (sourceIsUrl_ && wantsPlayback_ && !buffering_) {
+        const auto bytes = decodedBytes_.load(std::memory_order_relaxed);
+        if (bytes > streamProgressBytes_) {
+            if (!streamHealthySince_ || (streamLastProgress_ && now - streamLastProgress_ > 3000))
+                streamHealthySince_ = now;
+            streamLastProgress_ = now;
+            streamProgressBytes_ = bytes;
+            // A flapping station must not regain its retry budget after one frame.
+            if (now - streamHealthySince_ >= 30000) streamRetryCount_ = 0;
+        } else if (streamLastProgress_ && now - streamLastProgress_ > 3000) {
+            streamHealthySince_ = 0;
         }
     }
 }
@@ -1150,6 +1207,7 @@ bool MusicPlayer::readTrackMetadata(const fs::path& filePath, TrackMetadata& met
 // -------------------------------------------------------------------------
 
 bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
+    cancelStreamRetry();
     if (musicFiles_.empty()) {
         LOG_ERROR("MusicPlayer", "playMusic called with empty playlist.");
         return false;
@@ -1212,6 +1270,7 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
     if (!startTrack(position)) {
         musicVolume(steadyMusicVolume());
         LOG_ERROR("MusicPlayer", "Play error: " + std::string(SDL_GetError()));
+        handlePlaybackFailure(sourceIsUrl_);
         return false;
     }
 
@@ -1223,6 +1282,14 @@ bool MusicPlayer::playMusic(int index, int customFadeMs, double position) {
 }
 
 bool MusicPlayer::pauseMusic(int customFadeMs) {
+    if (streamRetryPaused_) return false;
+    const bool pending = streamRetryAt_ != 0;
+    cancelStreamRetry();
+    if (pending) {
+        streamRetryPaused_ = true;
+        setPlaybackState(PlaybackState::PAUSED);
+        return true;
+    }
     if (!isPlaying() || isFading()) return false;
     int useFade = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
@@ -1239,6 +1306,7 @@ bool MusicPlayer::pauseMusic(int customFadeMs) {
 }
 
 bool MusicPlayer::resumeMusic(int customFadeMs) {
+    if (streamRetryPaused_) return playMusic(currentIndex_, customFadeMs);
     if (!isPaused() || isFading()) return false;
     int useFade = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
 
@@ -1255,6 +1323,14 @@ bool MusicPlayer::resumeMusic(int customFadeMs) {
 }
 
 bool MusicPlayer::stopMusic(int customFadeMs) {
+    const bool pending = streamRetryAt_ != 0 || streamRetryPaused_;
+    cancelStreamRetry();
+    if (pending) {
+        haltTrack();
+        cancelFade();
+        setPlaybackState(PlaybackState::NONE);
+        return true;
+    }
     if (!(musicTrack_ && (MIX_TrackPlaying(musicTrack_) || MIX_TrackPaused(musicTrack_))) && !(musicTrack_ && MIX_TrackPaused(musicTrack_))) return false;
     if (isFading()) return false;
     int useFade = (customFadeMs < 0) ? fadeMs_ : customFadeMs;
@@ -1509,6 +1585,7 @@ bool MusicPlayer::startTrack(double position) {
 }
 
 void MusicPlayer::releaseAudio() {
+    cancelStreamRetry();
     AudioBus::instance().setMusicPlayer(nullptr);
     closePipeline();
     if (musicTrack_) {
@@ -1733,7 +1810,7 @@ std::string MusicPlayer::getTrackArtist(int index) const { return getTrackMetada
 std::string MusicPlayer::getTrackAlbum(int index) const { return getTrackMetadata(index).album; }
 
 bool MusicPlayer::isPlaying() const { return (musicTrack_ && (MIX_TrackPlaying(musicTrack_) || MIX_TrackPaused(musicTrack_))) == 1 && !(musicTrack_ && MIX_TrackPaused(musicTrack_)); }
-bool MusicPlayer::isPaused() const { return (musicTrack_ && MIX_TrackPaused(musicTrack_)) == 1; }
+bool MusicPlayer::isPaused() const { return streamRetryPaused_ || (musicTrack_ && MIX_TrackPaused(musicTrack_)) == 1; }
 bool MusicPlayer::hasStartedPlaying() const { return hasStartedPlaying_; }
 bool MusicPlayer::isFading() const { return musicFade_.active || isVolumeFading_; }
 

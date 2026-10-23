@@ -20,6 +20,7 @@
 #include <wrl/client.h>
 #endif
 #include "GStreamerVideo.h"
+#include "GStreamerCpuFrame.h"
 #include "GlibLoop.h"
 #include "../Utility/ThreadPool.h"
 #include "../Database/Configuration.h"
@@ -512,10 +513,9 @@ void GStreamerVideo::initializePlugins() {
 			if (rendererBackend == "direct3d11")
 			{
 				// Enable both D3D12 and D3D11 decoders.
-				// GStreamer's D3D12 decoders (rank primary + 2) offer superior stability
-				// and driver correctness across Intel/AMD/NVIDIA and can output D3D11Memory
-				// directly to our D3D11 interop, while D3D11 decoders (rank primary + 1)
-				// serve as fallback.
+				// Prefer D3D12 H.264/HEVC (rank primary + 2), which can output
+				// D3D11Memory directly to this interop. Keep the D3D11 variants
+				// at primary + 1 as fallback.
 				for (const char* codec :
 					{ "h264", "h265", "vp9", "mpeg2", "av1" })
 				{
@@ -797,6 +797,7 @@ void GStreamerVideo::destroyTextures() {
 	allocatedWidth_ = 0;
 	allocatedHeight_ = 0;
 	allocatedFormat_ = SDL_PIXELFORMAT_UNKNOWN;
+	allocatedColorspace_ = SDL_COLORSPACE_UNKNOWN;
 }
 
 bool GStreamerVideo::stop() {
@@ -938,6 +939,14 @@ void GStreamerVideo::stopOnControl() {
 			nullptr);
 	}
 
+	// Prevent a concurrent corner update from accessing the element as its
+	// owning pipeline is released. Streaming callbacks have already drained.
+	{
+		std::lock_guard lock(perspectiveMutex_);
+		perspective_ = nullptr;
+		lastPerspectiveW_ = lastPerspectiveH_ = -1;
+	}
+
 	// Release our owning reference after NULL and bus-watch removal complete.
 	if (pipeline) {
 		gst_object_unref(pipeline);
@@ -954,13 +963,6 @@ void GStreamerVideo::stopOnControl() {
 		}
 
 		stagedSample_.epoch = 0;
-	}
-
-	if (perspective_gva_) {
-		g_value_array_free(
-			perspective_gva_);
-
-		perspective_gva_ = nullptr;
 	}
 
 	actualGstState_.store(
@@ -1360,7 +1362,9 @@ void GStreamerVideo::runUriPumpOnControl() {
         (actualState == GST_STATE_PAUSED ||
          actualState == GST_STATE_PLAYING);
 
-    const bool needsPrerollState =
+    const bool needsReadyReset =
+        !instantUriEnabled_ && actualState > GST_STATE_READY;
+    const bool needsPrerollState = needsReadyReset ||
         actualState == GST_STATE_NULL ||
         actualState == GST_STATE_READY;
 
@@ -1376,6 +1380,11 @@ void GStreamerVideo::runUriPumpOnControl() {
     playbackEpoch_.store(newEpoch, std::memory_order_release);
 
     startupWorkerNs_.store(SDL_GetTicksNS(), std::memory_order_release);
+
+    // playbin without instant-uri applies URI changes only after READY.
+    // Keep this transition on the control worker with the callback gate closed.
+    if (needsReadyReset)
+        gst_element_set_state(pipeline_, GST_STATE_READY);
 
     if (canInstantSwitch) {
         g_object_set(
@@ -1969,7 +1978,19 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 		return true;
 	}
 
-	pipeline_ = gst_element_factory_make("playbin3", "player");
+	bool forceSoftwareDecoder = false;
+#ifdef RETROFE_HAVE_EGL_DMABUF
+	// Stateless decoders can expose tiled DMA-BUFs that CPU filters cannot
+	// consume. playbin3 ignores FORCE_SW_DECODERS, so use playbin's per-instance
+	// decoder selection for these CPU-only pipelines without changing ranks.
+	forceSoftwareDecoder = !Configuration::HardwareVideoAccel || hasPerspective_ || disableInterop_;
+#endif
+	pipeline_ = gst_element_factory_make(forceSoftwareDecoder ? "playbin" : "playbin3", "player");
+	{
+		std::lock_guard lock(perspectiveMutex_);
+		pipelineHasPerspective_ = hasPerspective_;
+		lastPerspectiveW_ = lastPerspectiveH_ = -1;
+	}
 	videoSink_ = gst_element_factory_make("appsink", "video_sink");
 
 	if (!pipeline_ || !videoSink_) {
@@ -2059,6 +2080,7 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 	gst_caps_unref(acaps);
 
 	gint flags = GST_PLAY_FLAG_VIDEO | GST_PLAY_FLAG_AUDIO;
+	if (forceSoftwareDecoder) flags |= GST_PLAY_FLAG_FORCE_SW_DECODERS;
 	flags &= ~(1 << 4);
 	g_object_set(pipeline_, "flags", flags, nullptr);
 
@@ -2115,13 +2137,13 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			videoCaps = gst_caps_from_string(
 				gpuInterop_ && gpuInterop_->available()
 				? gpuInterop_->caps()
-				: "video/x-raw,format=(string)NV12");
-			sdlFormat_ = gpuInterop_ && gpuInterop_->available() ? gpuInterop_->pixelFormat() : SDL_PIXELFORMAT_NV12;
-			LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_NV12 (HW accel: true)");
+				: GStreamerCpuFrame::caps());
+			sdlFormat_ = gpuInterop_ && gpuInterop_->available() ? gpuInterop_->pixelFormat() : SDL_PIXELFORMAT_IYUV;
+			LOG_DEBUG("GStreamerVideo", "Hardware interop requested; CPU YUV formats negotiated per sample");
 		}
 		else {
 			videoCaps = gst_caps_from_string(
-				"video/x-raw,format=(string)I420");
+				GStreamerCpuFrame::caps());
 			sdlFormat_ = SDL_PIXELFORMAT_IYUV;
 			LOG_DEBUG("GStreamerVideo", "SDL pixel format: SDL_PIXELFORMAT_IYUV (HW accel: false)");
 		}
@@ -2172,10 +2194,10 @@ bool GStreamerVideo::createPipelineIfNeeded() {
 			glPipelineActive_.store(false);
 			disableInterop_ = true;
 			gpuInterop_.reset();
-			auto* fallbackCaps = gst_caps_from_string("video/x-raw,format=NV12,pixel-aspect-ratio=1/1");
+			auto* fallbackCaps = gst_caps_from_string(GStreamerCpuFrame::caps());
 			gst_app_sink_set_caps(GST_APP_SINK(videoSink_), fallbackCaps);
 			gst_caps_unref(fallbackCaps);
-			sdlFormat_ = SDL_PIXELFORMAT_NV12;
+			sdlFormat_ = SDL_PIXELFORMAT_IYUV;
 			output = videoSink_;
 		}
 		gst_object_ref_sink(output);
@@ -2276,10 +2298,11 @@ bool GStreamerVideo::openMedia(const std::string& file, bool cpuFallback) {
      * media changes, however, stay on the retained playbin3 and are routed
      * through the coalescing URI pump below.
      */
-    if (!cpuFallback && disableInterop_) {
-        disableInterop_ = false;
+	const bool restoreInterop = !cpuFallback && disableInterop_;
+	if (restoreInterop) disableInterop_ = false;
+    if (pipeline_ && (restoreInterop || pipelineHasPerspective_ != hasPerspective_)) {
 		pendingOpenAfterStop_ = file;
-		pendingOpenCpuFallback_ = false;
+		pendingOpenCpuFallback_ = cpuFallback;
 		return beginStop(true);
     }
 
@@ -2402,97 +2425,9 @@ GstPadProbeReturn GStreamerVideo::padProbeCallback(
 
 			video->dimensions_.store({ w, h }, std::memory_order_release);
 
-			if (video->hasPerspective_) {
-				if (w != video->lastPerspectiveW_ ||
-					h != video->lastPerspectiveH_)
-				{
-					video->lastPerspectiveW_ = w;
-					video->lastPerspectiveH_ = h;
-
-					std::array<Point2D, 4> box = {
-						Point2D(
-							double(video->perspectiveCorners_[0]),
-							double(video->perspectiveCorners_[1])),
-						Point2D(
-							double(video->perspectiveCorners_[2]),
-							double(video->perspectiveCorners_[3])),
-						Point2D(
-							double(video->perspectiveCorners_[4]),
-							double(video->perspectiveCorners_[5])),
-						Point2D(
-							double(video->perspectiveCorners_[6]),
-							double(video->perspectiveCorners_[7]))
-					};
-
-					const auto mat =
-						computePerspectiveMatrixFromCorners(w, h, box);
-
-					struct Task {
-						std::weak_ptr<GStreamerVideo> self;
-						std::array<double, 9> matrix;
-						uint64_t epoch;
-					};
-
-					auto* task = new Task{
-						video->weak_from_this(),
-						mat,
-						epoch
-					};
-
-					g_main_context_invoke_full(
-						GlibLoop::instance().context(),
-						G_PRIORITY_DEFAULT,
-						[](gpointer data) -> gboolean {
-							auto* t = static_cast<Task*>(data);
-							if (!t)
-								return G_SOURCE_REMOVE;
-
-							auto v = t->self.lock();
-							if (!v || !v->perspective_)
-								return G_SOURCE_REMOVE;
-
-							if (t->epoch !=
-								v->playbackEpoch_.load(
-									std::memory_order_acquire))
-							{
-								return G_SOURCE_REMOVE;
-							}
-
-							if (v->perspective_gva_) {
-								g_value_array_free(v->perspective_gva_);
-								v->perspective_gva_ = nullptr;
-							}
-
-							v->perspective_gva_ =
-								g_value_array_new(9);
-
-							GValue val = G_VALUE_INIT;
-							g_value_init(&val, G_TYPE_DOUBLE);
-
-							for (double e : t->matrix) {
-								g_value_set_double(&val, e);
-								g_value_array_append(
-									v->perspective_gva_,
-									&val);
-							}
-
-							g_value_unset(&val);
-
-							g_object_set(
-								G_OBJECT(v->perspective_),
-								"matrix",
-								v->perspective_gva_,
-								nullptr);
-
-							return G_SOURCE_REMOVE;
-						},
-						task,
-						[](gpointer data) {
-							delete static_cast<Task*>(data);
-						}
-					);
-				}
-			}
+			// The perspective setter locks the element and invalidates its map.
+			// Apply it in CAPS handling before any preroll buffer reaches the sink.
+			video->applyPerspectiveForDimensions(w, h);
 		}
 	}
 
@@ -2503,7 +2438,8 @@ void GStreamerVideo::elementSetupCallback([[maybe_unused]] GstElement* playbin,
 	GstElement* element,
 	gpointer data) {
 	const auto* self = static_cast<GStreamerVideo*>(data);
-	const bool isHw = Configuration::HardwareVideoAccel && (!self || !self->disableInterop_);
+	const bool isHw = Configuration::HardwareVideoAccel &&
+		(!self || (!self->disableInterop_ && !self->hasPerspective_));
 	const gchar* name = GST_OBJECT_NAME(element);
 
 	auto has_prop = [](GstElement* e, const char* p) {
@@ -2871,6 +2807,7 @@ void GStreamerVideo::createSdlTexture() {
 	bool needsRecreate = (allocatedWidth_ != w ||
 		allocatedHeight_ != h ||
 		allocatedFormat_ != sdlFormat_ ||
+		allocatedColorspace_ != sdlColorspace_ ||
 		texture_ == nullptr);
 
 	if (!needsRecreate) return;
@@ -2882,8 +2819,14 @@ void GStreamerVideo::createSdlTexture() {
 
 	destroyTextures();
 
-	texture_ = SDL_CreateTexture(
-		SDL::getRenderer(monitor_), sdlFormat_, SDL_TEXTUREACCESS_STREAMING, w, h);
+	const auto properties = SDL_CreateProperties();
+	SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_FORMAT_NUMBER, sdlFormat_);
+	SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_ACCESS_NUMBER, SDL_TEXTUREACCESS_STREAMING);
+	SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_WIDTH_NUMBER, w);
+	SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_HEIGHT_NUMBER, h);
+	SDL_SetNumberProperty(properties, SDL_PROP_TEXTURE_CREATE_COLORSPACE_NUMBER, sdlColorspace_);
+	texture_ = SDL_CreateTextureWithProperties(SDL::getRenderer(monitor_), properties);
+	SDL_DestroyProperties(properties);
 
 	if (!texture_) {
 		LOG_ERROR("GStreamerVideo", std::string("SDL_CreateTexture failed: ") + SDL_GetError());
@@ -2897,6 +2840,7 @@ void GStreamerVideo::createSdlTexture() {
 	allocatedWidth_ = w;
 	allocatedHeight_ = h;
 	allocatedFormat_ = sdlFormat_;
+	allocatedColorspace_ = sdlColorspace_;
 	isTextureReady_ = false;
 	textureValid_.store(false, std::memory_order_release);
 }
@@ -2961,13 +2905,9 @@ void GStreamerVideo::updateFrame() {
 	const int frameH = GST_VIDEO_INFO_HEIGHT(&info);
 	if (frameW <= 0 || frameH <= 0) { gst_sample_unref(sampleToProcess); return; }
 
-	VideoDim currentDim = dimensions_.load(std::memory_order_acquire);
-	if (currentDim.w <= 0 || currentDim.h <= 0) {
-		dimensions_.store({ frameW, frameH }, std::memory_order_release);
-	}
-
 	dimensions_.store({ frameW, frameH }, std::memory_order_release);
-	if (gpuInterop_ && gpuInterop_->available()) {
+	const bool cpuFrame = GStreamerCpuFrame::isSystemMemory(buf);
+	if (gpuInterop_ && gpuInterop_->available() && !cpuFrame) {
 		if (SDL_Texture* imported = gpuInterop_->copy(sampleToProcess)) {
 			if (texture_ && texture_ != gpuTexture_) SDL_DestroyTexture(texture_);
 			texture_ = gpuTexture_ = imported;
@@ -3004,8 +2944,7 @@ void GStreamerVideo::updateFrame() {
 			return;
 		}
 		if (!loggedUpload_) LOG_INFO("GStreamerVideo", std::string("GPU texture interop fallback: ") + gpuInterop_->reason() + "; " + currentFile_);
-		if (gst_buffer_n_memory(buf) > 0 &&
-			!gst_memory_is_type(gst_buffer_peek_memory(buf, 0), GST_ALLOCATOR_SYSMEM)) {
+		if (!cpuFrame) {
 		// Decoder-owned DMA_DRM and VulkanImage memory cannot be treated as
 		// ordinary CPU NV12/RGBA. Reopen with system-memory negotiation.
 		isTextureReady_ = false;
@@ -3018,13 +2957,23 @@ void GStreamerVideo::updateFrame() {
 	}
 	// A failed device can become unavailable after hardware caps were negotiated.
 	// Reopen on the worker instead of implicitly downloading native memory here.
-	if (gpuInterop_ && gst_buffer_n_memory(buf) > 0 &&
-		!gst_memory_is_type(gst_buffer_peek_memory(buf, 0), GST_ALLOCATOR_SYSMEM)) {
+	if (gpuInterop_ && !cpuFrame) {
 		pendingCpuFallback_.store(true, std::memory_order_release);
 		gst_sample_unref(sampleToProcess);
 		return;
 	}
-	if (texture_ == gpuTexture_) { texture_ = nullptr; gpuTexture_ = nullptr; }
+	if (gpuTexture_) {
+		if (texture_ == gpuTexture_) texture_ = nullptr;
+		gpuTexture_ = nullptr;
+		if (gpuInterop_) gpuInterop_->discardFrames();
+	}
+	sdlFormat_ = GStreamerCpuFrame::format(info);
+	sdlColorspace_ = GStreamerCpuFrame::colorspace(info);
+	if (sdlFormat_ == SDL_PIXELFORMAT_UNKNOWN) {
+		LOG_WARNING("GStreamerVideo", "Unsupported CPU frame format; dropping sample");
+		gst_sample_unref(sampleToProcess);
+		return;
+	}
 	createSdlTexture();
 
 	GstVideoFrame frame;
@@ -3438,7 +3387,8 @@ void GStreamerVideo::enablePlugin(const std::string& pluginName) {
 	GstElementFactory* factory = gst_element_factory_find(pluginName.c_str());
 	if (factory)
 	{
-		gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_PRIMARY + 1);
+		const bool preferred = pluginName == "d3d12h264dec" || pluginName == "d3d12h265dec";
+		gst_plugin_feature_set_rank(GST_PLUGIN_FEATURE(factory), GST_RANK_PRIMARY + (preferred ? 2 : 1));
 		gst_object_unref(factory);
 	}
 }
@@ -3456,15 +3406,44 @@ void GStreamerVideo::setSoftOverlay(bool value) {
 	softOverlay_ = value;
 }
 
+void GStreamerVideo::applyPerspectiveForDimensions(int width, int height) {
+	std::lock_guard lock(perspectiveMutex_);
+	if (!pipelineHasPerspective_ || !hasPerspective_ || !perspective_ || width <= 0 || height <= 0 ||
+		(width == lastPerspectiveW_ && height == lastPerspectiveH_)) return;
+	const std::array<Point2D, 4> box{
+		Point2D(perspectiveCorners_[0], perspectiveCorners_[1]),
+		Point2D(perspectiveCorners_[2], perspectiveCorners_[3]),
+		Point2D(perspectiveCorners_[4], perspectiveCorners_[5]),
+		Point2D(perspectiveCorners_[6], perspectiveCorners_[7])};
+	const auto matrix = computePerspectiveMatrixFromCorners(width, height, box);
+	auto* values = g_value_array_new(9);
+	GValue value = G_VALUE_INIT;
+	g_value_init(&value, G_TYPE_DOUBLE);
+	for (const auto entry : matrix) {
+		g_value_set_double(&value, entry);
+		g_value_array_append(values, &value);
+	}
+	g_value_unset(&value);
+	g_object_set(perspective_, "matrix", values, nullptr);
+	g_value_array_free(values);
+	lastPerspectiveW_ = width;
+	lastPerspectiveH_ = height;
+}
+
 void GStreamerVideo::setPerspectiveCorners(const int* corners) {
-	if (corners) {
-		std::copy(corners, corners + 8, perspectiveCorners_);
-		hasPerspective_ = true;
+	if (pipeline_ && pipelineHasPerspective_ != (corners != nullptr)) {
+		textureValid_.store(false, std::memory_order_release);
+		presentationEpoch_.store(0, std::memory_order_release);
 	}
-	else {
-		std::fill(perspectiveCorners_, perspectiveCorners_ + 8, 0);
-		hasPerspective_ = false;
+	{
+		std::lock_guard lock(perspectiveMutex_);
+		if (corners) std::copy(corners, corners + 8, perspectiveCorners_);
+		else std::fill(perspectiveCorners_, perspectiveCorners_ + 8, 0);
+		hasPerspective_ = corners != nullptr;
+		lastPerspectiveW_ = lastPerspectiveH_ = -1;
 	}
+	const auto dimensions = dimensions_.load(std::memory_order_acquire);
+	applyPerspectiveForDimensions(dimensions.w, dimensions.h);
 }
 
 bool GStreamerVideo::hasFinishedLoops() const {

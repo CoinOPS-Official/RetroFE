@@ -20,6 +20,8 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <filesystem>
+#include <unordered_set>
 
 
 Item::~Item() = default;
@@ -154,6 +156,34 @@ void Item::loadInfo(const std::string& path)
             ss << "Missing an assignment operator (=) on line " << lineCount << " " << path;
             LOG_ERROR("Item", ss.str());
         }
+    }
+}
+
+void Item::loadCollectionInfo(const std::vector<Item*>& items, const std::string& directory) {
+    namespace fs = std::filesystem;
+    std::error_code error;
+    if (items.empty() || !fs::is_directory(directory, error)) return;
+    auto filenameKey = [](const std::string& name) {
+#if defined(_WIN32) || defined(__APPLE__)
+        return Utils::toLower(name);
+#else
+        return name;
+#endif
+    };
+    std::unordered_set<std::string> files;
+    for (fs::directory_iterator it(directory, error), end; !error && it != end; it.increment(error))
+        files.insert(filenameKey(it->path().filename().string()));
+
+    Item defaults;
+    if (error || files.contains("default.conf")) defaults.loadInfo((fs::path(directory) / "default.conf").string());
+    for (auto* item : items) {
+        // Preserve loadInfo's first-value-wins precedence, including preexisting info.
+        item->info_.insert(defaults.info_.begin(), defaults.info_.end());
+        const auto filename = item->name + ".conf";
+        // A partial directory scan or a name containing subdirectories needs
+        // the original open attempt rather than relying on the filename set.
+        if (error || files.contains(filenameKey(filename)) || filename.find_first_of("/\\") != std::string::npos)
+            item->loadInfo((fs::path(directory) / filename).string());
     }
 }
 

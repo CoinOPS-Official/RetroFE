@@ -183,6 +183,8 @@ public:
     void setCoastFriction(float value);
     bool canBeginCoast() const;
     void enableTextFallback(bool value);
+    void enableTextOnly(bool value);
+    void setTextFormat(const std::string& format);
     bool horizontalScroll{ false };
     void deallocateSpritePoints();
     void allocateSpritePoints();
@@ -235,6 +237,8 @@ private:
     bool playlistType_;
     bool selectedImage_;
     bool textFallback_{ false };
+    bool textOnly_{ false };
+    std::string textFormat_;
 
     std::vector<ViewInfo*>* scrollPoints_{ nullptr };
     std::shared_ptr<std::vector<std::shared_ptr<AnimationEvents>>> tweenPoints_;

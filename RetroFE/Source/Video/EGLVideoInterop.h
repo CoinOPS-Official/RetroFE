@@ -33,7 +33,10 @@ public:
     bool retainsDeferredFrame() const { return false; }
     void invalidateFrame() { discardFrames(); }
     const char* reason() const;
-    static const char* caps() { return "video/x-raw(memory:DMABuf),format=DMA_DRM"; }
+    static const char* caps() {
+        return "video/x-raw(memory:DMABuf),format=DMA_DRM;"
+               "video/x-raw,format=(string){I420,NV12}";
+    }
     static SDL_PixelFormat pixelFormat() { return SDL_PIXELFORMAT_ABGR8888; }
     const char* description() const;
     int width() const;

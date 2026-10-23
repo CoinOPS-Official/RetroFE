@@ -1,6 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
+#include <atomic>
 
 class Configuration; // fwd-declare
 
@@ -45,7 +46,8 @@ public:
 
     // Run a single sync pass using the given config (path, allowlist, size defaults).
     // Returns true if all entries either updated successfully or were already 304.
-    static bool RunWithConfig(const Config& cfg, bool dryRun = false);
+    static bool RunWithConfig(const Config& cfg, bool dryRun = false,
+        const std::atomic<bool>* cancel = nullptr);
 
     // Back-compat helper; equivalent to RunWithConfig with defaults + given path.
     static bool RunFromFile(const std::string& payloadPath, bool dryRun = false);
@@ -57,7 +59,8 @@ private:
     static void FillDefaultSidecars(Entry& e);
 
     // Conditional GET + atomic replace; uses cfg for default size cap.
-    static bool DownloadIfNewer(const Entry& e, const Config& cfg, std::string& outStatus);
+    static bool DownloadIfNewer(const Entry& e, const Config& cfg, std::string& outStatus,
+        const std::atomic<bool>* cancel);
 
     // Small helpers
     static std::string PreprocessLine(const std::string& input); // strip '#' comment + trim

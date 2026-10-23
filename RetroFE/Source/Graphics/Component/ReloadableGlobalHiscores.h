@@ -154,6 +154,7 @@ private:
     float prevGeomW_;
     float prevGeomH_;
     float prevGeomFont_;
+    float prevGeomLetterSpacing_ = 0.f;
     int   compW_;               // composite texture width
     int   compH_;               // composite texture height
 

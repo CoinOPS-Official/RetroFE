@@ -278,6 +278,7 @@ private:
     int allocatedWidth_{ 0 };
     int allocatedHeight_{ 0 };
     SDL_PixelFormat allocatedFormat_{ SDL_PIXELFORMAT_UNKNOWN };
+    SDL_Colorspace allocatedColorspace_{ SDL_COLORSPACE_UNKNOWN };
     bool isTextureReady_{ false };
     // Resource readiness and presentation validity are separate. A warm
     // retarget keeps its texture allocation but invalidates its contents
@@ -295,7 +296,9 @@ private:
     std::atomic<bool> pendingCpuFallback_{false};
     bool disableInterop_ = false;
     int perspectiveCorners_[8]{ 0 };
-    bool hasPerspective_{ false };
+    std::atomic<bool> hasPerspective_{ false };
+    std::mutex perspectiveMutex_;
+    bool pipelineHasPerspective_{ false }; // immutable until the retained pipeline is rebuilt
 
     // === GStreamer and SDL resource pointers ===
     GstElement* pipeline_{ nullptr };
@@ -306,11 +309,11 @@ private:
     int lastPerspectiveH_{ -1 };
     SDL_Texture* texture_{ nullptr };
     SDL_PixelFormat sdlFormat_{ SDL_PIXELFORMAT_UNKNOWN };
+    SDL_Colorspace sdlColorspace_{ SDL_COLORSPACE_UNKNOWN };
     guint elementSetupHandlerId_{ 0 };
     guint busWatchId_{ 0 };
     guint padProbeId_{ 0 };
     GValueArray* gva_{ nullptr };
-    GValueArray* perspective_gva_{ nullptr };
 
     static bool initialized_;
     static bool pluginsInitialized_;
@@ -335,6 +338,7 @@ private:
     static gboolean on_propose_allocation(GstAppSink* sink, GstQuery* query, gpointer user_data);
     static GstPadProbeReturn padProbeCallback(GstPad* pad, GstPadProbeInfo* info, gpointer user_data);
     static void initializePlugins();
+    void applyPerspectiveForDimensions(int width, int height);
 
     void createSdlTexture();
     void destroyTextures();

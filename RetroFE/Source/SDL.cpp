@@ -603,36 +603,6 @@ bool SDL::initialize(Configuration& config) {
     );
 
     // ---------------------------------------------------------
-    // OpenGL system RAM optimizations
-    // ---------------------------------------------------------
-
-    SDL_GL_SetAttribute(
-        SDL_GL_CONTEXT_PROFILE_MASK,
-        SDL_GL_CONTEXT_PROFILE_CORE
-    );
-
-    SDL_GL_SetAttribute(
-        SDL_GL_CONTEXT_MAJOR_VERSION,
-        3
-    );
-
-    SDL_GL_SetAttribute(
-        SDL_GL_CONTEXT_MINOR_VERSION,
-        2
-    );
-
-    // No depth/stencil backing allocation required.
-    SDL_GL_SetAttribute(
-        SDL_GL_DEPTH_SIZE,
-        0
-    );
-
-    SDL_GL_SetAttribute(
-        SDL_GL_STENCIL_SIZE,
-        0
-    );
-
-    // ---------------------------------------------------------
     // Per-screen initialization
     // ---------------------------------------------------------
 

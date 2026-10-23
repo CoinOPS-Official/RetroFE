@@ -113,7 +113,7 @@ foreach(path IN LISTS ffmpeg_candidates)
 endforeach()
 # These obsolete application libraries must not survive an incremental build.
 if(REMOVE_LEGACY_TESTS)
-    foreach(test retrofe_sdl3_smoke_tests retrofe_high_score_change_tests retrofe_mame_software_resolver_tests
+    foreach(test retrofe_sdl3_smoke_tests retrofe_high_score_change_tests retrofe_global_score_cache_tests retrofe_mame_software_resolver_tests
             retrofe_text_benchmark retrofe_page_traversal_benchmark
             retrofe_vulkan_context_smoke retrofe_vulkan_interop_smoke retrofe_ffmpeg_vulkan_interop_smoke
             upstream-vkdownload upstream-vkupload upstream-vkimagebufferpool

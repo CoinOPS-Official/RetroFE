@@ -52,8 +52,10 @@ namespace {
 		if (font) font->setColor(color);
 	}
 
-	static float measureTextWidthExact(FontManager* font,
-		const std::string& text, float scale) {
+} // namespace
+
+	float ReloadableHiscores::measureTextWidthExact(FontManager* font,
+		const std::string& text, float scale) const {
 		if (!font || text.empty()) return 0.0f;
 		const float targetHeight = scale * font->getMaxHeight();
 		const auto* mip = font->getMipLevelForHeight(targetHeight);
@@ -62,18 +64,16 @@ namespace {
 		if (!engine) return 0.0f;
 		float width = 0.0f;
 		const float glyphScale = targetHeight / mip->height;
-		return engine->measure(text, glyphScale, width, glyphScale < 1.f) ? width : 0.0f;
+		return engine->measure(text, glyphScale, width, glyphScale < 1.f, baseViewInfo.LetterSpacing) ? width : 0.0f;
 	}
 
-	static void renderAtlasText(SDL_Renderer* renderer, FontManager* font,
+	void ReloadableHiscores::renderAtlasText(SDL_Renderer* renderer, FontManager* font,
 		const FontManager::MipLevel* mip, const std::string& text,
-		float x, float y, float scale) {
+		float x, float y, float scale) const {
 		if (!renderer || !font || !mip || text.empty()) return;
 		if (auto* engine = font->getTextEngineAtlas(mip))
-			engine->draw(text, x, std::round(y), scale, font->getColor(), scale < 1.f);
+			engine->draw(text, x, std::round(y), scale, font->getColor(), scale < 1.f, baseViewInfo.LetterSpacing);
 	}
-
-} // namespace
 
 ReloadableHiscores::ReloadableHiscores(Configuration& config, std::string textFormat,
 	Page& p, int displayOffset, FontManager* font, float scrollingSpeed, float startTime,
@@ -210,7 +210,7 @@ bool ReloadableHiscores::update(float dt) {
 			// resetScrollForParamReload = false; // Viewport change shouldn't reset scroll if content is same
 			LOG_DEBUG("ReloadableHiscores", "View width changed, scheduling reload.");
 		}
-		if (cachedBaseFontSize_ != baseViewInfo.FontSize) {
+		if (cachedBaseFontSize_ != baseViewInfo.FontSize || cachedLetterSpacing_ != baseViewInfo.LetterSpacing) {
 			shouldReloadBasedOnParams = true;
 			// resetScrollForParamReload = false; // Font size change shouldn't reset scroll
 			LOG_DEBUG("ReloadableHiscores", "Base font size changed, scheduling reload.");
@@ -467,6 +467,7 @@ void ReloadableHiscores::reloadTexture(bool resetScroll) {
 	lastComputedRowPadding_ = rowPadding;
 	cachedViewWidth_ = effectiveViewWidth;
 	cachedBaseFontSize_ = baseViewInfo.FontSize;
+	cachedLetterSpacing_ = baseViewInfo.LetterSpacing;
 	cachedTableIndex_ = currentTableIndex_;
 	cacheValid_ = true;
 
@@ -677,6 +678,7 @@ void ReloadableHiscores::rebuildPagePlan_() {
 	cachedViewWidth_ = fullW;
 	cachedViewHeight_ = baseViewInfo.ScaledHeight();
 	cachedBaseFontSize_ = baseViewInfo.FontSize;
+	cachedLetterSpacing_ = baseViewInfo.LetterSpacing;
 	if (!font || font->getMaxHeight() <= 0 || highScoreTable_.tables.empty()) return;
 
 	const float gap = fullW * 0.04f;
@@ -1030,7 +1032,8 @@ bool ReloadableHiscores::updatePages_(float dt) {
 	const bool geometryChanged =
 		std::abs(currentWidth - cachedViewWidth_) > 0.5f ||
 		std::abs(baseViewInfo.ScaledHeight() - cachedViewHeight_) > 0.5f ||
-		std::abs(baseViewInfo.FontSize - cachedBaseFontSize_) > 0.01f;
+		std::abs(baseViewInfo.FontSize - cachedBaseFontSize_) > 0.01f ||
+		std::abs(baseViewInfo.LetterSpacing - cachedLetterSpacing_) > 0.01f;
 
 	const bool revisionChanged = revision != lastRenderedRevision_;
 	if (selectionChanged || revisionChanged || geometryChanged) {

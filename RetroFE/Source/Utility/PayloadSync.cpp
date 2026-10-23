@@ -223,7 +223,8 @@ static size_t write_cb(char* ptr, size_t size, size_t nmemb, void* userdata) {
 
 // ---------------------- downloader ----------------------
 
-bool PayloadSync::DownloadIfNewer(const Entry& e, const Config& cfg, std::string& outStatus) {
+bool PayloadSync::DownloadIfNewer(const Entry& e, const Config& cfg, std::string& outStatus,
+    const std::atomic<bool>* cancel) {
     const std::string absLocal = Utils::combinePath(Configuration::absolutePath, e.local);
     const std::string tmpPath = absLocal + ".tmp";
     fs::create_directories(fs::path(absLocal).parent_path());
@@ -265,6 +266,14 @@ bool PayloadSync::DownloadIfNewer(const Entry& e, const Config& cfg, std::string
     curl_easy_setopt(curl, CURLOPT_HEADERDATA, &hs);
     curl_easy_setopt(curl, CURLOPT_CONNECTTIMEOUT, 10L);
     curl_easy_setopt(curl, CURLOPT_TIMEOUT, 30L);
+    if (cancel) {
+        curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 0L);
+        curl_easy_setopt(curl, CURLOPT_XFERINFODATA, cancel);
+        curl_easy_setopt(curl, CURLOPT_XFERINFOFUNCTION,
+            +[](void* context, curl_off_t, curl_off_t, curl_off_t, curl_off_t) -> int {
+                return static_cast<const std::atomic<bool>*>(context)->load() ? 1 : 0;
+            });
+    }
 
     CURLcode rc = curl_easy_perform(curl);
     long http = 0; curl_easy_getinfo(curl, CURLINFO_RESPONSE_CODE, &http);
@@ -300,7 +309,8 @@ bool PayloadSync::DownloadIfNewer(const Entry& e, const Config& cfg, std::string
 
 // ---------------------- runners ----------------------
 
-bool PayloadSync::RunWithConfig(const Config& cfg, bool dryRun) {
+bool PayloadSync::RunWithConfig(const Config& cfg, bool dryRun, const std::atomic<bool>* cancel) {
+    if (cancel && cancel->load()) return false;
     const std::string path = cfg.ResolvePayloadPath();
     auto entries = ParseFile(path);
     if (entries.empty()) {
@@ -310,6 +320,7 @@ bool PayloadSync::RunWithConfig(const Config& cfg, bool dryRun) {
 
     bool okAll = true;
     for (auto& e : entries) {
+        if (cancel && cancel->load()) return false;
         if (!AllowUrl(e.url, cfg) || !SafeLocalRel(e.local)) {
             LOG_WARNING("Payload", "Policy skip: " << e.url << " -> " << e.local);
             continue;
@@ -321,7 +332,7 @@ bool PayloadSync::RunWithConfig(const Config& cfg, bool dryRun) {
         }
 
         std::string msg;
-        bool ok = DownloadIfNewer(e, cfg, msg);
+        bool ok = DownloadIfNewer(e, cfg, msg, cancel);
         okAll &= ok;
 
         LOG_INFO("Payload", e.url << " -> " << e.local << " : " << msg);

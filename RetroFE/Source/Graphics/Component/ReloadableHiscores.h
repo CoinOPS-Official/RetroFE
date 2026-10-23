@@ -22,6 +22,7 @@
 #include <SDL3/SDL.h>
 
 #include "Component.h"
+#include "../Font.h"
 #include "../../Collection/Item.h"
 #include "../../Database/LocalHiScores.h"
 #include "LocalScorePagePlan.h"
@@ -42,6 +43,10 @@ public:
 
 
 private:
+    float measureTextWidthExact(FontManager* font, const std::string& text, float scale) const;
+    void renderAtlasText(SDL_Renderer* renderer, FontManager* font,
+        const FontManager::MipLevel* mip, const std::string& text,
+        float x, float y, float scale) const;
     struct PagePanel {
         size_t tableIndex = 0;
         std::vector<size_t> visibleColumns;
@@ -135,6 +140,7 @@ private:
     float cachedViewWidth_;           // Stores the width constraint used for the last full calculation
     float cachedViewHeight_ = -1.0f;
     float cachedBaseFontSize_;        // Stores the baseViewInfo.FontSize used
+    float cachedLetterSpacing_ = 0.f;
     float lastComputedDrawableHeight_; // Drawable height based on final scale
     float lastComputedRowPadding_;     // Row padding based on final scale
 

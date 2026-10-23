@@ -42,14 +42,16 @@ public:
     TextEngineAtlas& operator=(const TextEngineAtlas&) = delete;
 
     bool measure(const std::string& string, float scale, float& width,
-        bool ensureDownscaledFillGap = false) {
+        bool ensureDownscaledFillGap = false, float letterSpacing = 0.f) {
+        if (!std::isfinite(letterSpacing)) return SDL_SetError("Invalid letter spacing");
         CachedText* cached = getText(string);
         if (!cached) return false;
         const float outlineWidth = cached->hasGlyph ? 2.f * outlinePx_ * scale : 0.f;
-        if (!ensureDownscaledFillGap || scale >= 1.f) {
+        if (letterSpacing == 0.f && (!ensureDownscaledFillGap || scale >= 1.f)) {
             width = cached->width * scale + outlineWidth;
         } else {
-            if (!prepareFillGapOffsets(cached, scale)) return false;
+            if (!prepareFillGapOffsets(cached, scale, letterSpacing,
+                ensureDownscaledFillGap && scale < 1.f)) return false;
             width = 0.f;
             for (size_t line = 0; line < cached->lineWidths.size(); ++line)
                 width = std::max(width, cached->lineWidths[line] * scale +
@@ -60,8 +62,9 @@ public:
     }
 
     bool wrapLines(const std::string& string, float scale, float maxWidth,
-        std::vector<std::string>& lines) {
+        std::vector<std::string>& lines, float letterSpacing = 0.f) {
         if (scale <= 0.f || maxWidth <= 0.f) return false;
+        if (!std::isfinite(letterSpacing)) return SDL_SetError("Invalid letter spacing");
         TTF_Text* wrapped = TTF_CreateText(nullptr, font_, string.c_str(), string.size());
         if (!wrapped) return false;
         const int width = std::max(1, static_cast<int>(maxWidth / scale) - 2 * outlinePx_);
@@ -77,7 +80,26 @@ public:
             if (wrapped->num_lines == 0) result.emplace_back();
             return true;
         };
-        bool ok = collect(width, lines);
+        // SDL_ttf chooses Unicode line-break boundaries. Reduce its shaping
+        // width until the tracked lines fit the actual viewport as well.
+        // Negative tracking can admit more content than the natural width.
+        int wrapWidth = width;
+        if (letterSpacing < 0.f)
+            wrapWidth += static_cast<int>(std::min(1000000.f,
+                -letterSpacing * string.size() / scale));
+        bool ok = collect(wrapWidth, lines);
+        while (ok && letterSpacing != 0.f && wrapWidth > 1) {
+            float overflow = 0.f;
+            for (const auto& line : lines) {
+                float measured = 0.f;
+                if (!measure(line, scale, measured, false, letterSpacing)) { ok = false; break; }
+                overflow = std::max(overflow, measured - maxWidth);
+            }
+            if (!ok || overflow <= 0.01f) break;
+            wrapWidth = std::max(1, wrapWidth - std::max(1,
+                static_cast<int>(std::ceil(overflow / scale))));
+            ok = collect(wrapWidth, lines);
+        }
         TTF_DestroyText(wrapped);
         return ok;
     }
@@ -96,16 +118,16 @@ public:
     }
 
     bool draw(const std::string& string, float x, float y, float scale, SDL_Color color,
-        bool ensureDownscaledFillGap = false) {
+        bool ensureDownscaledFillGap = false, float letterSpacing = 0.f) {
         return drawImpl(string, x, y, scale, color, nullptr, 0, 0, nullptr,
-            ensureDownscaledFillGap);
+            ensureDownscaledFillGap, letterSpacing);
     }
 
     bool drawTransformed(const std::string& string, float x, float y, float scale,
         SDL_Color color, const ViewInfo& view, int layoutWidth, int layoutHeight,
         const SDL_FRect* clip = nullptr, bool ensureDownscaledFillGap = false) {
         return drawImpl(string, x, y, scale, color, &view, layoutWidth, layoutHeight, clip,
-            ensureDownscaledFillGap);
+            ensureDownscaledFillGap, view.LetterSpacing);
     }
 
 private:
@@ -125,7 +147,8 @@ private:
 
     bool drawImpl(const std::string& string, float x, float y, float scale,
         SDL_Color color, const ViewInfo* view, int layoutWidth, int layoutHeight,
-        const SDL_FRect* clip, bool ensureDownscaledFillGap) {
+        const SDL_FRect* clip, bool ensureDownscaledFillGap, float letterSpacing) {
+        if (!std::isfinite(letterSpacing)) return SDL_SetError("Invalid letter spacing");
         CachedText* cached = getText(string);
         if (!cached || !renderer_) return false;
         TTF_TextData* data = cached->text->internal;
@@ -139,8 +162,9 @@ private:
         // Upload every missing glyph before emitting geometry. Updating an atlas
         // page while a batch references it would break draw ordering.
         if (!prepareGlyphs(cached)) return false;
-        const bool adjustSpacing = ensureDownscaledFillGap && scale < 1.f;
-        if (adjustSpacing && !prepareFillGapOffsets(cached, scale)) return false;
+        const bool adjustSpacing = letterSpacing != 0.f || (ensureDownscaledFillGap && scale < 1.f);
+        if (adjustSpacing && !prepareFillGapOffsets(cached, scale, letterSpacing,
+            ensureDownscaledFillGap && scale < 1.f)) return false;
 
         GeometryBatch batch;
         const SDL_FColor fillTop{color.r / 255.f, color.g / 255.f,
@@ -268,6 +292,8 @@ private:
         std::vector<const Glyph*> outlineGlyphs;
         bool fillGapOffsetsReady = false;
         float fillGapOffsetScale = 0.f;
+        float letterSpacing = 0.f;
+        bool ensureFillGap = false;
         std::vector<float> opFillGapOffsets;
         std::vector<int> lineWidths;
         std::vector<float> lineFillGapOffsets;
@@ -316,17 +342,22 @@ private:
         return gap;
     }
 
-    bool prepareFillGapOffsets(CachedText* cached, float scale) {
-        if (cached->fillGapOffsetsReady && cached->fillGapOffsetScale == scale) return true;
-        if (!prepareGlyphs(cached)) return false;
+    bool prepareFillGapOffsets(CachedText* cached, float scale,
+        float letterSpacing, bool ensureFillGap) {
+        if (cached->fillGapOffsetsReady && cached->fillGapOffsetScale == scale &&
+            cached->letterSpacing == letterSpacing && cached->ensureFillGap == ensureFillGap) return true;
+        if (ensureFillGap && !prepareGlyphs(cached)) return false;
         TTF_Text* text = cached->text;
         TTF_TextData* data = text->internal;
         const int lineCount = std::max(1, text->num_lines);
         std::vector<std::vector<const TTF_SubString*>> visualLines(lineCount);
         for (int i = 0; i < data->num_clusters; ++i) {
             const auto& cluster = data->clusters[i];
+            // Line separators have cluster entries but are not spacing slots.
+            const bool lineBreak = cluster.length > 0 &&
+                (text->text[cluster.offset] == '\n' || text->text[cluster.offset] == '\r');
             if (cluster.length > 0 && cluster.line_index >= 0 &&
-                cluster.line_index < lineCount)
+                cluster.line_index < lineCount && !lineBreak)
                 visualLines[cluster.line_index].push_back(&cluster);
         }
 
@@ -357,14 +388,18 @@ private:
             }
             float offset = 0.f;
             for (size_t step = 0; step < clusters.size(); ++step) {
+                // Tracking is between visual clusters, including spaces, never
+                // inside a combining sequence or a shaped ligature. It is in
+                // layout pixels and therefore independent of raster mip size.
+                if (step > 0) offset += letterSpacing;
                 // SDL_ttf clusters keep combining marks and ligatures together.
                 // Apply a gap only between separate clusters with one glyph each.
-                if (step > 0 &&
+                if (ensureFillGap && step > 0 &&
                     clusterOps[step - 1].size() == 1 && clusterOps[step].size() == 1) {
                     const float gap = inkGap(cached, clusterOps[step - 1][0],
                         clusterOps[step][0], scale);
                     if (std::isfinite(gap))
-                        offset += std::max(0.f, std::ceil(minimumInkGapPx_ - gap));
+                        offset += std::max(0.f, std::ceil(minimumInkGapPx_ - gap - letterSpacing));
                 }
                 for (int opIndex : clusterOps[step])
                     cached->opFillGapOffsets[opIndex] = offset;
@@ -377,6 +412,8 @@ private:
             cached->lineY.push_back(line.rect.y);
         }
         cached->fillGapOffsetScale = scale;
+        cached->letterSpacing = letterSpacing;
+        cached->ensureFillGap = ensureFillGap;
         cached->fillGapOffsetsReady = true;
         return true;
     }

@@ -633,6 +633,7 @@ void GlobalHiScores::setGlobalGameroom(const std::string& gameroom) {
 }
 
 void GlobalHiScores::setGlobalPersistPath(const std::string& path) {
+	std::lock_guard<std::mutex> persistenceLock(globalPersistMutex_);
 	globalPersistPath_ = path;
 }
 
@@ -922,6 +923,7 @@ void GlobalHiScores::ingestIScoredAll_(const std::string& jsonText, int capPerGa
 }
 
 bool GlobalHiScores::loadGlobalCacheFromDisk() {
+	std::lock_guard<std::mutex> persistenceLock(globalPersistMutex_);
 	if (globalPersistPath_.empty()) return false;
 
 	std::ifstream in(globalPersistPath_);
@@ -984,6 +986,8 @@ bool GlobalHiScores::loadGlobalCacheFromDisk() {
 }
 
 bool GlobalHiScores::saveGlobalCacheToDisk() const {
+	// Keep snapshots and the shared temporary file ordered across refresh/exit saves.
+	std::lock_guard<std::mutex> persistenceLock(globalPersistMutex_);
 	if (globalPersistPath_.empty()) return false;
 
 	namespace fs = std::filesystem;
@@ -1017,12 +1021,24 @@ bool GlobalHiScores::saveGlobalCacheToDisk() const {
 		games.push_back(std::move(g));
 	}
 
-	// [Keep existing atomic write logic...]
+	const std::string serialized = root.dump(2);
+	// Compare the actual destination, including after startup or a path change.
+	// Missing, unreadable, or damaged caches still take the normal write path.
+	{
+		std::ifstream existing(p, std::ios::binary | std::ios::ate);
+		if (existing && existing.tellg() == static_cast<std::streamoff>(serialized.size())) {
+			existing.seekg(0);
+			std::string contents(serialized.size(), '\0');
+			if (existing.read(contents.data(), static_cast<std::streamsize>(contents.size())) &&
+				contents == serialized) return true;
+		}
+	}
+
 	fs::path tmp = p; tmp += ".tmp";
 	{
 		std::ofstream out(tmp, std::ios::binary);
 		if (!out) return false;
-		out << root.dump(2);
+		out << serialized;
 		out.flush();
 		if (!out) return false;
 	}
@@ -1030,7 +1046,7 @@ bool GlobalHiScores::saveGlobalCacheToDisk() const {
 	if (ec) {
 		std::ofstream out(p, std::ios::binary);
 		if (!out) return false;
-		out << root.dump(2);
+		out << serialized;
 		return static_cast<bool>(out);
 	}
 	return true;

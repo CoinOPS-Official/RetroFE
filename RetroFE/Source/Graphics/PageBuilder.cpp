@@ -1301,6 +1301,7 @@ ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monit
 	xml_node<>* itemDefaults = menuXml->first_node("itemDefaults");
 	xml_attribute<> const* modeXml = menuXml->first_attribute("mode");
 	xml_attribute<> const* imageTypeXml = menuXml->first_attribute("imageType");
+	xml_attribute<> const* textTypeXml = menuXml->first_attribute("textType");
 	xml_attribute<> const* videoTypeXml = menuXml->first_attribute("videoType");
 	xml_attribute<> const* menuTypeXml = menuXml->first_attribute("type");
 	xml_attribute<> const* scrollTimeXml = menuXml->first_attribute("scrollTime");
@@ -1342,6 +1343,14 @@ ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monit
 		}
 	}
 
+	// Text is an explicit content choice, independent of artwork availability.
+	const std::string textType = textTypeXml ? Utils::toLower(textTypeXml->value()) : "";
+	const bool textOnly = textType == "playlist" || textType == "title";
+	if (textType == "playlist") playlistType = true;
+	if (textTypeXml && !textOnly) {
+		LOG_WARNING("Layout", "Unsupported menu textType: " + textType);
+	}
+
 	bool layoutMode = false;
 	bool commonMode = false;
 	if (modeXml) {
@@ -1370,6 +1379,10 @@ ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monit
 	}
 
 	menu = new ScrollingList(config_, page, layoutMode, commonMode, playlistType, selectedImage, font, layoutKey, imageType, videoType, useTextureCache);
+	menu->enableTextOnly(textOnly);
+	if (const auto* textFormat = findAttribute(menuXml, "textFormat", itemDefaults)) {
+		menu->setTextFormat(textFormat->value());
+	}
 	menu->baseViewInfo.Monitor = cMonitor;
 	menu->baseViewInfo.Layout = page.getCurrentLayout();
 
@@ -1451,6 +1464,18 @@ ScrollingList* PageBuilder::buildMenu(xml_node<>* menuXml, Page& page, int monit
 	}
 	else {
 		buildVerticalMenu(menu, menuXml, itemDefaults);
+	}
+
+	if (textOnly && font) {
+		// The menu shares its itemDefaults font. Prepare each slot's size and
+		// animation endpoints even when no per-slot fontColor is specified.
+		for (auto* item = menuXml->first_node("item"); item; item = item->next_sibling("item")) {
+			const float size = getVerticalAlignment(findAttribute(item, "fontSize", itemDefaults), -1);
+			if (size > 0 && font->prepareSize(size)) {
+				if (const auto* mip = font->getMipLevelForSize(size)) font->prewarmTextEngine(mip);
+			}
+		}
+		prepareTweensForFont(font, menuXml, false);
 	}
 
 	loadTweens(menu, menuXml);
@@ -1642,6 +1667,7 @@ void PageBuilder::buildViewInfo(xml_node<>* componentXml, ViewInfo& info, xml_no
 	xml_attribute<> const* height = findAttribute(componentXml, "height", defaultXml);
 	xml_attribute<> const* width = findAttribute(componentXml, "width", defaultXml);
 	xml_attribute<> const* fontSize = findAttribute(componentXml, "fontSize", defaultXml);
+	xml_attribute<> const* letterSpacing = findAttribute(componentXml, "letterSpacing", defaultXml);
 	xml_attribute<> const* fontColor = findAttribute(componentXml, "fontColor", defaultXml);
 	xml_attribute<> const* minHeight = findAttribute(componentXml, "minHeight", defaultXml);
 	xml_attribute<> const* minWidth = findAttribute(componentXml, "minWidth", defaultXml);
@@ -1688,6 +1714,7 @@ void PageBuilder::buildViewInfo(xml_node<>* componentXml, ViewInfo& info, xml_no
 		info.Width = getHorizontalAlignment(width, -1);
 	}
 	info.FontSize = getVerticalAlignment(fontSize, -1);
+	info.LetterSpacing = letterSpacing ? Utils::convertFloat(letterSpacing->value()) : 0.f;
 	info.MinHeight = getVerticalAlignment(minHeight, 0);
 	info.MinWidth = getHorizontalAlignment(minWidth, 0);
 	info.MaxHeight = getVerticalAlignment(maxHeight, FLT_MAX);

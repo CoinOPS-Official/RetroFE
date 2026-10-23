@@ -30,6 +30,7 @@
 #include "Control/Restrictor/Restrictor.h"
 #include <SDL3_ttf/SDL_ttf.h>
 #include <atomic>
+#include <future>
 #include <list>
 #include <stack>
 #include <map>
@@ -73,6 +74,8 @@ private:
     std::atomic<bool> initialized{ false };
     std::atomic<bool> initializeError{ false };
     SDL_Thread   *initializeThread;
+    std::future<bool> payloadSyncFuture_;
+    std::atomic<bool> cancelPayloadSync_{false};
     static int    initialize( void *context );
     void          waitForInitializationThread(int* status = nullptr);
 

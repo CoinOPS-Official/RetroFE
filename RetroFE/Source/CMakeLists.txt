@@ -556,6 +556,10 @@ if(RETROFE_BUILD_TESTING)
             "GST_PLUGIN_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugins;GST_PLUGIN_SCANNER=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugin-scanner.exe;GST_PLUGIN_SYSTEM_PATH=$<TARGET_FILE_DIR:retrofe_sdl3_smoke_tests>/gst-plugins;GST_REGISTRY=${CMAKE_BINARY_DIR}/test-gst-pruned-registry.bin")
     endif()
     set_tests_properties(retrofe_sdl3_smoke_tests PROPERTIES RUN_SERIAL TRUE)
+    add_executable(retrofe_collection_regression_tests Tests/CollectionRegressionTests.cpp)
+    target_link_libraries(retrofe_collection_regression_tests PRIVATE retrofe_core)
+    retrofe_stage_runtime(retrofe_collection_regression_tests)
+    add_test(NAME retrofe_collection_regression_tests COMMAND retrofe_collection_regression_tests)
     if(RETROFE_ENABLE_FFMPEG)
         add_test(NAME retrofe_ffmpeg_smoke_tests COMMAND retrofe_sdl3_smoke_tests "${RETROFE_DIR}/../Package/Environment/Common")
         get_property(video_test_environment TEST retrofe_sdl3_smoke_tests PROPERTY ENVIRONMENT)
@@ -568,6 +572,11 @@ if(RETROFE_BUILD_TESTING)
     )
     add_test(NAME retrofe_high_score_change_tests COMMAND retrofe_high_score_change_tests)
 
+    add_executable(retrofe_global_score_cache_tests Tests/GlobalScoreCacheTests.cpp)
+    target_link_libraries(retrofe_global_score_cache_tests PRIVATE retrofe_core)
+    retrofe_stage_runtime(retrofe_global_score_cache_tests)
+    add_test(NAME retrofe_global_score_cache_tests COMMAND retrofe_global_score_cache_tests)
+
     add_executable(retrofe_mame_software_resolver_tests
         "${RETROFE_DIR}/Source/Execute/MameSoftwareResolver.cpp"
         "${RETROFE_DIR}/Source/Tests/MameSoftwareResolverTests.cpp"
@@ -577,6 +586,8 @@ endif()
 
 # Keep tests (including the subproject's tests) out of the deployable runtime.
 foreach(test_target IN ITEMS retrofe_sdl3_smoke_tests retrofe_high_score_change_tests
+        retrofe_global_score_cache_tests
+        retrofe_collection_regression_tests
         retrofe_text_benchmark retrofe_page_traversal_benchmark
         retrofe_vulkan_context_smoke retrofe_vulkan_interop_smoke
         retrofe_ffmpeg_vulkan_interop_smoke

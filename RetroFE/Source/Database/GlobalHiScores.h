@@ -9,6 +9,7 @@
 #include <functional>
 #include <atomic>
 #include <optional>
+#include <mutex>
 
 struct GlobalScoreQuery {
     std::string gameIds;
@@ -70,6 +71,7 @@ private:
     // -------- Global internals --------
     std::string iscoredGameroom_;
     std::string globalPersistPath_;
+    mutable std::mutex globalPersistMutex_; // serializes path changes and cache IO
     std::atomic<bool> globalRefreshInFlight_{ false };
 
     GlobalHiScoreData global_;                // canonical global store (by gameId)

@@ -33,7 +33,7 @@ public:
     void sortPlaylists();
     bool isItemInLastPlayed(const Item* selectedItem);
     void addSubcollection(CollectionInfo *info);
-    auto itemIsLess(const std::string& sortType, bool currentCollectionMenusort) const;
+    const std::string& getPlaylistTitle(const std::string& id) const;
     void sortPlaylistByName(const std::string& playlistName);
     void extensionList(std::vector<std::string> &extensions) const;
     std::string name;
@@ -47,6 +47,7 @@ public:
 
     using Playlists_T = std::map<std::string, std::vector<Item*>*, std::less<>>;
     Playlists_T playlists;
+    std::map<std::string, std::string, std::less<>> playlistTitles;
     std::string sortType;
     bool menusort;
     bool subsSplit;

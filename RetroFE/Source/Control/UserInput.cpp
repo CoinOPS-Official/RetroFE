@@ -593,6 +593,29 @@ bool UserInput::update(SDL_Event& event) {
         }
     }
 
+    // Hotplug and instance-to-slot remapping above still run. Only events
+    // consumed by a binding need the per-handler virtual dispatch below.
+    switch (e.type) {
+    case SDL_EVENT_KEY_DOWN:
+    case SDL_EVENT_KEY_UP:
+    case SDL_EVENT_JOYSTICK_AXIS_MOTION:
+    case SDL_EVENT_JOYSTICK_BUTTON_DOWN:
+    case SDL_EVENT_JOYSTICK_BUTTON_UP:
+    case SDL_EVENT_JOYSTICK_HAT_MOTION:
+    case SDL_EVENT_GAMEPAD_AXIS_MOTION:
+    case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
+    case SDL_EVENT_GAMEPAD_BUTTON_UP:
+    case SDL_EVENT_MOUSE_BUTTON_DOWN:
+    case SDL_EVENT_MOUSE_BUTTON_UP:
+    case SDL_EVENT_FINGER_DOWN:
+    case SDL_EVENT_FINGER_MOTION:
+    case SDL_EVENT_FINGER_UP:
+    case SDL_EVENT_FINGER_CANCELED:
+        break;
+    default:
+        return false;
+    }
+
     bool event_handled = false;
     for (unsigned int i = 0; i < keyHandlers_.size(); ++i) {
         InputHandler* h = keyHandlers_[i].first;

@@ -58,6 +58,7 @@ public:
     float        ImageWidth{ 0 };
     float        ImageHeight{ 0 };
     float        FontSize{ -1 };
+    float        LetterSpacing{ 0 };
     FontManager* font{ nullptr };
     float        Angle{ 0 };
     float        Alpha{ 1 };

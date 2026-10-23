@@ -20,6 +20,7 @@
 #include <string>
 #include <map>
 #include <vector>
+#include <unordered_set>
 
 class Configuration;
 class CollectionInfo;
@@ -49,5 +50,8 @@ private:
     void AddToPlayCount(Item* item);
     std::map<std::string, double> ImportTimeSpent(const std::string& file);
     std::map<std::string, Item*> ImportPlayCount(const std::string& file);
-    void ImportRomDirectory(const std::string& path, CollectionInfo *info, std::map<std::string, Item *> includeFilter, std::map<std::string, Item *> excludeFilter, bool romHierarchy, bool emuarc);
+    void ImportRomDirectory(const std::string& path, CollectionInfo *info,
+        const std::unordered_set<std::string>& includeFilter,
+        const std::unordered_set<std::string>& excludeFilter,
+        std::unordered_set<std::string>& existingNames, bool romHierarchy, bool emuarc);
 };

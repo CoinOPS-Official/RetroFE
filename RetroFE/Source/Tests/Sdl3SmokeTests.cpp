@@ -19,8 +19,13 @@
 #include "../Graphics/TextEngineAtlas.h"
 #include "../Graphics/GeometryBatch.h"
 #include "../Graphics/Component/Text.h"
+#include "../Graphics/Component/ReloadableText.h"
+#include "../Graphics/Component/ReloadableScrollingText.h"
+#include "../Graphics/Component/ScrollingList.h"
 #include "../Graphics/FontCache.h"
 #include "../Video/GStreamerVideo.h"
+#include "../Video/GStreamerCpuFrame.h"
+#include "../Video/EGLVideoInterop.h"
 #include "GStreamerEGLPitchChecks.h"
 #include "../Video/GlibLoop.h"
 #include "../Video/VideoPool.h"
@@ -286,11 +291,149 @@ void inputChecks(Configuration& config) {
     }
     input.updateKeystate();
     require(input.keystate(UserInput::KeyCodeSelect), "Configured joy0 maps to SDL3 instance ID");
+    for (const auto type : {SDL_EVENT_WINDOW_RESIZED, SDL_EVENT_MOUSE_MOTION,
+        SDL_EVENT_AUDIO_DEVICE_ADDED, SDL_EVENT_USER}) {
+        SDL_Event unrelated{};
+        unrelated.type = type;
+        const auto original = unrelated;
+        require(!input.update(unrelated), "Unrelated events are not reported as binding input");
+        require(std::memcmp(&unrelated, &original, sizeof(unrelated)) == 0,
+            "Input filtering preserves the caller event");
+    }
+    input.updateKeystate();
+    require(input.keystate(UserInput::KeyCodeSelect), "Unrelated events preserve held input");
     SDL_CloseJoystick(joystick);
     require(SDL_DetachVirtualJoystick(id), "Detach virtual joystick");
     while (SDL_PollEvent(&event)) input.update(event);
     input.updateKeystate();
     require(!input.keystate(UserInput::KeyCodeSelect), "Disconnect clears held input");
+    config.setProperty("SDLGameController", true);
+    {
+        UserInput gamepadInput(config);
+        require(gamepadInput.initialize(), "Initialize gamepad bindings");
+        SDL_VirtualJoystickDesc padDesc{};
+        SDL_INIT_INTERFACE(&padDesc);
+        padDesc.type = SDL_JOYSTICK_TYPE_GAMEPAD;
+        padDesc.nbuttons = 1;
+        padDesc.button_mask = 1u << SDL_GAMEPAD_BUTTON_SOUTH;
+        padDesc.name = "RetroFE SDL3 test gamepad";
+        const auto padId = SDL_AttachVirtualJoystick(&padDesc);
+        require(padId != 0 && SDL_IsGamepad(padId), "Attach mapped virtual gamepad");
+        auto* padJoystick = SDL_OpenJoystick(padId);
+        require(padJoystick != nullptr, "Open virtual gamepad joystick");
+        event = {};
+        event.type = SDL_EVENT_GAMEPAD_ADDED;
+        event.gdevice.which = padId;
+        gamepadInput.update(event);
+        while (SDL_PollEvent(&event)) {}
+        require(SDL_SetJoystickVirtualButton(padJoystick, 0, true), "Press virtual gamepad button");
+        SDL_UpdateJoysticks();
+        while (SDL_PollEvent(&event)) {
+            if (event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN && event.gbutton.which == padId)
+                gamepadInput.update(event);
+        }
+        gamepadInput.updateKeystate();
+        require(gamepadInput.keystate(UserInput::KeyCodeSelect), "Gamepad button dispatch survives event filtering");
+        SDL_CloseJoystick(padJoystick);
+        require(SDL_DetachVirtualJoystick(padId), "Detach virtual gamepad");
+        while (SDL_PollEvent(&event)) gamepadInput.update(event);
+        gamepadInput.updateKeystate();
+        require(!gamepadInput.keystate(UserInput::KeyCodeSelect), "Gamepad removal still clears held input");
+    }
+    config.setProperty("SDLGameController", false);
+}
+
+void textSelectionReloadChecks(FontManager& font) {
+    Configuration config;
+    Page page(config, 64, 64);
+    Item item;
+    item.name = "text-selection-regression";
+    item.title = item.fullTitle = "FIRST TITLE";
+    auto* collection = new CollectionInfo(config, "text-selection-regression", "", "", "", "");
+    item.collectionInfo = collection;
+    collection->items.push_back(&item);
+    collection->playlists.emplace("all", &collection->items);
+    auto* menu = new ScrollingList(config, page, false, false, false, false,
+        nullptr, "", "null", "null", false);
+    page.pushMenu(menu);
+    require(page.pushCollection(collection), "Bind selected item for text reload checks");
+    auto capture = [&](Component& component) {
+        auto* renderer = SDL::getRenderer(0);
+        require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) && SDL_RenderClear(renderer),
+            "Clear text reload comparison");
+        component.draw();
+        auto* pixels = SDL_RenderReadPixels(renderer, nullptr);
+        require(pixels != nullptr, "Read text reload comparison");
+        auto* rgba = SDL_ConvertSurface(pixels, SDL_PIXELFORMAT_RGBA32);
+        SDL_DestroySurface(pixels);
+        require(rgba != nullptr, "Normalize text reload comparison");
+        std::vector<Uint8> result;
+        for (int y = 0; y < rgba->h; ++y) {
+            auto* row = static_cast<Uint8*>(rgba->pixels) + y * rgba->pitch;
+            result.insert(result.end(), row, row + rgba->w * 4);
+        }
+        SDL_DestroySurface(rgba);
+        return result;
+    };
+    auto prepare = [](Component& component) {
+        component.baseViewInfo.X = component.baseViewInfo.Y = 0;
+        component.baseViewInfo.XOrigin = component.baseViewInfo.YOrigin = 0;
+        component.baseViewInfo.Width = component.baseViewInfo.MaxWidth = 64;
+        component.baseViewInfo.Height = component.baseViewInfo.MaxHeight = 64;
+        component.baseViewInfo.FontSize = 24;
+        component.baseViewInfo.Alpha = 1;
+    };
+    for (const bool reloadDuringScroll : {true, false}) {
+        item.title = "FIRST TITLE";
+        ReloadableText label("title", page, config, false, &font, "", "", "", "", "", "", "");
+        prepare(label);
+        label.setMenuScrollReload(reloadDuringScroll);
+        const auto initial = capture(label);
+        item.title = "SECOND TITLE";
+        label.setNewScrollItemSelected();
+        label.update(0);
+        const auto afterScroll = capture(label);
+        require(reloadDuringScroll ? afterScroll != initial : afterScroll == initial,
+            "Ordinary text honors menuScrollReload during selection changes");
+        item.title = "THIRD TITLE";
+        label.update(0);
+        require(capture(label) == afterScroll, "Consumed text event does not reload again on the next frame");
+        label.setNewScrollItemSelected();
+        label.update(0);
+        require(reloadDuringScroll ? capture(label) != afterScroll : capture(label) == afterScroll,
+            "A subsequent scroll selection still refreshes eligible text");
+        label.setNewItemSelected();
+        label.update(0);
+        const auto settled = capture(label);
+        if (!reloadDuringScroll) require(settled != initial, "Settle-only text refreshes on final selection");
+        item.title = "FOURTH TITLE";
+        label.update(0);
+        require(capture(label) == settled, "Settled text consumes earlier scroll notifications");
+    }
+    item.title = "ABCDEFGHIJKLMNOPQRSTUVWXYZ ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    {
+        ReloadableScrollingText marquee(config, false, false, false, "title", "", "", "", "", "", "left",
+            page, 0, &font, "horizontal", 40, 0, 0, 0, "");
+        prepare(marquee);
+        marquee.setMenuScrollReload(true);
+        marquee.setNewScrollItemSelected();
+        marquee.update(0);
+        const auto initial = capture(marquee);
+        marquee.update(0.25f);
+        require(capture(marquee) != initial, "Marquee advances after consuming a scroll selection");
+        marquee.setNewScrollItemSelected();
+        marquee.update(0);
+        require(capture(marquee) == initial, "A new scroll selection still restarts the marquee");
+        marquee.setMenuScrollReload(false);
+        item.title = "DIFFERENT MARQUEE CONTENT";
+        marquee.setNewScrollItemSelected();
+        marquee.update(0);
+        require(capture(marquee) == initial, "Settle-only marquee ignores intermediate selections");
+        marquee.setNewItemSelected();
+        marquee.update(0);
+        require(capture(marquee) != initial, "Settle-only marquee refreshes after selection settles");
+    }
+    page.deInitialize();
 }
 
 void mediaChecks(const std::string& assets) {
@@ -406,6 +549,60 @@ void mediaChecks(const std::string& assets) {
         require(streamed, "HTTP music stream advances");
         require(music->stopMusic(0), "Stop HTTP music stream");
     }
+    if (const char* retryBase = std::getenv("RETROFE_TEST_MUSIC_RETRY_BASE_URL")) {
+        const auto pumpFor = [&](Uint64 duration, const auto& done) {
+            const auto deadline = SDL_GetTicks() + duration;
+            do {
+                music->pump();
+                if (done()) return true;
+                SDL_Delay(10);
+            } while (SDL_GetTicks() < deadline);
+            return false;
+        };
+        const auto select = [&](const char* path) {
+            require(music->loadM3UPlaylist(std::string(retryBase) + path), "Load retry fixture station");
+            require(music->playMusic(0, 0), "Start retry fixture station");
+        };
+        const auto originalMusicVolume = music->getLogicalVolume();
+        music->setLogicalVolume(45);
+        select("/recover");
+        require(pumpFor(22000, [&] { return music->getCurrent() > .1 && !music->isFading(); }),
+                "Internet stream recovers after two failed attempts");
+        require(music->getLogicalVolume() == 45, "Stream retries retain the selected music volume");
+        require(music->stopMusic(0), "Stop recovered internet stream");
+        music->setLogicalVolume(originalMusicVolume);
+
+        select("/stop");
+        require(pumpFor(3000, [&] { return music->getPlaybackState() == MusicPlayer::PlaybackState::NONE; }),
+                "Failed stream enters retry wait");
+        require(music->stopMusic(0), "Explicit stop cancels pending stream retry");
+        pumpFor(6000, [] { return false; });
+        require(!music->isPlaying(), "Cancelled stream stays stopped beyond retry deadline");
+
+        select("/pause");
+        require(pumpFor(3000, [&] { return music->getPlaybackState() == MusicPlayer::PlaybackState::NONE; }),
+                "Second failed stream enters retry wait");
+        require(music->pauseMusic(0) && music->isPaused(), "Pause cancels retry without losing resume intent");
+        pumpFor(6000, [] { return false; });
+        require(music->isPaused(), "Pending stream stays paused beyond retry deadline");
+        require(music->resumeMusic(0), "Resume explicitly restarts paused stream");
+        require(pumpFor(3000, [&] { return music->getCurrent() > .1; }), "Resumed stream decodes audio");
+        music->stopMusic(0);
+
+        select("/exhaust");
+        pumpFor(39000, [] { return false; });
+        require(music->getPlaybackState() == MusicPlayer::PlaybackState::NONE && !music->isPlaying(),
+                "Permanently failing station stops after bounded retries");
+        // The fixture verifies exactly four HTTP requests (initial plus three retries).
+        select("/next");
+        require(pumpFor(3000, [&] { return music->getPlaybackState() == MusicPlayer::PlaybackState::NONE; }),
+                "Track-change fixture enters retry wait");
+        require(music->loadMusicFolder(testMusicFolder ? testMusicFolder : assets + "/layouts/Arcades/sounds"),
+                "Replacing playlist cancels internet retry");
+        require(music->playMusic(0, 0), "Play local file after failed stream");
+        pumpFor(6000, [] { return false; });
+        music->stopMusic(0);
+    }
     if (const char* stationPlaylist = std::getenv("RETROFE_TEST_MUSIC_PLAYLIST_URL")) {
         require(music->loadM3UPlaylist(stationPlaylist) && music->getTrackCount() > 0,
                 "Resolve remote station playlist");
@@ -478,6 +675,7 @@ void mediaChecks(const std::string& assets) {
     {
         FontManager font(assets + "/retrofe/OpenSans.ttf", 24, {255,255,255,255}, true, 1, 0);
         require(font.initialize(), "Open gradient and outline font faces");
+        textSelectionReloadChecks(font);
         require(font.getWidth("RetroFE") > 0, "Measure text using SDL_ttf shaping");
         const std::string accented = "caf\xc3\xa9";
         const int coldWidth = font.getWidth(accented);
@@ -493,6 +691,84 @@ void mediaChecks(const std::string& assets) {
         float shapedWidth = 0.0f;
         require(shaped->measure("", 1.0f, shapedWidth) && shapedWidth == 0.0f,
             "Empty outlined text has zero width");
+        {
+            float natural = 0.f, spaced = 0.f, restored = 0.f;
+            require(shaped->measure("A V", 1.f, natural) &&
+                shaped->measure("A V", 1.f, spaced, false, 1.8f) &&
+                std::abs(spaced - natural - 3.6f) < 0.01f,
+                "Tracking counts spaces and adds no trailing gap");
+            require(shaped->measure("A V", 1.f, spaced, false, -0.75f) &&
+                std::abs(spaced - natural + 1.5f) < 0.01f &&
+                shaped->measure("A V", 1.f, restored) && restored == natural,
+                "Negative and zero tracking do not contaminate shared text cache");
+            require(shaped->measure("AV", 0.5f, natural) &&
+                shaped->measure("AV", 0.5f, spaced, false, 2.f) &&
+                std::abs(spaced - natural - 2.f) < 0.01f,
+                "Tracking is in layout pixels independent of glyph raster scale");
+            require(shaped->measure("e\xcc\x81X", 1.f, natural) &&
+                shaped->measure("e\xcc\x81X", 1.f, spaced, false, 2.f) &&
+                std::abs(spaced - natural - 2.f) < 0.01f,
+                "Tracking preserves combining glyph clusters");
+            require(shaped->measure("AV\nAV", 1.f, natural) &&
+                shaped->measure("AV\nAV", 1.f, spaced, false, 2.f) &&
+                std::abs(spaced - natural - 2.f) < 0.01f,
+                "Tracking restarts on each text line");
+            require(shaped->measure("", 1.f, spaced, false, 2.f) && spaced == 0.f &&
+                shaped->measure("A", 1.f, spaced, false, 2.f) &&
+                shaped->measure("A", 1.f, natural) && spaced == natural,
+                "Empty and single-cluster text have no tracking gap");
+            for (float spacing : {2.f, -0.5f}) {
+                std::vector<std::string> lines;
+                require(shaped->wrapLines("one two three four five six", 1.f, 90.f, lines, spacing),
+                    "Wrap text using tracked widths");
+                std::string joined;
+                for (const auto& line : lines) {
+                    require(shaped->measure(line, 1.f, spaced, false, spacing) && spaced <= 90.01f,
+                        "Tracked wrapped rows fit their viewport");
+                    for (char c : line) if (c != ' ') joined += c;
+                }
+                require(joined == "onetwothreefourfivesix", "Tracked wrapping retains every word");
+            }
+            auto bounds = [&](float spacing, bool centered, float clipWidth) {
+                auto* renderer = SDL::getRenderer(0);
+                require(SDL_SetRenderDrawColor(renderer, 0, 0, 0, 255) && SDL_RenderClear(renderer),
+                    "Clear tracking pixel comparison");
+                Configuration textConfig;
+                // Dummy fullscreen can be larger than the requested window.
+                // Use one layout unit per output pixel for these assertions.
+                Page textPage(textConfig, SDL::getWindowWidth(0), SDL::getWindowHeight(0));
+                Text text("HH", textPage, &font, 0);
+                text.baseViewInfo.FontSize = 24;
+                text.baseViewInfo.LetterSpacing = spacing;
+                text.baseViewInfo.X = centered ? 32.f : 1.f;
+                text.baseViewInfo.XOrigin = centered ? 0.5f : 0.f;
+                text.baseViewInfo.MaxWidth = clipWidth;
+                text.draw();
+                SDL_Surface* surface = SDL_RenderReadPixels(renderer, nullptr);
+                require(surface != nullptr, "Read tracked glyph pixels");
+                int left = surface->w, right = -1;
+                for (int y = 0; y < surface->h; ++y) for (int x = 0; x < surface->w; ++x) {
+                    Uint8 r, g, b, a;
+                    require(SDL_ReadSurfacePixel(surface, x, y, &r, &g, &b, &a), "Read tracked text pixel");
+                    if (r > 20 || g > 20 || b > 20) { left = std::min(left, x); right = std::max(right, x); }
+                }
+                SDL_DestroySurface(surface);
+                return std::pair{left, right};
+            };
+            const auto normal = bounds(0.f, false, 64.f);
+            const auto tracked = bounds(4.f, false, 64.f);
+            if (normal.second < 0 || tracked.first != normal.first || tracked.second != normal.second + 4)
+                std::cerr << "Text tracking bounds: natural=" << normal.first << ',' << normal.second
+                    << " tracked=" << tracked.first << ',' << tracked.second << '\n';
+            require(normal.second >= 0 && tracked.first == normal.first && tracked.second == normal.second + 4,
+                "Text drawing matches measured tracking and leaves first glyph in place");
+            const auto centerNormal = bounds(0.f, true, 64.f);
+            const auto centerTracked = bounds(4.f, true, 64.f);
+            require(centerTracked.first == centerNormal.first - 2 && centerTracked.second == centerNormal.second + 2,
+                "Text centers using its tracked width");
+            require(bounds(4.f, false, 22.f).second <= 22,
+                "Tracked text honors the width clip");
+        }
         require(shaped->measure("office caf\xc3\xa9", 1.0f, shapedWidth) && shapedWidth > 0,
             "Shape Unicode text with the SDL3_ttf text engine");
         std::vector<std::string> wrappedLines;
@@ -827,6 +1103,93 @@ void mediaChecks(const std::string& assets) {
     TTF_Quit();
 }
 
+void cpuVideoCapsChecks() {
+    gst_init(nullptr, nullptr);
+    auto* mixed = gst_caps_from_string(EGLVideoInterop::caps());
+    require(mixed != nullptr, "Parse EGL native and CPU caps alternatives");
+    for (const char* format : {"I420", "NV12"}) {
+        const std::string text = std::string("video/x-raw,format=") + format;
+        auto* cpu = gst_caps_from_string(text.c_str());
+        require(cpu && gst_caps_can_intersect(mixed, cpu), "EGL caps retain native software-decoder output");
+        gst_caps_unref(cpu);
+    }
+    auto* native = gst_caps_from_string("video/x-raw(memory:DMABuf),format=DMA_DRM");
+    require(native && gst_caps_can_intersect(mixed, native), "EGL caps retain DMA-BUF hardware output");
+    gst_caps_unref(native);
+    gst_caps_unref(mixed);
+
+    GstVideoInfo info;
+    gst_video_info_init(&info);
+    require(gst_video_info_set_format(&info, GST_VIDEO_FORMAT_I420, 128, 72), "Prepare I420 frame description");
+    require(GStreamerCpuFrame::format(info) == SDL_PIXELFORMAT_IYUV, "I420 samples use planar SDL upload");
+    info.colorimetry.matrix = GST_VIDEO_COLOR_MATRIX_BT709;
+    info.colorimetry.range = GST_VIDEO_COLOR_RANGE_0_255;
+    require(GStreamerCpuFrame::colorspace(info) == SDL_COLORSPACE_BT709_FULL, "Preserve full-range BT709 CPU samples");
+    require(gst_video_info_set_format(&info, GST_VIDEO_FORMAT_NV12, 128, 72), "Prepare NV12 frame description");
+    require(GStreamerCpuFrame::format(info) == SDL_PIXELFORMAT_NV12, "NV12 samples use interleaved SDL upload");
+    require(gst_video_info_set_format(&info, GST_VIDEO_FORMAT_RGBA, 128, 72), "Prepare perspective frame description");
+    require(GStreamerCpuFrame::format(info) == SDL_PIXELFORMAT_ABGR8888 &&
+        GStreamerCpuFrame::colorspace(info) == SDL_COLORSPACE_SRGB, "Perspective samples retain RGBA upload and RGB colorspace");
+    auto* buffer = gst_buffer_new_allocate(nullptr, 256, nullptr);
+    require(GStreamerCpuFrame::isSystemMemory(buffer), "Recognize CPU buffers before native interop import");
+    gst_buffer_unref(buffer);
+}
+
+void pooledPerspectiveChecks() {
+    const char* file = std::getenv("RETROFE_TEST_MEDIA_B");
+    if (!file || VideoFactory::backend() != "gstreamer") return;
+    constexpr int listId = 9387;
+    const int corners[]{32, 18, 96, 18, 32, 54, 96, 54};
+    auto* renderer = SDL::getRenderer(0);
+    auto video = VideoFactory::createVideo(0, 0, false, listId, nullptr);
+    auto* identity = video.get();
+    require(identity != nullptr, "Create pooled perspective regression player");
+    for (const bool perspective : {false, true, false, true, false}) {
+        if (!video) {
+            video = VideoFactory::createVideo(0, 0, false, listId, perspective ? corners : nullptr);
+            require(video && video.get() == identity, "Reuse the same drained player across perspective modes");
+        }
+        require(video->open(file) && !video->getTexture(), "Mode retarget hides the old presentation");
+        const auto deadline = SDL_GetTicks() + 5000;
+        while (!video->getTexture() && !video->hasError() && SDL_GetTicks() < deadline) {
+            SDL_PumpEvents();
+            video->updateFrame();
+            require(SDL::beginVideoFrame(renderer), "Submit perspective preroll transfers");
+            SDL_Delay(5);
+        }
+        require(video->getTexture() && !video->hasError(), "Retargeted perspective mode prerolls");
+        require(SDL_SetRenderDrawColor(renderer, 255, 0, 255, 255) && SDL_RenderClear(renderer), "Clear perspective comparison");
+        const SDL_FRect destination{0, 0, 64, 64};
+        require(SDL_RenderTexture(renderer, video->getTexture(), nullptr, &destination), "Draw pooled perspective frame");
+        const auto outside = pixel(renderer, 1, 1);
+        const auto inside = pixel(renderer, 32, 32);
+        require(inside.b > inside.r + 80 && inside.b > inside.g + 80, "Perspective mode preserves decoded blue pixels");
+        require(perspective ? outside.r > 240 && outside.b > 240 : outside.b > outside.r + 80,
+            "Changing a warm player mode updates the filter and restores unwarped coverage");
+        require(SDL_RenderPresent(renderer), "Present perspective comparison");
+        auto draining = video;
+        VideoPool::releaseVideo(std::move(video), 0, listId);
+        const auto drainDeadline = SDL_GetTicks() + 5000;
+        while (!draining->isReadyForReuse() && SDL_GetTicks() < drainDeadline) { SDL_PumpEvents(); SDL_Delay(5); }
+        require(draining->isReadyForReuse(), "Perspective player drains for pool reuse");
+        draining.reset();
+    }
+    VideoPool::cleanup(0, listId);
+    GStreamerVideo::waitForControlTasks();
+#ifdef _WIN32
+    if (Configuration::HardwareVideoAccel && SDL::getRendererBackend(0) == "direct3d11") {
+        for (const char* codec : {"h264", "h265"}) {
+            auto* d12 = gst_element_factory_find((std::string("d3d12") + codec + "dec").c_str());
+            auto* d11 = gst_element_factory_find((std::string("d3d11") + codec + "dec").c_str());
+            if (d12 && d11) require(gst_plugin_feature_get_rank(GST_PLUGIN_FEATURE(d12)) >
+                gst_plugin_feature_get_rank(GST_PLUGIN_FEATURE(d11)), "Prefer D3D12 H264/HEVC over D3D11 decoders");
+            if (d12) gst_object_unref(d12);
+            if (d11) gst_object_unref(d11);
+        }
+    }
+#endif
+}
+
 void videoLifecycleChecks(const std::string& assets) {
     gst_init(nullptr, nullptr);
     for (const char* name : {"playbin", "appsink", "appsrc", "audioconvert",
@@ -842,6 +1205,7 @@ void videoLifecycleChecks(const std::string& assets) {
         require(video->open(assets + "/layouts/Arcades/video/splash.mp4"), "Open packaged video");
         const Uint64 deadline = SDL_GetTicks() + 10000;
         while (!video->getTexture() && !video->hasError() && SDL_GetTicks() < deadline) {
+            SDL_PumpEvents();
             video->updateFrame();
             require(SDL::beginVideoFrame(SDL::getRenderer(0)), "Submit preroll transfers");
             SDL_Delay(10);
@@ -886,6 +1250,7 @@ void videoLifecycleChecks(const std::string& assets) {
         require(video->open(assets + "/layouts/Arcades/video/splash.mp4"), "Reopen video on retained instance");
         const Uint64 reopenDeadline = SDL_GetTicks() + 10000;
         while (!video->getTexture() && !video->hasError() && SDL_GetTicks() < reopenDeadline) {
+            SDL_PumpEvents();
             video->updateFrame();
             require(SDL::beginVideoFrame(SDL::getRenderer(0)), "Submit preroll transfers");
             SDL_Delay(10);
@@ -911,6 +1276,7 @@ void videoLifecycleChecks(const std::string& assets) {
         }
         const Uint64 deadline = SDL_GetTicks() + 10000;
         while (SDL_GetTicks() < deadline) {
+            SDL_PumpEvents();
             bool allReady = true;
             for (size_t i = 0; i < videos.size(); ++i) {
                 auto& video = videos[i];
@@ -1158,7 +1524,10 @@ void ffmpegContractChecks() {
     require(video->isReadyForReuse(), "Unload completes");
     video->open(first);
     waitFrame();
-    require(video->getTexture() == retained, "Same-format reopen reuses texture allocation");
+    if (Configuration::HardwareVideoAccel)
+        require(video->usingGpuTexture(), "Same-format reopen retains native GPU presentation");
+    else
+        require(video->getTexture() == retained, "Same-format reopen reuses CPU texture allocation");
     video->prepareForRetarget();
     video->open(second);
     require(!video->getTexture(), "Retarget suppresses stale video");
@@ -1190,6 +1559,14 @@ void ffmpegContractChecks() {
         require(video->getTexture() != nullptr, "Automatic loop never blanks the presentation");
     }
     require(video->hasFinishedLoops() && video->isPaused(), "Finite loop count finishes and pauses");
+    if (const char* fallback = std::getenv("RETROFE_TEST_MEDIA_FALLBACK"); fallback && Configuration::HardwareVideoAccel) {
+        require(video->open(fallback), "Open unsupported native-presentation fixture");
+        waitFrame();
+        require(!video->usingGpuTexture(), "Unsupported native format presents through software fallback");
+        require(video->open(first) && !video->getTexture(), "Open supported hardware stream after fallback");
+        waitFrame();
+        require(video->usingGpuTexture(), "Stream-local fallback does not demote later hardware streams");
+    }
     const int corners[]{32, 18, 96, 18, 32, 54, 96, 54};
     video->setPerspectiveCorners(corners);
     video->open(second);
@@ -1204,6 +1581,10 @@ void ffmpegContractChecks() {
         "Perspective preserves transparent exterior and transformed video");
     SDL_RenderPresent(renderer);
     video->setPerspectiveCorners(nullptr);
+    require(video->open(second) && !video->getTexture(), "Reopen the same clip without perspective");
+    waitFrame();
+    if (Configuration::HardwareVideoAccel)
+        require(video->usingGpuTexture(), "Same-URI reopen restores hardware presentation after perspective fallback");
     video->open(std::string(second) + ".missing");
     const auto errorDeadline = SDL_GetTicks() + 3000;
     while (!video->hasError() && SDL_GetTicks() < errorDeadline) SDL_Delay(5);
@@ -1607,6 +1988,7 @@ void compositeBenchmark(Configuration& config) {
 }
 
 int main(int argc, char** argv) {
+    cpuVideoCapsChecks();
     gstreamerEGLPitchChecks(require);
     scrollTweenResetChecks();
     const bool composite = argc > 2 && std::string(argv[2]) == "--composite-benchmark";
@@ -1675,6 +2057,7 @@ int main(int argc, char** argv) {
 #endif
         videoLifecycleChecks(argv[1]);
         ffmpegContractChecks();
+        pooledPerspectiveChecks();
         const std::string file = std::string(argv[1]) + "/layouts/Arcades/video/splash.mp4";
         if (hardware) concurrentVideoChecks(file);
         scrollingVideoStartupChecks(config, file);
@@ -1692,6 +2075,7 @@ int main(int argc, char** argv) {
     }
     imageAsyncIOChecks(config);
     ffmpegContractChecks();
+    pooledPerspectiveChecks();
 #ifdef _WIN32
     d3d11RendererChecks();
 #endif

@@ -51,7 +51,7 @@ void Text::draw() {
     const float maxW = baseViewInfo.Width < baseViewInfo.MaxWidth && baseViewInfo.Width > 0
         ? baseViewInfo.Width : baseViewInfo.MaxWidth;
     float shapedWidth = 0;
-    if (!engine->measure(textData_, scale, shapedWidth)) return;
+    if (!engine->measure(textData_, scale, shapedWidth, false, baseViewInfo.LetterSpacing)) return;
 
     const float oldW = baseViewInfo.Width;
     const float oldH = baseViewInfo.Height;

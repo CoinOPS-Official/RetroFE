@@ -72,6 +72,7 @@ std::unordered_map<std::string, TweenProperty> Tween::tweenPropertyMap_ = {
     {"xoffset", TWEEN_PROPERTY_X_OFFSET},
     {"yoffset", TWEEN_PROPERTY_Y_OFFSET},
     {"fontsize", TWEEN_PROPERTY_FONT_SIZE},
+    {"letterspacing", TWEEN_PROPERTY_LETTER_SPACING},
     {"backgroundalpha", TWEEN_PROPERTY_BACKGROUND_ALPHA},
     {"maxwidth", TWEEN_PROPERTY_MAX_WIDTH},
     {"maxheight", TWEEN_PROPERTY_MAX_HEIGHT},

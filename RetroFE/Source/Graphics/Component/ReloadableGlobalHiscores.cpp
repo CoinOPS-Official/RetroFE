@@ -390,7 +390,8 @@ bool ReloadableGlobalHiscores::update(float dt) {
     const bool geomChanged =
         (prevGeomW_ != widthNow) ||
         (prevGeomH_ != heightNow) ||
-        (prevGeomFont_ != baseViewInfo.FontSize);
+        (prevGeomFont_ != baseViewInfo.FontSize) ||
+        (prevGeomLetterSpacing_ != baseViewInfo.LetterSpacing);
 
     Item const* selectedItem = page.getSelectedItem(displayOffset_);
     bool dataChanged = false;
@@ -462,6 +463,7 @@ bool ReloadableGlobalHiscores::update(float dt) {
             prevGeomW_ = widthNow;
             prevGeomH_ = heightNow;
             prevGeomFont_ = baseViewInfo.FontSize;
+            prevGeomLetterSpacing_ = baseViewInfo.LetterSpacing;
         }
 
         return Component::update(dt);
@@ -472,6 +474,7 @@ bool ReloadableGlobalHiscores::update(float dt) {
         prevGeomW_ = widthNow;
         prevGeomH_ = heightNow;
         prevGeomFont_ = baseViewInfo.FontSize;
+        prevGeomLetterSpacing_ = baseViewInfo.LetterSpacing;
         needsRedraw_ = true;
         tablesNeedRedraw_ = true;  // NEW: Geometry changed = re-render tables
         gridBaselineValid_ = false;
@@ -873,7 +876,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
         const float glyphScale = targetHeight / mip->height;
         if (auto* engine = font->getTextEngineAtlas(mip))
             engine->draw(text, x, std::round(y), glyphScale,
-                baseViewInfo.textColor, glyphScale < 1.f);
+                baseViewInfo.textColor, glyphScale < 1.f, baseViewInfo.LetterSpacing);
     };
 
     auto measureTextWidthExact = [&](FontManager* font, const std::string& text,
@@ -886,7 +889,7 @@ void ReloadableGlobalHiscores::reloadTexture() {
         if (!engine) return 0.0f;
         float width = 0.0f;
         const float glyphScale = targetHeight / mip->height;
-        return engine->measure(text, glyphScale, width, glyphScale < 1.f) ? width : 0.0f;
+        return engine->measure(text, glyphScale, width, glyphScale < 1.f, baseViewInfo.LetterSpacing) ? width : 0.0f;
     };
 
     // --- Column alignment helper ---

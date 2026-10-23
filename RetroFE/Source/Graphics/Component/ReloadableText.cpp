@@ -15,6 +15,7 @@
  */
 
 #include "ReloadableText.h"
+#include "../../Collection/CollectionInfo.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
 #include "../../Sound/MusicPlayer.h"
@@ -90,6 +91,7 @@ bool ReloadableText::update(float dt)
     {
         ReloadTexture();
         newItemSelected = false;
+        newScrollItemSelected = false;
     }
     else if (type_ == "file")
     {
@@ -346,7 +348,8 @@ void ReloadableText::ReloadTexture() {
     }
     else if (isPlaylistType())
     {
-        text = playlistName;
+        const auto* collection = page.getCollection();
+        text = collection ? collection->getPlaylistTitle(playlistName) : playlistName;
     }
     // ------------------------------------------------------------
     // Item-driven sources (selectedItem guaranteed non-null here)

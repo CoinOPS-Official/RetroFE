@@ -27,6 +27,7 @@
 #include "VideoComponent.h"
 #include "ReloadableMedia.h"
 #include "Text.h"
+#include <cctype>
 #include "../../Video/VideoPool.h"
 #include "../../Database/Configuration.h"
 #include "../../Database/GlobalOpts.h"
@@ -130,7 +131,7 @@ void ScrollingList::setItems(std::vector<Item*>* items) {
     if (!videoTypeLC.empty() && videoTypeLC != "null" && videoTypeLC != imageTypeLC)
         types.push_back(videoTypeLC);
 
-    if (!types.empty()) {
+    if (!textOnly_ && !types.empty()) {
         for (Item* it : *items_) {
             if (!it) continue;
             it->precomputeNameCandidates(types);   // builds once; selection-agnostic
@@ -145,6 +146,9 @@ void ScrollingList::precalculateMediaPaths() {
 
     mediaCache_.clear();
     mediaCache_.resize(items_->size());
+
+    // Explicit text menus do not resolve artwork or videos, including defaults.
+    if (textOnly_) return;
 
     const std::string& selectedItemName = getSelectedItemName();
 
@@ -302,6 +306,16 @@ void ScrollingList::setMinScrollTime( float value )
 void ScrollingList::enableTextFallback(bool value)
 {
     textFallback_ = value;
+}
+
+void ScrollingList::enableTextOnly(bool value)
+{
+    textOnly_ = value;
+}
+
+void ScrollingList::setTextFormat(const std::string& format)
+{
+    textFormat_ = Utils::toLower(format);
 }
 
 void ScrollingList::deallocateSpritePoints() {
@@ -1219,6 +1233,9 @@ void ScrollingList::resetTweens(Component* c, const std::shared_ptr<AnimationEve
     if (std::abs(currentViewInfo->FontSize - nextViewInfo->FontSize) > EPSILON_FLOAT) {
         set.push(Tween(TWEEN_PROPERTY_FONT_SIZE, LINEAR, static_cast<float>(currentViewInfo->FontSize), static_cast<float>(nextViewInfo->FontSize), scrollTime));
     }
+    if (std::abs(currentViewInfo->LetterSpacing - nextViewInfo->LetterSpacing) > EPSILON_FLOAT) {
+        set.push(Tween(TWEEN_PROPERTY_LETTER_SPACING, LINEAR, currentViewInfo->LetterSpacing, nextViewInfo->LetterSpacing, scrollTime));
+    }
     if (std::abs(currentViewInfo->BackgroundAlpha - nextViewInfo->BackgroundAlpha) > EPSILON_FLOAT) {
         set.push(Tween(TWEEN_PROPERTY_BACKGROUND_ALPHA, LINEAR, static_cast<float>(currentViewInfo->BackgroundAlpha), static_cast<float>(nextViewInfo->BackgroundAlpha), scrollTime));
     }
@@ -1284,13 +1301,22 @@ bool ScrollingList::allocateTexture(size_t componentIndex, size_t fullListIndex)
         }
     }
 
-    // 3. Fallback to Text
-    if (!t && textFallback_) {
-        if (existingComponent && existingComponent->recycleAsText(item->title)) {
+    // 3. Explicit text content or media fallback. Format the display copy only;
+    // playlist identifiers and sorting retain their original spelling.
+    if (!t && (textOnly_ || textFallback_)) {
+        std::string title = item->title;
+        if (textFormat_ == "uppercase") {
+            std::transform(title.begin(), title.end(), title.begin(),
+                [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
+        }
+        else if (textFormat_ == "lowercase") {
+            title = Utils::toLower(title);
+        }
+        if (existingComponent && existingComponent->recycleAsText(title)) {
             t = existingComponent;
         }
         else {
-            t = new Text(item->title, page, fontInst_, baseViewInfo.Monitor);
+            t = new Text(title, page, fontInst_, baseViewInfo.Monitor);
         }
     }
 
